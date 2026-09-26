@@ -27,7 +27,7 @@ concurrency:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -38,7 +38,7 @@ jobs:
 
   database:
     needs: test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
       SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
@@ -60,7 +60,7 @@ jobs:
 
   web:
     needs: [test, database]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       BEYOND_SUPABASE_URL: ${{ vars.SUPABASE_URL }}
       BEYOND_SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
@@ -95,7 +95,7 @@ jobs:
   pages:
     needs: web
     if: vars.USE_GITHUB_PAGES == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
