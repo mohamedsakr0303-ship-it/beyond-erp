@@ -91,6 +91,7 @@ CF_AR = {"Depreciation": "الإهلاك", "Amortization": "الاستهلاك",
          "Other current liabilities": "التزامات متداولة أخرى",
          "Capital expenditures (fixed assets)": "النفقات الرأسمالية (أصول ثابتة)",
          "Additions to intangibles": "إضافات أصول غير ملموسة", "Other long-term assets": "أصول طويلة الأجل أخرى",
+         "Investments bought / (sold)": "استثمارات (مشتراة / مباعة)", "Partners' current accounts": "جاري الشركاء",
          "Short-term debt issued / (repaid)": "قروض قصيرة الأجل (مستلمة / مسددة)",
          "Long-term debt issued / (repaid)": "قروض طويلة الأجل (مستلمة / مسددة)",
          "Other long-term liabilities": "التزامات طويلة الأجل أخرى", "Capital contributed": "رأس المال المدفوع",
@@ -414,6 +415,25 @@ def stock_table(db, warehouse_id=None, q=None, lang="en"):
             "columns": cols, "rows": rows, "lang": lang}
 
 
+def fixed_assets_table(db, date_to=None, q=None, state=None, lang="en"):
+    from . import assets
+    data = assets.register(db, q, None, state or "active", acc.clean_date(date_to) if date_to else None)
+    heads = [("Code", "الكود", "left", None), ("Asset", "الأصل", "left", None), ("Account", "الحساب", "left", None),
+             ("Acquired", "تاريخ الشراء", "left", None), ("Life (months)", "العمر (شهور)", "right", "num"),
+             ("Cost", "التكلفة", "right", "money"), ("Accumulated depreciation", "مجمع الإهلاك", "right", "money"),
+             ("Book value", "القيمة الدفترية", "right", "money"), ("Monthly", "الإهلاك الشهري", "right", "money")]
+    cols = [{"label": h[1] if lang == "ar" else h[0], "align": h[2], "fmt": h[3]} for h in heads]
+    rows = [{"cells": [r["code"], r["name"] + (" (disposed)" if r["disposed"] and lang != "ar" else " (مستبعد)" if r["disposed"] else ""),
+                       r["account"], r["acquired"], r["life_months"], r["cost"], r["accumulated"], r["book_value"],
+                       r["monthly"]], "style": "item", "indent": 0} for r in data["rows"]]
+    t = data["totals"]
+    rows.append({"cells": [L("total", lang), "", "", "", "", t["cost"], t["accumulated"], t["book_value"], ""],
+                 "style": "grand", "indent": 0})
+    title = "سجل الأصول الثابتة" if lang == "ar" else "Fixed asset register"
+    return {"title": title, "subtitle": f"{L('as_of', lang)} {acc.clean_date(date_to) if date_to else acc.today()} · "
+                                        f"{db.setting('currency')}", "columns": cols, "rows": rows, "lang": lang}
+
+
 def receivables_table(db, date_from=None, date_to=None, lang="en"):
     data = [b for b in acc.bu_summaries(db, date_from, date_to) if b["receivable"] or b["advances"] or b["to_collect"]]
     heads = [("Code", "الكود", "left"), ("Name", "الاسم", "left"), ("Invoiced receivable", "مديونية الفواتير", "right"),
@@ -511,6 +531,8 @@ def build(db, name, p):
         return tax_table(db, p.get("date_from"), p.get("date_to"), lang)
     if name == "receivables":
         return receivables_table(db, p.get("date_from"), p.get("date_to"), lang)
+    if name == "fixed_assets":
+        return fixed_assets_table(db, p.get("date_to"), p.get("q"), p.get("state"), lang)
     raise acc.ValidationError(f"Unknown report {name!r}")
 
 
@@ -518,7 +540,7 @@ REPORT_PERMS = {"income_statement": "reports.income_statement", "balance_sheet":
                 "cash_flow": "reports.cash_flow", "trial_balance": "reports.trial_balance",
                 "general_ledger": "accounting.ledger", "bu_pnl": "business_units.profitability",
                 "payables": "purchasing.payables", "stock": "stock.balances", "receivables": "sales.receivables",
-                "tax": "tax.report"}
+                "tax": "tax.report", "fixed_assets": "assets.register"}
 
 
 # ==================================================================== writers

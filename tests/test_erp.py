@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from erp import accounting as a  # noqa: E402
-from erp import auth, interchange, reports  # noqa: E402
+from erp import assets, auth, entries, equity, interchange, reports  # noqa: E402
 from erp.db import Database  # noqa: E402
 
 try:
@@ -353,7 +353,7 @@ class Workspace(unittest.TestCase):
     def dump(self, db):
         out = {t: db.q(f"SELECT * FROM {t} ORDER BY 1") for t in
                ("business_units", "journal_entries", "journal_lines", "users", "offers", "partners", "accounts",
-                "settings", "audit_log")}
+                "settings", "audit_log", "ownership_changes", "fixed_assets", "partner_shares")}
         for u in out["users"]:
             u.pop("pw_hash")          # passwords stay on the device where they were set
         out["audit_log"] = [r for r in out["audit_log"] if r["action"] not in ("login", "setup")]  # device-local
@@ -451,6 +451,21 @@ class Workspace(unittest.TestCase):
         self.assertEqual(self.node_call(0, c, "POST", "/api/docs/receipt", {"bu_id": bu["id"], "amount": 7})[0], 200)
         # gateway relays B's local user; the log records that user, and both copies end up identical
         self.assertEqual(self.sb.state.ops[-2]["app_user"], "admin")
+        # partners' equity and fixed assets replay the same on every device (previews are never logged)
+        for name in ("P1", "P2"):
+            st, r = self.node_call(0, a, "POST", "/api/partners", {"name": name, "default_share": 0.5})
+            self.assertEqual(st, 200, r)
+            self.node_call(0, a, "POST", "/api/docs/partner_tx", {"partner": name, "type": "Capital", "amount": 50000})
+        n = len(self.sb.state.ops)
+        self.assertEqual(self.node_call(0, a, "POST", "/api/equity-preview/transfer", {"seller": "P1", "buyer": "P3", "share": 10})[0], 200)
+        self.assertEqual(len(self.sb.state.ops), n)
+        st, r = self.node_call(1, b, "POST", "/api/equity/transfer", {"seller": "P1", "buyer": "P3", "share": 10})
+        self.assertEqual(st, 200, r)
+        st, r = self.node_call(0, a, "POST", "/api/assets", {"name": "Laptop", "account": "1430", "cost": 36000,
+                                                             "life_months": 36, "acquired": "2026-01-10", "pay": "cash"})
+        self.assertEqual(st, 200, r)
+        st, r = self.node_call(1, b, "POST", "/api/assets/depreciation", {"through": "2026-03"})
+        self.assertEqual(st, 200, r)
         for srv, _, _ in self.nodes:
             srv.cloud.pull()
         self.assertEqual(self.dump(self.nodes[0][1]), self.dump(self.nodes[1][1]))
@@ -462,6 +477,150 @@ class Workspace(unittest.TestCase):
         self.assertEqual(st, 503)
         self.assertIn("workspace", r["error"])
         self.nodes[1][0].cloud.configure(url, "anon")
+
+
+class Equity(unittest.TestCase):
+    def setUp(self):
+        self.db = Database(":memory:")
+        self.db.x("INSERT INTO partners(name,default_share) VALUES ('A',0.6),('B',0.4)")
+        self.db.x("INSERT INTO business_units(code,name) VALUES ('U1','Unit')")
+        self.db.x("INSERT INTO partner_shares(partner_id,bu_id,share) VALUES (1,1,0.5),(2,1,0.5)")
+        a.record_partner_tx(self.db, {"partner": "A", "type": "Capital", "amount": 60000, "date": "2026-01-01"})
+        a.record_partner_tx(self.db, {"partner": "B", "type": "Capital", "amount": 40000, "date": "2026-01-01"})
+
+    def shares(self):
+        return {p["name"]: round(p["default_share"], 6) for p in self.db.q("SELECT * FROM partners")}
+
+    def check_books(self):
+        self.assertEqual([c["check"] for c in a.audit(self.db) if not c["ok"]], [])
+
+    def test_transfer_admit_exit_and_undo(self):
+        db = self.db
+        r = equity.post(db, "transfer", {"seller": "A", "buyer": "C", "share": 30, "price": 99999, "date": "2026-02-01"})
+        self.assertEqual(self.shares(), {"A": 0.3, "B": 0.4, "C": 0.3})
+        self.assertEqual(equity.balances(db, "C")["capital"], 30000)   # half of A's capital moved with half of A's share
+        self.assertEqual(equity.balances(db, "A")["capital"], 30000)
+        bu = {r_["partner_id"]: r_["share"] for r_ in db.q("SELECT * FROM partner_shares WHERE bu_id=1")}
+        self.assertEqual(bu, {1: 0.25, 2: 0.5, 3: 0.25})            # the unit's own shares move in proportion
+        equity.post(db, "admit", {"name": "D", "share": 20, "amount": 50000, "basis": "bonus", "date": "2026-03-01"})
+        self.assertAlmostEqual(sum(self.shares().values()), 1)
+        self.assertEqual(equity.balances(db, "D")["capital"], 30000)   # 20% × (100,000 + 50,000)
+        self.assertEqual(equity.total_capital(db), 150000)
+        x = equity.post(db, "exit", {"partner": "B", "settlement": 45000, "paid": 5000, "date": "2026-04-01"})
+        self.assertEqual(self.shares()["B"], 0)
+        self.assertEqual(db.one("SELECT active FROM partners WHERE name='B'")["active"], 0)
+        self.assertEqual(equity.balances(db, "B")["due_to"], 40000)
+        self.assertAlmostEqual(sum(self.shares().values()), 1)
+        self.check_books()
+        with self.assertRaises(a.ValidationError):   # only the latest change can be undone
+            equity.undo_change(db, r["change"])
+        a.void_entry(db, x["id"], "wrong")              # voiding the exit restores B
+        self.assertGreater(self.shares()["B"], 0)
+        self.assertEqual(db.one("SELECT active FROM partners WHERE name='B'")["active"], 1)
+        self.check_books()
+
+    def test_loans_interest_distribution_and_capital_interest(self):
+        db = self.db
+        equity.post(db, "loan", {"partner": "A", "amount": 36500, "rate": 10, "date": "2026-01-01"})
+        p = equity.preview(db, "interest", {"partner": "A", "date": "2026-01-11"})
+        self.assertEqual(p["lines"][0]["debit"], 100.0)                 # 10 days × 36,500 × 10% / 365
+        equity.post(db, "interest", {"partner": "A", "date": "2026-01-11"})
+        with self.assertRaises(a.ValidationError):
+            equity.post(db, "interest", {"partner": "A", "date": "2026-01-11"})   # already booked to that day
+        self.assertEqual(equity.balances(db, "A")["interest"], 100)
+        equity.post(db, "repay", {"partner": "A", "what": "interest", "amount": 100, "date": "2026-01-12"})
+        equity.post(db, "contribute", {"partner": "A", "amount": 36500, "source": "loan", "ownership": "by_capital",
+                                       "date": "2026-01-13"})
+        self.assertEqual(equity.balances(db, "A")["loan"], 0)
+        self.assertEqual(self.shares(), {"A": round(96500 / 136500, 6), "B": round(40000 / 136500, 6)})
+        equity.post(db, "distribute", {"amount": 1000, "date": "2026-01-31"})
+        self.assertEqual(equity.balances(db, "B")["distributions_payable"], round(1000 * 40000 / 136500, 2))
+        db.x("UPDATE partners SET capital_interest=0.1 WHERE name='B'")
+        rep = a.partner_report(db, "2026-01-01", "2026-12-31")
+        self.assertGreater(next(r for r in rep["partners"] if r["name"] == "B")["capital_interest"], 3900)
+        self.check_books()
+
+    def test_same_account_both_sides_refused(self):
+        with self.assertRaises(a.ValidationError):
+            a.record_journal(self.db, {"date": "2026-01-02", "lines": [{"account": "1020", "debit": 5}, {"account": "1020", "credit": 5}]})
+        # the same account is fine when the lines belong to different partners (a capital transfer)
+        a.record_journal(self.db, {"date": "2026-01-02", "lines": [{"account": "3010", "debit": 5, "party": "A"},
+                                                                    {"account": "3010", "credit": 5, "party": "B"}]})
+
+    def test_old_books_get_the_new_accounts(self):
+        db = Database(":memory:")
+        db.x("DELETE FROM accounts WHERE code IN ('3020','3110')")
+        db.x("INSERT INTO accounts(code,name,type,subtype,normal) VALUES ('3020','Mine','Equity','capital','Credit')")
+        db.x("DELETE FROM settings WHERE key='coa_v2'")
+        db._migrate()
+        self.assertEqual(db.one("SELECT name FROM accounts WHERE code='3020'")["name"], "Mine")
+        self.assertEqual(db.acct("partner_current"), "3021")
+        self.assertEqual(db.acct("legal_reserve"), "3110")
+
+    def test_json_round_trip_keeps_line_parties_and_history(self):
+        equity.post(self.db, "transfer", {"seller": "A", "buyer": "C", "share": 30, "date": "2026-02-01"})
+        db2 = Database(":memory:")
+        interchange.import_data(db2, interchange.read_json(interchange.to_json(self.db).encode()), mode="replace")
+        for n in ("A", "B", "C"):
+            self.assertEqual(equity.balances(db2, n), equity.balances(self.db, n))
+        self.assertEqual(len(equity.history(db2)), 1)
+
+
+class FixedAssets(unittest.TestCase):
+    def test_purchase_depreciation_disposal(self):
+        db = Database(":memory:")
+        a.record_journal(db, {"date": "2026-01-01", "lines": [{"account": "1020", "debit": 900000}, {"account": "3010", "credit": 900000}]})
+        aid = assets.save(db, {"name": "Truck", "account": "1420", "acquired": "2026-01-15", "cost": 600000, "salvage": 60000,
+                               "life_months": 60, "pay": "payable", "vendor": "Dealer", "paid": 100000, "vat_code": "VAT14"})
+        self.assertEqual(a.party_balance(db, db.acct("ap"), "Dealer"), 584000)   # 600,000 + 14% VAT − 100,000 paid
+        r = assets.run_depreciation(db, "2026-04")
+        self.assertEqual(r["total"], 36000)                              # 4 months × 9,000
+        with self.assertRaises(a.ValidationError):
+            assets.run_depreciation(db, "2026-04")
+        row = assets.register(db)["rows"][0]
+        self.assertEqual((row["accumulated"], row["book_value"], row["booked_through"]), (36000, 564000, "2026-04"))
+        a.void_entry(db, r["entries"][0], "redo")                       # voided depreciation is booked again next run
+        self.assertEqual(assets.run_depreciation(db, "2026-04")["total"], 36000)
+        assets.dispose(db, aid, {"date": "2026-06-20", "proceeds": 500000})   # May + June first, then the sale
+        row = assets.register(db)["rows"][0]
+        self.assertTrue(row["disposed"])
+        self.assertEqual(row["accumulated"], 54000)
+        self.assertEqual(next(x for x in a.account_totals(db) if x["code"] == "7045")["net"], 4600000)   # loss 46,000.00
+        self.assertEqual([c["check"] for c in a.audit(db) if not c["ok"]], [])
+        # land is never depreciated; an existing asset can be registered with its past depreciation
+        assets.save(db, {"name": "Plot", "account": "1440", "acquired": "2025-01-01", "cost": 100000, "life_months": 0})
+        assets.save(db, {"name": "Desk", "account": "1400", "acquired": "2024-01-01", "cost": 12000, "life_months": 60,
+                         "opening_depr": 4800})
+        p = assets.plan_depreciation(db, "2026-06")
+        self.assertEqual([(x["name"], x["from"]) for x in p["rows"]], [("Desk", "2026-01")])   # 24 months already taken
+        # the register and its depreciation survive a JSON round trip
+        db2 = Database(":memory:")
+        interchange.import_data(db2, interchange.read_json(interchange.to_json(db).encode()), mode="replace")
+        self.assertEqual([(r["code"], r["accumulated"], r["disposed"]) for r in assets.register(db2)["rows"]],
+                         [(r["code"], r["accumulated"], r["disposed"]) for r in assets.register(db)["rows"]])
+        self.assertEqual(reports.build(db, "fixed_assets", {})["rows"][-1]["cells"][5], 112000)
+
+
+class EntryTypes(unittest.TestCase):
+    def test_types_menu_and_posting(self):
+        db = Database(":memory:")
+        types = entries.load(db)
+        self.assertIn("legal_reserve", [t["id"] for t in types])
+        cash = entries.resolve_side(db, "subtype:cash")
+        self.assertIn("1020", cash["choose"])
+        eid = entries.post(db, "cash_transfer", {"amount": 500, "debit_account": "1010", "credit_account": "1020"})
+        self.assertEqual(a.get_entry(db, eid)["amount"], 500)
+        with self.assertRaises(a.ValidationError):
+            entries.post(db, "cash_transfer", {"amount": 500, "debit_account": "1020", "credit_account": "1020"})
+        entries.save(db, [{"name": "Pay rent", "kind": "Rent", "debit": "6010", "credit": "role:bank", "party": "required"}])
+        with self.assertRaises(a.ValidationError):
+            entries.post(db, "pay_rent", {"amount": 100})           # party required
+        eid = entries.post(db, "pay_rent", {"amount": 100, "party": "Landlord"})
+        self.assertEqual(a.get_entry(db, eid)["kind"], "Rent")
+        self.assertNotIn("legal_reserve", [t["id"] for t in entries.load(db)])   # removed built-ins stay removed
+        entries.save_menu(db, [{"key": "entry:pay_rent", "show": True}, {"key": "doc:journal", "show": True}, {"key": "bad", "show": True}])
+        m = entries.menu(db)
+        self.assertEqual([x["key"] for x in m if x["show"]], ["entry:pay_rent", "doc:journal"])
 
 
 if __name__ == "__main__":

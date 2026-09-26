@@ -71,7 +71,7 @@ SHEETS = [
                 choices=sorted({s for v in SUBTYPES.values() for s in v})),
               C("normal", "Normal Balance", "الطبيعة", kind="calc", width=10,
                 calc='=IF(OR({type}="Asset",{type}="COGS",{type}="Expense"),IF(OR({subtype}="accumulated_depreciation",'
-                     '{subtype}="accumulated_amortization"),"Credit","Debit"),IF(OR({subtype}="drawings",'
+                     '{subtype}="accumulated_amortization",{subtype}="allowance_doubtful"),"Credit","Debit"),IF(OR({subtype}="drawings",'
                      '{subtype}="sales_discount"),"Debit","Credit"))'),
               C("role", "System Role", "الدور في النظام", width=18),
               C("name_ar", "Arabic Name", "الاسم بالعربية", width=34),
@@ -109,11 +109,29 @@ SHEETS = [
               C("default_wht", "Default WHT", "خصم وتحصيل افتراضي", kind="tax", width=10), C("notes", "Notes", "ملاحظات", width=20)]},
     {"name": "Partners", "ar": "الشركاء", "module": "partners", "title": "Partners and their default profit share",
      "cols": [C("name", "Partner", "الشريك", width=30, required=True),
-              C("default_share", "Default Share %", "نسبة الملكية الافتراضية", kind="pct", width=12)]},
+              C("default_share", "Default Share %", "نسبة الملكية الافتراضية", kind="pct", width=12),
+              C("active", "Still a Partner", "شريك حالي", width=8, choices=["Yes", "No"]),
+              C("joined", "Joined", "تاريخ الانضمام", kind="date"), C("left_on", "Left", "تاريخ الخروج", kind="date"),
+              C("capital_interest", "Interest on Capital %", "فائدة رأس المال", kind="pct", width=10),
+              C("loan_rate", "Loan Interest %", "فائدة القرض", kind="pct", width=10),
+              C("notes", "Notes", "ملاحظات", width=24)]},
     {"name": "Partner Shares", "ar": "حصص الشركاء", "module": "partners",
      "title": "Ownership per business unit (overrides the default share)",
      "cols": [C("partner", "Partner", "الشريك", width=30, required=True), C("bu_code", "Business Unit", "وحدة الأعمال", kind="bu", required=True),
               C("share", "Share %", "النسبة", kind="pct", width=10)]},
+    {"name": "Fixed Assets", "ar": "الأصول الثابتة", "module": "assets",
+     "title": "Fixed asset register (its purchase, depreciation and disposal are journal entries with reference FA:<code>)",
+     "cols": [C("code", "Asset Code", "كود الأصل", width=10, required=True), C("name", "Asset", "الأصل", width=28, required=True),
+              C("account", "Asset Account", "حساب الأصل", kind="acct", required=True),
+              C("accum_account", "Accumulated Depreciation Account", "حساب مجمع الإهلاك", kind="acct", role="accum_depreciation"),
+              C("expense_account", "Depreciation Expense Account", "حساب مصروف الإهلاك", kind="acct", role="depreciation"),
+              C("acquired", "Date Acquired", "تاريخ الشراء", kind="date", required=True),
+              C("cost", "Cost", "التكلفة", kind="money", required=True), C("salvage", "Residual Value", "القيمة التخريدية", kind="money"),
+              C("life_months", "Useful Life (months)", "العمر الإنتاجي (شهور)", kind="num", width=9, note="0 = not depreciated (land)"),
+              C("depr_start", "Depreciate From (YYYY-MM)", "بداية الإهلاك", width=10),
+              C("opening_depr", "Depreciation Before Registering", "إهلاك سابق", kind="money"),
+              C("bu_code", "Business Unit", "وحدة الأعمال", kind="bu"), C("location", "Location", "الموقع", width=14),
+              C("serial", "Serial / Plate No.", "الرقم التسلسلي / اللوحة", width=14), C("notes", "Notes", "ملاحظات", width=20)]},
     {"name": "Warehouses", "ar": "المخازن", "module": "stock", "title": "Warehouses / stores and their inventory account",
      "cols": [C("name", "Warehouse", "المخزن", width=22, required=True), C("location", "Location", "الموقع", width=20),
               C("account", "Inventory Account", "حساب المخزون", kind="acct", width=12)]},
@@ -312,7 +330,9 @@ SHEETS = [
               C("kind", "Voucher Type", "نوع القيد", width=16), C("bu_code", "Business Unit", "وحدة الأعمال", kind="bu"),
               C("party", "Party", "الطرف", width=16), C("ref", "Reference", "المرجع", width=10),
               C("memo", "Description", "البيان", width=30), C("account", "Account", "الحساب", kind="acct", required=True),
-              C("debit", "Debit", "مدين", kind="money"), C("credit", "Credit", "دائن", kind="money")],
+              C("debit", "Debit", "مدين", kind="money"), C("credit", "Credit", "دائن", kind="money"),
+              C("line_party", "Line Party", "طرف السطر", width=14,
+                note="Only when a line belongs to someone other than the voucher's party (e.g. each partner in a share transfer)")],
      "legs": [("debit", "account", "D"), ("credit", "account", "C")]},
 ]
 SHEET_BY_NAME = {s["name"]: s for s in SHEETS}
@@ -358,10 +378,18 @@ def export_data(db):
                                                          "notes")}
                                      | {"contract_value": to_major(b["contract_value"])})
     for p in db.q("SELECT * FROM partners ORDER BY id"):
-        out["Partners"].append({"name": p["name"], "default_share": p["default_share"]})
+        out["Partners"].append({"name": p["name"], "default_share": p["default_share"],
+                                "active": "Yes" if p["active"] else "No", "joined": p["joined"] or "",
+                                "left_on": p["left_on"] or "", "capital_interest": p["capital_interest"] or "",
+                                "loan_rate": p["loan_rate"] or "", "notes": p["notes"] or ""})
     for s in db.q("SELECT p.name, s.bu_id, s.share FROM partner_shares s JOIN partners p ON p.id=s.partner_id "
                   "ORDER BY p.id, s.bu_id"):
         out["Partner Shares"].append({"partner": s["name"], "bu_code": code(s["bu_id"]), "share": s["share"]})
+    for a in db.q("SELECT * FROM fixed_assets ORDER BY code"):
+        out["Fixed Assets"].append({k: a[k] for k in ("code", "name", "account", "accum_account", "expense_account", "acquired",
+                                                      "life_months", "depr_start", "location", "serial", "notes")}
+                                   | {"cost": to_major(a["cost"]), "salvage": to_major(a["salvage"]) or "",
+                                      "opening_depr": to_major(a["opening_depr"]) or "", "bu_code": code(a["bu_id"])})
     whs = {w["id"]: w for w in db.q("SELECT * FROM warehouses ORDER BY id")}
     for w in whs.values():
         out["Warehouses"].append({"name": w["name"], "location": w["location"], "account": w["account"] or ""})
@@ -461,7 +489,8 @@ def export_data(db):
                 out["Journal Vouchers"].append({"voucher": f"JV-{e['id']}", "date": e["date"], "kind": e["kind"],
                                                 "bu_code": e["bu_code"] or "", "party": e["party"], "ref": e["ref"],
                                                 "memo": e["memo"], "account": ln["account"],
-                                                "debit": ln["debit"] or "", "credit": ln["credit"] or ""})
+                                                "debit": ln["debit"] or "", "credit": ln["credit"] or "",
+                                                "line_party": ln.get("party", "")})
     return out
 
 
@@ -469,6 +498,8 @@ def _entry_to_row(e, accounts):
     """Map a posted entry back onto its document sheet; None -> goes to Journal Vouchers."""
     if e["reversed_by"] or e["reversal_of"]:
         return None
+    if any(ln.get("party") and ln["party"] != e["party"] for ln in e["lines"]):
+        return None  # lines for several parties (partners' capital moves) only fit the Journal Vouchers sheet
     role = lambda code: accounts[code]["role"]  # noqa: E731
     dr = [ln for ln in e["lines"] if ln["debit"] and role(ln["account"]) not in ("vat_input", "wht_receivable")]
     cr = [ln for ln in e["lines"] if ln["credit"] and role(ln["account"]) not in ("wht_payable", "vat_output")]
@@ -518,7 +549,8 @@ def _entry_to_row(e, accounts):
         return "Payment Vouchers", base | {"party": e["party"], "against": dr[0]["account"], "amount": dr[0]["debit"],
                                            "method": m.get("method", ""), "paid_from": cr[0]["account"],
                                            "ref": e["ref"], "memo": e["memo"]}
-    if k in ("Capital Contribution", "Owner Drawing") and len(dr) == 1 and len(cr) == 1:
+    if k in ("Capital Contribution", "Owner Drawing") and len(dr) == 1 and len(cr) == 1 and \
+            sub((dr[0] if k == "Capital Contribution" else cr[0])["account"]) == "cash":
         cash, eq = (dr[0], cr[0]) if k == "Capital Contribution" else (cr[0], dr[0])
         return "Partner Transactions", {"date": e["date"], "partner": e["party"], "type": k,
                                         "amount": dr[0]["debit"], "cash_account": cash["account"],
@@ -655,7 +687,25 @@ def export_extras(db):
     """What the sheets cannot hold: letterhead images, offer types and offers (JSON backups only)."""
     return {"assets": db.q("SELECT key, mime, w, h, data FROM assets ORDER BY key"),
             "offer_types": db.q("SELECT id, name, content FROM offer_types ORDER BY id"),
-            "offers": db.q("SELECT o.*, u.code AS bu_code FROM offers o LEFT JOIN business_units u ON u.id=o.bu_id ORDER BY o.id")}
+            "offers": db.q("SELECT o.*, u.code AS bu_code FROM offers o LEFT JOIN business_units u ON u.id=o.bu_id ORDER BY o.id"),
+            "ownership_changes": _ownership_export(db)}
+
+
+def _ownership_export(db):
+    """Ownership history with partners by name (ids differ after an import)."""
+    names = {str(p["id"]): p["name"] for p in db.q("SELECT id, name FROM partners")}
+    out = []
+    for ch in db.q("SELECT * FROM ownership_changes ORDER BY id"):
+        conv = {}
+        for side in ("before", "after"):
+            st = json.loads(ch[side])
+            conv[side] = {"shares": {names.get(k, k): v for k, v in st["shares"].items()},
+                          "active": {names.get(k, k): v for k, v in st.get("active", {}).items()},
+                          "dates": {names.get(k, k): v for k, v in st.get("dates", {}).items()},
+                          "bu": [[names.get(p, p), b, v] for p, b, v in st.get("bu", [])]}
+        out.append({"date": ch["date"], "kind": ch["kind"], "memo": ch["memo"], "created_by": ch["created_by"],
+                    "created_at": ch["created_at"], **conv})
+    return out
 
 
 def _imp_extras(db, ex, mode, counts):
@@ -683,6 +733,24 @@ def _imp_extras(db, ex, mode, counts):
             n += 1
     if ex.get("offer_types") or ex.get("offers"):
         counts["Offers"] = n
+    if ex.get("ownership_changes"):
+        if mode == "replace":
+            db.conn.execute("DELETE FROM ownership_changes")
+        ids = {p["name"]: str(p["id"]) for p in db.q("SELECT id, name FROM partners")}
+        for ch in ex["ownership_changes"]:
+            if not isinstance(ch, dict):
+                continue
+            conv = {}
+            for side in ("before", "after"):
+                st = ch.get(side) or {}
+                conv[side] = json.dumps({"shares": {ids[k]: v for k, v in (st.get("shares") or {}).items() if k in ids},
+                                         "active": {ids[k]: v for k, v in (st.get("active") or {}).items() if k in ids},
+                                         "dates": {ids[k]: v for k, v in (st.get("dates") or {}).items() if k in ids},
+                                         "bu": [[ids[p], b, v] for p, b, v in (st.get("bu") or []) if p in ids]})
+            db.conn.execute("INSERT INTO ownership_changes(date,kind,memo,before,after,created_by,created_at) "
+                            "VALUES (?,?,?,?,?,?,?)", (acc.clean_date(ch.get("date")), acc.text(ch.get("kind")),
+                                                      acc.text(ch.get("memo")), conv["before"], conv["after"],
+                                                      acc.text(ch.get("created_by")), acc.text(ch.get("created_at"))))
 
 
 def to_json(db):
@@ -703,7 +771,7 @@ def to_csv(db, sheet_name, template=False):
     return ("﻿" + buf.getvalue()).encode("utf-8")
 
 
-WIPE_ORDER = ("parties", "stock_moves", "stock_levels", "stock_items", "extract_lines", "extracts", "boq_lines", "boqs",
+WIPE_ORDER = ("parties", "ownership_changes", "fixed_assets", "stock_moves", "stock_levels", "stock_items", "extract_lines", "extracts", "boq_lines", "boqs",
               "journal_lines", "journal_entries", "partner_shares", "partners", "rates", "business_units")
 
 
@@ -752,6 +820,7 @@ def import_data(db, data, mode="append", dry_run=False, user=""):
             run("Parties", lambda r: _imp_party(db, r))
             run("Partners", lambda r: _imp_partner(db, r))
             run("Partner Shares", lambda r: _imp_share(db, r))
+            run("Fixed Assets", lambda r: _imp_asset(db, r))
             run("Warehouses", lambda r: _imp_wh(db, r))
             run("Stock Items", lambda r: _imp_item(db, r))
             run("Price List", lambda r: _imp_rate(db, r))
@@ -842,8 +911,15 @@ def _imp_bu(db, r):
 
 
 def _imp_partner(db, r):
-    db.conn.execute("INSERT INTO partners(name,default_share) VALUES (?,?) ON CONFLICT(name) DO UPDATE SET "
-                    "default_share=excluded.default_share", (acc.text(r.get("name")), _pct(r.get("default_share"))))
+    active = 0 if str(r.get("active") or "").strip().lower() in ("no", "0", "false") else 1
+    db.conn.execute("INSERT INTO partners(name,default_share,active,joined,left_on,capital_interest,loan_rate,notes) "
+                    "VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(name) DO UPDATE SET default_share=excluded.default_share, "
+                    "active=excluded.active, joined=excluded.joined, left_on=excluded.left_on, "
+                    "capital_interest=excluded.capital_interest, loan_rate=excluded.loan_rate, notes=excluded.notes",
+                    (acc.text(r.get("name")), _pct(r.get("default_share")), active,
+                     acc.clean_date(r["joined"]) if r.get("joined") else "",
+                     acc.clean_date(r["left_on"]) if r.get("left_on") else "", _pct(r.get("capital_interest")),
+                     _pct(r.get("loan_rate")), acc.text(r.get("notes"), maxlen=2000)))
 
 
 def _imp_share(db, r):
@@ -852,6 +928,12 @@ def _imp_share(db, r):
         raise acc.ValidationError(f"Unknown partner {r.get('partner')}")
     db.conn.execute("INSERT OR REPLACE INTO partner_shares(partner_id,bu_id,share) VALUES (?,?,?)",
                     (p["id"], acc.bu_id_or_none(db, r.get("bu_code"), required=True), _pct(r.get("share"))))
+
+
+def _imp_asset(db, r):
+    from . import assets
+    old = db.one("SELECT id FROM fixed_assets WHERE code=?", (acc.text(r.get("code")),))
+    assets.save(db, {**r, "pay": "none"}, old["id"] if old else None)
 
 
 def _imp_wh(db, r):
@@ -944,7 +1026,8 @@ def _imp_journal(db, rows, errors, counts, user):
                                     "bu_code": first.get("bu_code"), "party": first.get("party"),
                                     "ref": first.get("ref") or v, "memo": first.get("memo"),
                                     "lines": [{"account": r.get("account"), "debit": r.get("debit"),
-                                               "credit": r.get("credit")} for _, r in items]}, user)
+                                               "credit": r.get("credit"), "party": r.get("line_party")}
+                                              for _, r in items]}, user)
             n += 1
         except acc.ValidationError as e:
             errors.append({"sheet": "Journal Vouchers", "row": items[0][0], "error": f"voucher {v}: {e}"})

@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from . import __version__
+from . import assets, entries, equity, __version__
 from . import accounting as acc
 from . import auth, branding, cloud, documents, einvoice, interchange, reports
 from .db import MODULES, SUBMODULES, SUBTYPES, to_major, to_minor
@@ -113,10 +113,12 @@ def bootstrap(ctx):
         "offer_types": [{"id": t["id"], "name": t["name"]} for t in db.q("SELECT id, name FROM offer_types ORDER BY id")],
         "enums": {"billing_bases": acc.BILLING_BASES, "methods": acc.PAYMENT_METHODS,
                   "payroll_types": list(acc.PAYROLL_TYPES), "stock_types": acc.STOCK_MOVE_TYPES,
-                  "entry_kinds": acc.ENTRY_KINDS, "subtypes": SUBTYPES, "modules": MODULES,
+                  "entry_kinds": acc.ENTRY_KINDS + sorted({k for k in entries.kinds(db) if k not in acc.ENTRY_KINDS}),
+                  "subtypes": SUBTYPES, "modules": MODULES,
                   "submodules": SUBMODULES, "levels": list(auth.LEVELS),
                   "doc_kinds": [{"key": k, "en": en, "ar": ar} for k, en, ar, _, _ in branding.DOC_KINDS],
-                  "journal_templates": acc.JOURNAL_TEMPLATES,
+                  "entry_types": entries.for_client(db), "new_menu": entries.menu(db),
+                  "menu_items": [{"key": k, "en": en, "ar": ar, "module": m} for k, en, ar, m in entries.MENU_ITEMS],
                   "sheets": [{"name": s["name"], "ar": s["ar"], "module": s["module"]} for s in interchange.SHEETS]},
     })
     return ok(base)
@@ -162,8 +164,10 @@ def put_settings(ctx):
         ctx.require("settings.branding", "edit")
     if "reserve_pct" in keys and not ctx.can("partners.equity", "edit"):
         ctx.require("settings.company", "edit")
-    if keys & {"backup_keep", "lock_date", "hidden_modules"}:
+    if keys & {"backup_keep", "lock_date"}:
         ctx.require("settings.system", "edit")
+    if "hidden_modules" in keys:
+        ctx.require("settings.menus", "edit")
     allowed = set(PUBLIC_SETTINGS) | {"backup_keep"}
     for k, v in ctx.body.items():
         if k not in allowed:
@@ -181,6 +185,27 @@ def put_settings(ctx):
         ctx.db.set_setting(k, acc.text(v, maxlen=20000))
     ctx.log("settings", ", ".join(ctx.body.keys()))
     return ok(settings_dict(ctx.db))
+
+
+@route("PUT", "/api/entry-types", "settings.menus", "edit")
+def put_entry_types(ctx):
+    out = entries.save(ctx.db, ctx.body.get("types"))
+    ctx.log("settings", "entry types")
+    return ok({"types": out})
+
+
+@route("PUT", "/api/new-menu", "settings.menus", "edit")
+def put_new_menu(ctx):
+    out = entries.save_menu(ctx.db, ctx.body.get("items"))
+    ctx.log("settings", "+ New menu")
+    return ok({"items": out})
+
+
+@route("POST", "/api/entry/<tid>", "accounting.journal", "add")
+def post_entry_type(ctx, tid):
+    eid = entries.post(ctx.db, tid, ctx.body, ctx.user["username"])
+    ctx.log("journal.add", eid)
+    return ok({"id": eid})
 
 
 # ========================================================== chart of accounts
@@ -287,10 +312,12 @@ def journal_filters(q):
     if q.get("status") in ("posted", "void"):
         w.append("e.status=?")
         p.append(q["status"])
-    for key, col in (("kind", "e.kind"), ("party", "e.party")):
-        if q.get(key):
-            w.append(f"{col}=?")
-            p.append(q[key])
+    if q.get("kind"):
+        w.append("e.kind=?")
+        p.append(q["kind"])
+    if q.get("party"):  # the entry's party, or a party named on one of its lines
+        w.append("(e.party=? OR EXISTS (SELECT 1 FROM journal_lines l WHERE l.entry_id=e.id AND l.party=?))")
+        p += [q["party"], q["party"]]
     if q.get("bu_id"):
         if q["bu_id"] == "none":
             w.append("e.bu_id IS NULL")
@@ -438,7 +465,12 @@ def list_docs(ctx, dtype):
 KIND_MODULE = {"Direct Cost": "purchasing.costs", "Operating Expense": "purchasing.expenses",
                "Payment Voucher": "purchasing.payments", "Payroll Accrual": "payroll", "Receipt Voucher": "sales.receipts",
                "Sales Invoice": "sales.invoices", "Capital Contribution": "partners.transactions",
-               "Owner Drawing": "partners.transactions", "Goods Receipt": "stock.moves", "Material Issue": "stock.moves",
+               "Owner Drawing": "partners.transactions", "Capital Withdrawal": "partners.transactions",
+               "Partner Loan": "partners.transactions", "Partner Loan Repayment": "partners.transactions",
+               "Partner Loan Interest": "partners.transactions", "Profit Distribution": "partners.transactions",
+               "Share Transfer": "partners.ownership", "Partner Admission": "partners.ownership",
+               "Partner Exit": "partners.ownership", "Asset Purchase": "assets.register", "Depreciation": "assets.depreciation",
+               "Asset Disposal": "assets.register", "Goods Receipt": "stock.moves", "Material Issue": "stock.moves",
                "Stock Transfer": "stock.moves", "Stock Adjustment": "stock.moves"}
 
 
@@ -723,8 +755,20 @@ def partner_add(ctx):
 def partner_edit(ctx, pid):
     b = ctx.body
     with ctx.db.tx():
-        ctx.db.conn.execute("UPDATE partners SET name=?, default_share=? WHERE id=?",
-                            (acc.text(b.get("name"), "name", required=True), min(acc.num(b.get("default_share")), 1),
+        old = ctx.db.one("SELECT * FROM partners WHERE id=?", (int(pid),))
+        if not old:
+            raise acc.ValidationError("Partner not found")
+        name = acc.text(b.get("name"), "name", required=True)
+        if ctx.db.one("SELECT 1 FROM partners WHERE name=? AND id<>?", (name, int(pid))):
+            raise acc.ValidationError("Another partner already has this name")
+        before = equity.state(ctx.db)
+        rate = lambda k: min(acc.num(b.get(k), k), 100) / 100 if b.get(k) not in (None, "") else old[k]  # noqa: E731
+        ctx.db.conn.execute("UPDATE partners SET name=?, default_share=?, active=?, joined=?, left_on=?, capital_interest=?, "
+                            "loan_rate=?, notes=? WHERE id=?",
+                            (name, min(acc.num(b.get("default_share", old["default_share"])), 1),
+                             0 if b.get("active") in (0, "0", False, "false") else 1,
+                             acc.text(b.get("joined", old["joined"])), acc.text(b.get("left_on", old["left_on"])),
+                             rate("capital_interest"), rate("loan_rate"), acc.text(b.get("notes", old["notes"]), maxlen=2000),
                              int(pid)))
         for bu_id, share in (b.get("shares") or {}).items():
             if share in ("", None):
@@ -732,15 +776,124 @@ def partner_edit(ctx, pid):
             else:
                 ctx.db.conn.execute("INSERT OR REPLACE INTO partner_shares(partner_id,bu_id,share) VALUES (?,?,?)",
                                     (int(pid), int(bu_id), min(acc.num(share, "share"), 1)))
+        if name != old["name"]:  # the partner's sub-ledger follows the new name
+            ctx.db.conn.execute("UPDATE journal_entries SET party=? WHERE party=?", (name, old["name"]))
+            ctx.db.conn.execute("UPDATE journal_lines SET party=? WHERE party=?", (name, old["name"]))
+        after = equity.state(ctx.db)
+        if before["shares"] != after["shares"] or before["bu"] != after["bu"]:
+            equity.record_change(ctx.db, acc.today(), "Ownership Change", f"Shares edited for {name}", before, after,
+                                 None, ctx.user["username"])
     return ok()
 
 
 @route("DELETE", "/api/partners/<pid>", "partners.equity", "edit")
 def partner_del(ctx, pid):
     p = ctx.db.one("SELECT name FROM partners WHERE id=?", (int(pid),))
-    if p and ctx.db.one("SELECT 1 FROM journal_entries WHERE party=? LIMIT 1", (p["name"],)):
-        raise acc.ValidationError("Partner has transactions and cannot be removed")
+    if p and ctx.db.one("SELECT 1 FROM journal_entries e WHERE e.party=? OR EXISTS (SELECT 1 FROM journal_lines l "
+                        "WHERE l.entry_id=e.id AND l.party=?) LIMIT 1", (p["name"], p["name"])):
+        raise acc.ValidationError("Partner has transactions and cannot be removed — untick “Still a partner” instead")
     ctx.db.x("DELETE FROM partners WHERE id=?", (int(pid),))
+    return ok()
+
+
+# ============================================================ fixed assets
+@route("GET", "/api/assets", "assets.register")
+def assets_list(ctx):
+    return ok(assets.register(ctx.db, ctx.q.get("q"), ctx.q.get("account"), ctx.q.get("state"), ctx.q.get("date_to")))
+
+
+@route("GET", "/api/assets/<aid>", "assets.register")
+def asset_get(ctx, aid):
+    return ok(assets._row(ctx.db, assets.get(ctx.db, aid)))
+
+
+@route("POST", "/api/assets", "assets.register", "add")
+def asset_add(ctx):
+    if ctx.body.get("pay") not in (None, "", "none"):
+        ctx.require("purchasing.costs" if ctx.body.get("pay") != "partner" else "partners.transactions", "add")
+    aid = assets.save(ctx.db, ctx.body, user=ctx.user["username"])
+    ctx.log("asset.add", aid)
+    return ok({"id": aid})
+
+
+@route("PUT", "/api/assets/<aid>", "assets.register", "edit")
+def asset_edit(ctx, aid):
+    assets.save(ctx.db, {**ctx.body, "pay": "none"}, aid, ctx.user["username"])
+    ctx.log("asset.edit", aid)
+    return ok()
+
+
+@route("DELETE", "/api/assets/<aid>", "assets.register", "edit")
+def asset_del(ctx, aid):
+    assets.delete(ctx.db, aid)
+    ctx.log("asset.delete", aid)
+    return ok()
+
+
+@route("POST", "/api/assets-preview/depreciation", "assets.depreciation", "add")
+def depr_preview(ctx):
+    return ok(assets.plan_depreciation(ctx.db, ctx.body.get("through"), ctx.body.get("ids")))
+
+
+@route("POST", "/api/assets/depreciation", "assets.depreciation", "add")
+def depr_run(ctx):
+    r = assets.run_depreciation(ctx.db, ctx.body.get("through"), ctx.body.get("ids"), ctx.user["username"])
+    ctx.log("asset.depreciation", r)
+    return ok(r)
+
+
+@route("POST", "/api/assets-preview/dispose", "assets.register", "edit")
+def dispose_preview(ctx):
+    pl = assets.plan_disposal(ctx.db, ctx.body.get("id"), ctx.body)
+    names = {a["code"]: a for a in ctx.db.q("SELECT code, name, name_ar FROM accounts")}
+    return ok({"lines": [{**ln, "name": names[ln["account"]]["name"], "name_ar": names[ln["account"]]["name_ar"]}
+                         for ln in pl["lines"]], "notes": pl["notes"], "gain": pl["gain"], "memo": pl["memo"]})
+
+
+@route("POST", "/api/assets/<aid>/dispose", "assets.register", "edit")
+def dispose(ctx, aid):
+    eid = assets.dispose(ctx.db, aid, ctx.body, ctx.user["username"])
+    ctx.log("asset.dispose", eid)
+    return ok({"id": eid})
+
+
+def _equity_module(action):
+    return "partners.ownership" if action in equity.OWNERSHIP_ACTIONS else "partners.transactions"
+
+
+@route("POST", "/api/equity-preview/<action>")
+def equity_preview(ctx, action):
+    ctx.require(_equity_module(action), "add")
+    return ok(equity.preview(ctx.db, action, ctx.body))
+
+
+@route("POST", "/api/equity/<action>")
+def equity_post(ctx, action):
+    ctx.require(_equity_module(action), "add")
+    r = equity.post(ctx.db, action, ctx.body, ctx.user["username"])
+    ctx.log(f"equity.{action}", r)
+    return ok(r)
+
+
+@route("GET", "/api/equity/history")
+def equity_history(ctx):
+    if not (ctx.can("partners.equity") or ctx.can("partners.ownership")):
+        raise PermissionError()
+    return ok({"rows": equity.history(ctx.db)})
+
+
+@route("PUT", "/api/equity/ownership", "partners.ownership", "edit")
+def equity_set(ctx):
+    cid = equity.set_ownership(ctx.db, ctx.body, ctx.user["username"])
+    ctx.log("equity.ownership", cid)
+    return ok({"id": cid})
+
+
+@route("DELETE", "/api/equity/history/<cid>", "partners.ownership", "edit")
+def equity_undo(ctx, cid):
+    with ctx.db.tx():
+        equity.undo_change(ctx.db, int(cid))
+    ctx.log("equity.undo", cid)
     return ok()
 
 
@@ -1192,9 +1345,10 @@ def offer_type_del(ctx, tid):
 
 
 # ============================================================ erase all data
-ERASE_TRANSACTIONS = ("stock_moves", "stock_levels", "extract_lines", "extracts", "journal_lines", "journal_entries", "offers")
+ERASE_TRANSACTIONS = ("stock_moves", "stock_levels", "extract_lines", "extracts", "ownership_changes", "journal_lines",
+                      "journal_entries", "offers")
 ERASE_ALL = ERASE_TRANSACTIONS + ("parties", "stock_items", "boq_lines", "boqs", "partner_shares", "partners", "rates",
-                                  "business_units", "offer_types", "tax_codes", "assets")
+                                  "fixed_assets", "business_units", "offer_types", "tax_codes", "assets")
 
 
 @route("POST", "/api/erase")

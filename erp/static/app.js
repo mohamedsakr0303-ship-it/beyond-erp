@@ -134,7 +134,8 @@ function applyLook() {
   document.title = (ap.app_name || ((st.company_name || "Beyond") + " ERP"));
 }
 const hiddenMods = () => (S.boot && S.boot.settings && S.boot.settings.hidden_modules) || [];
-const shown = key => !hiddenMods().includes(String(key).split(".")[0]);
+// hidden for everyone in Settings → Menus: a whole section ("sales") or one screen ("sales.offers")
+const shown = key => !hiddenMods().includes(String(key).split(".")[0]) && !hiddenMods().includes(String(key));
 
 // ---------------------------------------------------------------- events
 document.addEventListener("click", e => {
@@ -196,18 +197,22 @@ function renderShell() {
         <button data-a="theme">${t("theme")}: ${esc(store.get("theme", "auto"))}</button>
         <a href="#/settings">${t("m_settings")}</a><button data-a="pw">${t("change_pw")}</button><button data-a="logout">${t("logout")}</button></div></div>
     </header><main class="content" id="view"></main></div></div>`;
-  const nm = [];
-  if (can("purchasing.costs", "add")) nm.push(["costs", "m_costs", "direct_cost"]);
-  if (can("purchasing.expenses", "add")) nm.push(["expenses", "m_expenses", "expense"]);
-  if (can("purchasing.payments", "add")) nm.push(["payments", "m_payments", "payment"]);
-  if (can("sales.receipts", "add")) nm.push(["receipts", "m_receipts", "receipt"]);
-  if (can("sales.invoices", "add")) nm.push(["invoices", "m_invoices", "invoice"]);
-  if (can("payroll", "add")) nm.push(["payroll", "m_payroll", "payroll"]);
-  if (can("stock.moves", "add")) nm.push(["stock.moves", "m_moves", "stock_move"]);
-  if (can("accounting.journal", "add")) nm.push(["journal", "m_journal", "journal"]);
-  if (can("business_units.units", "add")) nm.push(["bus", "m_bus", "bu"]);
-  if (can("sales.offers", "add")) nm.push(["offers", "m_offers", "offer"]);
-  $("#newmenu").innerHTML = nm.map(([, k, d]) => `<button data-a="quicknew" data-doc="${d}">${t(k)}</button>`).join("") || `<div class="muted" style="padding:8px">${t("view_only")}</div>`;
+  // "+ New": the items chosen in Settings → Menus, in that order, that this user may add
+  const items = newMenuItems().filter(i => i.show && i.ok);
+  $("#newmenu").innerHTML = items.map(i => `<button data-a="quicknew" data-doc="${esc(i.key)}">${esc(i.label)}</button>`).join("") || `<div class="muted" style="padding:8px">${t("view_only")}</div>`;
+}
+// Every possible "+ New" item with its label and whether this user may use it
+function newMenuItems() {
+  const defs = Object.fromEntries((S.boot.enums.menu_items || []).map(m => [m.key, m]));
+  const types = Object.fromEntries((S.boot.enums.entry_types || []).map(e => [e.id, e]));
+  const docLabel = { direct_cost: "m_costs", expense: "m_expenses", payment: "m_payments", receipt: "m_receipts", invoice: "m_invoices", payroll: "m_payroll", stock_move: "m_moves", journal: "m_journal", bu: "m_bus", offer: "m_offers" };
+  return (S.boot.enums.new_menu || []).map(({ key, show }) => {
+    if (key.startsWith("entry:")) { const e = types[key.slice(6)]; if (!e) return null;
+      return { key, show: show && e.active !== false, label: (S.lang === "ar" && e.name_ar) || e.name, ok: can("accounting.journal", "add") && shown("accounting.journal"), entry: true }; }
+    const d = defs[key]; if (!d) return null;
+    const doc = key.startsWith("doc:") ? key.slice(4) : null;
+    return { key, show, label: doc ? t(docLabel[doc]) : (S.lang === "ar" ? d.ar : d.en), ok: can(d.module, "add") && shown(d.module) };
+  }).filter(Boolean);
 }
 S.GLOBAL_H = {
   menu: () => $(".app").classList.toggle("menu"),
@@ -217,7 +222,7 @@ S.GLOBAL_H = {
     if (STATIC && window.BeyondCloud) window.BeyondCloud.signout(); location.hash = ""; S.boot.user = null; renderAuth(); },
   pw: () => drawer(t("change_pw"), form([{ k: "current", l: t("current_pw"), type: "password" }, { k: "new", l: t("new_pw"), type: "password" }]),
     async v => { await api("PUT", "/api/me/password", v); toast(t("saved")); return true; }),
-  quicknew: el => openDoc(el.dataset.doc),
+  quicknew: el => newItem(el.dataset.doc),
   closeDrawer: () => closeDrawer(),
 };
 function renderNav(active) {
@@ -642,7 +647,7 @@ const DOCS = {
     { k: "vat_code", l: t("vat_incl"), type: "select", opts: taxOpts("vat"), help: S.lang === "ar" ? "فقط للإيراد النقدي المباشر؛ ضريبة الفواتير تُحسب في الفاتورة" : "Only for cash revenue booked directly; invoiced VAT is charged on the invoice" },
     { k: "ref", l: t("ref") }, { k: "memo", l: t("memo") }] },
   partner_tx: { title: "m_partners", fields: () => [
-    { k: "date", l: t("date"), type: "date", v: today(), req: 1 }, { k: "partner_id", l: t("partner"), type: "select", opts: S.boot.partners.map(p => [p.id, p.name]), req: 1 },
+    { k: "date", l: t("date"), type: "date", v: today(), req: 1 }, { k: "partner_id", l: t("partner"), type: "select", opts: S.boot.partners.filter(p => p.active !== 0).map(p => [p.id, p.name]), req: 1 },
     { k: "type", l: t("type"), type: "select", opts: [["Distribution", t("drawing")], ["Capital", t("capital")]] },
     { k: "amount", l: t("amount"), type: "number", req: 1 }, { k: "method", l: t("method"), type: "select", opts: methodOpts() },
     { k: "bu_id", l: t("bu"), type: "select", opts: buOpts("—") }, { k: "memo", l: t("memo"), span: "spanall" }] },
@@ -661,6 +666,14 @@ const DOCS = {
       ["to_warehouse_id", "qty", "counted", "rate", "bu_id", "account", "vendor", "paid", "method", "unit", "vat_code", "wht_code"].forEach(n => { const el = $(`[name=${n}]`, f).closest("label"); el.style.display = show.includes(n) ? "" : "none"; $(`[name=${n}]`, f).dataset.skip = show.includes(n) ? "" : "1"; }); };
       S.H.stype = sync; sync(); } },
 };
+// one "+ New" item: doc:<type> | eq:<action> | asset:new | asset:depr | entry:<entry type id>
+function newItem(key) {
+  const [kind, id] = key.includes(":") ? key.split(/:(.*)/s) : ["doc", key];
+  if (kind === "doc") return openDoc(id);
+  if (kind === "eq") return id === "drawing" ? openDoc("partner_tx") : equityForm(id);
+  if (kind === "asset") return id === "depr" ? deprForm() : assetForm();
+  if (kind === "entry") return entryTypeForm(id);
+}
 async function openDoc(type, pre) {
   if (type === "invoice") { location.hash = "#/invoice/new"; return; }
   if (type === "offer") { location.hash = "#/offers"; return; }
@@ -676,34 +689,36 @@ async function openDoc(type, pre) {
 }
 function journalLinesEditor(lines) {
   const opts = S.boot.accounts.filter(a => a.active).map(a => `<option value="${a.code}">${esc(a.code)} ${esc(aname(a))}</option>`).join("");
-  return `<div class="tbl"><table id="jl"><thead><tr><th>${t("account")}</th><th class="num">${t("debit")}</th><th class="num">${t("credit")}</th><th></th></tr></thead><tbody>
-    ${lines.map(l => `<tr><td><select data-skip="1" class="ja">${opts.replace(`value="${l.account}"`, `value="${l.account}" selected`)}</select></td>
+  return `<div class="tbl"><table id="jl"><thead><tr><th>${t("account")}</th><th class="num">${t("debit")}</th><th class="num">${t("credit")}</th><th title="${esc(t("line_party_help"))}">${t("line_party")}</th><th></th></tr></thead><tbody>
+    ${lines.map(l => `<tr><td><select data-skip="1" class="ja"><option value="">—</option>${opts.replace(`value="${l.account}"`, `value="${l.account}" selected`)}</select></td>
       <td><input data-skip="1" class="jd num" type="number" step="any" value="${l.debit || ""}" data-input="jbal"></td><td><input data-skip="1" class="jc num" type="number" step="any" value="${l.credit || ""}" data-input="jbal"></td>
+      <td><input data-skip="1" class="jp" value="${esc(l.party || "")}" list="jparties" style="min-width:90px"></td>
       <td><button type="button" class="btn sm danger" data-a="jrm">✕</button></td></tr>`).join("")}</tbody></table></div>
+    ${datalist("jparties", [...(S.boot.partners || []).map(p => p.name), ...(S.boot.parties || []).map(p => p.name)])}
     <div class="row" style="margin-top:8px"><button type="button" class="btn sm" data-a="jadd">${t("add_line")}</button><span class="spacer"></span><span id="jbal"></span></div>`;
 }
 function journalForm(e) {
   const lines = e ? e.lines : [{ account: "", debit: "", credit: "" }, { account: "", debit: "", credit: "" }];
-  const tpl = S.boot.enums.journal_templates;
+  const tpl = Object.fromEntries((S.boot.enums.entry_types || []).filter(x => x.active !== false).map(x => [x.id, x]));
   const html = form([
     { k: "date", l: t("date"), type: "date", v: e ? e.date : today(), req: 1 },
-    ...(e ? [] : [{ k: "template", l: t("template"), type: "select", opts: [["", "—"], ...Object.keys(tpl).map(k => [k, k])], change: "jtpl" }]),
+    ...(e ? [] : [{ k: "template", l: t("template"), type: "select", opts: [["", "—"], ...Object.values(tpl).map(x => [x.id, (S.lang === "ar" && x.name_ar) || x.name])], change: "jtpl", help: t("template_help") }]),
     { k: "bu_id", l: t("bu"), type: "select", opts: buOpts("—"), v: e ? e.bu_id : "" }, { k: "party", l: t("party"), v: e ? e.party : "" },
     { k: "memo", l: t("memo"), v: e ? e.memo : "", span: "spanall" }]) + `<div style="margin-top:12px">${journalLinesEditor(lines)}</div>`;
-  const collect = f => $$("#jl tbody tr", f).map(tr => ({ account: $(".ja", tr).value, debit: $(".jd", tr).value, credit: $(".jc", tr).value }));
+  const collect = f => $$("#jl tbody tr", f).map(tr => ({ account: $(".ja", tr).value, debit: $(".jd", tr).value, credit: $(".jc", tr).value, party: $(".jp", tr).value }));
   drawer((e ? t("edit") : t("new")) + " — " + t("m_journal"), html, async (v, f) => {
     const body = { ...v, lines: collect(f) };
-    if (e) await api("PUT", "/api/journal/" + e.id, body); else await api("POST", "/api/journal", { ...body, kind: v.template ? "Journal Voucher" : "Journal Voucher" });
+    if (e) await api("PUT", "/api/journal/" + e.id, body); else await api("POST", "/api/journal", { ...body, kind: v.template && tpl[v.template] ? tpl[v.template].kind : "Journal Voucher" });
     toast(t("saved"));
   }, { onOpen: f => {
     const bal = () => { const L = collect(f); const d = L.reduce((s, l) => s + (+l.debit || 0), 0), c = L.reduce((s, l) => s + (+l.credit || 0), 0);
       $("#jbal", f).innerHTML = `${t("debit")} ${money(d)} · ${t("credit")} ${money(c)} — <span class="${Math.abs(d - c) < 0.005 && d > 0 ? "bal-ok" : "bal-bad"}">${Math.abs(d - c) < 0.005 && d > 0 ? t("balanced") : t("unbalanced")}</span>`; };
     S.H.jbal = bal; bal();
-    S.H.jadd = () => { const tb = $("#jl tbody", f); tb.insertAdjacentHTML("beforeend", tb.lastElementChild.outerHTML); $$("input", tb.lastElementChild).forEach(i => { i.value = ""; }); bal(); };
+    S.H.jadd = () => { const tb = $("#jl tbody", f); tb.insertAdjacentHTML("beforeend", tb.lastElementChild.outerHTML); $$("input", tb.lastElementChild).forEach(i => { i.value = ""; }); $(".ja", tb.lastElementChild).value = ""; bal(); };
     S.H.jrm = el => { if ($$("#jl tbody tr", f).length > 2) el.closest("tr").remove(); bal(); };
     S.H.jtpl = el => { const x = tpl[el.value]; if (!x) return; const rows = $$("#jl tbody tr", f);
-      const code = r => accByRole(r) || (S.boot.accounts.find(a => a.subtype === r) || {}).code || "";
-      $(".ja", rows[0]).value = code(x[0]); $(".ja", rows[1]).value = code(x[1]); if (!$("[name=memo]", f).value) $("[name=memo]", f).value = el.value; };
+      const code = side => side.fixed || side.default || "";
+      $(".ja", rows[0]).value = code(x.dr); $(".ja", rows[1]).value = code(x.cr); if (!$("[name=memo]", f).value) $("[name=memo]", f).value = (S.lang === "ar" && x.name_ar) || x.name; };
   } });
 }
 
@@ -1015,37 +1030,6 @@ PAGES.warehouses = async (view) => {
     ${d.warehouses.map(w => `<tr class="click" data-a="${can("stock.warehouses", "edit") ? "whedit" : ""}" data-id="${w.id}"><td><b>${esc(w.name)}</b></td><td>${esc(w.location)}</td><td>${esc(w.account || accByRole("inventory"))}</td><td class="num">${money(val[w.id] || 0)}</td><td>${w.active ? "" : `<span class="chip">${t("no")}</span>`}</td></tr>`).join("")}</tbody></table></div></div>`;
 };
 
-// --------------------------------------------------------------- partners
-PAGES.partners = async (view, parts, q) => {
-  const d = await api("GET", "/api/partners?" + qs(q));
-  const ed = can("partners.equity", "edit");
-  const shareOf = (pid, bid, def) => { const s = d.shares.find(x => x.partner_id === pid && x.bu_id === bid); return s ? s.share : def; };
-  const edit = p => drawer(t("partner"), form([{ k: "name", l: t("name"), v: p.name, req: 1 }, { k: "default_share", l: t("default_share"), type: "number", v: p.default_share != null ? +(p.default_share * 100).toFixed(4) : "" },
-    { html: `<h4>${t("ownership")}</h4>`, span: "spanall" }, ...d.units.map(u => ({ k: "s_" + u.id, l: u.code + " %", type: "number", v: p.id ? +(shareOf(p.id, u.id, p.default_share) * 100).toFixed(4) : "" }))]),
-  async v => { const body = { name: v.name, default_share: (+v.default_share || 0) / 100, shares: {} };
-    d.units.forEach(u => { body.shares[u.id] = v["s_" + u.id] === "" ? "" : (+v["s_" + u.id] || 0) / 100; });
-    if (p.id) await api("PUT", "/api/partners/" + p.id, body); else { const r = await api("POST", "/api/partners", body); await api("PUT", "/api/partners/" + r.id, body); }
-    await refreshBoot(); toast(t("saved")); },
-  { extraButtons: p.id && ed ? `<button type="button" class="btn danger" data-a="pdel">${t("delete")}</button>` : "" });
-  S.H.pdel = () => {};
-  S.H.pnew = () => edit({});
-  S.H.pedit = el => { const p = d.partners.find(x => String(x.id) === el.dataset.id); edit({ ...p });
-    S.H.pdel = () => confirmDelete(p.name, "/api/partners/" + p.id, refreshBoot); };
-  S.H.ptx = () => openDoc("partner_tx");
-  S.H.rsave = async () => { try { await api("PUT", "/api/settings", { reserve_pct: (+$("#rpct").value || 0) / 100 }); await refreshBoot(); route(); } catch (e) { fail(e); } };
-  const cp = d.cash_position;
-  view.innerHTML = `<div class="toolbar">${can("partners.transactions", "add") ? `<button class="btn pri" data-a="ptx">+ ${t("drawing")} / ${t("capital")}</button>` : ""}${ed ? `<button class="btn" data-a="pnew">+ ${t("partner")}</button>` : ""}<span class="spacer"></span>
-      ${exportMenu("vouchers", { kinds: "Owner Drawing,Capital Contribution", title: t("m_partners") })}</div>` + filterBar(q, ["dates"]) +
-    `<div class="card"><h2>${t("reserve_pct")}</h2><div class="row"><input id="rpct" type="number" step="1" min="0" max="100" value="${+(d.reserve_pct * 100).toFixed(2)}" style="max-width:120px" ${ed ? "" : "disabled"}>
-      ${ed ? `<button class="btn" data-a="rsave">${t("save")}</button>` : ""}<span class="muted">${t("company_result")}: ${money(d.company_result)}</span></div>
-      <div class="banner ${cp.gap > 0 ? "err" : "ok"}" style="margin-top:10px">${t("cash_floor")}: ${money(cp.floor)} · ${t("cash")}: ${money(cp.cash)}${cp.gap > 0 ? ` — ${S.lang === "ar" ? "لا يوجد ما يمكن توزيعه بأمان حتى تُسد الفجوة" : "nothing is safely distributable until this gap closes"} (${money(cp.gap)})` : " ✓"}</div></div>
-    <div class="card"><div class="tbl"><table><thead><tr><th>${t("partner")}</th>${d.units.map(u => `<th class="num">${esc(u.code)}</th>`).join("")}<th class="num">${t("profit_share")}</th><th class="num">${t("distributable")}</th><th class="num">${t("drawn")}</th><th class="num">${t("balance")}</th></tr></thead><tbody>
-      ${d.partners.map(p => `<tr class="click" data-a="${ed ? "pedit" : ""}" data-id="${p.id}"><td>${esc(p.name)}<div class="lines">${t("default")} ${pct(p.default_share)}</div></td>${d.units.map(u => `<td class="num">${pct(p.units[u.code].share)}<div class="lines">${money(p.units[u.code].profit)}</div></td>`).join("")}
-        <td class="num">${money(p.profit_share)}</td><td class="num">${money(p.distributable)}</td><td class="num">${money(p.drawn)}</td><td class="num ${p.balance < 0 ? "neg" : "pos"}"><b>${money(p.balance)}</b></td></tr>`).join("")}
-      <tr class="total"><td>${t("total")}</td>${d.units.map(u => `<td class="num ${Math.abs(d.share_checks[u.code] - 1) < 0.001 ? "pos" : "neg"}">${pct(d.share_checks[u.code])}</td>`).join("")}<td class="num">${money(d.partners.reduce((s, p) => s + p.profit_share, 0))}</td><td class="num">${money(d.partners.reduce((s, p) => s + p.distributable, 0))}</td><td class="num">${money(d.partners.reduce((s, p) => s + p.drawn, 0))}</td><td class="num">${money(d.partners.reduce((s, p) => s + p.balance, 0))}</td></tr>
-      </tbody></table></div></div>`;
-};
-
 // ------------------------------------------------------------- accounting
 PAGES.journal = async (view, parts, q) => {
   const lq = { ...q, limit: q.limit || 50 };
@@ -1072,9 +1056,12 @@ PAGES.coa = async (view, parts, q) => {
   S.H.anew = () => edit({ type: "Expense", active: 1 });
   S.H.aedit = el => { const a = rows.find(x => x.code === el.dataset.id); S.H.adel = async () => { try { await api("DELETE", "/api/accounts/" + encodeURIComponent(a.code)); closeDrawer(); await refreshBoot(); route(); } catch (e) { fail(e); } }; edit(a); };
   const ed = can("accounting.coa", "edit");
-  view.innerHTML = `<div class="toolbar">${can("accounting.coa", "add") ? `<button class="btn pri" data-a="anew">+ ${t("new")}</button>` : ""}<span class="spacer"></span>${exportMenu("trial_balance", {})}</div>` +
+  const inactive = rows.filter(a => !a.active).length;
+  S.H.coainact = el => setQ({ ...q, inactive: el.checked ? "1" : "" });
+  view.innerHTML = `<div class="toolbar">${can("accounting.coa", "add") ? `<button class="btn pri" data-a="anew">+ ${t("new")}</button>` : ""}
+    ${inactive ? `<label class="f chk"><input type="checkbox" data-change="coainact" ${q.inactive ? "checked" : ""}>${S.lang === "ar" ? "إظهار الحسابات غير النشطة" : "Show inactive accounts"} (${inactive})</label>` : ""}<span class="spacer"></span>${exportMenu("trial_balance", {})}</div>` +
     filterBar(q, ["asof"]) + types.map(ty => `<div class="card"><h2>${esc(tl(ty))}</h2><div class="tbl"><table><thead><tr><th>${t("code")}</th><th>${t("account")}</th><th>${t("statement_line")}</th><th>${t("normal")}</th><th class="num">${t("balance")}</th></tr></thead><tbody>
-    ${rows.filter(a => a.type === ty).map(a => `<tr class="click ${a.active ? "" : "void"}" data-a="${ed ? "aedit" : ""}" data-id="${esc(a.code)}"><td><b>${esc(a.code)}</b></td><td>${esc(aname(a))}${S.lang === "ar" ? "" : a.name_ar ? ` <span class="muted">${esc(a.name_ar)}</span>` : ""} ${a.role ? `<span class="chip">${esc(a.role)}</span>` : ""}</td><td>${esc(sub(a.subtype))}</td><td>${tl(a.normal) === a.normal ? (S.lang === "ar" ? (a.normal === "Debit" ? "مدين" : "دائن") : a.normal) : ""}</td><td class="num ${a.balance < 0 ? "neg" : ""}">${a.balance ? money(a.balance) : "—"}</td></tr>`).join("")}</tbody></table></div></div>`).join("");
+    ${rows.filter(a => a.type === ty && (a.active || q.inactive)).map(a => `<tr class="click ${a.active ? "" : "void"}" data-a="${ed ? "aedit" : ""}" data-id="${esc(a.code)}"><td><b>${esc(a.code)}</b></td><td>${esc(aname(a))}${S.lang === "ar" ? "" : a.name_ar ? ` <span class="muted">${esc(a.name_ar)}</span>` : ""} ${a.role ? `<span class="chip">${esc(a.role)}</span>` : ""}</td><td>${esc(sub(a.subtype))}</td><td>${tl(a.normal) === a.normal ? (S.lang === "ar" ? (a.normal === "Debit" ? "مدين" : "دائن") : a.normal) : ""}</td><td class="num ${a.balance < 0 ? "neg" : ""}">${a.balance ? money(a.balance) : "—"}</td></tr>`).join("")}</tbody></table></div></div>`).join("");
 };
 
 // ------------------------------------------------------------------ offers
@@ -1474,22 +1461,22 @@ PAGES.settings = async (view, parts, q) => {
   if (tab === "menus") {
     const menuKeys = window.MENU.flatMap(([g, items]) => [g, ...items.map(i => i[0])]);
     const labels = st.menu_labels || {}, ed = can("settings.menus", "edit");
-    view.innerHTML = head + `<div class="card"><h2>${t("menu_names")}</h2><p class="muted">${t("menu_note")}</p><div class="tbl"><table><thead><tr><th>Key</th><th>English</th><th>العربية</th><th>Custom English</th><th>مخصص عربي</th></tr></thead><tbody>
+    view.innerHTML = head + entryOptionCards() + `<div class="card"><h2>${t("menu_names")}</h2><p class="muted">${t("menu_note")}</p><div class="tbl"><table><thead><tr><th>Key</th><th>English</th><th>العربية</th><th>Custom English</th><th>مخصص عربي</th></tr></thead><tbody>
       ${menuKeys.map(k => `<tr><td class="muted">${k}</td><td>${esc(window.I18N[k][0])}</td><td>${esc(window.I18N[k][1])}</td><td><input data-ml="${k}" data-l="en" value="${esc((labels[k] || {}).en || "")}" ${ed ? "" : "disabled"}></td><td><input data-ml="${k}" data-l="ar" value="${esc((labels[k] || {}).ar || "")}" dir="rtl" ${ed ? "" : "disabled"}></td></tr>`).join("")}</tbody></table></div>
       ${ed ? `<div class="row" style="margin-top:10px"><button class="btn pri" data-a="mlsave">${t("save")}</button></div>` : ""}</div>`;
+    entryOptionWire(view);
     S.H.mlsave = async () => { const out = {}; $$("[data-ml]").forEach(i => { if (i.value.trim()) { out[i.dataset.ml] = out[i.dataset.ml] || {}; out[i.dataset.ml][i.dataset.l] = i.value.trim(); } });
       try { await api("PUT", "/api/settings", { menu_labels: out }); await refreshBoot(); renderShell(); route(); toast(t("saved")); } catch (e) { fail(e); } };
     return;
   }
   // system & data
   const sys = can("settings.system") ? await api("GET", "/api/system").catch(() => null) : null;
-  const ed = can("settings.system", "edit"), hid = st.hidden_modules || [];
+  const ed = can("settings.system", "edit");
   view.innerHTML = head + (sys ? `<div class="card"><h2>${t("system_info")}</h2><div class="grid g2"><div>Version ${esc(sys.version)}<br><span class="muted">${esc(sys.db_path)}</span><br>${(sys.db_size / 1048576).toFixed(2)} MB</div>
       <div>${Object.entries(sys.counts).map(([k, v]) => `${esc(k)}: ${v}`).join(" · ")}<br><span class="muted">${sys.backups.length} backups: ${esc(sys.backups.slice(0, 3).join(", "))}</span></div></div>
       ${ed ? `<div class="row" style="margin-top:10px"><label class="f">${t("backups_keep")}<input id="bkeep" type="number" value="${esc(st.backup_keep || 14)}" style="max-width:100px"></label><button class="btn" data-a="maint">${t("maintenance")}</button><a class="btn" href="/api/backup">⬇ ${t("db_backup")}</a></div>` : ""}</div>
     <div class="card" id="lockcard"><h2>${t("lock_date")}</h2><div class="row"><input type="date" name="lock_date" value="${esc(st.lock_date || "")}" style="max-width:200px" ${ed ? "" : "disabled"}>${ed ? `<button class="btn" data-a="locksave">${t("save")}</button>` : ""}</div><p class="muted">${t("lock_note")}</p></div>
-    <div class="card"><h2>${t("hidden_mods")}</h2><p class="muted">${t("hidden_note")}</p><div class="grid g4">${S.boot.enums.modules.filter(m => !["settings", "users", "dashboard"].includes(m)).map(m => `<label class="f chk"><input type="checkbox" class="hidmod" value="${m}" ${hid.includes(m) ? "checked" : ""} ${ed ? "" : "disabled"}>${t("mod_" + m)}</label>`).join("")}</div>
-      ${ed ? `<div class="row" style="margin-top:10px"><button class="btn" data-a="hidsave">${t("save")}</button></div>` : ""}</div>` : "") +
+    <div class="card"><h2>${t("hidden_mods")}</h2><p class="muted">${t("hidden_moved")} <a href="#/settings?tab=menus">${t("tab_menus")}</a></p></div>` : "") +
     (S.boot.user.is_admin ? `<div class="card danger-zone" id="erasecard"><h2 class="neg">${t("erase_title")}</h2>
       <div class="banner ${STATIC ? "err" : "info"}">${STATIC ? t("erase_static") + ` <a href="/api/export/json">⬇ JSON</a>` : t("erase_note")}</div>
       <label class="f chk"><input type="radio" name="escope" value="transactions" checked>${t("erase_tx")}</label>
@@ -1498,7 +1485,6 @@ PAGES.settings = async (view, parts, q) => {
       : `<div class="card"><h2>${t("erase_title")}</h2><div class="muted">${t("admin_only")}</div></div>`);
   S.H.maint = async () => { try { await api("PUT", "/api/settings", { backup_keep: $("#bkeep").value }); const r = await api("POST", "/api/maintenance", {}); toast(`${(r.size_before / 1048576).toFixed(2)} → ${(r.size_after / 1048576).toFixed(2)} MB`); route(); } catch (e) { fail(e); } };
   S.H.locksave = async () => { try { await api("PUT", "/api/settings", { lock_date: $("[name=lock_date]").value }); await refreshBoot(); toast(t("saved")); } catch (e) { fail(e); } };
-  S.H.hidsave = async () => { try { await api("PUT", "/api/settings", { hidden_modules: $$(".hidmod:checked").map(i => i.value) }); await refreshBoot(); renderShell(); route(); toast(t("saved")); } catch (e) { fail(e); } };
   S.H.erase = async () => {
     const scope = ($("input[name=escope]:checked") || {}).value, word = $("#econfirm").value;
     if (word.trim().toUpperCase() !== "ERASE") { toast(t("erase_type"), true); return; }
@@ -1765,5 +1751,426 @@ async function boot() {
     poll(); clearInterval(S.syncTimer); S.syncTimer = setInterval(poll, 15000);
   }
 }
+// ================================================== partners' equity, fixed assets, entry types
+
+const L2 = (en, ar) => (S.lang === "ar" ? ar : en);
+const activePartners = () => (S.boot.partners || []).filter(p => p.active !== 0);
+const pctIn = v => (v == null || v === "" ? "" : +(v * 100).toFixed(4));
+const debounce = (fn, ms = 350) => { let h; return (...a) => { clearTimeout(h); h = setTimeout(() => fn(...a), ms); }; };
+
+// show only some fields of a drawer form; hidden ones are not submitted
+function showFields(f, keys, all) {
+  all.forEach(n => { const el = $(`[name=${n}]`, f); if (!el) return; const on = keys.includes(n);
+    el.closest("label").style.display = on ? "" : "none"; el.dataset.skip = on ? "" : "1"; });
+}
+
+// preview of what will be booked: journal lines, ownership before → after, notes
+function planHtml(p) {
+  if (!p) return "";
+  const lines = p.lines && p.lines.length ? `<div class="tbl"><table><thead><tr><th>${t("account")}</th><th>${t("party")}</th><th class="num">${t("debit")}</th><th class="num">${t("credit")}</th></tr></thead><tbody>
+    ${p.lines.map(l => `<tr><td>${esc(l.account)} ${esc(aname(l))}</td><td>${esc(l.party || "")}</td><td class="num">${l.debit ? money(l.debit) : ""}</td><td class="num">${l.credit ? money(l.credit) : ""}</td></tr>`).join("")}</tbody></table></div>`
+    : `<div class="muted">${L2("No journal entry — only the ownership changes.", "لا يوجد قيد — تتغير الملكية فقط.")}</div>`;
+  const own = p.ownership ? `<h4 style="margin:12px 0 6px">${L2("Ownership", "الملكية")}</h4><div class="tbl"><table><thead><tr><th>${t("partner")}</th><th class="num">${L2("Before", "قبل")}</th><th class="num">${L2("After", "بعد")}</th></tr></thead><tbody>
+    ${p.ownership.map(o => `<tr><td>${esc(o.partner)}</td><td class="num">${pct(o.before)}</td><td class="num ${o.after > o.before + 1e-9 ? "pos" : o.after < o.before - 1e-9 ? "neg" : ""}"><b>${pct(o.after)}</b></td></tr>`).join("")}
+    <tr class="total"><td>${t("total")}</td><td class="num">${pct(p.ownership.reduce((a, o) => a + o.before, 0))}</td><td class="num">${pct(p.ownership.reduce((a, o) => a + o.after, 0))}</td></tr></tbody></table></div>` : "";
+  const notes = (p.notes || []).map(n => `<div class="banner info" style="margin-top:8px">${esc(n)}</div>`).join("");
+  return `<h4 style="margin:4px 0 6px">${L2("What will be booked", "ما سيتم تسجيله")}</h4>${lines}${own}${notes}`;
+}
+
+// ============================================================ partners' equity
+// per-partner inputs (shares in %, or amounts), collected into {partner id: value}
+const shareBlock = (label, partners, vals = {}, cls = "eqsh", unit = "%") => `<div class="spanall eqblock" data-block="${cls}"><h4 style="margin:6px 0">${esc(label)}</h4><div class="grid g4">
+  ${partners.map(p => `<label class="f">${esc(p.name)} ${unit}<input class="${cls} num" data-pid="${p.id}" type="number" step="any" data-skip="1" value="${vals[p.id] ?? ""}"></label>`).join("")}</div></div>`;
+const collectBlock = (f, cls) => Object.fromEntries($$("." + cls, f).filter(i => i.value !== "").map(i => [i.dataset.pid, i.value]));
+
+const EQ = {
+  contribute: { title: ["Capital contribution", "زيادة رأس المال (مساهمة شريك)"], mod: "partners.transactions",
+    fields: (d, pre) => [
+      { k: "date", l: t("date"), type: "date", v: today(), req: 1 }, { k: "partner", l: t("partner"), type: "select", opts: activePartners().map(p => [p.id, p.name]), v: pre.partner },
+      { k: "amount", l: t("amount"), type: "number", req: 1 },
+      { k: "source", l: L2("Paid in as", "طريقة السداد"), type: "select", change: "eqsync", opts: [["cash", L2("Money (cash / bank)", "نقدية (خزينة / بنك)")], ["asset", L2("An asset (in kind)", "أصل عيني")],
+        ["loan", L2("Converting the partner's loan to capital", "تحويل قرض الشريك إلى رأس مال")], ["current", L2("From the partner's current account", "من جاري الشريك")]] },
+      { k: "method", l: t("method"), type: "select", opts: methodOpts() },
+      { k: "asset_account", l: L2("Asset account", "حساب الأصل"), type: "select", opts: accts(["Asset"], ["fixed_asset", "intangible", "investment", "inventory", "other_noncurrent_asset"]) },
+      { k: "ownership", l: L2("Ownership after this", "الملكية بعد ذلك"), type: "select", change: "eqsync", opts: [["keep", L2("Keep the current shares", "بدون تغيير")],
+        ["by_capital", L2("Follow each partner's capital", "حسب رأس مال كل شريك")], ["set", L2("Type the new shares", "إدخال النسب الجديدة")]],
+        help: L2("Investing more does not change the shares by itself — choose how they should change.", "زيادة المساهمة لا تغيّر النسب تلقائياً — اختر كيف تتغير.") },
+      { html: shareBlock(L2("New shares", "النسب الجديدة"), activePartners(), Object.fromEntries(activePartners().map(p => [p.id, pctIn(p.default_share)]))), span: "spanall" },
+      { k: "memo", l: t("memo"), span: "spanall" }],
+    sync: v => ["date", "partner", "amount", "source", "ownership", "memo", ...(v.source === "cash" ? ["method"] : []), ...(v.source === "asset" ? ["asset_account"] : [])],
+    blocks: v => (v.ownership === "set" ? ["eqsh"] : []), body: (v, f) => ({ ...v, shares: collectBlock(f, "eqsh") }) },
+  withdraw: { title: ["Capital withdrawal", "تخفيض رأس المال (سحب شريك)"], mod: "partners.transactions",
+    fields: (d, pre) => [
+      { k: "date", l: t("date"), type: "date", v: today(), req: 1 }, { k: "partner", l: t("partner"), type: "select", opts: activePartners().map(p => [p.id, p.name]), v: pre.partner },
+      { k: "amount", l: t("amount"), type: "number", req: 1, help: L2("A return of capital — profit paid out is a drawing or a distribution.", "استرداد جزء من رأس المال — أما صرف الأرباح فهو مسحوبات أو توزيع.") },
+      { k: "to", l: L2("Paid", "السداد"), type: "select", change: "eqsync", opts: [["cash", L2("Now (cash / bank)", "الآن (خزينة / بنك)")], ["current", L2("To the partner's current account", "إلى جاري الشريك")], ["payable", L2("Owed to the partner (pay later)", "مستحق للشريك (يُسدد لاحقاً)")]] },
+      { k: "method", l: t("method"), type: "select", opts: methodOpts() },
+      { k: "ownership", l: L2("Ownership after this", "الملكية بعد ذلك"), type: "select", change: "eqsync", opts: [["keep", L2("Keep the current shares", "بدون تغيير")], ["by_capital", L2("Follow each partner's capital", "حسب رأس مال كل شريك")], ["set", L2("Type the new shares", "إدخال النسب الجديدة")]] },
+      { html: shareBlock(L2("New shares", "النسب الجديدة"), activePartners(), Object.fromEntries(activePartners().map(p => [p.id, pctIn(p.default_share)]))), span: "spanall" },
+      { k: "memo", l: t("memo"), span: "spanall" }],
+    sync: v => ["date", "partner", "amount", "to", "ownership", "memo", ...(v.to === "cash" ? ["method"] : [])],
+    blocks: v => (v.ownership === "set" ? ["eqsh"] : []), body: (v, f) => ({ ...v, shares: collectBlock(f, "eqsh") }) },
+  loan: { title: ["Loan from a partner", "قرض من شريك"], mod: "partners.transactions",
+    fields: (d, pre) => [
+      { k: "date", l: t("date"), type: "date", v: today(), req: 1 }, { k: "partner", l: t("partner"), type: "select", opts: activePartners().map(p => [p.id, p.name]), v: pre.partner, change: "eqrate" },
+      { k: "amount", l: t("amount"), type: "number", req: 1 }, { k: "method", l: t("method"), type: "select", opts: methodOpts() },
+      { k: "rate", l: L2("Interest % a year (0 = interest-free)", "الفائدة % سنوياً (0 = بدون فائدة)"), type: "number", v: pctIn((activePartners()[0] || {}).loan_rate) || 0,
+        help: L2("A loan is money the company owes back — it does not buy ownership. Interest is an expense.", "القرض دين على الشركة ولا يمنح ملكية. الفائدة مصروف.") },
+      { k: "memo", l: t("memo"), span: "spanall" }] },
+  repay: { title: ["Repay a partner's loan / interest", "سداد قرض شريك / فوائده"], mod: "partners.transactions",
+    fields: (d, pre) => [
+      { k: "date", l: t("date"), type: "date", v: today(), req: 1 }, { k: "partner", l: t("partner"), type: "select", opts: (d.partners || []).filter(p => p.accounts.loan || p.accounts.interest).map(p => [p.id, `${p.name} — ${L2("loan", "قرض")} ${money(p.accounts.loan)} · ${L2("interest", "فوائد")} ${money(p.accounts.interest)}`]), v: pre.partner },
+      { k: "what", l: L2("Paying", "سداد"), type: "select", opts: [["principal", L2("The loan (principal)", "أصل القرض")], ["interest", L2("Interest owed", "الفوائد المستحقة")]] },
+      { k: "amount", l: t("amount"), type: "number", req: 1 }, { k: "method", l: t("method"), type: "select", opts: methodOpts() },
+      { k: "memo", l: t("memo"), span: "spanall" }] },
+  interest: { title: ["Interest on a partner's loan", "فوائد قرض شريك"], mod: "partners.transactions",
+    fields: (d, pre) => [
+      { k: "date", l: L2("Up to (date)", "حتى تاريخ"), type: "date", v: today(), req: 1 },
+      { k: "partner", l: t("partner"), type: "select", opts: (d.partners || []).filter(p => p.accounts.loan).map(p => [p.id, `${p.name} — ${money(p.accounts.loan)} @ ${pct(p.loan_rate)}`]), v: pre.partner, change: "eqrate" },
+      { k: "rate", l: L2("Interest % a year", "الفائدة % سنوياً"), type: "number" },
+      { k: "add_to_loan", l: L2("Add the interest to the loan (instead of owing it separately)", "إضافة الفائدة إلى أصل القرض"), type: "checkbox", span: "spanall" },
+      { k: "memo", l: t("memo"), span: "spanall" }] },
+  distribute: { title: ["Profit distribution", "توزيع أرباح"], mod: "partners.transactions",
+    fields: d => [
+      { k: "date", l: t("date"), type: "date", v: today(), req: 1 }, { k: "amount", l: L2("Total to distribute", "إجمالي التوزيع"), type: "number", help: L2("Split by the partners' shares — or type an amount per partner below.", "يُقسم حسب نسب الشركاء — أو أدخل مبلغاً لكل شريك بالأسفل.") },
+      { k: "pay_now", l: L2("Pay it now (otherwise it is owed to the partners)", "صرفها الآن (وإلا تُسجل مستحقة للشركاء)"), type: "checkbox", change: "eqsync", span: "spanall" },
+      { k: "method", l: t("method"), type: "select", opts: methodOpts() },
+      { html: shareBlock(L2("Or an amount per partner", "أو مبلغ لكل شريك"), activePartners(), {}, "eqamt", ""), span: "spanall" },
+      { k: "memo", l: t("memo"), span: "spanall" }],
+    sync: v => ["date", "amount", "pay_now", "memo", ...(v.pay_now ? ["method"] : [])], blocks: () => ["eqamt"],
+    body: (v, f) => ({ ...v, amounts: collectBlock(f, "eqamt") }) },
+  transfer: { title: ["Transfer / sell a share", "تنازل / بيع حصة"], mod: "partners.ownership",
+    fields: (d, pre) => [
+      { k: "date", l: t("date"), type: "date", v: today(), req: 1 },
+      { k: "seller", l: L2("From (seller)", "من (البائع)"), type: "select", opts: activePartners().map(p => [p.id, `${p.name} — ${pct(p.default_share)}`]), v: pre.seller },
+      { k: "buyer", l: L2("To (buyer) — a partner or a new name", "إلى (المشتري) — شريك أو اسم جديد"), list: "eqpartners", req: 1, v: pre.buyer },
+      { k: "share", l: L2("Share of the company transferred (%)", "النسبة المتنازل عنها من الشركة (%)"), type: "number" },
+      { k: "all", l: L2("The seller's whole share (replace this partner)", "كامل حصة البائع (استبدال الشريك)"), type: "checkbox", change: "eqsync", v: pre.all },
+      { k: "price", l: L2("Price agreed (for the record)", "الثمن المتفق عليه (للتوثيق)"), type: "number", help: L2("Paid between the two partners — it does not go through the company.", "يُدفع بين الشريكين مباشرة ولا يمر بحسابات الشركة.") },
+      { k: "memo", l: t("memo"), span: "spanall" }],
+    sync: v => ["date", "seller", "buyer", "all", "price", "memo", ...(v.all ? [] : ["share"])] },
+  admit: { title: ["Admit a new partner", "دخول شريك جديد"], mod: "partners.ownership",
+    fields: () => [
+      { k: "date", l: t("date"), type: "date", v: today(), req: 1 }, { k: "name", l: L2("New partner's name", "اسم الشريك الجديد"), req: 1 },
+      { k: "share", l: L2("Their share of the company (%)", "نسبته من الشركة (%)"), type: "number", req: 1, help: L2("Everyone else is diluted in proportion.", "تنخفض نسب الباقين بنفس النسبة.") },
+      { k: "amount", l: L2("Amount invested (0 if none)", "المبلغ المستثمر (0 إن لم يوجد)"), type: "number" },
+      { k: "source", l: L2("Paid in as", "طريقة السداد"), type: "select", change: "eqsync", opts: [["cash", L2("Money (cash / bank)", "نقدية")], ["asset", L2("An asset (in kind)", "أصل عيني")]] },
+      { k: "method", l: t("method"), type: "select", opts: methodOpts() },
+      { k: "asset_account", l: L2("Asset account", "حساب الأصل"), type: "select", opts: accts(["Asset"], ["fixed_asset", "intangible", "investment", "inventory", "other_noncurrent_asset"]) },
+      { k: "basis", l: L2("If they pay more (or less) than the share's book value", "إذا دفع أكثر (أو أقل) من القيمة الدفترية للحصة"), type: "select", span: "spanall", opts: [
+        ["capital", L2("Credit all of it to the new partner's capital", "يُضاف كله لرأس مال الشريك الجديد")],
+        ["bonus", L2("Bonus method — the difference goes to the existing partners by their shares", "طريقة المكافأة — الفرق للشركاء الحاليين بنسبهم")],
+        ["premium", L2("Share premium — the extra goes to a share premium reserve", "علاوة إصدار — الزيادة إلى احتياطي علاوة الإصدار")]] },
+      { k: "memo", l: t("memo"), span: "spanall" }],
+    sync: v => ["date", "name", "share", "amount", "source", "basis", "memo", ...(v.source === "cash" ? ["method"] : ["asset_account"])] },
+  exit: { title: ["Partner exit / buy-out", "خروج شريك"], mod: "partners.ownership",
+    fields: (d, pre) => [
+      { k: "date", l: t("date"), type: "date", v: today(), req: 1 },
+      { k: "partner", l: L2("Partner leaving", "الشريك المنسحب"), type: "select", opts: (d.partners || []).filter(p => p.active).map(p => [p.id, `${p.name} — ${L2("capital", "رأس المال")} ${money(p.accounts.capital)} · ${L2("current", "جاري")} ${money(p.accounts.current)}`]), v: pre.partner },
+      { k: "settlement", l: L2("Agreed settlement (blank = book value)", "مبلغ التسوية المتفق عليه (فارغ = القيمة الدفترية)"), type: "number" },
+      { k: "paid", l: L2("Paid now (blank = all of it)", "المدفوع الآن (فارغ = كامل المبلغ)"), type: "number", help: L2("The rest is owed to them under “Due to departing partners”.", "الباقي يُسجل مستحقاً له في حساب «مستحق للشركاء المنسحبين».") },
+      { k: "method", l: t("method"), type: "select", opts: methodOpts() },
+      { html: shareBlock(L2("Remaining partners' new shares (optional — blank = in proportion)", "النسب الجديدة للشركاء الباقين (اختياري — فارغ = بالتناسب)"), activePartners()), span: "spanall" },
+      { k: "memo", l: t("memo"), span: "spanall" }],
+    body: (v, f) => ({ ...v, shares: collectBlock(f, "eqsh") }) },
+};
+
+async function equityForm(action, pre = {}) {
+  if (action === "set") return ownershipForm();
+  const def = EQ[action]; if (!def) return;
+  let d = { partners: [] };
+  try { d = await api("GET", "/api/partners"); } catch { /* no permission to view the report — lists stay short */ }
+  const partnerNames = (S.boot.partners || []).map(p => p.name);
+  const html = form(def.fields(d, pre)) + datalist("eqpartners", partnerNames) + `<div id="eqplan" style="margin-top:14px"></div>`;
+  drawer(L2(...def.title), html, async (v, f) => {
+    const r = await api("POST", "/api/equity/" + action, def.body ? def.body(v, f) : v);
+    await refreshBoot(); renderShell(); toast(t("posted"));
+    return r;
+  }, { submitLabel: L2("Book it", "تسجيل"), onOpen: f => {
+    const all = $$("[name]", f).map(el => el.name);
+    const vals = () => readForm(f);
+    const sync = () => {
+      const v = vals();
+      if (def.sync) showFields(f, def.sync(v), all);
+      $$(".eqblock", f).forEach(b => { b.style.display = !def.blocks || def.blocks(v).includes(b.dataset.block) ? "" : "none"; });
+      preview();
+    };
+    const preview = debounce(async () => {
+      const v = readForm(f); const box = $("#eqplan", f); if (!box) return;
+      try { box.innerHTML = planHtml(await api("POST", "/api/equity-preview/" + action, def.body ? def.body(v, f) : v)); }
+      catch (e) { box.innerHTML = `<div class="banner err">${esc(e.message)}</div>`; }
+    });
+    S.H.eqsync = sync;
+    S.H.eqrate = () => { const pid = $("[name=partner]", f).value, r = $("[name=rate]", f);
+      const p = (S.boot.partners || []).find(x => String(x.id) === String(pid)); if (r && p) r.value = pctIn(p.loan_rate) || 0; preview(); };
+    f.addEventListener("input", preview); f.addEventListener("change", preview);
+    if ($("[name=rate]", f) && action !== "loan") S.H.eqrate();
+    sync();
+  } });
+}
+
+function ownershipForm() {
+  const ps = activePartners();
+  drawer(L2("Change the shares", "تعديل نسب الملكية"), form([
+    { k: "date", l: t("date"), type: "date", v: today(), req: 1 },
+    { k: "all_units", l: L2("Apply to every business unit too", "تطبيق على كل وحدات الأعمال أيضاً"), type: "checkbox" },
+    { html: shareBlock(L2("New shares", "النسب الجديدة"), ps, Object.fromEntries(ps.map(p => [p.id, pctIn(p.default_share)]))), span: "spanall" },
+    { html: `<div id="shtot" class="muted"></div><p class="muted">${L2("Use this for a new partnership agreement. Money moving between partners is a share transfer instead.", "استخدمه عند تعديل عقد الشركة. أما انتقال الحصص بمقابل فهو «تنازل عن حصة».")}</p>`, span: "spanall" },
+    { k: "memo", l: t("memo"), span: "spanall" }]),
+  async (v, f) => { await api("PUT", "/api/equity/ownership", { ...v, shares: collectBlock(f, "eqsh") }); await refreshBoot(); toast(t("saved")); },
+  { onOpen: f => { const tot = () => { const s = $$(".eqsh", f).reduce((a, i) => a + (+i.value || 0), 0);
+    $("#shtot", f).innerHTML = `${t("total")}: <b class="${Math.abs(s - 100) < 0.01 ? "bal-ok" : "bal-bad"}">${s.toFixed(2)}%</b>`; };
+    f.addEventListener("input", tot); tot(); } });
+}
+
+PAGES.partners = async (view, parts, q) => {
+  const [d, hist] = await Promise.all([api("GET", "/api/partners?" + qs(q)),
+    (can("partners.equity") || can("partners.ownership")) ? api("GET", "/api/equity/history").catch(() => ({ rows: [] })) : { rows: [] }]);
+  const ed = can("partners.equity", "edit"), tx = can("partners.transactions", "add"), own = can("partners.ownership", "add");
+  const shareOf = (pid, bid, def) => { const s = d.shares.find(x => x.partner_id === pid && x.bu_id === bid); return s ? s.share : def; };
+  const edit = p => drawer(t("partner"), form([{ k: "name", l: t("name"), v: p.name, req: 1 },
+    { k: "default_share", l: t("default_share"), type: "number", v: p.default_share != null ? pctIn(p.default_share) : "", help: p.id ? L2("Changes are kept in the ownership history.", "التغييرات تُحفظ في سجل الملكية.") : "" },
+    { k: "active", l: L2("Still a partner", "شريك حالي"), type: "checkbox", v: p.active !== 0 },
+    { k: "joined", l: L2("Joined", "تاريخ الانضمام"), type: "date", v: p.joined }, { k: "left_on", l: L2("Left", "تاريخ الخروج"), type: "date", v: p.left_on },
+    { k: "capital_interest", l: L2("Interest on capital % a year", "فائدة رأس المال % سنوياً"), type: "number", v: pctIn(p.capital_interest_rate ?? p.capital_interest) || "",
+      help: L2("Agreed return on their capital, taken from profit before the rest is shared (not an expense).", "عائد متفق عليه على رأس المال يُخصم من الربح قبل توزيع الباقي (ليس مصروفاً).") },
+    { k: "loan_rate", l: L2("Interest on their loans % a year", "فائدة قروضه % سنوياً"), type: "number", v: pctIn(p.loan_rate) || "" },
+    { k: "notes", l: t("notes"), type: "textarea", v: p.notes, span: "spanall" },
+    { html: `<h4>${t("ownership")}</h4>`, span: "spanall" }, ...d.units.map(u => ({ k: "s_" + u.id, l: u.code + " %", type: "number", v: p.id ? pctIn(shareOf(p.id, u.id, p.default_share)) : "" }))]),
+  async v => { const body = { ...v, default_share: (+v.default_share || 0) / 100, shares: {} };
+    d.units.forEach(u => { body.shares[u.id] = v["s_" + u.id] === "" ? "" : (+v["s_" + u.id] || 0) / 100; delete body["s_" + u.id]; });
+    if (p.id) await api("PUT", "/api/partners/" + p.id, body); else { const r = await api("POST", "/api/partners", body); await api("PUT", "/api/partners/" + r.id, body); }
+    await refreshBoot(); toast(t("saved")); },
+  { extraButtons: p.id && ed ? `<button type="button" class="btn danger" data-a="pdel">${t("delete")}</button>` : "" });
+  S.H.pnew = () => edit({ active: 1, joined: today() });
+  S.H.pedit = el => { const p = d.partners.find(x => String(x.id) === el.dataset.id); edit({ ...p });
+    S.H.pdel = () => confirmDelete(p.name, "/api/partners/" + p.id, refreshBoot); };
+  S.H.eqa = el => equityForm(el.dataset.act, el.dataset.pid ? { partner: el.dataset.pid } : {});
+  S.H.eqdraw = () => openDoc("partner_tx");
+  S.H.eqreplace = () => equityForm("transfer", { all: true });
+  S.H.equndo = async el => { if (!confirm(L2("Undo this ownership change? The shares go back to what they were before.", "التراجع عن تغيير الملكية هذا؟ تعود النسب كما كانت."))) return;
+    try { await api("DELETE", "/api/equity/history/" + el.dataset.id); await refreshBoot(); toast(t("saved")); route(); } catch (e) { fail(e); } };
+  S.H.rsave = async () => { try { await api("PUT", "/api/settings", { reserve_pct: (+$("#rpct").value || 0) / 100 }); await refreshBoot(); route(); } catch (e) { fail(e); } };
+  const act = (a, l) => `<button data-a="eqa" data-act="${a}">${esc(l)}</button>`;
+  const txMenu = tx ? `<div class="dd"><button class="btn pri">+ ${L2("Partner transaction", "حركة شريك")} ▾</button><div class="dd-menu">
+      ${act("contribute", L2("Capital contribution", "زيادة رأس المال"))}${act("withdraw", L2("Capital withdrawal", "تخفيض رأس المال"))}
+      <button data-a="eqdraw">${L2("Drawing (on account of profit)", "مسحوبات (تحت حساب الأرباح)")}</button>${act("distribute", L2("Profit distribution", "توزيع أرباح"))}
+      ${act("loan", L2("Loan from a partner", "قرض من شريك"))}${act("interest", L2("Interest on a partner's loan", "فوائد قرض شريك"))}${act("repay", L2("Repay a loan / interest", "سداد قرض / فوائد"))}</div></div>` : "";
+  const ownMenu = own ? `<div class="dd"><button class="btn">${L2("Ownership", "الملكية")} ▾</button><div class="dd-menu">
+      ${act("transfer", L2("Transfer / sell a share", "تنازل / بيع حصة"))}<button data-a="eqreplace">${L2("Replace a partner (whole share)", "استبدال شريك (كامل الحصة)")}</button>
+      ${act("admit", L2("Admit a new partner", "دخول شريك جديد"))}${act("exit", L2("Partner exit / buy-out", "خروج شريك"))}${act("set", L2("Change the shares directly", "تعديل النسب مباشرة"))}</div></div>` : "";
+  const cp = d.cash_position, anyInt = d.partners.some(p => p.capital_interest);
+  const acctRow = p => { const a = p.accounts; return `<tr class="click ${p.active ? "" : "void"}" data-a="${ed ? "pedit" : ""}" data-id="${p.id}">
+      <td><b>${esc(p.name)}</b>${p.active ? "" : ` <span class="chip">${L2("former partner", "شريك سابق")}${p.left_on ? " · " + fd(p.left_on) : ""}</span>`}${p.joined ? `<div class="lines">${L2("since", "منذ")} ${fd(p.joined)}</div>` : ""}</td>
+      <td class="num"><b>${pct(p.default_share)}</b></td><td class="num">${money(a.capital)}</td><td class="num">${money(a.current)}</td><td class="num">${money(a.drawings)}</td>
+      <td class="num">${money(a.loan)}${p.loan_rate ? `<div class="lines">@ ${pct(p.loan_rate)}</div>` : ""}</td><td class="num">${money(a.interest)}</td><td class="num">${money(a.distributions_payable + a.due_to)}</td></tr>`; };
+  const tot = k => d.partners.reduce((s, p) => s + (p.accounts[k] || 0), 0);
+  view.innerHTML = `<div class="toolbar">${txMenu}${ownMenu}${ed ? `<button class="btn" data-a="pnew">+ ${t("partner")}</button>` : ""}<span class="spacer"></span>
+      ${exportMenu("vouchers", { kinds: "Capital Contribution,Capital Withdrawal,Owner Drawing,Profit Distribution,Partner Loan,Partner Loan Repayment,Partner Loan Interest,Share Transfer,Partner Admission,Partner Exit", title: t("m_partners") })}</div>` + filterBar(q, ["dates"]) +
+    `<div class="card"><h2>${L2("Partners' accounts", "حسابات الشركاء")}</h2><div class="tbl"><table><thead><tr><th>${t("partner")}</th><th class="num">${L2("Ownership", "الملكية")}</th><th class="num">${L2("Capital", "رأس المال")}</th><th class="num">${L2("Current account", "جاري الشريك")}</th>
+      <th class="num">${L2("Drawings", "المسحوبات")}</th><th class="num">${L2("Loans to the company", "قروض للشركة")}</th><th class="num">${L2("Interest owed", "فوائد مستحقة")}</th><th class="num">${L2("Owed to them", "مستحقات لهم")}</th></tr></thead><tbody>
+      ${d.partners.map(acctRow).join("")}
+      <tr class="total"><td>${t("total")}</td><td class="num ${Math.abs(d.default_check - 1) < 0.001 ? "pos" : "neg"}">${pct(d.default_check)}</td><td class="num">${money(tot("capital"))}</td><td class="num">${money(tot("current"))}</td><td class="num">${money(tot("drawings"))}</td><td class="num">${money(tot("loan"))}</td><td class="num">${money(tot("interest"))}</td><td class="num">${money(tot("distributions_payable") + tot("due_to"))}</td></tr></tbody></table></div>
+      <p class="muted" style="font-size:.85em;margin:8px 0 0">${L2("Capital = what each partner invested (changes only with contributions, withdrawals, transfers, admissions and exits). Loans are debts the company owes them. Drawings are taken on account of profit.", "رأس المال = ما استثمره كل شريك (يتغير فقط بالزيادة أو التخفيض أو التنازل أو الدخول أو الخروج). القروض ديون على الشركة. المسحوبات تحت حساب الأرباح.")}</p></div>
+    <div class="card"><h2>${t("reserve_pct")}</h2><div class="row"><input id="rpct" type="number" step="1" min="0" max="100" value="${+(d.reserve_pct * 100).toFixed(2)}" style="max-width:120px" ${ed ? "" : "disabled"}>
+      ${ed ? `<button class="btn" data-a="rsave">${t("save")}</button>` : ""}<span class="muted">${t("company_result")}: ${money(d.company_result)}</span></div>
+      <div class="banner ${cp.gap > 0 ? "err" : "ok"}" style="margin-top:10px">${t("cash_floor")}: ${money(cp.floor)} · ${t("cash")}: ${money(cp.cash)}${cp.gap > 0 ? ` — ${L2("nothing is safely distributable until this gap closes", "لا يوجد ما يمكن توزيعه بأمان حتى تُسد الفجوة")} (${money(cp.gap)})` : " ✓"}</div></div>
+    <div class="card"><h2>${L2("Profit shares", "حصص الأرباح")}</h2><div class="tbl"><table><thead><tr><th>${t("partner")}</th>${d.units.map(u => `<th class="num">${esc(u.code)}</th>`).join("")}${anyInt ? `<th class="num">${L2("Interest on capital", "فائدة رأس المال")}</th>` : ""}<th class="num">${t("profit_share")}</th><th class="num">${t("distributable")}</th><th class="num">${t("drawn")}</th><th class="num">${t("balance")}</th></tr></thead><tbody>
+      ${d.partners.filter(p => p.active || p.profit_share || p.drawn).map(p => `<tr class="click" data-a="${ed ? "pedit" : ""}" data-id="${p.id}"><td>${esc(p.name)}<div class="lines">${t("default")} ${pct(p.default_share)}</div></td>${d.units.map(u => `<td class="num">${pct(p.units[u.code].share)}<div class="lines">${money(p.units[u.code].profit)}</div></td>`).join("")}
+        ${anyInt ? `<td class="num">${money(p.capital_interest)}</td>` : ""}<td class="num">${money(p.profit_share)}</td><td class="num">${money(p.distributable)}</td><td class="num">${money(p.drawn)}</td><td class="num ${p.balance < 0 ? "neg" : "pos"}"><b>${money(p.balance)}</b></td></tr>`).join("")}
+      <tr class="total"><td>${t("total")}</td>${d.units.map(u => `<td class="num ${Math.abs(d.share_checks[u.code] - 1) < 0.001 ? "pos" : "neg"}">${pct(d.share_checks[u.code])}</td>`).join("")}${anyInt ? `<td class="num">${money(d.partners.reduce((s, p) => s + p.capital_interest, 0))}</td>` : ""}<td class="num">${money(d.partners.reduce((s, p) => s + p.profit_share, 0))}</td><td class="num">${money(d.partners.reduce((s, p) => s + p.distributable, 0))}</td><td class="num">${money(d.partners.reduce((s, p) => s + p.drawn, 0))}</td><td class="num">${money(d.partners.reduce((s, p) => s + p.balance, 0))}</td></tr>
+      </tbody></table></div></div>
+    ${hist.rows.length ? `<div class="card"><h2>${L2("Ownership history", "سجل الملكية")}</h2><div class="tbl"><table><thead><tr><th>${t("date")}</th><th>${t("kind")}</th><th>${t("description")}</th><th>${L2("Shares", "النسب")}</th><th></th></tr></thead><tbody>
+      ${hist.rows.map(h => `<tr><td>${fd(h.date)}</td><td><span class="chip">${esc(tl(h.kind))}</span></td><td>${esc(h.memo)}${h.entry_id ? ` · <a href="#" data-a="openv" data-id="${h.entry_id}">#${h.entry_id}</a>` : ""}${h.created_by ? `<div class="lines">${esc(h.created_by)}</div>` : ""}</td>
+        <td>${h.moves.map(m => `<bdi>${esc(m.partner)}</bdi> <span dir="ltr">${pct(m.before)} → <b>${pct(m.after)}</b></span>`).join("<br>")}</td>
+        <td>${h.latest && own ? `<button class="btn sm" data-a="equndo" data-id="${h.id}">${L2("Undo", "تراجع")}</button>` : ""}</td></tr>`).join("")}</tbody></table></div>
+      <p class="muted" style="font-size:.85em">${L2("Only the latest change can be undone. A change booked with a journal entry is also undone by voiding or reversing that entry.", "يمكن التراجع عن آخر تغيير فقط. التغيير المرتبط بقيد يُلغى أيضاً بإلغاء القيد أو عكسه.")}</p></div>` : ""}`;
+};
+
+// ================================================================= fixed assets
+const assetAccounts = () => accts(["Asset"], ["fixed_asset", "intangible", "investment", "other_noncurrent_asset"]);
+PAGES.assets = async (view, parts, q) => {
+  const d = await api("GET", "/api/assets?" + qs(q));
+  const add = can("assets.register", "add"), dep = can("assets.depreciation", "add");
+  S.H.fanew = () => assetForm();
+  S.H.fadep = () => deprForm();
+  S.H.faopen = el => assetView(el.dataset.id);
+  const k = (l, v) => `<div class="kpi"><div class="l">${esc(l)}</div><div class="v">${money(v)}</div></div>`;
+  const stat = r => r.disposed ? `<span class="chip bad">${L2("disposed", "مستبعد")}</span>` : r.fully_depreciated ? `<span class="chip ok">${L2("fully depreciated", "مهلك بالكامل")}</span>` : !r.life_months ? `<span class="chip">${L2("not depreciated", "لا يُهلك")}</span>` : "";
+  view.innerHTML = `<div class="toolbar">${add ? `<button class="btn pri" data-a="fanew">+ ${L2("New asset", "أصل جديد")}</button>` : ""}${dep ? `<button class="btn" data-a="fadep">${L2("Run depreciation", "احتساب الإهلاك")}</button>` : ""}<span class="spacer"></span>${exportMenu("fixed_assets", q)}</div>` +
+    filterBar(q, ["q", ["select", "state", t("status"), [["active", L2("In use", "قيد الاستخدام")], ["disposed", L2("Disposed", "مستبعد")]]]]) +
+    `<div class="kpis">${k(L2("Cost", "التكلفة"), d.totals.cost)}${k(L2("Accumulated depreciation", "مجمع الإهلاك"), d.totals.accumulated)}${k(L2("Book value", "القيمة الدفترية"), d.totals.book_value)}</div>` +
+    `<div class="card">${d.rows.length ? `<div class="tbl"><table><thead><tr><th>${t("code")}</th><th>${L2("Asset", "الأصل")}</th><th>${t("account")}</th><th>${L2("Acquired", "تاريخ الشراء")}</th><th class="num">${L2("Cost", "التكلفة")}</th><th class="num">${L2("Accumulated", "المجمع")}</th><th class="num">${L2("Book value", "القيمة الدفترية")}</th><th class="num">${L2("Monthly", "شهرياً")}</th><th>${L2("Booked to", "محتسب حتى")}</th><th></th></tr></thead><tbody>
+      ${d.rows.map(r => `<tr class="click ${r.disposed ? "void" : ""}" data-a="faopen" data-id="${r.id}"><td><b>${esc(r.code)}</b></td><td>${esc(r.name)}${r.location || r.serial ? `<div class="lines">${esc([r.location, r.serial].filter(Boolean).join(" · "))}</div>` : ""}</td>
+        <td>${esc(r.account)} ${esc(aname(S.boot.accounts.find(a => a.code === r.account) || {}))}</td><td>${fd(r.acquired)}</td><td class="num">${money(r.cost)}</td><td class="num">${money(r.accumulated)}</td><td class="num"><b>${money(r.book_value)}</b></td>
+        <td class="num">${r.life_months ? money(r.monthly) : "—"}</td><td>${esc(r.booked_through || "—")}</td><td>${stat(r)}</td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="empty">${L2("No assets yet. Add your vehicles, equipment, furniture, computers, software… and the app works out the depreciation every month.", "لا توجد أصول بعد. أضف السيارات والمعدات والأثاث والأجهزة والبرامج… وسيحسب البرنامج الإهلاك شهرياً.")}</div>`}</div>`;
+};
+
+async function assetView(id) {
+  const a = await api("GET", "/api/assets/" + id);
+  const edit = can("assets.register", "edit");
+  const row = (l, v) => `<tr><td class="muted">${esc(l)}</td><td>${v}</td></tr>`;
+  const html = `<div class="tbl"><table><tbody>
+    ${row(L2("Account", "الحساب"), `${esc(a.account)} ${esc(aname(S.boot.accounts.find(x => x.code === a.account) || {}))}`)}
+    ${row(L2("Acquired", "تاريخ الشراء"), fd(a.acquired))}${row(L2("Cost", "التكلفة"), money(a.cost))}${row(L2("Residual value", "القيمة التخريدية"), money(a.salvage))}
+    ${row(L2("Useful life", "العمر الإنتاجي"), a.life_months ? `${a.life_months} ${L2("months", "شهر")} (${+(a.life_months / 12).toFixed(2)} ${L2("years", "سنة")}) · ${L2("to", "حتى")} ${esc(a.end_month || "")}` : L2("Not depreciated", "لا يُهلك"))}
+    ${row(L2("Monthly depreciation", "الإهلاك الشهري"), money(a.monthly))}${row(L2("Accumulated", "المجمع"), money(a.accumulated))}${row(L2("Book value", "القيمة الدفترية"), `<b>${money(a.book_value)}</b>`)}
+    ${row(L2("Booked to", "محتسب حتى"), esc(a.booked_through || "—"))}${a.bu_code ? row(t("bu"), esc(a.bu_code)) : ""}${a.location ? row(L2("Location", "الموقع"), esc(a.location)) : ""}${a.serial ? row(L2("Serial / plate", "الرقم / اللوحة"), esc(a.serial)) : ""}${a.notes ? row(t("notes"), esc(a.notes)) : ""}
+    ${a.purchase_entry ? row(L2("Purchase", "الشراء"), `<a href="#" data-a="openv" data-id="${a.purchase_entry}">#${a.purchase_entry}</a>`) : ""}
+    ${a.disposal_entry ? row(L2("Disposal", "الاستبعاد"), `<a href="#" data-a="openv" data-id="${a.disposal_entry}">#${a.disposal_entry}</a>`) : ""}</tbody></table></div>
+    ${a.depreciation.length ? `<h4>${L2("Depreciation booked", "الإهلاك المسجل")}</h4><div class="tbl"><table><thead><tr><th>#</th><th>${L2("Months", "الأشهر")}</th><th class="num">${t("amount")}</th></tr></thead><tbody>
+      ${a.depreciation.map(x => `<tr class="click" data-a="openv" data-id="${x.id}"><td>${x.id}</td><td>${esc(x.from)}${x.to !== x.from ? " → " + esc(x.to) : ""}</td><td class="num">${money(x.amount)}</td></tr>`).join("")}</tbody></table></div>` : ""}`;
+  const btns = [];
+  if (edit) btns.push(`<button type="button" class="btn" data-a="faedit">${t("edit")}</button>`);
+  if (edit && !a.disposed) btns.push(`<button type="button" class="btn" data-a="fadisp">${L2("Sell / write off", "بيع / استبعاد")}</button>`);
+  if (edit && !a.purchase_entry && !a.depreciation.length && !a.disposal_entry) btns.push(`<button type="button" class="btn danger" data-a="fadel">${t("delete")}</button>`);
+  drawer(`${a.code} — ${a.name}`, html, null, { readOnly: true, extraButtons: btns.join("") });
+  S.H.faedit = () => assetForm(a);
+  S.H.fadisp = () => disposeForm(a);
+  S.H.fadel = () => confirmDelete(a.name, "/api/assets/" + a.id);
+}
+
+function assetForm(a) {
+  const isNew = !a; a = a || {};
+  const pays = [["none", L2("Already on the books (opening balance) — just register it", "مسجل بالفعل (رصيد افتتاحي) — تسجيل فقط")], ["cash", L2("Paid in full now", "مدفوع بالكامل الآن")],
+    ["payable", L2("Bought on credit / partly paid", "شراء آجل / دفع جزئي")], ["partner", L2("Contributed by a partner (adds to their capital)", "مقدم من شريك (يضاف لرأس ماله)")]];
+  const fields = [
+    { k: "code", l: t("code"), v: a.code || "", ph: L2("automatic", "تلقائي") }, { k: "name", l: L2("Asset", "الأصل"), v: a.name, req: 1 },
+    { k: "account", l: L2("Asset account", "حساب الأصل"), type: "select", opts: assetAccounts(), v: a.account || accByRole("fixed_asset") },
+    { k: "acquired", l: L2("Date acquired", "تاريخ الشراء"), type: "date", v: a.acquired || today(), req: 1 },
+    { k: "cost", l: L2("Cost (before VAT)", "التكلفة (قبل الضريبة)"), type: "number", v: a.cost, req: 1 },
+    { k: "salvage", l: L2("Residual value at the end", "القيمة التخريدية في النهاية"), type: "number", v: a.salvage || "" },
+    { k: "life_months", l: L2("Useful life (months)", "العمر الإنتاجي (بالأشهر)"), type: "number", v: a.life_months ?? 60, input: "falife", help: L2("60 = 5 years · 0 = never depreciated (land)", "60 = 5 سنوات · 0 = لا يُهلك (أراضي)") },
+    { k: "depr_start", l: L2("Depreciate from (month)", "بداية الإهلاك (شهر)"), type: "month", v: a.depr_start || "" },
+    { k: "opening_depr", l: L2("Depreciation already taken before (if any)", "إهلاك سابق قبل التسجيل (إن وجد)"), type: "number", v: a.opening_depr || "" },
+    { k: "bu_id", l: t("bu"), type: "select", opts: buOpts("—"), v: a.bu_id || "" },
+    { k: "location", l: L2("Location / holder", "الموقع / العهدة"), v: a.location }, { k: "serial", l: L2("Serial / plate no.", "الرقم التسلسلي / اللوحة"), v: a.serial },
+    { k: "notes", l: t("notes"), type: "textarea", v: a.notes, span: "spanall" }];
+  if (isNew) fields.push(
+    { html: `<h4 style="margin:6px 0 0">${L2("How it was paid", "طريقة السداد")}</h4>`, span: "spanall" },
+    { k: "pay", l: L2("Booking", "التسجيل"), type: "select", opts: pays, change: "fapay", span: "spanall" },
+    { k: "vendor", l: t("supplier"), list: "faparties" }, { k: "paid", l: t("paid_now"), type: "number" },
+    { k: "method", l: t("method"), type: "select", opts: methodOpts() },
+    { k: "vat_code", l: t("vat_code"), type: "select", opts: taxOpts("vat") }, { k: "wht_code", l: t("wht_code"), type: "select", opts: taxOpts("wht") },
+    { k: "partner", l: t("partner"), type: "select", opts: activePartners().map(p => [p.id, p.name]) });
+  drawer((isNew ? L2("New asset", "أصل جديد") : t("edit")) + (a.code ? " — " + a.code : ""), form(fields) + datalist("faparties", (S.boot.parties || []).map(p => p.name)) + `<div id="falife" class="muted"></div>`,
+    async v => { if (!v.depr_start) delete v.depr_start; if (isNew) await api("POST", "/api/assets", v); else await api("PUT", "/api/assets/" + a.id, v); toast(t("saved")); },
+    { onOpen: f => {
+      S.H.falife = () => { const m = +$("[name=life_months]", f).value || 0, c = +$("[name=cost]", f).value || 0, s = +$("[name=salvage]", f).value || 0;
+        $("#falife", f).textContent = m ? `${+(m / 12).toFixed(2)} ${L2("years", "سنة")} · ${L2("monthly depreciation", "الإهلاك الشهري")} ${money((c - s) / m)}` : L2("Not depreciated", "لا يُهلك"); };
+      f.addEventListener("input", S.H.falife); S.H.falife();
+      if (isNew) { S.H.fapay = () => { const p = $("[name=pay]", f).value;
+        showFields(f, { none: [], cash: ["method", "vat_code", "wht_code", "vendor"], payable: ["vendor", "paid", "method", "vat_code", "wht_code"], partner: ["partner"] }[p], ["vendor", "paid", "method", "vat_code", "wht_code", "partner"]); };
+        S.H.fapay(); }
+      const acc = $("[name=account]", f); acc.addEventListener("change", () => { const x = S.boot.accounts.find(y => y.code === acc.value); if (x && x.subtype === "fixed_asset" && /land|أراض/i.test(x.name + x.name_ar)) $("[name=life_months]", f).value = 0; S.H.falife(); });
+    } });
+}
+
+function deprForm() {
+  const month = today().slice(0, 7);
+  drawer(L2("Run depreciation", "احتساب الإهلاك"), form([
+    { k: "through", l: L2("Depreciate up to (month)", "حتى شهر"), type: "month", v: month, req: 1, change: "dprev",
+      help: L2("Books every month not booked yet, one entry per asset, dated the last day of the month.", "يسجل كل شهر لم يُحتسب بعد، قيد لكل أصل بتاريخ آخر يوم في الشهر.") }]) + `<div id="dplan" style="margin-top:12px"></div>`,
+  async v => { const r = await api("POST", "/api/assets/depreciation", v); toast(`${r.count} × ${t("posted")} — ${money(r.total)}`); },
+  { submitLabel: L2("Book depreciation", "تسجيل الإهلاك"), onOpen: f => {
+    S.H.dprev = async () => { const box = $("#dplan", f);
+      try { const p = await api("POST", "/api/assets-preview/depreciation", readForm(f));
+        box.innerHTML = p.rows.length ? `<div class="tbl"><table><thead><tr><th>${L2("Asset", "الأصل")}</th><th>${L2("Months", "الأشهر")}</th><th class="num">${t("amount")}</th></tr></thead><tbody>
+          ${p.rows.map(r => `<tr><td>${esc(r.code)} ${esc(r.name)}</td><td>${esc(r.from)}${r.to !== r.from ? " → " + esc(r.to) : ""} (${r.months})</td><td class="num">${money(r.amount)}</td></tr>`).join("")}
+          <tr class="total"><td>${t("total")}</td><td></td><td class="num">${money(p.total)}</td></tr></tbody></table></div>` : `<div class="banner ok">${L2("Everything is depreciated up to this month.", "تم احتساب الإهلاك حتى هذا الشهر.")}</div>`;
+      } catch (e) { box.innerHTML = `<div class="banner err">${esc(e.message)}</div>`; } };
+    $("[name=through]", f).addEventListener("input", S.H.dprev); S.H.dprev(); } });
+}
+
+function disposeForm(a) {
+  drawer(L2("Sell / write off", "بيع / استبعاد") + " — " + a.code, form([
+    { k: "date", l: t("date"), type: "date", v: today(), req: 1 },
+    { k: "proceeds", l: L2("Sale price (0 = scrapped / written off)", "سعر البيع (0 = تكهين / استبعاد)"), type: "number", v: 0 },
+    { k: "method", l: t("method"), type: "select", opts: methodOpts() },
+    { k: "on_credit", l: L2("Not paid yet (the buyer owes it)", "لم يُسدد بعد (مستحق على المشتري)"), type: "checkbox" },
+    { k: "buyer", l: L2("Buyer", "المشتري"), list: "faparties" },
+    { k: "depreciate_first", l: L2("Book depreciation up to this month first", "احتساب الإهلاك حتى هذا الشهر أولاً"), type: "checkbox", v: true },
+    { k: "memo", l: t("memo"), span: "spanall" }]) + datalist("faparties", (S.boot.parties || []).map(p => p.name)) + `<div id="dsplan" style="margin-top:12px"></div>`,
+  async v => { await api("POST", `/api/assets/${a.id}/dispose`, v); toast(t("posted")); },
+  { submitLabel: L2("Book it", "تسجيل"), onOpen: f => {
+    const prev = debounce(async () => { const box = $("#dsplan", f);
+      try { box.innerHTML = planHtml(await api("POST", "/api/assets-preview/dispose", { ...readForm(f), id: a.id })); }
+      catch (e) { box.innerHTML = `<div class="banner err">${esc(e.message)}</div>`; } });
+    f.addEventListener("input", prev); f.addEventListener("change", prev); prev(); } });
+}
+
+// ================================================================= entry types
+function entryTypeForm(id) {
+  const e = (S.boot.enums.entry_types || []).find(x => x.id === id); if (!e) return;
+  const opts = side => side.choose.map(c => { const a = S.boot.accounts.find(x => x.code === c) || { code: c, name: c }; return [c, `${c} — ${aname(a)}`]; });
+  const fixed = side => { const a = S.boot.accounts.find(x => x.code === side.fixed) || {}; return `${side.fixed} — ${aname(a)}`; };
+  const fields = [{ k: "date", l: t("date"), type: "date", v: today(), req: 1 }, { k: "amount", l: t("amount"), type: "number", req: 1 },
+    e.dr.fixed ? { html: `<label class="f">${t("debit")}<input value="${esc(fixed(e.dr))}" disabled></label>` } : { k: "debit_account", l: t("debit"), type: "select", opts: opts(e.dr), v: e.dr.default },
+    e.cr.fixed ? { html: `<label class="f">${t("credit")}<input value="${esc(fixed(e.cr))}" disabled></label>` } : { k: "credit_account", l: t("credit"), type: "select", opts: opts(e.cr), v: e.cr.default }];
+  if (e.party !== "none") fields.push({ k: "party", l: t("party"), list: "etparties", req: e.party === "required" });
+  if (e.bu !== "none") fields.push({ k: "bu_id", l: t("bu"), type: "select", opts: buOpts(e.bu === "required" ? "" : "—"), req: e.bu === "required" });
+  fields.push({ k: "ref", l: t("ref") }, { k: "memo", l: t("memo"), v: (S.lang === "ar" && e.name_ar) || e.name, span: "spanall" });
+  drawer((S.lang === "ar" && e.name_ar) || e.name, form(fields) + datalist("etparties", [...(S.boot.partners || []).map(p => p.name), ...(S.boot.parties || []).map(p => p.name)]),
+    async v => { await api("POST", "/api/entry/" + e.id, v); toast(t("posted")); });
+}
+
+// Settings → Menus: hide sections & screens, the "+ New" menu, entry types
+function specOpts(cur) {
+  const o = [["", L2("Choose when entering — any account", "يُختار عند الإدخال — أي حساب")]];
+  Object.keys(S.boot.enums.subtypes).forEach(ty => o.push([`type:${ty}`, `${L2("Choose among", "يُختار من")}: ${tl(ty)}`]));
+  Object.entries(S.boot.enums.subtypes).forEach(([, subs]) => subs.forEach(s => o.push([`subtype:${s}`, `${L2("Choose among", "يُختار من")}: ${sub(s)}`])));
+  if (cur && !o.some(x => x[0] === cur)) {
+    if (cur.startsWith("role:")) { const a = S.boot.accounts.find(x => x.role === cur.slice(5)); o.push([cur, a ? `${a.code} — ${aname(a)}` : cur]); }
+    else if (cur.startsWith("subtype:")) o.push([cur, `${L2("Choose among", "يُختار من")}: ${cur.slice(8).split(",").map(sub).join(" / ")}`]);
+    else if (cur.startsWith("type:")) o.push([cur, `${L2("Choose among", "يُختار من")}: ${cur.slice(5).split(",").map(tl).join(" / ")}`]);
+  }
+  S.boot.accounts.filter(a => a.active).forEach(a => o.push([a.code, `${a.code} — ${aname(a)}`]));
+  return o.map(([v, l]) => `<option value="${esc(v)}" ${v === (cur || "") ? "selected" : ""}>${esc(l)}</option>`).join("");
+}
+const reqOpts = cur => [["none", L2("Not asked", "لا يُطلب")], ["optional", L2("Optional", "اختياري")], ["required", L2("Required", "إلزامي")]]
+  .map(([v, l]) => `<option value="${v}" ${v === cur ? "selected" : ""}>${esc(l)}</option>`).join("");
+const etRow = e => `<tr data-id="${esc(e.id || "")}"><td><input class="et-name" value="${esc(e.name || "")}" style="min-width:160px"><input class="et-name-ar" dir="rtl" value="${esc(e.name_ar || "")}" placeholder="العربية" style="min-width:160px;margin-top:4px"></td>
+  <td><input class="et-kind" list="etkinds" value="${esc(e.kind || "Journal Voucher")}" style="min-width:130px"></td>
+  <td><select class="et-debit" style="min-width:190px;max-width:260px">${specOpts(e.debit)}</select></td><td><select class="et-credit" style="min-width:190px;max-width:260px">${specOpts(e.credit)}</select></td>
+  <td><select class="et-party">${reqOpts(e.party || "optional")}</select></td><td><select class="et-bu">${reqOpts(e.bu || "optional")}</select></td>
+  <td class="center"><input type="checkbox" class="et-active" ${e.active !== false ? "checked" : ""}></td><td><button type="button" class="btn sm danger" data-a="etdel">✕</button></td></tr>`;
+
+function entryOptionCards() {
+  const ed = can("settings.menus", "edit"), hid = S.boot.settings.hidden_modules || [];
+  const subs = S.boot.enums.submodules;
+  const secs = S.boot.enums.modules.filter(m => !["settings", "users", "dashboard"].includes(m));
+  const hideCard = `<div class="card"><h2>${L2("Show or hide sections and screens", "إظهار أو إخفاء الأقسام والشاشات")}</h2><p class="muted">${t("hidden_note")}</p><div class="grid g4">
+    ${secs.map(m => `<div><label class="f chk"><input type="checkbox" class="hidmod" value="${m}" ${hid.includes(m) ? "" : "checked"} ${ed ? "" : "disabled"}><b>${t("mod_" + m)}</b></label>
+      ${(subs[m] || []).map(sc => `<label class="f chk" style="margin-inline-start:22px"><input type="checkbox" class="hidmod" value="${m}.${sc}" ${hid.includes(m + "." + sc) ? "" : "checked"} ${ed ? "" : "disabled"}>${esc(t(window.SUBPERM[m + "." + sc] || sc))}</label>`).join("")}</div>`).join("")}</div>
+    ${ed ? `<div class="row" style="margin-top:10px"><button class="btn" data-a="hidsave">${t("save")}</button></div>` : ""}</div>`;
+  const items = newMenuItems();
+  const menuCard = `<div class="card"><h2>${L2("“+ New” menu", "قائمة «+ جديد»")}</h2><p class="muted">${L2("Tick what appears under “+ New” and put it in order. Entry types you add below can be put here too. People only see what their permissions allow.", "اختر ما يظهر تحت «+ جديد» ورتّبه. يمكن إضافة أنواع القيود التي تنشئها بالأسفل أيضاً. كل مستخدم يرى ما تسمح به صلاحياته فقط.")}</p>
+    <div class="tbl"><table id="nmtab"><tbody>${items.map(i => `<tr data-key="${esc(i.key)}"><td style="width:36px"><input type="checkbox" class="nm-show" ${i.show ? "checked" : ""} ${ed ? "" : "disabled"}></td><td>${esc(i.label)}${i.entry ? ` <span class="chip">${L2("entry type", "نوع قيد")}</span>` : ""}</td>
+      <td style="width:90px">${ed ? `<button type="button" class="btn sm" data-a="nmup">↑</button><button type="button" class="btn sm" data-a="nmdown">↓</button>` : ""}</td></tr>`).join("")}</tbody></table></div>
+    ${ed ? `<div class="row" style="margin-top:10px"><button class="btn" data-a="nmsave">${t("save")}</button><button class="btn" data-a="nmreset">${L2("Back to the default", "الافتراضي")}</button></div>` : ""}</div>`;
+  const types = S.boot.enums.entry_types || [];
+  const typeCard = `<div class="card"><h2>${L2("Entry types", "أنواع القيود")}</h2><p class="muted">${L2("Two-line entries you use often (“Pay rent”, “Move cash to the bank”…). Each side is a fixed account or chosen when entering. They appear as templates in Journal vouchers and can be added to “+ New”.", "قيود من سطرين تُستخدم كثيراً («سداد الإيجار»، «إيداع نقدية بالبنك»…). كل طرف حساب ثابت أو يُختار عند الإدخال. تظهر كقوالب في قيود اليومية ويمكن إضافتها إلى «+ جديد».")}</p>
+    <div class="tbl"><table id="ettab"><thead><tr><th>${t("name")}</th><th>${L2("Voucher type", "نوع القيد")}</th><th>${t("debit")}</th><th>${t("credit")}</th><th>${t("party")}</th><th>${t("bu")}</th><th>${t("active")}</th><th></th></tr></thead>
+      <tbody>${types.map(etRow).join("")}</tbody></table></div>${datalist("etkinds", S.boot.enums.entry_kinds)}
+    ${ed ? `<div class="row" style="margin-top:10px"><button class="btn" data-a="etadd">+ ${L2("Add entry type", "إضافة نوع قيد")}</button><span class="spacer"></span><button class="btn pri" data-a="etsave">${t("save")}</button></div>` : ""}</div>`;
+  return hideCard + menuCard + typeCard;
+}
+function entryOptionWire(view) {
+  const after = async () => { await refreshBoot(); renderShell(); route(); toast(t("saved")); };
+  S.H.hidsave = async () => { try { await api("PUT", "/api/settings", { hidden_modules: $$(".hidmod", view).filter(i => !i.checked).map(i => i.value) }); await after(); } catch (e) { fail(e); } };
+  S.H.nmup = el => { const tr = el.closest("tr"); if (tr.previousElementSibling) tr.parentNode.insertBefore(tr, tr.previousElementSibling); };
+  S.H.nmdown = el => { const tr = el.closest("tr"); if (tr.nextElementSibling) tr.parentNode.insertBefore(tr.nextElementSibling, tr); };
+  S.H.nmsave = async () => { try { await api("PUT", "/api/new-menu", { items: $$("#nmtab tr", view).map(tr => ({ key: tr.dataset.key, show: $(".nm-show", tr).checked })) }); await after(); } catch (e) { fail(e); } };
+  S.H.nmreset = async () => { try { await api("PUT", "/api/new-menu", { items: [] }); await after(); } catch (e) { fail(e); } };
+  S.H.etadd = () => { $("#ettab tbody", view).insertAdjacentHTML("beforeend", etRow({ kind: "Journal Voucher", debit: "type:Expense", credit: "subtype:cash", party: "optional", bu: "optional" })); };
+  S.H.etdel = el => { if (confirm(L2("Remove this entry type? Entries already booked with it stay.", "حذف نوع القيد؟ القيود المسجلة به تبقى."))) el.closest("tr").remove(); };
+  S.H.etsave = async () => {
+    const types = $$("#ettab tbody tr", view).map(tr => ({ id: tr.dataset.id, name: $(".et-name", tr).value.trim(), name_ar: $(".et-name-ar", tr).value.trim(), kind: $(".et-kind", tr).value.trim(),
+      debit: $(".et-debit", tr).value, credit: $(".et-credit", tr).value, party: $(".et-party", tr).value, bu: $(".et-bu", tr).value, active: $(".et-active", tr).checked })).filter(x => x.name);
+    try { await api("PUT", "/api/entry-types", { types }); await after(); } catch (e) { fail(e); }
+  };
+}
+
 (window.__beyondReady || Promise.resolve()).then(boot, () => {});
 })();

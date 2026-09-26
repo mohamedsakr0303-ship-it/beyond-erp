@@ -117,7 +117,8 @@ CREATE TABLE IF NOT EXISTS journal_lines (
     entry_id INTEGER NOT NULL REFERENCES journal_entries(id) ON DELETE CASCADE,
     account TEXT NOT NULL REFERENCES accounts(code) ON UPDATE CASCADE ON DELETE RESTRICT,
     debit INTEGER NOT NULL DEFAULT 0 CHECK (debit >= 0),
-    credit INTEGER NOT NULL DEFAULT 0 CHECK (credit >= 0)
+    credit INTEGER NOT NULL DEFAULT 0 CHECK (credit >= 0),
+    party TEXT DEFAULT ''                  -- a line's own party (e.g. each partner in a share transfer); '' = the entry's
 );
 CREATE INDEX IF NOT EXISTS ix_jl_entry ON journal_lines(entry_id);
 CREATE INDEX IF NOT EXISTS ix_jl_account ON journal_lines(account);
@@ -125,7 +126,26 @@ CREATE INDEX IF NOT EXISTS ix_jl_account ON journal_lines(account);
 CREATE TABLE IF NOT EXISTS partners (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
-    default_share REAL DEFAULT 0
+    default_share REAL DEFAULT 0,
+    active INTEGER NOT NULL DEFAULT 1,     -- 0 = has left the company (kept for history)
+    joined TEXT DEFAULT '',
+    left_on TEXT DEFAULT '',
+    capital_interest REAL DEFAULT 0,       -- agreed yearly return on capital, paid out of profit before sharing it
+    loan_rate REAL DEFAULT 0,              -- yearly interest on the partner's loans to the company (0 = interest-free)
+    notes TEXT DEFAULT ''
+);
+-- Every change of ownership (share transfer, admission, exit, manual change): the shares before and after, so the
+-- latest one can be undone (voiding its journal entry undoes it too).
+CREATE TABLE IF NOT EXISTS ownership_changes (
+    id INTEGER PRIMARY KEY,
+    date TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    memo TEXT DEFAULT '',
+    entry_id INTEGER REFERENCES journal_entries(id) ON DELETE SET NULL,
+    before TEXT NOT NULL,
+    after TEXT NOT NULL,
+    created_by TEXT DEFAULT '',
+    created_at TEXT DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS partner_shares (
     partner_id INTEGER NOT NULL REFERENCES partners(id) ON DELETE CASCADE,
@@ -231,6 +251,27 @@ CREATE TABLE IF NOT EXISTS stock_moves (
 );
 CREATE INDEX IF NOT EXISTS ix_sm_item ON stock_moves(item_id, warehouse_id);
 
+-- Fixed asset register. Cost, depreciation and disposal are journal entries tagged ref 'FA:<code>...';
+-- the register holds only the description and the depreciation policy, so it survives export / import.
+CREATE TABLE IF NOT EXISTS fixed_assets (
+    id INTEGER PRIMARY KEY,
+    code TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    account TEXT NOT NULL REFERENCES accounts(code) ON UPDATE CASCADE,        -- cost (asset) account
+    accum_account TEXT REFERENCES accounts(code) ON UPDATE CASCADE,           -- accumulated depreciation
+    expense_account TEXT REFERENCES accounts(code) ON UPDATE CASCADE,         -- depreciation expense
+    acquired TEXT NOT NULL,
+    cost INTEGER NOT NULL DEFAULT 0,
+    salvage INTEGER NOT NULL DEFAULT 0,
+    life_months INTEGER NOT NULL DEFAULT 60,   -- 0 = not depreciated (land)
+    depr_start TEXT DEFAULT '',                -- first month depreciated (YYYY-MM); default = month acquired
+    opening_depr INTEGER NOT NULL DEFAULT 0,   -- depreciation already taken before it was registered here
+    bu_id INTEGER REFERENCES business_units(id) ON DELETE SET NULL,
+    location TEXT DEFAULT '',
+    serial TEXT DEFAULT '',
+    notes TEXT DEFAULT ''
+);
+
 -- Taxes: VAT and withholding (WHT) codes with their Egyptian e-invoice (ETA) tax types
 CREATE TABLE IF NOT EXISTS tax_codes (
     code TEXT PRIMARY KEY,
@@ -333,40 +374,59 @@ DEFAULT_ACCOUNTS = [
     ("1020", "Bank Account", "Asset", "cash", "bank"),
     ("1030", "Petty Cash", "Asset", "cash", None),
     ("1100", "Accounts Receivable — Clients", "Asset", "receivable", "ar"),
+    ("1120", "Notes Receivable (Cheques Under Collection)", "Asset", "receivable", "notes_receivable"),
     ("1150", "Retention Receivable", "Asset", "receivable", None),
     ("1160", "Employee Advances", "Asset", "other_current_asset", None),
+    ("1170", "Due from Partners", "Asset", "other_current_asset", "partner_receivable"),
+    ("1180", "Unbilled Revenue (Work Done, Not Yet Invoiced)", "Asset", "other_current_asset", None),
+    ("1190", "Allowance for Doubtful Accounts", "Asset", "allowance_doubtful", "doubtful_allowance"),
     ("1200", "Materials Inventory", "Asset", "inventory", "inventory"),
     ("1300", "Prepaid Expenses", "Asset", "prepaid", None),
     ("1310", "Supplier Advances", "Asset", "prepaid", None),
     ("1320", "VAT Recoverable (Input)", "Asset", "other_current_asset", "vat_input"),
     ("1330", "Withholding Tax Receivable (deducted by clients)", "Asset", "other_current_asset", "wht_receivable"),
+    ("1340", "Letters of Guarantee — Cash Margin", "Asset", "other_current_asset", None),
     ("1400", "Furniture & Office Equipment", "Asset", "fixed_asset", "fixed_asset"),
     ("1410", "Tools & Site Equipment", "Asset", "fixed_asset", None),
     ("1420", "Vehicles", "Asset", "fixed_asset", None),
     ("1430", "Computers & IT Equipment", "Asset", "fixed_asset", None),
+    ("1440", "Land", "Asset", "fixed_asset", None),
+    ("1450", "Buildings & Leasehold Improvements", "Asset", "fixed_asset", None),
+    ("1460", "Assets Under Construction", "Asset", "fixed_asset", None),
     ("1490", "Accumulated Depreciation", "Asset", "accumulated_depreciation", "accum_depreciation"),
     ("1500", "Software & Licences", "Asset", "intangible", "intangible"),
     ("1510", "Brand, Website & Design Library", "Asset", "intangible", None),
+    ("1520", "Goodwill", "Asset", "intangible", None),
     ("1590", "Accumulated Amortization", "Asset", "accumulated_amortization", "accum_amortization"),
     ("1600", "Security Deposits", "Asset", "other_noncurrent_asset", None),
+    ("1700", "Long-term Investments", "Asset", "investment", "investments"),
     # ---- Liabilities
     ("2010", "Accounts Payable — Suppliers", "Liability", "payable", "ap"),
     ("2015", "Subcontractors Payable", "Liability", "payable", None),
     ("2020", "Accrued Payroll", "Liability", "accrued", "accrued_payroll"),
     ("2030", "Accrued Expenses", "Liability", "accrued", None),
     ("2040", "Social Insurance Payable", "Liability", "accrued", None),
+    ("2050", "Notes Payable (Cheques Issued)", "Liability", "payable", None),
+    ("2060", "Accrued Interest Payable", "Liability", "accrued", "accrued_interest"),
     ("2100", "Client Advances (Unearned Revenue)", "Liability", "deferred_revenue", "client_advances"),
     ("2110", "Retention Payable", "Liability", "other_current_liability", None),
+    ("2120", "Profit Distributions Payable to Partners", "Liability", "dividends_payable", "dividends_payable"),
+    ("2130", "Due to Departing Partners", "Liability", "other_current_liability", "partner_payable"),
     ("2200", "VAT Payable (Output)", "Liability", "tax_payable", "vat_output"),
     ("2210", "Withholding Tax Payable (deducted from suppliers)", "Liability", "tax_payable", "wht_payable"),
     ("2220", "Income Tax Payable", "Liability", "tax_payable", "income_tax_payable"),
     ("2300", "Short-term Loans", "Liability", "short_term_debt", "short_term_debt"),
     ("2310", "Credit Card Payable", "Liability", "short_term_debt", None),
     ("2400", "Long-term Loans", "Liability", "long_term_debt", "long_term_debt"),
-    ("2500", "Partner Loans", "Liability", "long_term_debt", None),
+    ("2500", "Partner Loans", "Liability", "long_term_debt", "partner_loans"),
+    ("2510", "End-of-Service Provision", "Liability", "other_noncurrent_liability", None),
     # ---- Equity
     ("3010", "Partner Capital", "Equity", "capital", "capital"),
+    ("3020", "Partners' Current Accounts", "Equity", "partner_current", "partner_current"),
+    ("3030", "Share Premium", "Equity", "other_equity", "share_premium"),
     ("3100", "Retained Earnings", "Equity", "retained_earnings", "retained"),
+    ("3110", "Legal Reserve", "Equity", "reserves", "legal_reserve"),
+    ("3120", "General Reserve", "Equity", "reserves", None),
     ("3200", "Partner Drawings / Dividends", "Equity", "drawings", "drawings"),
     # ---- Revenue
     ("4010", "Project Revenue — Execution", "Revenue", "operating_revenue", "revenue"),
@@ -374,8 +434,11 @@ DEFAULT_ACCOUNTS = [
     ("4030", "Supervision / Management Fees", "Revenue", "operating_revenue", None),
     ("4040", "Furniture & Supply Sales", "Revenue", "operating_revenue", None),
     ("4050", "Sales Discounts & Allowances", "Revenue", "sales_discount", "sales_discount"),
+    ("4060", "Gain on Disposal of Fixed Assets", "Revenue", "other_income", "disposal_gain"),
+    ("4070", "Rental Income", "Revenue", "other_income", None),
+    ("4080", "Discounts Received", "Revenue", "other_income", None),
     ("4090", "Other Income", "Revenue", "other_income", "other_income"),
-    ("4095", "Interest Income", "Revenue", "other_income", None),
+    ("4095", "Interest Income", "Revenue", "other_income", "interest_income"),
     # ---- Cost of sales
     ("5010", "Materials", "COGS", "cogs", "materials"),
     ("5020", "Subcontractor Costs", "COGS", "cogs", None),
@@ -387,6 +450,7 @@ DEFAULT_ACCOUNTS = [
     ("5080", "Inventory Adjustments", "COGS", "cogs", "stock_adjust"),
     # ---- Operating expenses (above EBITDA)
     ("6010", "Rent", "Expense", "general_admin", None),
+    ("6015", "Repairs & Maintenance", "Expense", "general_admin", None),
     ("6020", "Software & Subscriptions", "Expense", "general_admin", None),
     ("6030", "Marketing & Advertising", "Expense", "marketing", None),
     ("6040", "Utilities (Electricity & Water)", "Expense", "utilities", None),
@@ -397,32 +461,41 @@ DEFAULT_ACCOUNTS = [
     ("6065", "Bank Charges", "Expense", "general_admin", None),
     ("6070", "Project Overhead (non-billable)", "Expense", "other_operating", "project_overhead"),
     ("6075", "Travel & Transport", "Expense", "general_admin", None),
+    ("6078", "Fuel & Vehicle Running Costs", "Expense", "general_admin", None),
     ("6080", "Office Supplies", "Expense", "general_admin", None),
     ("6085", "Insurance", "Expense", "general_admin", None),
+    ("6088", "Bad Debts Expense", "Expense", "general_admin", "bad_debts"),
     ("6090", "Other Operating Expenses", "Expense", "other_operating", "other_overhead"),
     # ---- Below EBITDA
     ("7010", "Depreciation Expense", "Expense", "depreciation", "depreciation"),
     ("7020", "Amortization Expense", "Expense", "amortization", "amortization"),
     ("7030", "Interest Expense", "Expense", "interest", "interest"),
     ("7040", "Foreign Exchange Loss / (Gain)", "Expense", "other_nonoperating", None),
+    ("7045", "Loss on Disposal of Fixed Assets", "Expense", "other_nonoperating", "disposal_loss"),
     ("7050", "Income Tax Expense", "Expense", "income_tax", "income_tax"),
 ]
 
 SUBTYPES = {
-    "Asset": ["cash", "receivable", "inventory", "prepaid", "other_current_asset", "fixed_asset",
-              "accumulated_depreciation", "intangible", "accumulated_amortization", "other_noncurrent_asset"],
-    "Liability": ["payable", "accrued", "deferred_revenue", "tax_payable", "other_current_liability",
+    "Asset": ["cash", "receivable", "allowance_doubtful", "inventory", "prepaid", "other_current_asset", "fixed_asset",
+              "accumulated_depreciation", "intangible", "accumulated_amortization", "investment",
+              "other_noncurrent_asset"],
+    "Liability": ["payable", "accrued", "deferred_revenue", "tax_payable", "dividends_payable", "other_current_liability",
                   "short_term_debt", "long_term_debt", "other_noncurrent_liability"],
-    "Equity": ["capital", "retained_earnings", "drawings", "other_equity"],
+    "Equity": ["capital", "partner_current", "reserves", "retained_earnings", "drawings", "other_equity"],
     "Revenue": ["operating_revenue", "sales_discount", "other_income"],
     "COGS": ["cogs"],
     "Expense": ["employee", "general_admin", "marketing", "utilities", "other_operating",
                 "depreciation", "amortization", "interest", "other_nonoperating", "income_tax"],
 }
 ACCOUNT_NAMES_AR = {'1010': 'النقدية بالصندوق', '1020': 'الحساب البنكي', '1030': 'العهد النقدية', '1100': 'العملاء (المدينون)', '1150': 'محتجزات لدى العملاء (ضمان أعمال)', '1160': 'سلف العاملين', '1200': 'مخزون الخامات', '1300': 'مصروفات مدفوعة مقدماً', '1310': 'دفعات مقدمة للموردين', '1320': 'ضريبة القيمة المضافة (مدخلات)', '1330': 'ضريبة خصم وتحصيل لدى العملاء', '1400': 'أثاث ومعدات مكتبية', '1410': 'عدد ومعدات مواقع', '1420': 'سيارات', '1430': 'أجهزة حاسب ومعدات تقنية', '1490': 'مجمع الإهلاك', '1500': 'برامج وتراخيص', '1510': 'العلامة التجارية والموقع ومكتبة التصميمات', '1590': 'مجمع الاستهلاك', '1600': 'تأمينات لدى الغير', '2010': 'الموردون (الدائنون)', '2015': 'مقاولو الباطن', '2020': 'أجور مستحقة', '2030': 'مصروفات مستحقة', '2040': 'تأمينات اجتماعية مستحقة', '2100': 'دفعات مقدمة من العملاء (إيرادات مؤجلة)', '2110': 'محتجزات مقاولي الباطن', '2200': 'ضريبة القيمة المضافة (مخرجات)', '2210': 'ضريبة الخصم والتحصيل المستحقة (من الموردين)', '2220': 'ضريبة الدخل المستحقة', '2300': 'قروض قصيرة الأجل', '2310': 'بطاقات ائتمان مستحقة', '2400': 'قروض طويلة الأجل', '2500': 'قروض الشركاء', '3010': 'رأس مال الشركاء', '3100': 'الأرباح المحتجزة', '3200': 'مسحوبات الشركاء / توزيعات الأرباح', '4010': 'إيرادات المشروعات — التنفيذ', '4020': 'أتعاب التصميم', '4030': 'أتعاب الإشراف والإدارة', '4040': 'مبيعات أثاث وتوريدات', '4050': 'خصومات ومسموحات المبيعات', '4090': 'إيرادات أخرى', '4095': 'إيرادات فوائد', '5010': 'خامات', '5020': 'تكاليف مقاولي الباطن', '5030': 'عمالة مباشرة', '5040': 'تجهيز الموقع', '5050': 'إيجار معدات', '5060': 'نقل وتشوين', '5070': 'تصميم خارجي ورندرات', '5080': 'تسويات المخزون', '6010': 'الإيجار', '6020': 'برامج واشتراكات', '6030': 'دعاية وإعلان', '6040': 'كهرباء ومياه', '6045': 'هاتف وإنترنت', '6050': 'رواتب إدارية', '6055': 'تأمينات اجتماعية ومزايا', '6060': 'أتعاب مهنية (قانونية ومراجعة)', '6065': 'مصروفات بنكية', '6070': 'مصروفات المشروعات غير المحملة', '6075': 'انتقالات وسفر', '6080': 'أدوات مكتبية', '6085': 'تأمين', '6090': 'مصروفات تشغيلية أخرى', '7010': 'مصروف الإهلاك', '7020': 'مصروف الاستهلاك', '7030': 'مصروفات الفوائد', '7040': 'خسائر (أرباح) فروق العملة', '7050': 'مصروف ضريبة الدخل'}
+ACCOUNT_NAMES_AR.update({'1120': 'أوراق القبض (شيكات تحت التحصيل)', '1170': 'مستحق من الشركاء', '1180': 'إيرادات مستحقة غير مفوترة (أعمال منفذة)', '1190': 'مخصص الديون المشكوك في تحصيلها', '1340': 'غطاء خطابات الضمان', '1440': 'أراضي', '1450': 'مباني وتحسينات أماكن مستأجرة', '1460': 'مشروعات تحت التنفيذ', '1520': 'الشهرة', '1700': 'استثمارات طويلة الأجل', '2050': 'أوراق الدفع (شيكات صادرة)', '2060': 'فوائد مستحقة', '2120': 'توزيعات أرباح مستحقة للشركاء', '2130': 'مستحق للشركاء المنسحبين', '2510': 'مخصص مكافأة نهاية الخدمة', '3020': 'جاري الشركاء', '3030': 'علاوة إصدار / علاوة حصص', '3110': 'الاحتياطي القانوني', '3120': 'الاحتياطي العام', '4060': 'أرباح بيع أصول ثابتة', '4070': 'إيرادات إيجار', '4080': 'خصم مكتسب', '6015': 'صيانة وإصلاحات', '6078': 'وقود ومصروفات سيارات', '6088': 'ديون معدومة', '7045': 'خسائر بيع أصول ثابتة'})
+NEW_IN_V12 = {"1120", "1170", "1180", "1190", "1340", "1440", "1450", "1460", "1520", "1700", "2050", "2060", "2120",
+              "2130", "2510", "3020", "3030", "3110", "3120", "4060", "4070", "4080", "6015", "6078", "6088", "7045"}
+ROLES_ADDED_V12 = {"2500": "partner_loans", "4095": "interest_income"}
 
 # Contra accounts carry the opposite normal balance of their type.
-CONTRA_SUBTYPES = {"accumulated_depreciation", "accumulated_amortization", "drawings", "sales_discount"}
+CONTRA_SUBTYPES = {"accumulated_depreciation", "accumulated_amortization", "allowance_doubtful", "drawings",
+                   "sales_discount"}
 
 
 def normal_for(acc_type: str, subtype: str) -> str:
@@ -432,7 +505,7 @@ def normal_for(acc_type: str, subtype: str) -> str:
     return "Debit" if debit else "Credit"
 
 
-MODULES = ["dashboard", "business_units", "sales", "estimating", "purchasing", "stock", "payroll",
+MODULES = ["dashboard", "business_units", "sales", "estimating", "purchasing", "stock", "payroll", "assets",
            "accounting", "partners", "reports", "tax", "import_export", "settings", "users"]
 
 # Second-level permissions: each screen can have its own level, or inherit its section's.
@@ -444,8 +517,9 @@ SUBMODULES = {
     "purchasing": ["costs", "expenses", "payments", "payables"],
     "stock": ["balances", "moves", "warehouses"],
     "payroll": [],
+    "assets": ["register", "depreciation"],
     "accounting": ["journal", "ledger", "coa"],
-    "partners": ["equity", "transactions"],
+    "partners": ["equity", "transactions", "ownership"],
     "reports": ["income_statement", "balance_sheet", "cash_flow", "trial_balance"],
     "tax": ["codes", "report", "einvoice"],
     "import_export": ["export", "import"],
@@ -473,6 +547,8 @@ DEFAULT_SETTINGS = {
     "bank_name": "", "bank_account": "", "bank_holder": "", "bank_swift": "", "bank_iban": "",
     "offer_validity_days": "15", "offer_prefix": "OFR-", "offer_digits": "4",
     "hidden_modules": "[]",
+    "new_menu": "[]",
+    "entry_types": "",
     "appearance": "{}",
     "branding": "{}",
     "regional": "{}",
@@ -566,6 +642,15 @@ class Database:
                         self.conn.execute("INSERT INTO accounts(code,name,name_ar,type,subtype,normal,role) "
                                           "VALUES (?,?,?,?,?,?,?)", (code, name, ACCOUNT_NAMES_AR.get(code, ""),
                                                                      typ, sub, normal_for(typ, sub), role))
+        self._add_cols("journal_lines", [("party", "TEXT DEFAULT ''")])
+        self._add_cols("partners", [("active", "INTEGER NOT NULL DEFAULT 1"), ("joined", "TEXT DEFAULT ''"),
+                                    ("left_on", "TEXT DEFAULT ''"), ("capital_interest", "REAL DEFAULT 0"),
+                                    ("loan_rate", "REAL DEFAULT 0"),
+                                    ("notes", "TEXT DEFAULT ''")])
+        if self.conn.execute("SELECT COUNT(*) FROM accounts").fetchone()[0] and \
+                not self.conn.execute("SELECT 1 FROM settings WHERE key='coa_v2'").fetchone():
+            self._add_new_accounts()
+        self.conn.execute("INSERT OR IGNORE INTO settings(key,value) VALUES ('coa_v2','1')")
         if not self.conn.execute("SELECT 1 FROM tax_codes").fetchone():
             self.conn.executemany("INSERT INTO tax_codes(code,name,name_ar,kind,rate,eta_type,eta_subtype) "
                                   "VALUES (?,?,?,?,?,?,?)", DEFAULT_TAX_CODES)
@@ -576,6 +661,22 @@ class Database:
         if not self.conn.execute("SELECT 1 FROM settings WHERE key='docs_seeded'").fetchone():
             self.seed_documents()
             self.conn.execute("INSERT OR REPLACE INTO settings(key,value) VALUES ('docs_seeded','1')")
+
+    def _add_new_accounts(self):
+        """Books created before version 1.2 get the accounts added then (reserves, partner current accounts,
+        disposal gains...). A code already in use moves the new account to the next free code; an existing role wins."""
+        for code, role in ROLES_ADDED_V12.items():
+            if not self.conn.execute("SELECT 1 FROM accounts WHERE role=?", (role,)).fetchone():
+                self.conn.execute("UPDATE accounts SET role=? WHERE code=? AND role IS NULL", (role, code))
+        for code, name, typ, sub, role in DEFAULT_ACCOUNTS:
+            if code not in NEW_IN_V12 or (role and self.conn.execute("SELECT 1 FROM accounts WHERE role=?",
+                                                                      (role,)).fetchone()):
+                continue
+            c = code
+            while self.conn.execute("SELECT 1 FROM accounts WHERE code=?", (c,)).fetchone():
+                c = str(int(c) + 1)
+            self.conn.execute("INSERT INTO accounts(code,name,name_ar,type,subtype,normal,role) VALUES (?,?,?,?,?,?,?)",
+                              (c, name, ACCOUNT_NAMES_AR.get(code, ""), typ, sub, normal_for(typ, sub), role))
 
     def seed_documents(self, offer_types=True, logo=True):
         """Starter offer types and the default letterhead logo + watermark (all replaceable)."""
@@ -597,6 +698,7 @@ class Database:
                               (code, name, ACCOUNT_NAMES_AR.get(code, ""), typ, sub, normal_for(typ, sub), role))
         for k, v in DEFAULT_SETTINGS.items():
             self.conn.execute("INSERT OR IGNORE INTO settings(key,value) VALUES (?,?)", (k, v))
+        self.conn.execute("INSERT OR IGNORE INTO settings(key,value) VALUES ('coa_v2','1')")
         self.conn.execute("INSERT OR IGNORE INTO warehouses(name, account) VALUES ('Main Store', "
                           "(SELECT code FROM accounts WHERE role='inventory'))")
 

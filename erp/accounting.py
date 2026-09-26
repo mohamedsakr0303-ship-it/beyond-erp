@@ -22,8 +22,10 @@ PAYROLL_TYPES = {  # cost type -> (account role, business unit required?)
 }
 STOCK_MOVE_TYPES = ["Receipt", "Issue", "Transfer", "Adjustment"]
 ENTRY_KINDS = ["Direct Cost", "Operating Expense", "Payroll Accrual", "Payment Voucher", "Receipt Voucher",
-               "Sales Invoice", "Capital Contribution", "Owner Drawing", "Journal Voucher", "Goods Receipt",
-               "Material Issue", "Stock Transfer", "Stock Adjustment", "Reversing Entry"]
+               "Sales Invoice", "Capital Contribution", "Capital Withdrawal", "Owner Drawing", "Partner Loan", "Partner Loan Repayment",
+               "Partner Loan Interest", "Share Transfer", "Partner Admission", "Partner Exit", "Profit Distribution",
+               "Reserve Transfer", "Asset Purchase", "Depreciation", "Asset Disposal", "Journal Voucher",
+               "Goods Receipt", "Material Issue", "Stock Transfer", "Stock Adjustment", "Reversing Entry"]
 
 
 class ValidationError(Exception):
@@ -128,6 +130,7 @@ def _validate_lines(db, lines):
         raise ValidationError("An entry needs at least two lines")
     accounts = {r["code"]: r for r in db.q("SELECT code, active FROM accounts")}
     out, dr, cr = [], 0, 0
+    touched = set()
     for ln in lines:
         acc = text(ln.get("account"))
         if acc not in accounts:
@@ -138,11 +141,16 @@ def _validate_lines(db, lines):
             raise ValidationError("A line cannot have both a debit and a credit")
         if not d and not c:
             continue
-        out.append((acc, d, c))
+        party = text(ln.get("party"))
+        out.append((acc, d, c, party))
+        touched.add((acc, party))
         dr += d
         cr += c
     if dr == 0:
         raise ValidationError("Entry total must be greater than zero")
+    if len(touched) == 1:
+        raise ValidationError("The debit and the credit are on the same account, so nothing would change — "
+                              "choose the account the money comes from and the one it goes to")
     if dr != cr:
         raise ValidationError(f"Debits ({to_major(dr):,.2f}) must equal credits ({to_major(cr):,.2f})")
     return out
@@ -166,8 +174,8 @@ def _insert_entry(db, *, date, kind, memo="", bu_id=None, party="", ref="", line
         (clean_date(date), kind, text(memo, maxlen=1000), bu_id, text(party), text(ref),
          json.dumps(meta or {}, ensure_ascii=False), reversal_of, user or "", now_iso().replace("T", " ")))
     eid = cur.lastrowid
-    db.conn.executemany("INSERT INTO journal_lines(entry_id,account,debit,credit) VALUES (?,?,?,?)",
-                        [(eid, a, d, c) for a, d, c in vlines])
+    db.conn.executemany("INSERT INTO journal_lines(entry_id,account,debit,credit,party) VALUES (?,?,?,?,?)",
+                        [(eid, a, d, c, p) for a, d, c, p in vlines])
     return eid
 
 
@@ -184,7 +192,7 @@ def get_entry(db, eid):
     e["meta"] = json.loads(e["meta"] or "{}")
     e["history"] = json.loads(e["history"] or "[]")
     e["lines"] = [{"account": r["account"], "name": r["name"], "name_ar": r["name_ar"], "debit": to_major(r["debit"]),
-                   "credit": to_major(r["credit"])}
+                   "credit": to_major(r["credit"]), **({"party": r["party"]} if r["party"] else {})}
                   for r in db.q("SELECT l.*, a.name, a.name_ar FROM journal_lines l JOIN accounts a ON a.code=l.account "
                                 "WHERE entry_id=? ORDER BY l.id", (eid,))]
     e["amount"] = round(sum(ln["debit"] for ln in e["lines"]), 2)
@@ -396,26 +404,10 @@ def record_journal(db, d, user=""):
                       ref=text(d.get("ref")), lines=d.get("lines") or [], user=user)
 
 
-JOURNAL_TEMPLATES = {
-    # name: (kind, debit role/subtype hint, credit role/subtype hint)
-    "Depreciation": ("depreciation", "accum_depreciation"),
-    "Amortization": ("amortization", "accum_amortization"),
-    "Income tax accrual": ("income_tax", "income_tax_payable"),
-    "Loan received": ("bank", "short_term_debt"),
-    "Loan repayment": ("short_term_debt", "bank"),
-    "Interest paid": ("interest", "bank"),
-    "Asset purchase": ("fixed_asset", "bank"),
-    "Software / intangible purchase": ("intangible", "bank"),
-    "Apply client advance to invoice": ("client_advances", "ar"),
-    "VAT settlement (offset input VAT)": ("vat_output", "vat_input"),
-    "Pay VAT to the Tax Authority": ("vat_output", "bank"),
-    "Pay withholding tax to the Tax Authority": ("wht_payable", "bank"),
-    "Offset client-withheld tax against income tax": ("income_tax_payable", "wht_receivable"),
-}
-
-
 # ------------------------------------------------------------- corrections
 def _unlink_documents(db, eid):
+    from . import equity
+    equity.undo_change(db, entry_id=eid)  # an ownership change booked by this entry goes with it
     db.conn.execute("UPDATE extracts SET status='draft', entry_id=NULL WHERE entry_id=?", (eid,))
     pairs = db.q("SELECT DISTINCT item_id, warehouse_id FROM stock_moves WHERE entry_id=?", (eid,))
     db.conn.execute("DELETE FROM stock_moves WHERE entry_id=?", (eid,))
@@ -448,7 +440,8 @@ def reverse_entry(db, eid, date=None, user=""):
             raise ValidationError("Entry not found")
         if e["status"] != "posted" or e["reversed_by"] or e["reversal_of"]:
             raise ValidationError("Only a live, un-reversed entry can be reversed")
-        lines = [{"account": ln["account"], "debit": ln["credit"], "credit": ln["debit"]} for ln in e["lines"]]
+        lines = [{"account": ln["account"], "debit": ln["credit"], "credit": ln["debit"], "party": ln.get("party", "")}
+                 for ln in e["lines"]]
         rid = _insert_entry(db, date=date or today(), kind="Reversing Entry", memo=f"Reversal of #{eid}: {e['memo']}",
                             bu_id=e["bu_id"], party=e["party"], ref=e["ref"], lines=lines, reversal_of=eid, user=user)
         db.conn.execute("UPDATE journal_entries SET reversed_by=? WHERE id=?", (rid, eid))
@@ -477,8 +470,8 @@ def edit_entry(db, eid, d, user=""):
                          bu_id_or_none(db, d.get("bu_id", e["bu_id"])), text(d.get("party", e["party"])),
                          json.dumps(e["history"] + [snap], ensure_ascii=False), eid))
         db.conn.execute("DELETE FROM journal_lines WHERE entry_id=?", (eid,))
-        db.conn.executemany("INSERT INTO journal_lines(entry_id,account,debit,credit) VALUES (?,?,?,?)",
-                            [(eid, a, dd, c) for a, dd, c in vlines])
+        db.conn.executemany("INSERT INTO journal_lines(entry_id,account,debit,credit,party) VALUES (?,?,?,?,?)",
+                            [(eid, a, dd, c, p) for a, dd, c, p in vlines])
 
 
 def delete_entry(db, eid):
@@ -849,6 +842,7 @@ def post_extract(db, xid, date=None, user="", ar_account=None, revenue_account=N
 
 # ====================================================================== REPORTS
 LIVE = "e.status='posted'"
+PARTY = "COALESCE(NULLIF(l.party,''), e.party)"  # a line's own party, else the entry's
 
 
 def _where(date_from=None, date_to=None, bu_id=None):
@@ -968,6 +962,15 @@ def income_statement(db, date_from=None, date_to=None, bu_id=None, allocate_over
     }
 
 
+BS_CURRENT_ASSETS = ["cash", "receivable", "allowance_doubtful", "inventory", "prepaid", "other_current_asset"]
+BS_NONCURRENT_ASSETS = ["fixed_asset", "accumulated_depreciation", "intangible", "accumulated_amortization", "investment",
+                        "other_noncurrent_asset"]
+BS_CURRENT_LIABILITIES = ["payable", "accrued", "deferred_revenue", "tax_payable", "dividends_payable",
+                          "other_current_liability", "short_term_debt"]
+BS_NONCURRENT_LIABILITIES = ["long_term_debt", "other_noncurrent_liability"]
+BS_EQUITY = ["capital", "partner_current", "reserves", "retained_earnings", "other_equity", "drawings"]
+
+
 def balance_sheet(db, date_to=None, bu_id=None):
     rows = account_totals(db, date_to=date_to, bu_id=bu_id)
     sub = _by_subtype([r for r in rows if r["dr"] or r["cr"]])
@@ -980,13 +983,11 @@ def balance_sheet(db, date_to=None, bu_id=None):
                 out.append({"code": r["code"], "name": r["name"], "subtype": s, "amount": to_major(sign * r["net"])})
         return out
 
-    cur_assets = sect(["cash", "receivable", "inventory", "prepaid", "other_current_asset"], 1)
-    nc_assets = sect(["fixed_asset", "accumulated_depreciation", "intangible", "accumulated_amortization",
-                      "other_noncurrent_asset"], 1)
-    cur_liab = sect(["payable", "accrued", "deferred_revenue", "tax_payable", "other_current_liability",
-                     "short_term_debt"], -1)
-    nc_liab = sect(["long_term_debt", "other_noncurrent_liability"], -1)
-    equity = sect(["capital", "retained_earnings", "other_equity", "drawings"], -1)
+    cur_assets = sect(BS_CURRENT_ASSETS, 1)
+    nc_assets = sect(BS_NONCURRENT_ASSETS, 1)
+    cur_liab = sect(BS_CURRENT_LIABILITIES, -1)
+    nc_liab = sect(BS_NONCURRENT_LIABILITIES, -1)
+    equity = sect(BS_EQUITY, -1)
     equity.append({"code": "", "name": "Current earnings (profit to date)", "subtype": "earnings",
                    "amount": to_major(earnings)})
     t = lambda ls: round(sum(x["amount"] for x in ls), 2)  # noqa: E731
@@ -1001,18 +1002,19 @@ def balance_sheet(db, date_to=None, bu_id=None):
             "total_liabilities_equity": round(tl + te, 2), "balanced": abs(ta - tl - te) < 0.005}
 
 
-CF_OPERATING = [("receivable", "Accounts receivable"), ("inventory", "Inventory"),
+CF_OPERATING = [(("receivable", "allowance_doubtful"), "Accounts receivable"), ("inventory", "Inventory"),
                 ("prepaid", "Prepaid expenses & advances"), ("other_current_asset", "Other current assets"),
                 ("payable", "Accounts payable"), ("accrued", "Accrued liabilities & payroll"),
                 ("deferred_revenue", "Deferred revenue (client advances)"), ("tax_payable", "Taxes payable"),
                 ("other_current_liability", "Other current liabilities")]
 CF_INVESTING = [("fixed_asset", "Capital expenditures (fixed assets)"), ("intangible", "Additions to intangibles"),
-                ("other_noncurrent_asset", "Other long-term assets")]
+                ("investment", "Investments bought / (sold)"), ("other_noncurrent_asset", "Other long-term assets")]
 CF_FINANCING = [("short_term_debt", "Short-term debt issued / (repaid)"),
                 ("long_term_debt", "Long-term debt issued / (repaid)"),
                 ("other_noncurrent_liability", "Other long-term liabilities"),
-                ("capital", "Capital contributed"), ("other_equity", "Other equity movements"),
-                ("drawings", "Dividends / partner drawings paid")]
+                ("capital", "Capital contributed"), ("partner_current", "Partners' current accounts"),
+                (("other_equity", "reserves"), "Other equity movements"),
+                (("drawings", "dividends_payable"), "Dividends / partner drawings paid")]
 
 
 def cash_flow(db, date_from=None, date_to=None, bu_id=None):
@@ -1027,12 +1029,12 @@ def cash_flow(db, date_from=None, date_to=None, bu_id=None):
         by_sub[r["subtype"]] = by_sub.get(r["subtype"], 0) + r["net"]
     pnl = income_statement(db, date_from, date_to, bu_id)
     # change in an asset (debit up) uses cash: -net; change in a liability/equity (credit up) adds cash: -net too.
-    effect = lambda s: to_major(-by_sub.get(s, 0))  # noqa: E731
+    effect = lambda s: to_major(-sum(by_sub.get(x, 0) for x in ((s,) if isinstance(s, str) else s)))  # noqa: E731
     ops = [{"label": "(+) Depreciation", "amount": effect("accumulated_depreciation")},
            {"label": "(+) Amortization", "amount": effect("accumulated_amortization")}]
     ops += [{"label": f"(+/-) {lbl}", "amount": effect(s)} for s, lbl in CF_OPERATING]
     inv = [{"label": f"(-) {lbl}", "amount": effect(s)} for s, lbl in CF_INVESTING]
-    fin = [{"label": ("(-) " if s == "drawings" else "(+/-) ") + lbl, "amount": effect(s)} for s, lbl in CF_FINANCING]
+    fin = [{"label": ("(-) " if "drawings" in s else "(+/-) ") + lbl, "amount": effect(s)} for s, lbl in CF_FINANCING]
     # retained earnings moved directly (e.g. opening balances or prior-year adjustments)
     fin.append({"label": "(+/-) Retained earnings adjustments", "amount": effect("retained_earnings")})
     net_ops = round(pnl["net_profit"] + sum(x["amount"] for x in ops), 2)
@@ -1062,7 +1064,7 @@ def general_ledger(db, account=None, date_from=None, date_to=None, bu_id=None, p
         w += " AND l.account=?"
         p.append(account)
     if party:
-        w += " AND e.party=?"
+        w += f" AND {PARTY}=?"
         p.append(party)
     opening = 0
     if acc and date_from:
@@ -1071,7 +1073,7 @@ def general_ledger(db, account=None, date_from=None, date_to=None, bu_id=None, p
                    f"ON e.id=l.entry_id WHERE l.account=? AND {w0}", [account] + p0)
         opening = r["n"]
     sign = 1 if (not acc or acc["normal"] == "Debit") else -1
-    rows = db.q(f"""SELECT e.id, e.date, e.kind, e.memo, e.party, b.code AS bu_code, l.account, a.name AS account_name,
+    rows = db.q(f"""SELECT e.id, e.date, e.kind, e.memo, {PARTY} AS party, b.code AS bu_code, l.account, a.name AS account_name,
                     l.debit, l.credit FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
                     JOIN accounts a ON a.code=l.account LEFT JOIN business_units b ON b.id=e.bu_id
                     WHERE {w} ORDER BY e.date, e.id, l.id LIMIT ? OFFSET ?""", p + [int(limit), int(offset)])
@@ -1086,7 +1088,7 @@ def general_ledger(db, account=None, date_from=None, date_to=None, bu_id=None, p
 
 def party_balance(db, account, party):
     r = db.one(f"SELECT COALESCE(SUM(l.credit-l.debit),0) AS n FROM journal_lines l JOIN journal_entries e "
-               f"ON e.id=l.entry_id WHERE {LIVE} AND l.account=? AND e.party=?", (account, party))
+               f"ON e.id=l.entry_id WHERE {LIVE} AND l.account=? AND {PARTY}=?", (account, party))
     return to_major(r["n"])
 
 
@@ -1100,11 +1102,11 @@ def party_balances(db, subtypes=("payable",), accounts=None, date_to=None):
     if not codes:
         return []
     w, p = _where(date_to=date_to)
-    rows = db.q(f"""SELECT e.party AS party, l.account, SUM(l.credit) AS owed, SUM(l.debit) AS paid,
+    rows = db.q(f"""SELECT {PARTY} AS party, l.account, SUM(l.credit) AS owed, SUM(l.debit) AS paid,
                     SUM(l.credit-l.debit) AS balance, MAX(e.date) AS last_date
                     FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
                     WHERE {w} AND l.account IN ({",".join("?" * len(codes))})
-                    GROUP BY e.party, l.account HAVING balance<>0 ORDER BY balance DESC""", p + codes)
+                    GROUP BY 1, l.account HAVING balance<>0 ORDER BY balance DESC""", p + codes)
     for r in rows:
         for k in ("owed", "paid", "balance"):
             r[k] = to_major(r[k])
@@ -1199,8 +1201,14 @@ def partner_report(db, date_from=None, date_to=None):
     company_after_alloc = round(company + alloc_total, 2)  # overhead already charged to units is not double-counted
     reserve = float(db.setting("reserve_pct", "0.4") or 0)
     draws = {r["party"]: to_major(r["n"]) for r in db.q(
-        f"SELECT e.party, SUM(l.debit-l.credit) AS n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id "
-        f"JOIN accounts a ON a.code=l.account WHERE {LIVE} AND a.subtype='drawings' GROUP BY e.party")}
+        f"SELECT {PARTY} AS party, SUM(l.debit-l.credit) AS n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id "
+        f"JOIN accounts a ON a.code=l.account WHERE {LIVE} AND a.subtype='drawings'"
+        + (" AND e.date>=?" if date_from else "") + (" AND e.date<=?" if date_to else "") + " GROUP BY 1",
+        [x for x in (date_from, date_to) if x])}
+    from . import equity
+    # agreed interest on capital comes out of the company's result before the rest is shared
+    cap_int = equity.capital_interest(db, date_from, date_to)
+    pool = round(company_after_alloc - sum(cap_int.values()), 2)
     rows = []
     for pt in partners:
         per, total = {}, 0.0
@@ -1208,10 +1216,13 @@ def partner_report(db, date_from=None, date_to=None):
             s = shares.get((pt["id"], b["id"]), pt["default_share"] or 0)
             per[b["code"]] = {"share": s, "profit": round(b["net_profit"] * s, 2)}
             total += b["net_profit"] * s
-        total += company_after_alloc * (pt["default_share"] or 0)
+        total += pool * (pt["default_share"] or 0) + cap_int.get(pt["name"], 0)
         distributable = total * (1 - reserve) if total > 0 else total
         drawn = draws.get(pt["name"], 0)
         rows.append({"id": pt["id"], "name": pt["name"], "default_share": pt["default_share"], "units": per,
+                     "active": pt["active"], "joined": pt["joined"], "left_on": pt["left_on"],
+                     "capital_interest_rate": pt["capital_interest"], "loan_rate": pt["loan_rate"], "notes": pt["notes"],
+                     "capital_interest": cap_int.get(pt["name"], 0), "accounts": equity.balances(db, pt["name"], date_to),
                      "profit_share": round(total, 2), "distributable": round(distributable, 2), "drawn": drawn,
                      "balance": round(distributable - drawn, 2)})
     checks = {b["code"]: round(sum(shares.get((pt["id"], b["id"]), pt["default_share"] or 0) for pt in partners), 4)
@@ -1360,10 +1371,10 @@ def tax_summary(db, date_from=None, date_to=None):
     tax_ids = {r["name"]: r for r in db.q("SELECT name, tax_id, national_id FROM parties")}
 
     def by_party(code, sign):  # sign 1: credit-positive
-        rows = db.q(f"""SELECT e.party, SUM(l.credit-l.debit) AS n, COUNT(DISTINCT e.id) AS docs,
+        rows = db.q(f"""SELECT {PARTY} AS party, SUM(l.credit-l.debit) AS n, COUNT(DISTINCT e.id) AS docs,
                         SUM(CASE WHEN e.kind IN ('Journal Voucher','Payment Voucher') AND l.debit>0 THEN l.debit ELSE 0 END) AS settled
                         FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
-                        WHERE {w} AND l.account=? GROUP BY e.party ORDER BY e.party""", p + [code])
+                        WHERE {w} AND l.account=? GROUP BY 1 ORDER BY 1""", p + [code])
         return [{"party": r["party"], "tax_id": (tax_ids.get(r["party"]) or {}).get("tax_id", ""),
                  "amount": to_major(sign * r["n"]), "documents": r["docs"]} for r in rows if r["n"]]
 

@@ -5,4 +5,4 @@ code works unchanged on Windows, macOS and Linux. openpyxl is optional and only
 needed for importing/exporting Excel workbooks.
 """
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
