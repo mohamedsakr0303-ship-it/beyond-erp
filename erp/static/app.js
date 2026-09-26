@@ -248,14 +248,14 @@ const CloudAPI = STATIC ? {
   claim: () => window.BeyondCloud.claim(), join: () => window.BeyondCloud.join(), pull: () => window.BeyondCloud.pull(),
   disconnect: () => window.BeyondCloud.disconnect(), members: () => window.BeyondCloud.members(), setMember: m => window.BeyondCloud.setMember(m),
   linkMember: m => window.BeyondCloud.linkMember(m),
-  manageUser: m => window.BeyondCloud.manageUser(m),
+  manageUser: m => window.BeyondCloud.manageUser(m), deleteAccount: m => window.BeyondCloud.deleteAccount(m),
 } : {
   status: () => api("GET", "/api/cloud"), config: (url, key) => api("PUT", "/api/cloud/config", { url, key }),
   signin: (email, password, create) => api("POST", "/api/cloud/signin", { email, password, create }), info: () => api("GET", "/api/cloud/info"),
   claim: () => api("POST", "/api/cloud/claim", {}), join: () => api("POST", "/api/cloud/join", {}), pull: () => api("POST", "/api/cloud/pull", {}),
   disconnect: () => api("POST", "/api/cloud/disconnect", {}), members: () => api("GET", "/api/cloud/members"), setMember: m => api("PUT", "/api/cloud/members", m),
   linkMember: m => api("PUT", "/api/cloud/members/link", m),
-  manageUser: m => api("PUT", "/api/cloud/account", m),
+  manageUser: m => api("PUT", "/api/cloud/account", m), deleteAccount: m => api("POST", "/api/cloud/account/delete", m),
 };
 const cloudOn = () => STATIC ? !!(window.BeyondCloud && window.BeyondCloud.joined()) : !!(S.boot && S.boot.cloud && S.boot.cloud.joined);
 
@@ -527,6 +527,12 @@ function exportMenu(name, params) {
 function docMenu(base, formats, extra = "") {
   return `<div class="dd"><button class="btn">⬇ ${t("documents")} ▾</button><div class="dd-menu">${formats.map(([f, l]) =>
     `<a href="${base}?format=${f}" ${f === "pdf" ? 'target="_blank" rel="noopener"' : ""}>${t(l)}</a>`).join("")}${extra}</div></div>`;
+}
+// Delete after a clear confirmation; the server refuses anything still in use and says why.
+async function confirmDelete(what, path, after) {
+  if (!confirm((S.lang === "ar" ? "حذف " : "Delete ") + what + (S.lang === "ar" ? "؟ لا يمكن التراجع." : "? This cannot be undone."))) return false;
+  try { await api("DELETE", path); if (after) await after(); closeDrawer(); toast(S.lang === "ar" ? "تم الحذف" : "Deleted"); route(); return true; }
+  catch (e) { fail(e); return false; }
 }
 function pager(total, q) {
   const limit = Number(q.limit || 50), offset = Number(q.offset || 0);
@@ -978,11 +984,12 @@ PAGES.stock = async (view, parts, q) => {
   const tot = d.levels.reduce((s, r) => s + r.value, 0);
   const ed = can("stock.moves", "add");
   for (const ty of ["Receipt", "Issue", "Transfer", "Adjustment"]) S.H["sm" + ty] = el => openDoc("stock_move", { type: ty, item: el && el.dataset && el.dataset.item, warehouse_id: el && el.dataset && el.dataset.wh });
+  S.H.itemdel = el => confirmDelete(el.dataset.n, "/api/items/" + el.dataset.id, refreshBoot);
   view.innerHTML = `<div class="toolbar">${ed ? ["Receipt", "Issue", "Transfer", "Adjustment"].map(ty => `<button class="btn ${ty === "Receipt" ? "pri" : ""}" data-a="sm${ty}">${tl(ty)}</button>`).join("") : ""}<span class="spacer"></span>${exportMenu("stock", q)}</div>` +
     filterBar(q, ["warehouse", "q"]) +
     `<div class="card"><h2>${t("inventory")} — ${money(tot)} ${cur()}</h2>${d.levels.length ? `<div class="tbl"><table><thead><tr><th>${t("item")}</th><th>${t("warehouse")}</th><th>${t("unit")}</th><th class="num">${t("on_hand")}</th><th class="num">${t("avg_cost")}</th><th class="num">${t("value")}</th><th></th></tr></thead><tbody>
       ${d.levels.map(r => `<tr><td>${esc(r.name)} ${r.low ? `<span class="chip warn">${t("reorder")}</span>` : ""}</td><td>${esc(r.warehouse)}</td><td>${esc(r.unit)}</td><td class="num ${r.qty < 0 ? "neg" : ""}">${numf(r.qty)}</td><td class="num">${money(r.avg_cost)}</td><td class="num">${money(r.value)}</td>
-      <td>${ed ? `<button class="btn sm" data-a="smIssue" data-item="${esc(r.name)}" data-wh="${r.warehouse_id}">${tl("Issue")}</button> <button class="btn sm" data-a="smAdjustment" data-item="${esc(r.name)}" data-wh="${r.warehouse_id}">${tl("Adjustment")}</button>` : ""}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${t("nothing")}</div>`}</div>`;
+      <td>${can("stock.balances", "edit") && !r.qty && !r.value ? `<button class="btn sm danger" data-a="itemdel" data-id="${r.item_id}" data-n="${esc(r.name)}" title="${S.lang === "ar" ? "حذف صنف بدون حركات" : "Delete an item that has no movements"}">✕</button> ` : ""}${ed ? `<button class="btn sm" data-a="smIssue" data-item="${esc(r.name)}" data-wh="${r.warehouse_id}">${tl("Issue")}</button> <button class="btn sm" data-a="smAdjustment" data-item="${esc(r.name)}" data-wh="${r.warehouse_id}">${tl("Adjustment")}</button>` : ""}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${t("nothing")}</div>`}</div>`;
 };
 PAGES.moves = async (view, parts, q) => {
   const lq = { ...q, limit: q.limit || 100 };
@@ -1018,9 +1025,12 @@ PAGES.partners = async (view, parts, q) => {
   async v => { const body = { name: v.name, default_share: (+v.default_share || 0) / 100, shares: {} };
     d.units.forEach(u => { body.shares[u.id] = v["s_" + u.id] === "" ? "" : (+v["s_" + u.id] || 0) / 100; });
     if (p.id) await api("PUT", "/api/partners/" + p.id, body); else { const r = await api("POST", "/api/partners", body); await api("PUT", "/api/partners/" + r.id, body); }
-    await refreshBoot(); toast(t("saved")); });
+    await refreshBoot(); toast(t("saved")); },
+  { extraButtons: p.id && ed ? `<button type="button" class="btn danger" data-a="pdel">${t("delete")}</button>` : "" });
+  S.H.pdel = () => {};
   S.H.pnew = () => edit({});
-  S.H.pedit = el => edit({ ...d.partners.find(x => String(x.id) === el.dataset.id) });
+  S.H.pedit = el => { const p = d.partners.find(x => String(x.id) === el.dataset.id); edit({ ...p });
+    S.H.pdel = () => confirmDelete(p.name, "/api/partners/" + p.id, refreshBoot); };
   S.H.ptx = () => openDoc("partner_tx");
   S.H.rsave = async () => { try { await api("PUT", "/api/settings", { reserve_pct: (+$("#rpct").value || 0) / 100 }); await refreshBoot(); route(); } catch (e) { fail(e); } };
   const cp = d.cash_position;
@@ -1296,9 +1306,12 @@ PAGES.parties = async (view, parts, q) => {
     { k: "email", l: t("email"), v: p.email, type: "email" }, { k: "phone", l: t("phone"), v: p.phone },
     { k: "default_vat", l: t("default_vat"), type: "select", opts: taxOpts("vat"), v: p.default_vat }, { k: "default_wht", l: t("default_wht"), type: "select", opts: taxOpts("wht"), v: p.default_wht },
     { k: "notes", l: t("notes"), type: "textarea", v: p.notes, span: "spanall" }]),
-  async v => { if (p.id) await api("PUT", "/api/parties-master/" + p.id, v); else await api("POST", "/api/parties-master", v); await refreshBoot(); toast(t("saved")); });
+  async v => { if (p.id) await api("PUT", "/api/parties-master/" + p.id, v); else await api("POST", "/api/parties-master", v); await refreshBoot(); toast(t("saved")); },
+  { extraButtons: p.id && can("sales.parties", "edit") ? `<button type="button" class="btn danger" data-a="pmdel">${t("delete")}</button>` : "" });
+  S.H.pmdel = () => {};
   S.H.pnew = () => edit({});
-  S.H.pedit = el => edit(d.rows.find(x => String(x.id) === el.dataset.id));
+  S.H.pedit = el => { const p = d.rows.find(x => String(x.id) === el.dataset.id); edit(p);
+    S.H.pmdel = () => confirmDelete(p.name, "/api/parties-master/" + p.id, refreshBoot); };
   view.innerHTML = `<div class="toolbar">${add ? `<button class="btn pri" data-a="pnew">+ ${t("new")}</button>` : ""}</div>` +
     filterBar(q, ["q", ["select", "type", t("type"), [["customer", t("customer")], ["supplier", t("supplier")]]]]) +
     `<div class="card">${d.rows.length ? `<div class="tbl"><table><thead><tr><th>${t("name")}</th><th>${t("type")}</th><th>${t("tax_id")}</th><th>${t("governate")}</th><th>${t("phone")}</th><th>${t("default_vat")}</th><th>${t("default_wht")}</th></tr></thead><tbody>
@@ -1311,9 +1324,12 @@ PAGES.taxcodes = async (view) => {
     { k: "name", l: t("name") + " (English)", v: c.name, req: 1 }, { k: "name_ar", l: t("name") + " (العربية)", v: c.name_ar },
     { k: "rate", l: t("rate_pct"), type: "number", v: c.rate != null ? +(c.rate * 100).toFixed(4) : "" }, { k: "eta_type", l: t("eta_type"), v: c.eta_type, ph: "T1 / T4" },
     { k: "eta_subtype", l: t("eta_sub"), v: c.eta_subtype, ph: "V009 / W001" }, { k: "active", l: t("active"), type: "checkbox", v: c.active !== 0 }]),
-  async v => { v.rate = (+v.rate || 0) / 100; if (c.code) await api("PUT", "/api/tax-codes/" + encodeURIComponent(c.code), v); else await api("POST", "/api/tax-codes", v); await refreshBoot(); toast(t("saved")); });
+  async v => { v.rate = (+v.rate || 0) / 100; if (c.code) await api("PUT", "/api/tax-codes/" + encodeURIComponent(c.code), v); else await api("POST", "/api/tax-codes", v); await refreshBoot(); toast(t("saved")); },
+  { extraButtons: c.code && ed ? `<button type="button" class="btn danger" data-a="tdel">${t("delete")}</button>` : "" });
+  S.H.tdel = () => {};
   S.H.tnew = () => edit({ active: 1 });
-  S.H.tedit = el => edit(rows.find(x => x.code === el.dataset.id));
+  S.H.tedit = el => { const c = rows.find(x => x.code === el.dataset.id); edit(c);
+    S.H.tdel = () => confirmDelete(c.code, "/api/tax-codes/" + encodeURIComponent(c.code), refreshBoot); };
   view.innerHTML = `<div class="toolbar">${can("tax.codes", "add") ? `<button class="btn pri" data-a="tnew">+ ${t("new")}</button>` : ""}</div>
     <div class="banner info">${S.lang === "ar" ? "النسب قابلة للتعديل — راجع النسب السارية مع مستشارك الضريبي." : "Rates are editable — confirm current rates with your tax adviser."}</div>
     <div class="card"><div class="tbl"><table><thead><tr><th>${t("code")}</th><th>${t("name")}</th><th>${t("kind_tax")}</th><th class="num">${t("rate_pct")}</th><th>${t("eta_type")}</th><th>${t("eta_sub")}</th></tr></thead><tbody>
@@ -1628,9 +1644,14 @@ PAGES.users = async (view) => {
         toast(ar ? "تم الحفظ. إنشاء حسابات الدخول من هنا غير مفعّل بعد — يُنشئ الشخص حسابه بنفسه ببريده." : "Saved. Creating sign-in accounts from here isn't set up yet — the person creates their own account with that email.", true);
       } else toast((ar ? "تم حفظ المستخدم، لكن لم يُنشأ حساب الدخول: " : "User saved, but the sign-in account was not set: ") + e.message, true);
     } },
-  { onOpen: f => { wirePerms(f); pwWire(f); } });
+  { onOpen: f => { wirePerms(f); pwWire(f); },
+    extraButtons: u.id && ed && u.id !== S.boot.user.id && (!u.is_admin || S.boot.user.is_admin) ? `<button type="button" class="btn danger" data-a="udel">${t("delete")}</button>` : "" });
+  S.H.udel = () => {};
   S.H.unew = () => edit({ perms: { dashboard: "view" } });
-  S.H.uedit = el => edit(rows.find(x => String(x.id) === el.dataset.id));
+  S.H.uedit = el => { const u = rows.find(x => String(x.id) === el.dataset.id);
+    edit(u);
+    S.H.udel = () => confirmDelete(`${u.username}${u.full_name ? " (" + u.full_name + ")" : ""}` + (cloudOn() ? (ar ? " وحساب دخوله" : " and their sign-in account") : ""), "/api/users/" + u.id,
+      async () => { if (cloudOn()) await CloudAPI.deleteAccount({ username: u.username, email: u.email }).catch(e => { if (e.status !== 404) toast((ar ? "حُذف المستخدم، لكن حساب الدخول لم يُحذف: " : "User deleted, but their sign-in account was not: ") + e.message, true); }); }); };
   const L = ["none", "view", "add", "edit"];
   const summary = u => {
     if (u.is_admin) return `<span class="chip ok">${t("admin")}</span>`;
@@ -1704,7 +1725,8 @@ async function workspaceTab(view, head) {
   ${info && info.is_admin ? `<div class="card"><h2>${ar ? "الأعضاء" : "Members"}</h2><p class="muted" style="font-size:.85em">${ar ? "كل عضو يسجل الدخول ببريده. أضف له أيضاً مستخدماً في التطبيق بنفس البريد كاسم مستخدم لتحديد صلاحياته (يتم ذلك تلقائياً هنا)." : "Each member signs in with their email. Adding a member here also creates their app user (username = email) — set their permissions under Users."}</p>
     <div class="tbl"><table><thead><tr><th>${t("email")}</th><th>${t("username")}</th><th>${t("admin")}</th><th>Gateway</th><th>${t("active")}</th><th></th></tr></thead><tbody>
     ${members.map(m => `<tr><td>${esc(m.email)}</td><td>${esc(m.username || "—")}</td><td><input type="checkbox" data-mf="is_admin" data-e="${esc(m.email)}" ${m.is_admin ? "checked" : ""}></td><td><input type="checkbox" data-mf="gateway" data-e="${esc(m.email)}" ${m.gateway ? "checked" : ""}></td>
-      <td><input type="checkbox" data-mf="active" data-e="${esc(m.email)}" ${m.active ? "checked" : ""}></td><td><button class="btn sm" data-a="wsmsave" data-e="${esc(m.email)}">${t("save")}</button></td></tr>`).join("")}
+      <td><input type="checkbox" data-mf="active" data-e="${esc(m.email)}" ${m.active ? "checked" : ""}></td><td style="white-space:nowrap"><button class="btn sm" data-a="wsmsave" data-e="${esc(m.email)}">${t("save")}</button>
+        ${m.email !== (info.email || "") ? ` <button class="btn sm danger" data-a="wsmdel" data-e="${esc(m.email)}" title="${ar ? "حذف حساب الدخول" : "Delete the sign-in account"}">✕</button>` : ""}</td></tr>`).join("")}
     <tr><td><input id="wsnew" type="email" placeholder="name@company.com"></td><td><input id="wsnewuser" placeholder="${t("username")}"></td><td><input type="checkbox" id="wsnewadm"></td><td><input type="checkbox" id="wsnewgw"></td><td></td><td><button class="btn sm pri" data-a="wsmadd">+ ${t("new")}</button></td></tr></tbody></table></div></div>` : ""}`;
   const run = async (fn, okMsg) => { try { await fn(); if (okMsg) toast(okMsg); await refreshBoot(); renderShell(); route(); } catch (e) { fail(e); } };
   S.H.wssave = () => { const v = readForm($("#wscfg")); run(() => CloudAPI.config(v.url, v.key), t("saved")); };
@@ -1720,6 +1742,8 @@ async function workspaceTab(view, head) {
   S.H.wsoff = () => confirm(ar ? "فصل هذا الجهاز؟ تبقى البيانات الحالية عليه." : "Disconnect this device? Its current books stay on it.") && run(() => CloudAPI.disconnect(), t("saved"));
   const mrow = e => ({ email: e, is_admin: $(`[data-mf=is_admin][data-e="${e}"]`).checked, gateway: $(`[data-mf=gateway][data-e="${e}"]`).checked, active: $(`[data-mf=active][data-e="${e}"]`).checked });
   S.H.wsmsave = el => run(() => CloudAPI.setMember(mrow(el.dataset.e)), t("saved"));
+  S.H.wsmdel = el => confirm((ar ? "حذف حساب الدخول لـ " : "Delete the sign-in account of ") + el.dataset.e + (ar ? "؟ لن يتمكن من الدخول. (مستخدم التطبيق يبقى — احذفه من المستخدمين إن أردت.)" : "? They can no longer sign in. (Their app user stays — delete it under Users if you want.)"))
+    && run(() => CloudAPI.deleteAccount({ email: el.dataset.e }), ar ? "تم الحذف" : "Deleted");
   S.H.wsmadd = () => { const email = $("#wsnew").value.trim().toLowerCase(); if (!email) return;
     run(async () => { await CloudAPI.setMember({ email, is_admin: $("#wsnewadm").checked, gateway: $("#wsnewgw").checked, active: true });
       const username = ($("#wsnewuser").value.trim() || email.split("@")[0]).toLowerCase();

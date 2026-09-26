@@ -411,6 +411,7 @@ def cloud_ensure_admin(email):
         setMember: m => rpc("set_member", { p_email: m.email, p_is_admin: !!m.is_admin, p_gateway: !!m.gateway, p_active: m.active !== false }),
         linkMember: m => rpc("link_member", { p_email: m.email, p_username: m.username || "", p_active: m.active !== false }),
         // create / update the person's sign-in account (supabase/functions/manage-user; administrators only)
+        deleteAccount: async m => req("POST", "/functions/v1/manage-user", { action: "delete", username: m.username || "", email: m.email || "" }, await token()),
         manageUser: async m => req("POST", "/functions/v1/manage-user", { username: m.username, email: m.email || "", password: m.password || "",
           full_name: m.full_name || "", active: m.active !== false }, await token()),
         snapshot: () => maybeSnapshot(true),

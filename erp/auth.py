@@ -137,6 +137,22 @@ def update_user(db, uid, d, acting_user_id):
         db.x("DELETE FROM sessions WHERE user_id=?", (uid,))
 
 
+def delete_user(db, uid, acting_user_id):
+    """Remove a user. Their name stays on everything they recorded (entries and the audit log keep the username)."""
+    u = db.one("SELECT * FROM users WHERE id=?", (uid,))
+    if not u:
+        raise ValidationError("User not found")
+    if uid == acting_user_id:
+        raise ValidationError("You cannot delete yourself — ask another administrator")
+    if u["is_admin"] and u["active"]:
+        admins = db.one("SELECT COUNT(*) AS n FROM users WHERE is_admin=1 AND active=1")["n"]
+        if admins <= 1:
+            raise ValidationError("At least one active administrator must remain")
+    db.x("DELETE FROM sessions WHERE user_id=?", (uid,))
+    db.x("DELETE FROM users WHERE id=?", (uid,))
+    return u
+
+
 def login(db, username, password):
     u = db.one("SELECT * FROM users WHERE username=? AND active=1", (text(username),))
     if not u or not check_password(password, u["pw_hash"]):

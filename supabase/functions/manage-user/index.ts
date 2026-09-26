@@ -1,4 +1,4 @@
-// Create or update a person's sign-in account from inside Beyond ERP (Users screen).
+// Create, update or delete a person's sign-in account from inside Beyond ERP (Users screen).
 //
 // Only a workspace administrator may call it (checked from their own sign-in token). It uses the project's
 // service key — which never leaves Supabase — to create the account already confirmed (no email is sent), set or
@@ -42,13 +42,33 @@ Deno.serve(async (req) => {
   const caller = String(me.data?.email || "").toLowerCase();
   if (!me.ok || !caller) return fail(401, "Sign in to the workspace again");
   const adm = await call("GET", `/rest/v1/members?select=email&email=eq.${encodeURIComponent(caller)}&active=is.true&is_admin=is.true`);
-  if (!adm.ok || !adm.data.length) return fail(403, "Only workspace administrators can create sign-in accounts");
+  if (!adm.ok || !adm.data.length) return fail(403, "Only workspace administrators can manage sign-in accounts");
 
   // 2. what to do
   let b: any;
   try { b = await req.json(); } catch { return fail(400, "Send JSON"); }
   const username = String(b.username || "").trim().toLowerCase();
   const email = String(b.email || "").trim().toLowerCase();
+
+  // delete: remove the person's sign-in account and their workspace membership
+  if (b.action === "delete") {
+    const q = email ? `email=eq.${encodeURIComponent(email)}` : `username=ilike.${encodeURIComponent(username)}`;
+    const row = await call("GET", `/rest/v1/members?select=email,is_admin,active&${q}&limit=1`);
+    const target: string = row.ok && row.data.length ? row.data[0].email : (email || (username ? `${username}@${PLACEHOLDER_DOMAIN}` : ""));
+    if (!target) return fail(400, "Say which account to delete");
+    if (target === caller) return fail(400, "You cannot delete your own sign-in account");
+    if (row.ok && row.data.length && row.data[0].is_admin && row.data[0].active) {
+      const admins = await call("GET", "/rest/v1/members?select=email&is_admin=is.true&active=is.true");
+      if (admins.ok && admins.data.length <= 1) return fail(400, "At least one active workspace administrator must remain");
+    }
+    const id = (await call("POST", "/rest/v1/rpc/auth_user_id", { p_email: target })).data;
+    if (id) {
+      const r = await call("DELETE", `/auth/v1/admin/users/${id}`);
+      if (!r.ok) return fail(400, msgOf(r.data));
+    }
+    await call("DELETE", `/rest/v1/members?email=eq.${encodeURIComponent(target)}`);
+    return reply(200, { deleted: target, account: !!id });
+  }
   const password = b.password ? String(b.password) : "";
   const active = b.active !== false;
   if (!/^[a-z0-9][a-z0-9._-]{1,39}$/.test(username)) {

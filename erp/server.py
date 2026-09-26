@@ -678,6 +678,19 @@ def wh_del(ctx, wid):
     return ok()
 
 
+@route("DELETE", "/api/items/<iid>", "stock.balances", "edit")
+def item_del(ctx, iid):
+    it = ctx.db.one("SELECT name FROM stock_items WHERE id=?", (int(iid),))
+    if not it:
+        raise acc.ValidationError("Not found")
+    if ctx.db.one("SELECT 1 FROM stock_moves WHERE item_id=? LIMIT 1", (int(iid),)):
+        raise acc.ValidationError(f"{it['name']} has stock movements — only items without any movements can be deleted "
+                                  "(void the movements first if they were a mistake)")
+    ctx.db.x("DELETE FROM stock_items WHERE id=?", (int(iid),))
+    ctx.log("item.delete", it["name"])
+    return ok()
+
+
 @route("PUT", "/api/items/<iid>", "stock.balances", "edit")
 def item_edit(ctx, iid):
     b = ctx.body
@@ -765,7 +778,15 @@ def party_edit(ctx, pid):
 
 @route("DELETE", "/api/parties-master/<pid>", "sales.parties", "edit")
 def party_del(ctx, pid):
+    p = ctx.db.one("SELECT name FROM parties WHERE id=?", (int(pid),))
+    if not p:
+        raise acc.ValidationError("Not found")
+    x = ctx.db.one("SELECT number FROM extracts WHERE customer=? LIMIT 1", (p["name"],))
+    if x:
+        raise acc.ValidationError(f"{p['name']} is the customer on invoice {x['number']} — its tax ID and address are "
+                                  "needed for that invoice and its e-invoice, so it cannot be deleted")
     ctx.db.x("DELETE FROM parties WHERE id=?", (int(pid),))
+    ctx.log("party.delete", p["name"])
     return ok()
 
 
@@ -782,6 +803,21 @@ def tax_code_add(ctx):
 @route("PUT", "/api/tax-codes/<code>", "tax.codes", "edit")
 def tax_code_edit(ctx, code):
     return ok({"code": acc.save_tax_code(ctx.db, ctx.body, old_code=code)})
+
+
+@route("DELETE", "/api/tax-codes/<code>", "tax.codes", "edit")
+def tax_code_del(ctx, code):
+    db = ctx.db
+    used = (db.one("SELECT number FROM extracts WHERE vat_code=? OR wht_code=? LIMIT 1", (code, code))
+            or db.one("SELECT name FROM parties WHERE default_vat=? OR default_wht=? LIMIT 1", (code, code))
+            or db.one("SELECT id FROM journal_entries WHERE meta LIKE ? OR meta LIKE ? LIMIT 1",
+                      (f'%"vat_code": "{code}"%', f'%"wht_code": "{code}"%')))
+    if used:
+        raise acc.ValidationError(f"Tax code {code} is used on invoices, vouchers or customers — untick Active to stop "
+                                  "using it instead (it stays on past documents)")
+    db.x("DELETE FROM tax_codes WHERE code=?", (code,))
+    ctx.log("tax_code.delete", code)
+    return ok()
 
 
 @route("GET", "/api/tax/summary", "tax.report")
@@ -988,6 +1024,16 @@ def user_edit(ctx, uid):
     auth.update_user(ctx.db, int(uid), ctx.body, ctx.user["id"])
     ctx.log("user.edit", uid)
     return ok()
+
+
+@route("DELETE", "/api/users/<uid>", "users.users", "edit")
+def user_del(ctx, uid):
+    target = ctx.db.one("SELECT is_admin FROM users WHERE id=?", (int(uid),))
+    if target and target["is_admin"] and not ctx.user["is_admin"]:
+        raise PermissionError()
+    u = auth.delete_user(ctx.db, int(uid), ctx.user["id"])
+    ctx.log("user.delete", u["username"])
+    return ok({"username": u["username"], "email": u.get("email") or ""})
 
 
 @route("PUT", "/api/me/password")
@@ -1329,6 +1375,14 @@ def cloud_account(ctx):
     c = _cloud(ctx)
     return _cloud_call(lambda: c.client()._call("POST", "/functions/v1/manage-user", {
         k: ctx.body.get(k) for k in ("username", "email", "password", "full_name", "active")}, c.token()))
+
+
+@route("POST", "/api/cloud/account/delete")
+def cloud_account_delete(ctx):
+    """Delete a person's workspace sign-in account (supabase/functions/manage-user)."""
+    c = _cloud(ctx)
+    return _cloud_call(lambda: c.client()._call("POST", "/functions/v1/manage-user", {
+        "action": "delete", "username": ctx.body.get("username") or "", "email": ctx.body.get("email") or ""}, c.token()))
 
 
 @route("PUT", "/api/cloud/members/link")

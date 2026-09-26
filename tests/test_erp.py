@@ -257,6 +257,26 @@ class Api(unittest.TestCase):
         # manual shared-overhead allocation, capped at 100%
         self.assertEqual(self.call(admin, "PUT", "/api/bus-allocation", {"allocations": {str(r["id"]): 0.7}})[0], 200)
         self.assertEqual(self.call(admin, "PUT", "/api/bus-allocation", {"allocations": {str(r["id"]): 1.2}})[0], 400)
+        # deleting: users (never yourself / the last admin), and only records nothing depends on
+        me = self.call(admin, "GET", "/api/bootstrap")[1]["user"]
+        self.assertIn("yourself", self.call(admin, "DELETE", f"/api/users/{me['id']}")[1]["error"])
+        st, tmp = self.call(admin, "POST", "/api/users", {"username": "temp", "password": "temp12345"})
+        self.assertEqual(self.call(admin, "DELETE", f"/api/users/{tmp['id']}")[0], 200)
+        self.assertIsNone(self.db.one("SELECT 1 FROM users WHERE username='temp'"))
+        self.assertEqual(self.call(admin, "POST", "/api/tax-codes", {"code": "TMP", "name": "t", "kind": "vat", "rate": 0.1})[0], 200)
+        self.assertEqual(self.call(admin, "DELETE", "/api/tax-codes/TMP")[0], 200)
+        self.call(admin, "POST", "/api/parties-master", {"name": "Cust", "type": "customer", "default_vat": "VAT14"})
+        self.assertIn("untick Active", self.call(admin, "DELETE", "/api/tax-codes/VAT14")[1]["error"])
+        pid = self.db.one("SELECT id FROM parties WHERE name='Cust'")["id"]
+        self.call(admin, "POST", "/api/extracts", {"bu_id": r["id"], "number": "INV-D", "customer": "Cust",
+                                                    "lines": [{"description": "x", "qty": 1, "price": 5}]})
+        self.assertIn("invoice INV-D", self.call(admin, "DELETE", f"/api/parties-master/{pid}")[1]["error"])
+        st, mv = self.call(admin, "POST", "/api/docs/stock_move", {"type": "Receipt", "item": "Paint", "qty": 2, "rate": 10, "warehouse": "Main Store", "date": "2026-05-01", "paid": 20})
+        self.assertEqual(st, 200, mv)
+        iid = self.db.one("SELECT id FROM stock_items WHERE name='Paint'")["id"]
+        self.assertIn("movements", self.call(admin, "DELETE", f"/api/items/{iid}")[1]["error"])
+        self.db.x("INSERT INTO stock_items(name) VALUES ('Typo')")
+        self.assertEqual(self.call(admin, "DELETE", "/api/items/" + str(self.db.one("SELECT id FROM stock_items WHERE name='Typo'")["id"]))[0], 200)
         # "view + add": may create new records on that screen, but not change or delete them
         self.call(admin, "POST", "/api/users", {"username": "store", "password": "store1234",
                                                 "perms": {"stock.moves": "add", "stock.warehouses": "add"}})

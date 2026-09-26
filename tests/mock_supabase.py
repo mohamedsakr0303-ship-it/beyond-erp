@@ -120,9 +120,17 @@ class Handler(BaseHTTPRequestHandler):
                 caller = self._email()
                 cm = st.members.get(caller)
                 if not cm or not cm["is_admin"] or not cm["active"]:
-                    return self._send(403, {"msg": "Only workspace administrators can create sign-in accounts"})
+                    return self._send(403, {"msg": "Only workspace administrators can manage sign-in accounts"})
                 u = str(body.get("username", "")).strip().lower()
                 e = (body.get("email") or "").strip().lower() or f"{u}@users.beyond-erp.invalid"
+                if body.get("action") == "delete":
+                    tgt = (body.get("email") or "").strip().lower() or next(
+                        (m["email"] for m in st.members.values() if m.get("username") == u), e)
+                    if tgt == caller:
+                        return self._send(400, {"msg": "You cannot delete your own sign-in account"})
+                    st.accounts.pop(tgt, None)
+                    st.members.pop(tgt, None)
+                    return self._send(200, {"deleted": tgt})
                 old = next((m["email"] for m in st.members.values() if m.get("username") == u), None)
                 if old and old != e:
                     st.accounts[e] = st.accounts.pop(old, None)
