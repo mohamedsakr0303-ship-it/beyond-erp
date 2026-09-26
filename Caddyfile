@@ -1,0 +1,4 @@
+erp.example.com {
+	encode gzip
+	reverse_proxy erp:8765
+}

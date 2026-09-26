@@ -1,0 +1,9 @@
+# Supabase CLI project settings (only what this app uses). The hosted project is linked in CI with --project-ref.
+project_id = "beyond-erp"
+
+[api]
+schemas = ["public"]
+
+[auth]
+site_url = "http://localhost:8765"
+enable_signup = true

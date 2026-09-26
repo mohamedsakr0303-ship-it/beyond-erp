@@ -1,0 +1,20 @@
+# docker compose up -d   →  https://erp.example.com  (edit the domain in Caddyfile)
+services:
+  erp:
+    build: .
+    restart: unless-stopped
+    environment:
+      BEYOND_ERP_SECURE_COOKIE: "1"
+    volumes:
+      - erp-data:/data
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    depends_on: [erp]
+volumes:
+  erp-data:
+  caddy-data:

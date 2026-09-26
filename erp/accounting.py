@@ -1,0 +1,1402 @@
+"""Business logic: double-entry posting, operational documents and statements.
+
+Every money movement ends up as one balanced journal entry. Documents (costs,
+payroll, collections, invoices, stock moves...) are thin helpers that build
+the right debit/credit lines, so every report comes from one source of truth.
+
+System accounts are looked up by *role* (db.acct('bank')), never by a
+hard-coded number, so the chart of accounts can be renumbered freely.
+"""
+import datetime as _dt
+import json
+import re
+
+from .db import SUBTYPES, normal_for, to_major, to_minor
+
+BILLING_BASES = ["Cost-Plus %", "Fixed Price", "Flexible / Settled"]
+PAYMENT_METHODS = ["Bank Transfer", "Cash", "Cheque", "Credit Card", "Instapay"]
+PAYROLL_TYPES = {  # cost type -> (account role, business unit required?)
+    "Direct Labour (Cost of Revenue)": ("direct_labour", True),
+    "Indirect Labour (Cost-Centre Overhead)": ("project_overhead", True),
+    "Administrative Salaries (Shared Overhead)": ("admin_salaries", False),
+}
+STOCK_MOVE_TYPES = ["Receipt", "Issue", "Transfer", "Adjustment"]
+ENTRY_KINDS = ["Direct Cost", "Operating Expense", "Payroll Accrual", "Payment Voucher", "Receipt Voucher",
+               "Sales Invoice", "Capital Contribution", "Owner Drawing", "Journal Voucher", "Goods Receipt",
+               "Material Issue", "Stock Transfer", "Stock Adjustment", "Reversing Entry"]
+
+
+class ValidationError(Exception):
+    """Bad user input; the API turns it into a 400 with this message."""
+
+
+# ------------------------------------------------------------------------ utils
+DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def today():
+    from .db import now
+    return now().date().isoformat()
+
+
+def now_iso():
+    from .db import now
+    return now().isoformat(timespec="seconds")
+
+
+def clean_date(value, field="date"):
+    if isinstance(value, _dt.datetime):
+        return value.date().isoformat()
+    if isinstance(value, _dt.date):
+        return value.isoformat()
+    value = ("" if value is None else str(value)).strip()
+    if not value:
+        return today()
+    value = value[:10]
+    if not DATE_RE.match(value):
+        raise ValidationError(f"{field} must be YYYY-MM-DD")
+    try:
+        _dt.date.fromisoformat(value)
+    except ValueError:
+        raise ValidationError(f"{field} is not a real date") from None
+    return value
+
+
+def num(value, field="amount", allow_zero=True, allow_negative=False):
+    if value in (None, ""):
+        value = 0
+    try:
+        v = float(str(value).replace(",", "")) if isinstance(value, str) else float(value)
+    except (TypeError, ValueError):
+        raise ValidationError(f"{field} must be a number") from None
+    if v != v or v in (float("inf"), float("-inf")):
+        raise ValidationError(f"{field} must be a number")
+    if not allow_negative and v < 0:
+        raise ValidationError(f"{field} cannot be negative")
+    if not allow_zero and v == 0:
+        raise ValidationError(f"{field} must be greater than zero")
+    return v
+
+
+def text(value, field=None, required=False, maxlen=500):
+    v = ("" if value is None else str(value)).strip()
+    if required and not v:
+        raise ValidationError(f"{field or 'value'} is required")
+    return v[:maxlen]
+
+
+def is_cash_method(method):
+    return (method or "").strip().lower() == "cash"
+
+
+def money_account(db, method=None, explicit=None):
+    """Where money goes in/out: an explicit cash/bank account, else by payment method."""
+    if explicit:
+        return account_code(db, explicit, subtypes=("cash", "short_term_debt"))
+    return db.acct("cash" if is_cash_method(method) else "bank")
+
+
+def account_code(db, value, types=None, subtypes=None, field="account"):
+    code = text(value)
+    row = db.one("SELECT * FROM accounts WHERE code=?", (code,))
+    if not row:
+        raise ValidationError(f"Unknown {field} {code!r}")
+    if not row["active"]:
+        raise ValidationError(f"Account {code} is inactive")
+    if types and row["type"] not in types:
+        raise ValidationError(f"{field} {code} must be a {' / '.join(types)} account")
+    if subtypes and row["subtype"] not in subtypes:
+        raise ValidationError(f"{field} {code} is not a valid choice here")
+    return code
+
+
+def bu_id_or_none(db, value, required=False):
+    if value in (None, "", 0, "0"):
+        if required:
+            raise ValidationError("Choose a business unit")
+        return None
+    row = db.one("SELECT id FROM business_units WHERE code=? OR (id=? AND ? GLOB '[0-9]*')",
+                 (str(value), value, str(value)))
+    if not row:
+        raise ValidationError(f"Unknown business unit: {value}")
+    return row["id"]
+
+
+# ------------------------------------------------------------------------ posting
+def _validate_lines(db, lines):
+    if not lines or len(lines) < 2:
+        raise ValidationError("An entry needs at least two lines")
+    accounts = {r["code"]: r for r in db.q("SELECT code, active FROM accounts")}
+    out, dr, cr = [], 0, 0
+    for ln in lines:
+        acc = text(ln.get("account"))
+        if acc not in accounts:
+            raise ValidationError(f"Unknown account {acc!r}")
+        d = to_minor(num(ln.get("debit"), "debit"))
+        c = to_minor(num(ln.get("credit"), "credit"))
+        if d and c:
+            raise ValidationError("A line cannot have both a debit and a credit")
+        if not d and not c:
+            continue
+        out.append((acc, d, c))
+        dr += d
+        cr += c
+    if dr == 0:
+        raise ValidationError("Entry total must be greater than zero")
+    if dr != cr:
+        raise ValidationError(f"Debits ({to_major(dr):,.2f}) must equal credits ({to_major(cr):,.2f})")
+    return out
+
+
+def check_open(db, date):
+    """Refuse changes dated on or before the lock date ("books closed up to")."""
+    lock = (db.setting("lock_date") or "").strip()
+    if lock and str(date or "") <= lock:
+        raise ValidationError(f"The books are closed up to {lock} — change the lock date in Settings to post or edit on {date}")
+
+
+def _insert_entry(db, *, date, kind, memo="", bu_id=None, party="", ref="", lines, meta=None,
+                  reversal_of=None, user=""):
+    """Insert a balanced entry. Caller must hold a transaction (db.tx())."""
+    check_open(db, clean_date(date))
+    vlines = _validate_lines(db, lines)
+    cur = db.conn.execute(
+        "INSERT INTO journal_entries(date,kind,memo,bu_id,party,ref,meta,reversal_of,created_by,created_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (clean_date(date), kind, text(memo, maxlen=1000), bu_id, text(party), text(ref),
+         json.dumps(meta or {}, ensure_ascii=False), reversal_of, user or "", now_iso().replace("T", " ")))
+    eid = cur.lastrowid
+    db.conn.executemany("INSERT INTO journal_lines(entry_id,account,debit,credit) VALUES (?,?,?,?)",
+                        [(eid, a, d, c) for a, d, c in vlines])
+    return eid
+
+
+def post_entry(db, **kw):
+    with db.tx():
+        return _insert_entry(db, **kw)
+
+
+def get_entry(db, eid):
+    e = db.one("SELECT e.*, b.code AS bu_code FROM journal_entries e LEFT JOIN business_units b ON b.id=e.bu_id "
+               "WHERE e.id=?", (eid,))
+    if not e:
+        return None
+    e["meta"] = json.loads(e["meta"] or "{}")
+    e["history"] = json.loads(e["history"] or "[]")
+    e["lines"] = [{"account": r["account"], "name": r["name"], "name_ar": r["name_ar"], "debit": to_major(r["debit"]),
+                   "credit": to_major(r["credit"])}
+                  for r in db.q("SELECT l.*, a.name, a.name_ar FROM journal_lines l JOIN accounts a ON a.code=l.account "
+                                "WHERE entry_id=? ORDER BY l.id", (eid,))]
+    e["amount"] = round(sum(ln["debit"] for ln in e["lines"]), 2)
+    return e
+
+
+def _split(db, total_minor, paid_minor, payable_code, method=None, paid_from=None):
+    """Credit lines for 'total, of which paid now; the rest is owed'."""
+    if paid_minor < 0 or paid_minor > total_minor:
+        raise ValidationError("Paid now must be between zero and the total")
+    lines = []
+    if paid_minor:
+        lines.append({"account": money_account(db, method, paid_from), "credit": to_major(paid_minor)})
+    if total_minor - paid_minor:
+        lines.append({"account": payable_code, "credit": to_major(total_minor - paid_minor)})
+    return lines
+
+
+# ---------------------------------------------------------------------- taxes
+def tax_code(db, code, kind):
+    """(code, rate) for a VAT or WHT code; blank code = no tax."""
+    code = text(code)
+    if not code:
+        return "", 0.0
+    t = db.one("SELECT * FROM tax_codes WHERE code=?", (code,))
+    if not t:
+        raise ValidationError(f"Unknown tax code {code!r}")
+    if t["kind"] != kind:
+        raise ValidationError(f"{code} is not a {'VAT' if kind == 'vat' else 'withholding'} code")
+    if not t["active"]:
+        raise ValidationError(f"Tax code {code} is inactive")
+    return code, float(t["rate"])
+
+
+def _purchase_taxes(db, d, net_minor):
+    """Input VAT we can recover and withholding tax we deduct from the supplier."""
+    vat_code, vat_rate = tax_code(db, d.get("vat_code"), "vat")
+    wht_code, wht_rate = tax_code(db, d.get("wht_code"), "wht")
+    vat = int(round(net_minor * vat_rate))
+    wht = int(round(net_minor * wht_rate))
+    return vat_code, vat, wht_code, wht
+
+
+def _purchase_lines(db, d, debit_account, net, vat, wht, payable, paid):
+    """Dr cost/asset (net) + Dr input VAT; Cr cash (paid) + Cr supplier (rest) + Cr WHT payable."""
+    supplier_total = net + vat - wht
+    lines = [{"account": debit_account, "debit": to_major(net)}]
+    if vat:
+        lines.append({"account": db.acct("vat_input"), "debit": to_major(vat)})
+    lines += _split(db, supplier_total, paid, payable, d.get("method"), d.get("paid_from"))
+    if wht:
+        lines.append({"account": db.acct("wht_payable"), "credit": to_major(wht)})
+    return lines
+
+
+# ---------------------------------------------------------------- purchasing
+def record_project_cost(db, d, user=""):
+    """Direct costs for a business unit (materials, subcontractors, site work)."""
+    bu = bu_id_or_none(db, d.get("bu_id") or d.get("bu_code"), required=True)
+    account = account_code(db, d.get("account") or db.acct("materials"), types=("COGS",), field="cost account")
+    qty = num(d.get("qty", 1) or 1, "quantity", allow_zero=False)
+    rate = num(d.get("rate"), "unit cost", allow_zero=False)
+    quoted = to_minor(qty * rate)
+    savings = to_minor(num(d.get("savings"), "negotiation savings"))
+    if savings > quoted:
+        raise ValidationError("Savings cannot exceed the quoted total")
+    cost = quoted - savings
+    vat_code, vat, wht_code, wht = _purchase_taxes(db, d, cost)
+    paid = to_minor(num(d.get("paid"), "paid now"))
+    vendor = text(d.get("vendor"))
+    if (paid < cost + vat - wht or wht) and not vendor:
+        raise ValidationError("Name the supplier so the unpaid balance / withholding can be tracked")
+    payable = account_code(db, d.get("payable_account") or db.acct("ap"), types=("Liability",))
+    lines = _purchase_lines(db, d, account, cost, vat, wht, payable, paid)
+    meta = {"qty": qty, "unit": text(d.get("unit")), "rate": rate, "quoted": to_major(quoted),
+            "savings": to_major(savings), "deal_ref": text(d.get("deal_ref")),
+            "deal_status": text(d.get("deal_status")), "method": text(d.get("method")),
+            "vat_code": vat_code, "wht_code": wht_code}
+    return post_entry(db, date=d.get("date"), kind="Direct Cost",
+                      memo=text(d.get("description"), "description", required=True), bu_id=bu, party=vendor,
+                      ref=meta["deal_ref"], lines=lines, meta=meta, user=user)
+
+
+def record_expense(db, d, user=""):
+    """Operating / overhead expense. With no business unit it is *shared* overhead,
+    later allocated to business units by their manual overhead %."""
+    account = account_code(db, d.get("account") or db.acct("other_overhead"), types=("Expense",),
+                           field="expense account")
+    amount = to_minor(num(d.get("amount"), "amount", allow_zero=False))
+    vat_code, vat, wht_code, wht = _purchase_taxes(db, d, amount)
+    due = amount + vat - wht
+    paid = due if d.get("paid") in (None, "") else to_minor(num(d.get("paid"), "paid now"))
+    vendor = text(d.get("vendor"))
+    if (paid < due or wht) and not vendor:
+        raise ValidationError("Name the supplier so the unpaid balance / withholding can be tracked")
+    payable = account_code(db, d.get("payable_account") or db.acct("ap"), types=("Liability",))
+    lines = _purchase_lines(db, d, account, amount, vat, wht, payable, paid)
+    return post_entry(db, date=d.get("date"), kind="Operating Expense",
+                      memo=text(d.get("description"), "description", required=True),
+                      bu_id=bu_id_or_none(db, d.get("bu_id") or d.get("bu_code")), party=vendor, lines=lines,
+                      meta={"method": text(d.get("method")), "vat_code": vat_code, "wht_code": wht_code}, user=user)
+
+
+def record_payroll(db, d, user=""):
+    ctype = d.get("cost_type") or "Direct Labour (Cost of Revenue)"
+    if ctype not in PAYROLL_TYPES:
+        raise ValidationError("Unknown payroll cost type")
+    role, needs_bu = PAYROLL_TYPES[ctype]
+    bu = bu_id_or_none(db, d.get("bu_id") or d.get("bu_code"), required=needs_bu)
+    account = account_code(db, d.get("account") or db.acct(role), types=("COGS", "Expense"))
+    worker = text(d.get("worker"), "worker name", required=True)
+    qty = num(d.get("qty", 1) or 1, "days / months", allow_zero=False)
+    rate = num(d.get("rate"), "rate", allow_zero=False)
+    total = to_minor(qty * rate)
+    paid = to_minor(num(d.get("paid"), "paid now"))
+    payable = account_code(db, d.get("payable_account") or db.acct("accrued_payroll"), types=("Liability",))
+    lines = [{"account": account, "debit": to_major(total)}] + _split(db, total, paid, payable, d.get("method"),
+                                                                      d.get("paid_from"))
+    role_txt = text(d.get("role"))
+    meta = {"role": role_txt, "cost_type": ctype, "qty": qty, "rate": rate, "period": text(d.get("period")),
+            "basis": text(d.get("basis")), "method": text(d.get("method"))}
+    return post_entry(db, date=d.get("date"), kind="Payroll Accrual",
+                      memo=f"{worker} — {role_txt}" if role_txt else worker,
+                      bu_id=bu, party=worker, lines=lines, meta=meta, user=user)
+
+
+def record_payment(db, d, user=""):
+    """Settle what we owe a supplier or worker (any liability account)."""
+    account = account_code(db, d.get("against") or db.acct("ap"), types=("Liability",), field="pay-against account")
+    party = text(d.get("party"), "payee", required=True)
+    amount = num(d.get("amount"), "amount", allow_zero=False)
+    owed = party_balance(db, account, party)
+    if to_minor(amount) > to_minor(owed) and not d.get("allow_overpay"):
+        raise ValidationError(f"{party} is owed {owed:,.2f} on {account}. Tick 'allow overpayment' to pay more.")
+    return post_entry(db, date=d.get("date"), kind="Payment Voucher", memo=text(d.get("memo")) or f"Payment to {party}",
+                      bu_id=bu_id_or_none(db, d.get("bu_id") or d.get("bu_code")), party=party, ref=text(d.get("ref")),
+                      lines=[{"account": account, "debit": amount},
+                             {"account": money_account(db, d.get("method"), d.get("paid_from")), "credit": amount}],
+                      meta={"method": text(d.get("method"))}, user=user)
+
+
+# ----------------------------------------------------------------------- sales
+def record_collection(db, d, user=""):
+    """Money received from a client. The credit account decides what it is:
+    revenue (cash-basis), receivables (settles an invoice) or client advances."""
+    bu = bu_id_or_none(db, d.get("bu_id") or d.get("bu_code"), required=True)
+    amount = num(d.get("amount"), "amount", allow_zero=False)
+    mode_roles = {"revenue": "revenue", "invoice": "ar", "advance": "client_advances"}
+    credit = d.get("credit_account") or db.acct(mode_roles.get(d.get("mode") or "revenue", "revenue"))
+    credit = account_code(db, credit, types=("Revenue", "Asset", "Liability"), field="credit account")
+    bu_row = db.one("SELECT name, customer FROM business_units WHERE id=?", (bu,))
+    received = to_minor(amount)
+    withheld = to_minor(num(d.get("withheld"), "tax withheld by client"))
+    gross = received + withheld
+    vat_code, vat_rate = tax_code(db, d.get("vat_code"), "vat")
+    vat = 0
+    if vat_code:
+        if db.one("SELECT type FROM accounts WHERE code=?", (credit,))["type"] != "Revenue":
+            raise ValidationError("VAT on a receipt applies only when it is booked straight to revenue "
+                                  "(invoiced VAT is charged on the sales invoice)")
+        vat = gross - int(round(gross / (1 + vat_rate)))
+    lines = [{"account": money_account(db, d.get("method"), d.get("received_into")), "debit": to_major(received)}]
+    if withheld:
+        lines.append({"account": db.acct("wht_receivable"), "debit": to_major(withheld)})
+    lines.append({"account": credit, "credit": to_major(gross - vat)})
+    if vat:
+        lines.append({"account": db.acct("vat_output"), "credit": to_major(vat)})
+    return post_entry(db, date=d.get("date"), kind="Receipt Voucher", memo=text(d.get("memo")) or "Client payment",
+                      bu_id=bu, party=text(d.get("party")) or bu_row["customer"] or bu_row["name"],
+                      ref=text(d.get("ref")), lines=lines,
+                      meta={"method": text(d.get("method")), "vat_code": vat_code, "withheld": to_major(withheld)},
+                      user=user)
+
+
+# ------------------------------------------------------------------ partners
+def _partner(db, d):
+    p = db.one("SELECT * FROM partners WHERE id=? OR name=?", (d.get("partner_id"), text(d.get("partner"))))
+    if not p:
+        raise ValidationError("Choose a partner")
+    return p
+
+
+def record_partner_tx(db, d, user=""):
+    """Capital in, or distribution (dividend/drawing) out."""
+    p = _partner(db, d)
+    typ = d.get("type") or "Distribution"
+    amount = num(d.get("amount"), "amount", allow_zero=False)
+    money = money_account(db, d.get("method"), d.get("cash_account"))
+    if typ == "Capital":
+        lines = [{"account": money, "debit": amount},
+                 {"account": account_code(db, d.get("equity_account") or db.acct("capital"), types=("Equity",)),
+                  "credit": amount}]
+    elif typ == "Distribution":
+        lines = [{"account": account_code(db, d.get("equity_account") or db.acct("drawings"), types=("Equity",)),
+                  "debit": amount}, {"account": money, "credit": amount}]
+    else:
+        raise ValidationError("Type must be Capital or Distribution")
+    kind = "Capital Contribution" if typ == "Capital" else "Owner Drawing"
+    return post_entry(db, date=d.get("date"), kind=kind, memo=text(d.get("memo")) or kind,
+                      bu_id=bu_id_or_none(db, d.get("bu_id") or d.get("bu_code")), party=p["name"], lines=lines,
+                      user=user)
+
+
+# ----------------------------------------------------------------- journal
+def record_journal(db, d, user=""):
+    """Manual journal: opening balances, depreciation, tax, loans, accruals..."""
+    return post_entry(db, date=d.get("date"), kind=text(d.get("kind")) or "Journal Voucher", memo=text(d.get("memo")),
+                      bu_id=bu_id_or_none(db, d.get("bu_id") or d.get("bu_code")), party=text(d.get("party")),
+                      ref=text(d.get("ref")), lines=d.get("lines") or [], user=user)
+
+
+JOURNAL_TEMPLATES = {
+    # name: (kind, debit role/subtype hint, credit role/subtype hint)
+    "Depreciation": ("depreciation", "accum_depreciation"),
+    "Amortization": ("amortization", "accum_amortization"),
+    "Income tax accrual": ("income_tax", "income_tax_payable"),
+    "Loan received": ("bank", "short_term_debt"),
+    "Loan repayment": ("short_term_debt", "bank"),
+    "Interest paid": ("interest", "bank"),
+    "Asset purchase": ("fixed_asset", "bank"),
+    "Software / intangible purchase": ("intangible", "bank"),
+    "Apply client advance to invoice": ("client_advances", "ar"),
+    "VAT settlement (offset input VAT)": ("vat_output", "vat_input"),
+    "Pay VAT to the Tax Authority": ("vat_output", "bank"),
+    "Pay withholding tax to the Tax Authority": ("wht_payable", "bank"),
+    "Offset client-withheld tax against income tax": ("income_tax_payable", "wht_receivable"),
+}
+
+
+# ------------------------------------------------------------- corrections
+def _unlink_documents(db, eid):
+    db.conn.execute("UPDATE extracts SET status='draft', entry_id=NULL WHERE entry_id=?", (eid,))
+    pairs = db.q("SELECT DISTINCT item_id, warehouse_id FROM stock_moves WHERE entry_id=?", (eid,))
+    db.conn.execute("DELETE FROM stock_moves WHERE entry_id=?", (eid,))
+    for p in pairs:
+        _recompute_level(db, p["item_id"], p["warehouse_id"])
+
+
+def void_entry(db, eid, reason="", user=""):
+    with db.tx():
+        e = db.one("SELECT * FROM journal_entries WHERE id=?", (eid,))
+        if not e:
+            raise ValidationError("Entry not found")
+        if e["status"] == "void":
+            raise ValidationError("Already void")
+        check_open(db, e["date"])
+        if e["reversed_by"] or e["reversal_of"]:
+            raise ValidationError("This entry is part of a reversal pair and cannot be voided")
+        meta = json.loads(e["meta"] or "{}")
+        meta["void_reason"] = text(reason)
+        meta["voided_by"] = user
+        db.conn.execute("UPDATE journal_entries SET status='void', meta=? WHERE id=?",
+                        (json.dumps(meta, ensure_ascii=False), eid))
+        _unlink_documents(db, eid)
+
+
+def reverse_entry(db, eid, date=None, user=""):
+    with db.tx():
+        e = get_entry(db, eid)
+        if not e:
+            raise ValidationError("Entry not found")
+        if e["status"] != "posted" or e["reversed_by"] or e["reversal_of"]:
+            raise ValidationError("Only a live, un-reversed entry can be reversed")
+        lines = [{"account": ln["account"], "debit": ln["credit"], "credit": ln["debit"]} for ln in e["lines"]]
+        rid = _insert_entry(db, date=date or today(), kind="Reversing Entry", memo=f"Reversal of #{eid}: {e['memo']}",
+                            bu_id=e["bu_id"], party=e["party"], ref=e["ref"], lines=lines, reversal_of=eid, user=user)
+        db.conn.execute("UPDATE journal_entries SET reversed_by=? WHERE id=?", (rid, eid))
+        _unlink_documents(db, eid)
+        return rid
+
+
+def edit_entry(db, eid, d, user=""):
+    """Correct an entry in place; the previous version is kept in its history."""
+    with db.tx():
+        e = get_entry(db, eid)
+        if not e:
+            raise ValidationError("Entry not found")
+        if e["status"] != "posted" or e["reversed_by"] or e["reversal_of"]:
+            raise ValidationError("Only live entries can be edited")
+        check_open(db, e["date"])
+        check_open(db, clean_date(d.get("date") or e["date"]))
+        if db.one("SELECT 1 FROM stock_moves WHERE entry_id=?", (eid,)) or \
+                db.one("SELECT 1 FROM extracts WHERE entry_id=?", (eid,)):
+            raise ValidationError("This entry belongs to a stock move or invoice — reverse it and re-enter instead")
+        vlines = _validate_lines(db, d.get("lines") or e["lines"])
+        snap = {k: e[k] for k in ("date", "memo", "bu_code", "party", "lines")}
+        snap.update(edited_at=now_iso(), edited_by=user)
+        db.conn.execute("UPDATE journal_entries SET date=?, memo=?, bu_id=?, party=?, history=? WHERE id=?",
+                        (clean_date(d.get("date") or e["date"]), text(d.get("memo", e["memo"]), maxlen=1000),
+                         bu_id_or_none(db, d.get("bu_id", e["bu_id"])), text(d.get("party", e["party"])),
+                         json.dumps(e["history"] + [snap], ensure_ascii=False), eid))
+        db.conn.execute("DELETE FROM journal_lines WHERE entry_id=?", (eid,))
+        db.conn.executemany("INSERT INTO journal_lines(entry_id,account,debit,credit) VALUES (?,?,?,?)",
+                            [(eid, a, dd, c) for a, dd, c in vlines])
+
+
+def delete_entry(db, eid):
+    with db.tx():
+        e = db.one("SELECT status FROM journal_entries WHERE id=?", (eid,))
+        if not e:
+            raise ValidationError("Entry not found")
+        if e["status"] != "void":
+            raise ValidationError("Void an entry before deleting it")
+        check_open(db, db.one("SELECT date FROM journal_entries WHERE id=?", (eid,))["date"])
+        db.conn.execute("DELETE FROM journal_entries WHERE id=?", (eid,))
+
+
+# ------------------------------------------------------------- chart of accounts
+def save_account(db, d, old_code=None):
+    code = text(d.get("code"), "code", required=True, maxlen=20)
+    name = text(d.get("name"), "name", required=True)
+    name_ar = text(d.get("name_ar"))
+    typ = d.get("type")
+    if typ not in SUBTYPES:
+        raise ValidationError("Choose an account type")
+    sub = d.get("subtype") or SUBTYPES[typ][0]
+    if sub not in SUBTYPES[typ]:
+        raise ValidationError(f"Subtype {sub!r} does not belong to {typ}")
+    role = text(d.get("role")) or None
+    active = 0 if d.get("active") in (0, "0", False, "false") else 1
+    with db.tx():
+        if old_code:
+            cur = db.one("SELECT * FROM accounts WHERE code=?", (old_code,))
+            if not cur:
+                raise ValidationError("Account not found")
+            if code != old_code and db.one("SELECT 1 FROM accounts WHERE code=?", (code,)):
+                raise ValidationError(f"Code {code} is already used")
+            if cur["role"] and not active:
+                raise ValidationError("System accounts cannot be deactivated")
+            used = db.one("SELECT 1 FROM journal_lines WHERE account=? LIMIT 1", (old_code,))
+            if used and cur["type"] != typ:
+                raise ValidationError("This account has postings; its type cannot change (subtype can)")
+            db.conn.execute("UPDATE accounts SET code=?, name=?, name_ar=?, type=?, subtype=?, normal=?, active=? "
+                            "WHERE code=?", (code, name, name_ar, typ, sub, normal_for(typ, sub), active, old_code))
+        else:
+            if db.one("SELECT 1 FROM accounts WHERE code=?", (code,)):
+                raise ValidationError(f"Code {code} is already used")
+            db.conn.execute("INSERT INTO accounts(code,name,name_ar,type,subtype,normal,active) VALUES (?,?,?,?,?,?,?)",
+                            (code, name, name_ar, typ, sub, normal_for(typ, sub), active))
+    return code
+
+
+def delete_account(db, code):
+    a = db.one("SELECT * FROM accounts WHERE code=?", (code,))
+    if not a:
+        raise ValidationError("Account not found")
+    if a["role"]:
+        raise ValidationError("System accounts cannot be deleted (you can rename or renumber them)")
+    if db.one("SELECT 1 FROM journal_lines WHERE account=? LIMIT 1", (code,)):
+        raise ValidationError("Account has postings — deactivate it instead")
+    db.x("DELETE FROM accounts WHERE code=?", (code,))
+
+
+# --------------------------------------------------------------------- stock
+def _warehouse(db, value):
+    w = db.one("SELECT * FROM warehouses WHERE id=? OR name=?", (value, text(value)))
+    if not w:
+        raise ValidationError(f"Unknown warehouse: {value}")
+    return w
+
+
+def _wh_account(db, w):
+    return w["account"] or db.acct("inventory")
+
+
+def _recompute_level(db, item_id, wh_id):
+    qty, avg = 0.0, 0.0
+    for m in db.q("SELECT qty, rate FROM stock_moves WHERE item_id=? AND warehouse_id=? ORDER BY date, id",
+                  (item_id, wh_id)):
+        if m["qty"] > 0:
+            new_qty = qty + m["qty"]
+            avg = ((max(qty, 0) * avg) + m["qty"] * m["rate"]) / max(new_qty, 1e-9) if new_qty > 0 else m["rate"]
+            qty = new_qty
+        else:
+            qty += m["qty"]
+    db.conn.execute("INSERT OR REPLACE INTO stock_levels(item_id,warehouse_id,qty,avg_cost) VALUES (?,?,?,?)",
+                    (item_id, wh_id, round(qty, 6), avg))
+
+
+def _item(db, d, create=False):
+    name = text(d.get("item") or d.get("name"), "item", required=True)
+    it = db.one("SELECT * FROM stock_items WHERE id=? OR name=?", (d.get("item_id"), name))
+    if it:
+        return it
+    if not create:
+        raise ValidationError(f"Unknown item: {name}")
+    iid = db.conn.execute("INSERT INTO stock_items(name,unit) VALUES (?,?)", (name, text(d.get("unit")) or "pcs")).lastrowid
+    return db.one("SELECT * FROM stock_items WHERE id=?", (iid,))
+
+
+def _level(db, item_id, wh_id):
+    return db.one("SELECT * FROM stock_levels WHERE item_id=? AND warehouse_id=?", (item_id, wh_id)) or \
+        {"qty": 0.0, "avg_cost": 0.0}
+
+
+def stock_move(db, d, user=""):
+    """One entry point for Receipt / Issue / Transfer / Adjustment."""
+    typ = d.get("type") or "Receipt"
+    if typ not in STOCK_MOVE_TYPES:
+        raise ValidationError("Unknown stock move type")
+    date = clean_date(d.get("date"))
+    with db.tx():
+        wh = _warehouse(db, d.get("warehouse_id") or d.get("warehouse"))
+        item = _item(db, d, create=(typ == "Receipt"))
+        lvl = _level(db, item["id"], wh["id"])
+        inv = _wh_account(db, wh)
+        if typ == "Receipt":
+            qty = num(d.get("qty"), "quantity", allow_zero=False)
+            rate = num(d.get("rate"), "unit cost", allow_zero=False)
+            total = to_minor(qty * rate)
+            vat_code, vat, wht_code, wht = _purchase_taxes(db, d, total)
+            paid = to_minor(num(d.get("paid"), "paid now"))
+            vendor = text(d.get("vendor"))
+            if (paid < total + vat - wht or wht) and not vendor:
+                raise ValidationError("Name the supplier so the unpaid balance / withholding can be tracked")
+            payable = account_code(db, d.get("payable_account") or db.acct("ap"), types=("Liability",))
+            lines = _purchase_lines(db, d, inv, total, vat, wht, payable, paid)
+            eid = _insert_entry(db, date=date, kind="Goods Receipt", memo=f"Received {qty:g} {item['unit']} "
+                                f"{item['name']} → {wh['name']}", party=vendor, lines=lines, user=user,
+                                meta={"qty": qty, "rate": rate, "item": item["name"], "warehouse": wh["name"],
+                                      "vat_code": vat_code, "wht_code": wht_code})
+            moves = [(wh["id"], qty, rate * 100, None)]
+        elif typ == "Issue":
+            qty = num(d.get("qty"), "quantity", allow_zero=False)
+            if qty > lvl["qty"] + 1e-9:
+                raise ValidationError(f"Only {lvl['qty']:g} {item['unit']} of {item['name']} in {wh['name']}")
+            value = int(round(qty * lvl["avg_cost"]))
+            if value <= 0:
+                raise ValidationError("Item has no cost value to issue")
+            bu = bu_id_or_none(db, d.get("bu_id") or d.get("bu_code"), required=True)
+            cost_acc = account_code(db, d.get("account") or db.acct("materials"), types=("COGS", "Expense"))
+            eid = _insert_entry(db, date=date, kind="Material Issue", bu_id=bu, user=user,
+                                memo=f"Issued {qty:g} {item['unit']} {item['name']} from {wh['name']}",
+                                lines=[{"account": cost_acc, "debit": to_major(value)},
+                                       {"account": inv, "credit": to_major(value)}],
+                                meta={"qty": qty, "item": item["name"], "warehouse": wh["name"]})
+            moves = [(wh["id"], -qty, lvl["avg_cost"], bu)]
+        elif typ == "Transfer":
+            qty = num(d.get("qty"), "quantity", allow_zero=False)
+            to = _warehouse(db, d.get("to_warehouse_id") or d.get("to_warehouse"))
+            if to["id"] == wh["id"]:
+                raise ValidationError("Pick a different destination warehouse")
+            if qty > lvl["qty"] + 1e-9:
+                raise ValidationError(f"Only {lvl['qty']:g} {item['unit']} in {wh['name']}")
+            value = int(round(qty * lvl["avg_cost"]))
+            to_acc = _wh_account(db, to)
+            eid = None
+            if to_acc != inv and value:
+                eid = _insert_entry(db, date=date, kind="Stock Transfer", user=user,
+                                    memo=f"Transfer {qty:g} {item['name']}: {wh['name']} → {to['name']}",
+                                    lines=[{"account": to_acc, "debit": to_major(value)},
+                                           {"account": inv, "credit": to_major(value)}])
+            moves = [(wh["id"], -qty, lvl["avg_cost"], None), (to["id"], qty, lvl["avg_cost"], None)]
+        else:  # Adjustment to a physical count
+            counted = num(d.get("counted"), "counted quantity")
+            diff = counted - lvl["qty"]
+            if abs(diff) < 1e-9:
+                raise ValidationError("Count matches the system — nothing to adjust")
+            rate = lvl["avg_cost"] or to_minor(num(d.get("rate"), "unit cost"))
+            value = int(round(abs(diff) * rate))
+            adj = db.acct("stock_adjust")
+            eid = None
+            if value:
+                lines = ([{"account": inv, "debit": to_major(value)}, {"account": adj, "credit": to_major(value)}]
+                         if diff > 0 else
+                         [{"account": adj, "debit": to_major(value)}, {"account": inv, "credit": to_major(value)}])
+                eid = _insert_entry(db, date=date, kind="Stock Adjustment", user=user, lines=lines,
+                                    memo=f"Count adjustment — {item['name']} @ {wh['name']} ({diff:+g})")
+            moves = [(wh["id"], diff, rate, None)]
+        for wid, q, r, bu in moves:
+            db.conn.execute("INSERT INTO stock_moves(item_id,warehouse_id,date,qty,rate,bu_id,entry_id,kind,note) "
+                            "VALUES (?,?,?,?,?,?,?,?,?)", (item["id"], wid, date, q, r, bu, eid, typ,
+                                                           text(d.get("note"))))
+            _recompute_level(db, item["id"], wid)
+        return eid
+
+
+def stock_report(db, warehouse_id=None, q=None):
+    w, p = [], []
+    if warehouse_id:
+        w.append("l.warehouse_id=?")
+        p.append(int(warehouse_id))
+    if q:
+        w.append("i.name LIKE ?")
+        p.append(f"%{q}%")
+    rows = db.q("SELECT i.id AS item_id, i.name, i.unit, i.reorder_level, w.id AS warehouse_id, w.name AS warehouse, "
+                "l.qty, l.avg_cost FROM stock_levels l JOIN stock_items i ON i.id=l.item_id "
+                "JOIN warehouses w ON w.id=l.warehouse_id" + (" WHERE " + " AND ".join(w) if w else "") +
+                " ORDER BY i.name, w.name", p)
+    for r in rows:
+        r["value"] = to_major(r["qty"] * r["avg_cost"])
+        r["avg_cost"] = to_major(r["avg_cost"])
+        r["low"] = bool(r["reorder_level"]) and r["qty"] <= r["reorder_level"]
+    return rows
+
+
+# ------------------------------------------------------------- BOQ & extracts
+def _lines_in(raw):
+    out = []
+    for i, ln in enumerate(raw or []):
+        desc = text(ln.get("description"), maxlen=2000)
+        if not desc:
+            continue
+        out.append({"seq": i, "category": text(ln.get("category")), "sub": text(ln.get("sub")),
+                    "item_no": text(ln.get("item_no")), "description": desc, "unit": text(ln.get("unit")),
+                    "qty": num(ln.get("qty"), "quantity"), "price": to_minor(num(ln.get("price"), "price")),
+                    "cost": to_minor(num(ln.get("cost"), "cost"))})
+    return out
+
+
+def _line_out(ln):
+    ln = dict(ln)
+    ln["price"] = to_major(ln["price"])
+    if "cost" in ln:
+        ln["cost"] = to_major(ln["cost"])
+    ln["amount"] = round(ln["qty"] * ln["price"], 2)
+    return ln
+
+
+def save_boq(db, d, boq_id=None):
+    lines = _lines_in(d.get("lines"))
+    bu = bu_id_or_none(db, d.get("bu_id") or d.get("bu_code"))
+    with db.tx():
+        vals = (bu, text(d.get("title")) or "BOQ", text(d.get("rev")) or "Rev 01", clean_date(d.get("date")),
+                text(d.get("client")), text(d.get("location")), text(d.get("notes"), maxlen=4000))
+        if boq_id:
+            if not db.one("SELECT 1 FROM boqs WHERE id=?", (boq_id,)):
+                raise ValidationError("BOQ not found")
+            db.conn.execute("UPDATE boqs SET bu_id=?,title=?,rev=?,date=?,client=?,location=?,notes=? WHERE id=?",
+                            vals + (boq_id,))
+            db.conn.execute("DELETE FROM boq_lines WHERE boq_id=?", (boq_id,))
+        else:
+            boq_id = db.conn.execute("INSERT INTO boqs(bu_id,title,rev,date,client,location,notes) "
+                                     "VALUES (?,?,?,?,?,?,?)", vals).lastrowid
+        db.conn.executemany("INSERT INTO boq_lines(boq_id,seq,category,sub,item_no,description,unit,qty,price,cost) "
+                            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                            [(boq_id, ln["seq"], ln["category"], ln["sub"], ln["item_no"], ln["description"],
+                              ln["unit"], ln["qty"], ln["price"], ln["cost"]) for ln in lines])
+    return boq_id
+
+
+def get_boq(db, boq_id):
+    b = db.one("SELECT b.*, u.code AS bu_code, u.name AS bu_name FROM boqs b "
+               "LEFT JOIN business_units u ON u.id=b.bu_id WHERE b.id=?", (boq_id,))
+    if not b:
+        return None
+    b["lines"] = [_line_out(ln) for ln in db.q("SELECT * FROM boq_lines WHERE boq_id=? ORDER BY seq, id", (boq_id,))]
+    b["total"] = round(sum(ln["amount"] for ln in b["lines"]), 2)
+    b["cost_total"] = round(sum(ln["qty"] * ln["cost"] for ln in b["lines"]), 2)
+    b["billed"] = round(sum(x["total"] for x in list_extracts(db, boq_id=boq_id) if x["status"] == "posted"), 2)
+    return b
+
+
+def save_extract(db, d, extract_id=None):
+    bu = bu_id_or_none(db, d.get("bu_id") or d.get("bu_code"), required=True)
+    number = text(d.get("number"), "invoice / extract number", required=True)
+    lines = _lines_in(d.get("lines"))
+    boq_id = d.get("boq_id") or None
+    vat_code, _ = tax_code(db, d.get("vat_code"), "vat")
+    wht_code, _ = tax_code(db, d.get("wht_code"), "wht")
+    with db.tx():
+        vals = (bu, boq_id, number, clean_date(d.get("date")), text(d.get("customer")), vat_code, wht_code)
+        if extract_id:
+            x = db.one("SELECT status FROM extracts WHERE id=?", (extract_id,))
+            if not x:
+                raise ValidationError("Extract not found")
+            if x["status"] == "posted":
+                raise ValidationError("Posted extracts are locked — reverse the invoice entry first")
+            db.conn.execute("UPDATE extracts SET bu_id=?,boq_id=?,number=?,date=?,customer=?,vat_code=?,wht_code=? "
+                            "WHERE id=?", vals + (extract_id,))
+            db.conn.execute("DELETE FROM extract_lines WHERE extract_id=?", (extract_id,))
+        else:
+            if db.one("SELECT 1 FROM extracts WHERE number=?", (number,)):
+                raise ValidationError(f"Invoice number {number} already exists")
+            extract_id = db.conn.execute("INSERT INTO extracts(bu_id,boq_id,number,date,customer,vat_code,wht_code) "
+                                         "VALUES (?,?,?,?,?,?,?)", vals).lastrowid
+        db.conn.executemany("INSERT INTO extract_lines(extract_id,seq,category,sub,item_no,description,unit,qty,price) "
+                            "VALUES (?,?,?,?,?,?,?,?,?)",
+                            [(extract_id, ln["seq"], ln["category"], ln["sub"], ln["item_no"], ln["description"],
+                              ln["unit"], ln["qty"], ln["price"]) for ln in lines])
+    return extract_id
+
+
+def get_extract(db, xid):
+    x = db.one("SELECT x.*, u.code AS bu_code, u.name AS bu_name, u.location AS bu_location, u.customer AS bu_customer, "
+               "b.title AS boq_title "
+               "FROM extracts x JOIN business_units u ON u.id=x.bu_id LEFT JOIN boqs b ON b.id=x.boq_id "
+               "WHERE x.id=?", (xid,))
+    if not x:
+        return None
+    x["lines"] = [_line_out(ln) for ln in
+                  db.q("SELECT * FROM extract_lines WHERE extract_id=? ORDER BY seq, id", (xid,))]
+    x["total"] = round(sum(ln["amount"] for ln in x["lines"]), 2)
+    x.update(invoice_taxes(db, x))
+    if x["boq_id"]:
+        contract = {ln["item_no"] or ln["description"]: ln["qty"]
+                    for ln in db.q("SELECT item_no, description, qty FROM boq_lines WHERE boq_id=?", (x["boq_id"],))}
+        before = {}
+        for r in db.q("SELECT l.item_no, l.description, l.qty FROM extract_lines l JOIN extracts e "
+                      "ON e.id=l.extract_id WHERE e.boq_id=? AND e.status='posted' AND e.id<>?", (x["boq_id"], xid)):
+            k = r["item_no"] or r["description"]
+            before[k] = before.get(k, 0) + r["qty"]
+        for ln in x["lines"]:
+            k = ln["item_no"] or ln["description"]
+            ln["contract_qty"] = contract.get(k)
+            ln["billed_before"] = before.get(k, 0)
+    return x
+
+
+def invoice_taxes(db, x):
+    """VAT and WHT for a sales invoice, computed on its net total."""
+    _, vr = tax_code(db, x.get("vat_code"), "vat")
+    _, wr = tax_code(db, x.get("wht_code"), "wht")
+    net = to_minor(x["total"])
+    vat, wht = int(round(net * vr)), int(round(net * wr))
+    party = x.get("customer") or ""
+    return {"vat": to_major(vat), "wht": to_major(wht), "gross": to_major(net + vat),
+            "receivable": to_major(net + vat - wht), "customer_name": party}
+
+
+def list_extracts(db, boq_id=None, bu_id=None, status=None, date_from=None, date_to=None):
+    w, p = [], []
+    for cond, val in (("x.boq_id=?", boq_id), ("x.bu_id=?", bu_id), ("x.status=?", status),
+                      ("x.date>=?", date_from), ("x.date<=?", date_to)):
+        if val:
+            w.append(cond)
+            p.append(val)
+    rows = db.q("SELECT x.*, u.code AS bu_code, b.title AS boq_title, "
+                "(SELECT COALESCE(SUM(ROUND(qty*price)),0) FROM extract_lines WHERE extract_id=x.id) AS total_minor "
+                "FROM extracts x JOIN business_units u ON u.id=x.bu_id LEFT JOIN boqs b ON b.id=x.boq_id" +
+                (" WHERE " + " AND ".join(w) if w else "") + " ORDER BY x.date DESC, x.id DESC", p)
+    for r in rows:
+        r["total"] = to_major(r.pop("total_minor"))
+    return rows
+
+
+def post_extract(db, xid, date=None, user="", ar_account=None, revenue_account=None):
+    """Invoice executed work: Dr Receivables / Cr Revenue."""
+    x = get_extract(db, xid)
+    if not x:
+        raise ValidationError("Extract not found")
+    if x["status"] == "posted":
+        raise ValidationError("Already invoiced")
+    if x["total"] <= 0:
+        raise ValidationError("Extract total must be greater than zero")
+    ar = account_code(db, ar_account or db.acct("ar"), types=("Asset",))
+    rev = account_code(db, revenue_account or db.acct("revenue"), types=("Revenue",))
+    lines = [{"account": ar, "debit": x["receivable"]}]
+    if x["wht"]:
+        lines.append({"account": db.acct("wht_receivable"), "debit": x["wht"]})
+    lines.append({"account": rev, "credit": x["total"]})
+    if x["vat"]:
+        lines.append({"account": db.acct("vat_output"), "credit": x["vat"]})
+    with db.tx():
+        eid = _insert_entry(db, date=date or x["date"], kind="Sales Invoice", memo=f"Invoice — {x['number']}",
+                            bu_id=x["bu_id"], party=x["customer"] or x["bu_customer"] or x["bu_name"], ref=x["number"],
+                            user=user, lines=lines,
+                            meta={"extract_id": xid, "vat_code": x["vat_code"], "wht_code": x["wht_code"]})
+        db.conn.execute("UPDATE extracts SET status='posted', entry_id=? WHERE id=?", (eid, xid))
+    return eid
+
+
+# ====================================================================== REPORTS
+LIVE = "e.status='posted'"
+
+
+def _where(date_from=None, date_to=None, bu_id=None):
+    w, p = [LIVE], []
+    if date_from:
+        w.append("e.date>=?")
+        p.append(clean_date(date_from))
+    if date_to:
+        w.append("e.date<=?")
+        p.append(clean_date(date_to))
+    if bu_id not in (None, ""):
+        if bu_id == "none":
+            w.append("e.bu_id IS NULL")
+        else:
+            w.append("e.bu_id=?")
+            p.append(int(bu_id))
+    return " AND ".join(w), p
+
+
+def account_totals(db, **kw):
+    w, p = _where(**kw)
+    rows = db.q(f"""SELECT a.code, a.name, a.type, a.subtype, a.normal, a.role,
+                    COALESCE(SUM(l.debit),0) AS dr, COALESCE(SUM(l.credit),0) AS cr
+                    FROM accounts a LEFT JOIN journal_lines l ON l.account=a.code
+                     AND l.entry_id IN (SELECT e.id FROM journal_entries e WHERE {w})
+                    GROUP BY a.code ORDER BY a.code""", p)
+    for r in rows:
+        r["net"] = r["dr"] - r["cr"]  # debit-positive
+    return rows
+
+
+def _day_before(d):
+    return (_dt.date.fromisoformat(clean_date(d)) - _dt.timedelta(days=1)).isoformat()
+
+
+def trial_balance(db, date_from=None, date_to=None, bu_id=None):
+    """Opening, period movement and closing per account (debit/credit columns)."""
+    opening = {r["code"]: r["net"] for r in account_totals(db, date_to=_day_before(date_from), bu_id=bu_id)} \
+        if date_from else {}
+    rows = []
+    for r in account_totals(db, date_from=date_from, date_to=date_to, bu_id=bu_id):
+        o = opening.get(r["code"], 0)
+        c = o + r["net"]
+        if not (o or r["dr"] or r["cr"]):
+            continue
+        rows.append({"code": r["code"], "name": r["name"], "type": r["type"], "subtype": r["subtype"],
+                     "opening_debit": to_major(max(o, 0)), "opening_credit": to_major(max(-o, 0)),
+                     "period_debit": to_major(r["dr"]), "period_credit": to_major(r["cr"]),
+                     "debit": to_major(max(c, 0)), "credit": to_major(max(-c, 0))})
+    tot = {k: round(sum(r[k] for r in rows), 2) for k in
+           ("opening_debit", "opening_credit", "period_debit", "period_credit", "debit", "credit")}
+    return {"rows": rows, "totals": tot, "balanced": abs(tot["debit"] - tot["credit"]) < 0.005,
+            "date_from": date_from, "date_to": date_to}
+
+
+def _by_subtype(rows):
+    m = {}
+    for r in rows:
+        m.setdefault(r["subtype"], []).append(r)
+    return m
+
+
+def income_statement(db, date_from=None, date_to=None, bu_id=None, allocate_overhead=False):
+    """Revenue → Net sales → Gross profit → Operating expenses → EBITDA → D&A → EBIT
+    → interest & other → EBT → income tax → Net profit."""
+    rows = [r for r in account_totals(db, date_from=date_from, date_to=date_to, bu_id=bu_id)
+            if r["type"] in ("Revenue", "COGS", "Expense") and (r["dr"] or r["cr"])]
+    sub = _by_subtype(rows)
+
+    def lines(subtype, sign):  # sign +1: credit-positive (income), -1: debit-positive (cost)
+        return [{"code": r["code"], "name": r["name"], "amount": to_major(-r["net"] if sign > 0 else r["net"])}
+                for r in sub.get(subtype, [])]
+
+    def total(ls):
+        return round(sum(x["amount"] for x in ls), 2)
+
+    revenue = lines("operating_revenue", +1)
+    discounts = lines("sales_discount", -1)
+    cogs = lines("cogs", -1)
+    opex_groups = [("Employee expenses", lines("employee", -1)),
+                   ("General & administrative expenses", lines("general_admin", -1)),
+                   ("Marketing & advertising expenses", lines("marketing", -1)),
+                   ("Utilities (electricity / telephone)", lines("utilities", -1)),
+                   ("Other operating expenses", lines("other_operating", -1))]
+    dep, amort = lines("depreciation", -1), lines("amortization", -1)
+    interest, other_nonop = lines("interest", -1), lines("other_nonoperating", -1)
+    other_income = lines("other_income", +1)
+    tax = lines("income_tax", -1)
+
+    gross_sales = total(revenue)
+    net_sales = round(gross_sales - total(discounts), 2)
+    cost_of_sales = total(cogs)
+    gross_profit = round(net_sales - cost_of_sales, 2)
+    opex = round(sum(total(g) for _, g in opex_groups), 2)
+    allocated = 0.0
+    if allocate_overhead and bu_id not in (None, "", "none"):
+        allocated = allocated_overhead(db, int(bu_id), date_from, date_to)
+        opex_groups.append(("Allocated shared overhead", [{"code": "", "name": "Share of company overhead",
+                                                           "amount": allocated}] if allocated else []))
+        opex = round(opex + allocated, 2)
+    ebitda = round(gross_profit - opex, 2)
+    da = round(total(dep) + total(amort), 2)
+    ebit = round(ebitda - da, 2)
+    ebt = round(ebit - total(interest) - total(other_nonop) + total(other_income), 2)
+    net = round(ebt - total(tax), 2)
+    pct = (lambda v: round(v / net_sales, 4) if net_sales else 0)
+    return {
+        "date_from": date_from, "date_to": date_to, "bu_id": bu_id,
+        "revenue": revenue, "gross_sales": gross_sales, "discounts": discounts, "net_sales": net_sales,
+        "cogs": cogs, "cost_of_sales": cost_of_sales, "gross_profit": gross_profit,
+        "opex_groups": [{"label": lbl, "lines": ls, "total": total(ls)} for lbl, ls in opex_groups],
+        "operating_expenses": opex, "allocated_overhead": allocated, "ebitda": ebitda,
+        "depreciation": dep, "amortization": amort, "d_and_a": da, "ebit": ebit,
+        "interest": interest, "other_nonoperating": other_nonop, "other_income": other_income, "ebt": ebt,
+        "tax": tax, "income_tax": total(tax), "net_profit": net,
+        "margins": {"gross": pct(gross_profit), "ebitda": pct(ebitda), "ebit": pct(ebit), "net": pct(net)},
+    }
+
+
+def balance_sheet(db, date_to=None, bu_id=None):
+    rows = account_totals(db, date_to=date_to, bu_id=bu_id)
+    sub = _by_subtype([r for r in rows if r["dr"] or r["cr"]])
+    earnings = -sum(r["net"] for r in rows if r["type"] in ("Revenue", "COGS", "Expense"))
+
+    def sect(subtypes, sign):
+        out = []
+        for s in subtypes:
+            for r in sub.get(s, []):
+                out.append({"code": r["code"], "name": r["name"], "subtype": s, "amount": to_major(sign * r["net"])})
+        return out
+
+    cur_assets = sect(["cash", "receivable", "inventory", "prepaid", "other_current_asset"], 1)
+    nc_assets = sect(["fixed_asset", "accumulated_depreciation", "intangible", "accumulated_amortization",
+                      "other_noncurrent_asset"], 1)
+    cur_liab = sect(["payable", "accrued", "deferred_revenue", "tax_payable", "other_current_liability",
+                     "short_term_debt"], -1)
+    nc_liab = sect(["long_term_debt", "other_noncurrent_liability"], -1)
+    equity = sect(["capital", "retained_earnings", "other_equity", "drawings"], -1)
+    equity.append({"code": "", "name": "Current earnings (profit to date)", "subtype": "earnings",
+                   "amount": to_major(earnings)})
+    t = lambda ls: round(sum(x["amount"] for x in ls), 2)  # noqa: E731
+    ta = round(t(cur_assets) + t(nc_assets), 2)
+    tl = round(t(cur_liab) + t(nc_liab), 2)
+    te = t(equity)
+    return {"date_to": date_to, "current_assets": cur_assets, "noncurrent_assets": nc_assets,
+            "current_liabilities": cur_liab, "noncurrent_liabilities": nc_liab, "equity": equity,
+            "total_current_assets": t(cur_assets), "total_noncurrent_assets": t(nc_assets),
+            "total_current_liabilities": t(cur_liab), "total_noncurrent_liabilities": t(nc_liab),
+            "total_assets": ta, "total_liabilities": tl, "total_equity": te,
+            "total_liabilities_equity": round(tl + te, 2), "balanced": abs(ta - tl - te) < 0.005}
+
+
+CF_OPERATING = [("receivable", "Accounts receivable"), ("inventory", "Inventory"),
+                ("prepaid", "Prepaid expenses & advances"), ("other_current_asset", "Other current assets"),
+                ("payable", "Accounts payable"), ("accrued", "Accrued liabilities & payroll"),
+                ("deferred_revenue", "Deferred revenue (client advances)"), ("tax_payable", "Taxes payable"),
+                ("other_current_liability", "Other current liabilities")]
+CF_INVESTING = [("fixed_asset", "Capital expenditures (fixed assets)"), ("intangible", "Additions to intangibles"),
+                ("other_noncurrent_asset", "Other long-term assets")]
+CF_FINANCING = [("short_term_debt", "Short-term debt issued / (repaid)"),
+                ("long_term_debt", "Long-term debt issued / (repaid)"),
+                ("other_noncurrent_liability", "Other long-term liabilities"),
+                ("capital", "Capital contributed"), ("other_equity", "Other equity movements"),
+                ("drawings", "Dividends / partner drawings paid")]
+
+
+def cash_flow(db, date_from=None, date_to=None, bu_id=None):
+    """Indirect-method statement: net income, add back non-cash, working-capital
+    changes, investing and financing — reconciled to the change in cash."""
+    date_to = date_to or today()
+    start = {r["code"]: r for r in account_totals(db, date_to=_day_before(date_from), bu_id=bu_id)} \
+        if date_from else {}
+    period = account_totals(db, date_from=date_from, date_to=date_to, bu_id=bu_id)
+    by_sub = {}
+    for r in period:
+        by_sub[r["subtype"]] = by_sub.get(r["subtype"], 0) + r["net"]
+    pnl = income_statement(db, date_from, date_to, bu_id)
+    # change in an asset (debit up) uses cash: -net; change in a liability/equity (credit up) adds cash: -net too.
+    effect = lambda s: to_major(-by_sub.get(s, 0))  # noqa: E731
+    ops = [{"label": "(+) Depreciation", "amount": effect("accumulated_depreciation")},
+           {"label": "(+) Amortization", "amount": effect("accumulated_amortization")}]
+    ops += [{"label": f"(+/-) {lbl}", "amount": effect(s)} for s, lbl in CF_OPERATING]
+    inv = [{"label": f"(-) {lbl}", "amount": effect(s)} for s, lbl in CF_INVESTING]
+    fin = [{"label": ("(-) " if s == "drawings" else "(+/-) ") + lbl, "amount": effect(s)} for s, lbl in CF_FINANCING]
+    # retained earnings moved directly (e.g. opening balances or prior-year adjustments)
+    fin.append({"label": "(+/-) Retained earnings adjustments", "amount": effect("retained_earnings")})
+    net_ops = round(pnl["net_profit"] + sum(x["amount"] for x in ops), 2)
+    net_inv = round(sum(x["amount"] for x in inv), 2)
+    net_fin = round(sum(x["amount"] for x in fin), 2)
+    begin = to_major(sum(r["net"] for r in start.values() if r["subtype"] == "cash"))
+    change = to_major(by_sub.get("cash", 0))
+    end = round(begin + change, 2)
+    computed = round(net_ops + net_inv + net_fin, 2)
+    return {"date_from": date_from, "date_to": date_to, "net_income": pnl["net_profit"], "operating": ops,
+            "net_operating": net_ops, "investing": inv, "net_investing": net_inv, "financing": fin,
+            "net_financing": net_fin, "beginning_cash": begin, "change_in_cash": computed, "ending_cash": end,
+            "reconciles": abs(computed - change) < 0.005}
+
+
+def general_ledger(db, account=None, date_from=None, date_to=None, bu_id=None, party=None, limit=500, offset=0):
+    w, p = _where(date_from=date_from, date_to=date_to, bu_id=bu_id)
+    acc = None
+    if account and len(str(account)) == 1:  # account-class filter, e.g. "5" = all 5000s
+        w += " AND l.account LIKE ?"
+        p.append(f"{account}%")
+        account = None
+    if account:
+        acc = db.one("SELECT * FROM accounts WHERE code=?", (account,))
+        if not acc:
+            raise ValidationError("Unknown account")
+        w += " AND l.account=?"
+        p.append(account)
+    if party:
+        w += " AND e.party=?"
+        p.append(party)
+    opening = 0
+    if acc and date_from:
+        w0, p0 = _where(date_to=_day_before(date_from), bu_id=bu_id)
+        r = db.one(f"SELECT COALESCE(SUM(l.debit-l.credit),0) AS n FROM journal_lines l JOIN journal_entries e "
+                   f"ON e.id=l.entry_id WHERE l.account=? AND {w0}", [account] + p0)
+        opening = r["n"]
+    sign = 1 if (not acc or acc["normal"] == "Debit") else -1
+    rows = db.q(f"""SELECT e.id, e.date, e.kind, e.memo, e.party, b.code AS bu_code, l.account, a.name AS account_name,
+                    l.debit, l.credit FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
+                    JOIN accounts a ON a.code=l.account LEFT JOIN business_units b ON b.id=e.bu_id
+                    WHERE {w} ORDER BY e.date, e.id, l.id LIMIT ? OFFSET ?""", p + [int(limit), int(offset)])
+    run = opening
+    for r in rows:
+        run += r["debit"] - r["credit"]
+        r["debit"], r["credit"] = to_major(r["debit"]), to_major(r["credit"])
+        r["balance"] = to_major(sign * run) if acc else None
+    return {"account": acc, "opening": to_major(sign * opening), "rows": rows,
+            "closing": to_major(sign * run) if acc else None}
+
+
+def party_balance(db, account, party):
+    r = db.one(f"SELECT COALESCE(SUM(l.credit-l.debit),0) AS n FROM journal_lines l JOIN journal_entries e "
+               f"ON e.id=l.entry_id WHERE {LIVE} AND l.account=? AND e.party=?", (account, party))
+    return to_major(r["n"])
+
+
+def party_balances(db, subtypes=("payable",), accounts=None, date_to=None):
+    """Open balances per party on liability accounts (suppliers, workers)."""
+    if accounts:
+        codes = list(accounts)
+    else:
+        codes = [r["code"] for r in db.q("SELECT code FROM accounts WHERE subtype IN (%s)" %
+                                          ",".join("?" * len(subtypes)), subtypes)]
+    if not codes:
+        return []
+    w, p = _where(date_to=date_to)
+    rows = db.q(f"""SELECT e.party AS party, l.account, SUM(l.credit) AS owed, SUM(l.debit) AS paid,
+                    SUM(l.credit-l.debit) AS balance, MAX(e.date) AS last_date
+                    FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
+                    WHERE {w} AND l.account IN ({",".join("?" * len(codes))})
+                    GROUP BY e.party, l.account HAVING balance<>0 ORDER BY balance DESC""", p + codes)
+    for r in rows:
+        for k in ("owed", "paid", "balance"):
+            r[k] = to_major(r[k])
+    return rows
+
+
+def shared_overhead_total(db, date_from=None, date_to=None):
+    """Operating expenses booked without a business unit (the indirect-cost pool)."""
+    w, p = _where(date_from=date_from, date_to=date_to, bu_id="none")
+    r = db.one(f"""SELECT COALESCE(SUM(l.debit-l.credit),0) AS n FROM journal_lines l
+                   JOIN journal_entries e ON e.id=l.entry_id JOIN accounts a ON a.code=l.account
+                   WHERE {w} AND a.subtype IN ('employee','general_admin','marketing','utilities','other_operating')""",
+               p)
+    return to_major(r["n"])
+
+
+def allocated_overhead(db, bu_id, date_from=None, date_to=None):
+    bu = db.one("SELECT overhead_pct FROM business_units WHERE id=?", (bu_id,))
+    return round(shared_overhead_total(db, date_from, date_to) * (bu["overhead_pct"] or 0 if bu else 0), 2)
+
+
+def bu_summaries(db, date_from=None, date_to=None, status=None, q=None):
+    w, p = _where(date_from=date_from, date_to=date_to)
+    agg = {r["bid"]: r for r in db.q(f"""
+        SELECT e.bu_id AS bid,
+          SUM(CASE WHEN a.type='Revenue' THEN l.credit-l.debit ELSE 0 END) AS revenue,
+          SUM(CASE WHEN a.type='COGS' THEN l.debit-l.credit ELSE 0 END) AS cogs,
+          SUM(CASE WHEN a.type='Expense' THEN l.debit-l.credit ELSE 0 END) AS direct_overhead,
+          SUM(CASE WHEN a.subtype='receivable' THEN l.debit-l.credit ELSE 0 END) AS receivable,
+          SUM(CASE WHEN a.subtype='deferred_revenue' THEN l.credit-l.debit ELSE 0 END) AS advances,
+          SUM(CASE WHEN e.kind='Receipt Voucher' AND a.subtype='cash' THEN l.debit ELSE 0 END) AS collected
+        FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id JOIN accounts a ON a.code=l.account
+        WHERE {w} AND e.bu_id IS NOT NULL GROUP BY e.bu_id""", p)}
+    pool = shared_overhead_total(db, date_from, date_to)
+    savings = {}
+    for r in db.q(f"SELECT e.bu_id, e.meta FROM journal_entries e WHERE {w} AND kind='Direct Cost'", p):
+        savings[r["bu_id"]] = savings.get(r["bu_id"], 0) + to_minor(json.loads(r["meta"]).get("savings", 0))
+    bw, bp = [], []
+    if status:
+        bw.append("status=?")
+        bp.append(status)
+    if q:
+        bw.append("(code LIKE ? OR name LIKE ? OR location LIKE ?)")
+        bp += [f"%{q}%"] * 3
+    out = []
+    for b in db.q("SELECT * FROM business_units" + (" WHERE " + " AND ".join(bw) if bw else "") + " ORDER BY code", bp):
+        a = agg.get(b["id"], {})
+        rev, cogs, ovh = (a.get(k) or 0 for k in ("revenue", "cogs", "direct_overhead"))
+        collected = a.get("collected") or 0
+        alloc = to_minor(pool * (b["overhead_pct"] or 0))
+        if b["basis"] == "Cost-Plus %":
+            expected = int(round(cogs * (1 + (b["fee_pct"] or 0))))
+        elif b["basis"] == "Fixed Price":
+            expected = b["contract_value"] or 0
+        else:
+            expected = collected
+        net = rev - cogs - ovh - alloc
+        out.append({**b, "contract_value": to_major(b["contract_value"]), "revenue": to_major(rev),
+                    "cogs": to_major(cogs), "direct_overhead": to_major(ovh), "allocated_overhead": to_major(alloc),
+                    "gross_profit": to_major(rev - cogs), "net_profit": to_major(net),
+                    "margin": round(net / rev, 4) if rev else 0, "receivable": to_major(a.get("receivable") or 0),
+                    "advances": to_major(a.get("advances") or 0), "collected": to_major(collected),
+                    "expected_billing": to_major(expected), "to_collect": to_major(max(expected - collected, 0)),
+                    "savings": to_major(savings.get(b["id"], 0))})
+    return out
+
+
+def deals(db):
+    m = {}
+    for r in db.q(f"SELECT e.party, e.meta FROM journal_entries e WHERE {LIVE} AND kind='Direct Cost'"):
+        meta = json.loads(r["meta"] or "{}")
+        ref = meta.get("deal_ref")
+        if not ref:
+            continue
+        g = m.setdefault(ref, {"ref": ref, "vendor": r["party"], "quoted": 0, "savings": 0, "entries": 0, "status": ""})
+        g["entries"] += 1
+        g["quoted"] += to_minor(meta.get("quoted", 0))
+        g["savings"] += to_minor(meta.get("savings", 0))
+        g["status"] = meta.get("deal_status") or g["status"]
+    for g in m.values():
+        g["cost"] = to_major(g["quoted"] - g["savings"])
+        g["quoted"], g["savings"] = to_major(g["quoted"]), to_major(g["savings"])
+    return sorted(m.values(), key=lambda g: g["ref"])
+
+
+def partner_report(db, date_from=None, date_to=None):
+    partners = db.q("SELECT * FROM partners ORDER BY id")
+    shares = {(r["partner_id"], r["bu_id"]): r["share"] for r in db.q("SELECT * FROM partner_shares")}
+    bus = bu_summaries(db, date_from, date_to)
+    company = income_statement(db, date_from, date_to, bu_id="none")["net_profit"]
+    alloc_total = round(sum(b["allocated_overhead"] for b in bus), 2)
+    company_after_alloc = round(company + alloc_total, 2)  # overhead already charged to units is not double-counted
+    reserve = float(db.setting("reserve_pct", "0.4") or 0)
+    draws = {r["party"]: to_major(r["n"]) for r in db.q(
+        f"SELECT e.party, SUM(l.debit-l.credit) AS n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id "
+        f"JOIN accounts a ON a.code=l.account WHERE {LIVE} AND a.subtype='drawings' GROUP BY e.party")}
+    rows = []
+    for pt in partners:
+        per, total = {}, 0.0
+        for b in bus:
+            s = shares.get((pt["id"], b["id"]), pt["default_share"] or 0)
+            per[b["code"]] = {"share": s, "profit": round(b["net_profit"] * s, 2)}
+            total += b["net_profit"] * s
+        total += company_after_alloc * (pt["default_share"] or 0)
+        distributable = total * (1 - reserve) if total > 0 else total
+        drawn = draws.get(pt["name"], 0)
+        rows.append({"id": pt["id"], "name": pt["name"], "default_share": pt["default_share"], "units": per,
+                     "profit_share": round(total, 2), "distributable": round(distributable, 2), "drawn": drawn,
+                     "balance": round(distributable - drawn, 2)})
+    checks = {b["code"]: round(sum(shares.get((pt["id"], b["id"]), pt["default_share"] or 0) for pt in partners), 4)
+              for b in bus}
+    return {"partners": rows, "units": [{"id": b["id"], "code": b["code"], "net_profit": b["net_profit"]} for b in bus],
+            "company_result": company_after_alloc, "reserve_pct": reserve, "share_checks": checks,
+            "default_check": round(sum(pt["default_share"] or 0 for pt in partners), 4)}
+
+
+def cash_position(db):
+    rows = account_totals(db)
+    cash = sum(r["net"] for r in rows if r["subtype"] == "cash")
+    span = db.one(f"SELECT MIN(date) AS a FROM journal_entries e WHERE {LIVE}")
+    n = 1
+    if span["a"]:
+        a, b = _dt.date.fromisoformat(span["a"]), _dt.date.today()
+        n = max(1, (b.year - a.year) * 12 + b.month - a.month + 1)
+    opex = sum(r["net"] for r in rows if r["subtype"] in ("employee", "general_admin", "marketing", "utilities",
+                                                           "other_operating"))
+    owed = -sum(r["net"] for r in rows if r["subtype"] in ("payable", "accrued"))
+    floor = opex / n * 3 + owed
+    return {"cash": to_major(cash), "monthly_overhead": to_major(opex / n), "months": n, "owed": to_major(owed),
+            "floor": to_major(floor), "gap": to_major(max(floor - cash, 0))}
+
+
+def dashboard(db, date_from=None, date_to=None, bu_id=None):
+    rows = {r["subtype"]: 0 for r in []}
+    for r in account_totals(db, date_to=date_to, bu_id=bu_id):
+        rows[r["subtype"]] = rows.get(r["subtype"], 0) + r["net"]
+    pnl = income_statement(db, date_from, date_to, bu_id)
+    start = (_dt.date.today().replace(day=1) - _dt.timedelta(days=330)).replace(day=1).isoformat()
+    w, p = _where(date_from=start, bu_id=bu_id)
+    series = db.q(f"""SELECT substr(e.date,1,7) AS month,
+            SUM(CASE WHEN a.type='Revenue' THEN l.credit-l.debit ELSE 0 END) AS revenue,
+            SUM(CASE WHEN a.type IN ('COGS','Expense') THEN l.debit-l.credit ELSE 0 END) AS costs
+            FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id JOIN accounts a ON a.code=l.account
+            WHERE {w} GROUP BY month ORDER BY month""", p)
+    for s in series:
+        s["revenue"], s["costs"] = to_major(s["revenue"]), to_major(s["costs"])
+    return {"cash": to_major(rows.get("cash", 0)), "receivable": to_major(rows.get("receivable", 0)),
+            "payable": to_major(-rows.get("payable", 0)), "accrued": to_major(-rows.get("accrued", 0)),
+            "advances": to_major(-rows.get("deferred_revenue", 0)), "inventory": to_major(rows.get("inventory", 0)),
+            "revenue": pnl["net_sales"], "ebitda": pnl["ebitda"], "net_profit": pnl["net_profit"],
+            "margins": pnl["margins"], "series": series, "units": bu_summaries(db, date_from, date_to),
+            "cash_position": cash_position(db), "audit": audit(db)}
+
+
+def audit(db):
+    tb = trial_balance(db)
+    bs = balance_sheet(db)
+    stock_val = round(sum(r["value"] for r in stock_report(db)), 2)
+    inv_accounts = {w["account"] or db.acct("inventory") for w in db.q("SELECT account FROM warehouses")}
+    inv = to_major(sum(r["net"] for r in account_totals(db) if r["code"] in inv_accounts))
+    bad = db.q("SELECT e.id FROM journal_entries e JOIN journal_lines l ON l.entry_id=e.id "
+               "GROUP BY e.id HAVING SUM(l.debit)<>SUM(l.credit)")
+    shares = db.one("SELECT COALESCE(SUM(overhead_pct),0) AS s FROM business_units")["s"]
+    cf = cash_flow(db)
+    return [
+        {"check": "Trial balance: debits = credits", "a": tb["totals"]["debit"], "b": tb["totals"]["credit"],
+         "ok": tb["balanced"]},
+        {"check": "Balance sheet: assets = liabilities + equity", "a": bs["total_assets"],
+         "b": bs["total_liabilities_equity"], "ok": bs["balanced"]},
+        {"check": "Cash flow reconciles to change in cash", "a": cf["change_in_cash"],
+         "b": round(cf["ending_cash"] - cf["beginning_cash"], 2), "ok": cf["reconciles"]},
+        {"check": "Stock register = inventory accounts", "a": stock_val, "b": inv, "ok": abs(stock_val - inv) < 0.05},
+        {"check": "Every journal entry balances", "a": len(bad), "b": 0, "ok": not bad},
+        {"check": "Shared-overhead % across business units ≤ 100%", "a": round(shares * 100, 2), "b": 100,
+         "ok": shares <= 1.0001},
+    ]
+
+
+# ================================================================== tax module
+PARTY_FIELDS = ("name", "type", "receiver_type", "tax_id", "national_id", "country", "governate", "region", "street",
+                "building", "postal_code", "email", "phone", "default_vat", "default_wht", "notes")
+
+
+def save_party(db, d, party_id=None):
+    v = {k: text(d.get(k), maxlen=2000 if k == "notes" else 300) for k in PARTY_FIELDS}
+    if not v["name"]:
+        raise ValidationError("name is required")
+    v["type"] = v["type"] if v["type"] in ("customer", "supplier", "both", "employee", "other") else "customer"
+    v["receiver_type"] = v["receiver_type"] if v["receiver_type"] in ("B", "P", "F") else "B"
+    v["country"] = (v["country"] or "EG").upper()[:2]
+    if v["tax_id"] and v["receiver_type"] == "B" and v["country"] == "EG" and not re.fullmatch(r"\d{9}", v["tax_id"]):
+        raise ValidationError("An Egyptian tax registration number has 9 digits")
+    if v["national_id"] and not re.fullmatch(r"\d{14}", v["national_id"]):
+        raise ValidationError("A national ID has 14 digits")
+    for k in ("default_vat", "default_wht"):
+        if v[k]:
+            tax_code(db, v[k], "vat" if k == "default_vat" else "wht")
+    with db.tx():
+        dup = db.one("SELECT id FROM parties WHERE name=?", (v["name"],))
+        if party_id:
+            if dup and dup["id"] != int(party_id):
+                raise ValidationError("Another party already has this name")
+            old = db.one("SELECT name FROM parties WHERE id=?", (int(party_id),))
+            if not old:
+                raise ValidationError("Party not found")
+            db.conn.execute(f"UPDATE parties SET {','.join(k + '=?' for k in PARTY_FIELDS)} WHERE id=?",
+                            tuple(v[k] for k in PARTY_FIELDS) + (int(party_id),))
+            if old["name"] != v["name"]:  # keep vouchers linked to the renamed party
+                db.conn.execute("UPDATE journal_entries SET party=? WHERE party=?", (v["name"], old["name"]))
+                db.conn.execute("UPDATE extracts SET customer=? WHERE customer=?", (v["name"], old["name"]))
+            return int(party_id)
+        if dup:
+            raise ValidationError("A party with this name already exists")
+        return db.conn.execute(f"INSERT INTO parties({','.join(PARTY_FIELDS)}) VALUES ({','.join('?' * len(PARTY_FIELDS))})",
+                               tuple(v[k] for k in PARTY_FIELDS)).lastrowid
+
+
+def save_tax_code(db, d, old_code=None):
+    code = text(d.get("code"), "code", required=True, maxlen=20).upper()
+    kind = d.get("kind")
+    if kind not in ("vat", "wht"):
+        raise ValidationError("kind must be vat or wht")
+    rate = num(d.get("rate"), "rate")
+    rate = rate / 100 if rate > 1 else rate
+    vals = (code, text(d.get("name"), "name", required=True), text(d.get("name_ar")), kind, rate,
+            text(d.get("eta_type")) or ("T1" if kind == "vat" else "T4"), text(d.get("eta_subtype")),
+            0 if d.get("active") in (0, "0", False, "No", "no") else 1)
+    with db.tx():
+        if old_code:
+            db.conn.execute("UPDATE tax_codes SET code=?,name=?,name_ar=?,kind=?,rate=?,eta_type=?,eta_subtype=?,active=? "
+                            "WHERE code=?", vals + (old_code,))
+        else:
+            if db.one("SELECT 1 FROM tax_codes WHERE code=?", (code,)):
+                raise ValidationError("Code already exists")
+            db.conn.execute("INSERT INTO tax_codes(code,name,name_ar,kind,rate,eta_type,eta_subtype,active) "
+                            "VALUES (?,?,?,?,?,?,?,?)", vals)
+    return code
+
+
+def tax_summary(db, date_from=None, date_to=None):
+    """VAT return figures and withholding-tax schedules for a period."""
+    w, p = _where(date_from=date_from, date_to=date_to)
+    roles = {r: db.acct(r) for r in ("vat_output", "vat_input", "wht_payable", "wht_receivable")}
+
+    def mv(code):
+        r = db.one(f"SELECT COALESCE(SUM(l.debit),0) dr, COALESCE(SUM(l.credit),0) cr FROM journal_lines l "
+                   f"JOIN journal_entries e ON e.id=l.entry_id WHERE {w} AND l.account=?", p + [code])
+        return r["dr"], r["cr"]
+
+    o_dr, o_cr = mv(roles["vat_output"])
+    i_dr, i_cr = mv(roles["vat_input"])
+    output_vat, input_vat = o_cr - o_dr, i_dr - i_cr
+    tax_ids = {r["name"]: r for r in db.q("SELECT name, tax_id, national_id FROM parties")}
+
+    def by_party(code, sign):  # sign 1: credit-positive
+        rows = db.q(f"""SELECT e.party, SUM(l.credit-l.debit) AS n, COUNT(DISTINCT e.id) AS docs,
+                        SUM(CASE WHEN e.kind IN ('Journal Voucher','Payment Voucher') AND l.debit>0 THEN l.debit ELSE 0 END) AS settled
+                        FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
+                        WHERE {w} AND l.account=? GROUP BY e.party ORDER BY e.party""", p + [code])
+        return [{"party": r["party"], "tax_id": (tax_ids.get(r["party"]) or {}).get("tax_id", ""),
+                 "amount": to_major(sign * r["n"]), "documents": r["docs"]} for r in rows if r["n"]]
+
+    # taxable base per VAT code from invoices / purchases in the period (from voucher metadata)
+    base = {}
+    for r in db.q(f"SELECT e.id, e.kind, e.meta FROM journal_entries e WHERE {w} AND e.meta LIKE '%vat_code%'", p):
+        m = json.loads(r["meta"] or "{}")
+        if not m.get("vat_code"):
+            continue
+        e = get_entry(db, r["id"])
+        side = "sales" if r["kind"] in ("Sales Invoice", "Receipt Voucher") else "purchases"
+        vat_line = sum(ln["credit"] - ln["debit"] if side == "sales" else ln["debit"] - ln["credit"]
+                       for ln in e["lines"] if ln["account"] == roles["vat_output" if side == "sales" else "vat_input"])
+        net = sum(ln["credit"] for ln in e["lines"] if side == "sales" and db.one(
+            "SELECT type FROM accounts WHERE code=?", (ln["account"],))["type"] == "Revenue") if side == "sales" else \
+            sum(ln["debit"] for ln in e["lines"] if ln["debit"] and ln["account"] != roles["vat_input"])
+        k = (side, m["vat_code"])
+        b = base.setdefault(k, {"side": side, "code": m["vat_code"], "net": 0.0, "vat": 0.0, "documents": 0})
+        b["net"] = round(b["net"] + net, 2)
+        b["vat"] = round(b["vat"] + vat_line, 2)
+        b["documents"] += 1
+    return {"date_from": date_from, "date_to": date_to, "accounts": roles,
+            "output_vat": to_major(output_vat), "input_vat": to_major(input_vat),
+            "net_vat": to_major(output_vat - input_vat),
+            "vat_by_code": sorted(base.values(), key=lambda b: (b["side"], b["code"])),
+            "wht_withheld_from_suppliers": by_party(roles["wht_payable"], 1),
+            "wht_deducted_by_clients": by_party(roles["wht_receivable"], -1),
+            "wht_payable_balance": party_total(db, roles["wht_payable"], date_to, 1),
+            "wht_receivable_balance": party_total(db, roles["wht_receivable"], date_to, -1)}
+
+
+def party_total(db, code, date_to=None, sign=1):
+    w, p = _where(date_to=date_to)
+    r = db.one(f"SELECT COALESCE(SUM(l.credit-l.debit),0) n FROM journal_lines l JOIN journal_entries e "
+               f"ON e.id=l.entry_id WHERE {w} AND l.account=?", p + [code])
+    return to_major(sign * r["n"])
