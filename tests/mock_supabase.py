@@ -116,10 +116,29 @@ class Handler(BaseHTTPRequestHandler):
                     e = body["refresh_token"][4:]
                 return self._send(200, {"access_token": "tok:" + e, "refresh_token": "ref:" + e, "expires_in": 3600,
                                         "user": {"email": e}})
+            if url.path == "/functions/v1/manage-user":   # supabase/functions/manage-user
+                caller = self._email()
+                cm = st.members.get(caller)
+                if not cm or not cm["is_admin"] or not cm["active"]:
+                    return self._send(403, {"msg": "Only workspace administrators can create sign-in accounts"})
+                u = str(body.get("username", "")).strip().lower()
+                e = (body.get("email") or "").strip().lower() or f"{u}@users.beyond-erp.invalid"
+                old = next((m["email"] for m in st.members.values() if m.get("username") == u), None)
+                if old and old != e:
+                    st.accounts[e] = st.accounts.pop(old, None)
+                    st.members[e] = {**st.members.pop(old), "email": e}
+                if e not in st.accounts or st.accounts[e] is None:
+                    if not body.get("password"):
+                        return self._send(400, {"msg": "Set a password for this person (they have no sign-in account yet)"})
+                if body.get("password"):
+                    st.accounts[e] = body["password"]
+                cur = st.members.get(e, {"email": e, "is_admin": False, "gateway": False})
+                st.members[e] = {**cur, "username": u, "active": body.get("active", True) is not False}
+                return self._send(200, {"email": e, "username": u, "placeholder": not body.get("email")})
             if url.path == "/functions/v1/login":    # supabase/functions/login: username -> email -> session
                 u = str(body.get("username", "")).strip().lower()
                 e = next((x["email"] for x in st.members.values() if x.get("username") == u and x["active"]), None)
-                if not e or st.accounts.get(e) != body.get("password") or e in st.unconfirmed:
+                if not e or st.accounts.get(e) != body.get("password") or e in st.unconfirmed or not st.members[e]["active"]:
                     return self._send(400, {"code": 400, "error_code": "invalid_credentials", "msg": "Invalid login credentials"})
                 return self._send(200, {"access_token": "tok:" + e, "refresh_token": "ref:" + e, "expires_in": 3600,
                                         "user": {"email": e}})

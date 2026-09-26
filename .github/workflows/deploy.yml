@@ -45,25 +45,45 @@ jobs:
       PROJECT_ID: ${{ vars.SUPABASE_PROJECT_ID }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      # Supabase only needs updating when something under supabase/ changed (or when run by hand), so an expired
+      # access token only matters on those rare pushes.
+      - name: Did the database or its functions change?
+        id: changed
+        run: |
+          before="${{ github.event.before }}"
+          if [ "${{ github.event_name }}" != "push" ] || [ -z "$before" ] || [ "$before" = "0000000000000000000000000000000000000000" ] \
+             || ! git cat-file -e "$before" 2>/dev/null || git diff --name-only "$before" "${{ github.sha }}" | grep -q '^supabase/'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No changes under supabase/ — database and functions left as they are"
+          fi
       - uses: supabase/setup-cli@v3
-        if: env.SUPABASE_ACCESS_TOKEN != '' && env.PROJECT_ID != ''
+        if: steps.changed.outputs.run == 'true' && env.SUPABASE_ACCESS_TOKEN != '' && env.PROJECT_ID != ''
         with:
           version: latest
       - name: Apply database migrations
-        if: env.SUPABASE_ACCESS_TOKEN != '' && env.PROJECT_ID != ''
+        if: steps.changed.outputs.run == 'true' && env.SUPABASE_ACCESS_TOKEN != '' && env.PROJECT_ID != ''
         run: |
           set -o pipefail
-          supabase --version
           { supabase link --project-ref "$PROJECT_ID" --password "$SUPABASE_DB_PASSWORD" &&
-            supabase db push --password "$SUPABASE_DB_PASSWORD"; } 2>&1 | tee out.txt ||
-            { echo "::error title=Database migrations::$(tail -c 1500 out.txt | tr '\n' ' ')"; exit 1; }
-      - name: Deploy the username sign-in function
-        if: env.SUPABASE_ACCESS_TOKEN != '' && env.PROJECT_ID != ''
-        continue-on-error: true   # only username sign-in depends on it; email and Google sign-in keep working
+            supabase db push --password "$SUPABASE_DB_PASSWORD"; } 2>&1 | tee out.txt || {
+            if grep -qi "unauthorized" out.txt; then
+              echo "::error title=Supabase access token expired or revoked::Create a new one (supabase.com → your avatar → Account preferences → Access Tokens), put it in the repository secret SUPABASE_ACCESS_TOKEN, then re-run this workflow."
+            else
+              echo "::error title=Database migrations::$(tail -c 1500 out.txt | tr '\n' ' ')"
+            fi
+            exit 1; }
+      - name: Deploy the sign-in functions (login, manage-user)
+        if: steps.changed.outputs.run == 'true' && env.SUPABASE_ACCESS_TOKEN != '' && env.PROJECT_ID != ''
         run: |
           set -o pipefail
-          supabase functions deploy login --project-ref "$PROJECT_ID" --no-verify-jwt --use-api 2>&1 | tee out.txt ||
-            { echo "::error title=Sign-in function::$(tail -c 1500 out.txt | tr '\n' ' ')"; exit 1; }
+          for fn in login manage-user; do
+            supabase functions deploy "$fn" --project-ref "$PROJECT_ID" --no-verify-jwt --use-api 2>&1 | tee out.txt ||
+              { echo "::error title=Function $fn::$(tail -c 1500 out.txt | tr '\n' ' ')"; exit 1; }
+          done
       - name: Skipped
         if: env.SUPABASE_ACCESS_TOKEN == '' || env.PROJECT_ID == ''
         run: echo "::notice::Supabase secrets not set yet — database step skipped (see docs/SUPABASE_SETUP.md)"

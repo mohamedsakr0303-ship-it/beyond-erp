@@ -386,6 +386,19 @@ class Workspace(unittest.TestCase):
             probe.sign_in_username("ali", "wrong")
         with self.assertRaises(RuntimeError):
             probe.sign_in_username("nobody", "alipass1")
+        # the administrator creates a sign-in account from Users — no email, no confirmation — and it works at once
+        self.assertEqual(self.node_call(0, a, "POST", "/api/users", {"username": "sara", "_no_password": True,
+                                                                     "perms": {"stock": "view"}})[0], 200)
+        st, r = self.node_call(0, a, "PUT", "/api/cloud/account", {"username": "sara", "password": "sarapw1"})
+        self.assertEqual(st, 200, r)
+        self.assertEqual(r["email"], "sara@users.beyond-erp.invalid")
+        sess = probe.sign_in_username("sara", "sarapw1")
+        self.assertEqual(sess["user"]["email"], "sara@users.beyond-erp.invalid")
+        from erp.cloud import username_for
+        self.assertEqual(username_for(sess["user"]["email"]), "sara")
+        st, r = self.node_call(0, a, "PUT", "/api/cloud/account", {"username": "sara", "active": False})
+        with self.assertRaises(RuntimeError):   # untick Active: sign-in blocked
+            probe.sign_in_username("sara", "sarapw1")
         # A (admin) adds B's account as a gateway member; B joins and gets A's books
         self.assertEqual(self.node_call(0, a, "PUT", "/api/cloud/members",
                                         {"email": "desk@x.com", "gateway": True})[0], 200)

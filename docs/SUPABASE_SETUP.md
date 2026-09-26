@@ -69,19 +69,24 @@ open from disk).
    This also creates their app user; set what they may see and change under **Users**.
 4. Colleagues open the app, **Create an account** with that same email, and sign in — they get the shared books.
 
-## Adding people
+## Adding people (all from inside Beyond ERP)
 
-**Users → New** (or open an existing user): fill in **Username**, **Email** and their permissions. Saving adds the
-email to the workspace automatically (you must be a workspace administrator), and records the username there too.
+**Users → New**: username, full name, a **sign-in password** (typed twice) and their permissions → **Save**. That
+creates their sign-in account on the spot — already confirmed, no emails — and they can sign in with
+**username + password** straight away. Email is optional: add it if they want **Sign in with Google** or to reset
+their own password by email. Without an email they get an internal placeholder address that is never used for mail.
 
-The person then creates their account once, on the sign-in page (**No account? Create one**, with that same email),
-or uses **Sign in with Google** if it is a Google address. After that they can sign in with **either their email or
-their username** + password (the username sign-in uses the small `login` function that the GitHub workflow deploys
-to Supabase automatically — it looks up the email on Supabase's side, so nobody can find out other people's emails
-from the sign-in page).
+* Change a password: open the user, type the new one twice, save.
+* Block someone: untick **Active** — their sign-in stops working (their history stays).
+* Only workspace administrators can do this; it runs through the small `manage-user` function, which holds
+  Supabase's secret key on Supabase's side — the key is never in the web page.
 
-To skip the confirmation email for someone: Supabase → Authentication → Users → **Add user**, their email + a
-password, tick **Auto Confirm User**, and tell them the password.
+People can still create their own account on the sign-in page ("No account? Create one") — an administrator then
+adds that email under Users so the app knows who they are.
+
+**Access token expiry**: GitHub needs `SUPABASE_ACCESS_TOKEN` only when something under `supabase/` changes (the
+workflow skips the Supabase step otherwise). When you create the token pick the longest expiry offered; if it has
+expired, the run says so plainly — create a new one, update the secret, and re-run.
 
 ## Sign in with Google (optional, free)
 

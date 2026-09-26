@@ -45,6 +45,15 @@ LOCAL_ONLY = [r"POST /api/login", r"POST /api/logout", r"POST /api/setup", r"PUT
 _LOCAL_RX = re.compile("^(?:" + "|".join(LOCAL_ONLY) + ")$")
 ETA_CALLS = re.compile(r"^POST /api/einvoice/(?:submit|(\d+)/(?:refresh|cancel))$")
 SNAPSHOT_EVERY = 300          # changes between automatic workspace copies
+# People created in Users without an email sign in through an internal address <username>@PLACEHOLDER_DOMAIN
+# (supabase/functions/manage-user); it is never emailed. The ".invalid" top-level domain is reserved for this.
+PLACEHOLDER_DOMAIN = "users.beyond-erp.invalid"
+
+
+def username_for(email):
+    """The app username behind a workspace account address, when it is an internal placeholder."""
+    e = (email or "").strip().lower()
+    return e.rsplit("@", 1)[0] if e.endswith("@" + PLACEHOLDER_DOMAIN) else None
 PULL_PAGE = 500
 
 

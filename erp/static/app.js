@@ -55,7 +55,7 @@ async function api(method, path, body, raw) {
   let data = null;
   try { data = await r.json(); } catch { data = null; }
   if (r.status === 401) { S.boot.user = null; renderAuth(); throw new Error(data && data.error || "Please sign in"); }
-  if (!r.ok) { const e = new Error((data && data.error) || `HTTP ${r.status}`); e.data = data; throw e; }
+  if (!r.ok) { const e = new Error((data && data.error) || `HTTP ${r.status}`); e.data = data; e.status = r.status; throw e; }
   return data;
 }
 function staticHeaders() { return { "x-requested-with": "BeyondERP", "x-session": store.get("token", "") || "" }; }
@@ -69,7 +69,7 @@ async function staticApi(method, path, body, raw) {
   try { data = JSON.parse(new TextDecoder().decode(r.body)); } catch { data = null; }
   if (data && "token" in data) store.set("token", data.token || "");
   if (r.status === 401) { S.boot.user = null; renderAuth(); throw new Error(data && data.error || "Please sign in"); }
-  if (r.status >= 400) { const e = new Error((data && data.error) || `HTTP ${r.status}`); e.data = data; throw e; }
+  if (r.status >= 400) { const e = new Error((data && data.error) || `HTTP ${r.status}`); e.data = data; e.status = r.status; throw e; }
   return data;
 }
 // Open an /api/ download or printable page. Server mode: normal navigation. Static mode: via the bridge.
@@ -248,21 +248,23 @@ const CloudAPI = STATIC ? {
   claim: () => window.BeyondCloud.claim(), join: () => window.BeyondCloud.join(), pull: () => window.BeyondCloud.pull(),
   disconnect: () => window.BeyondCloud.disconnect(), members: () => window.BeyondCloud.members(), setMember: m => window.BeyondCloud.setMember(m),
   linkMember: m => window.BeyondCloud.linkMember(m),
+  manageUser: m => window.BeyondCloud.manageUser(m),
 } : {
   status: () => api("GET", "/api/cloud"), config: (url, key) => api("PUT", "/api/cloud/config", { url, key }),
   signin: (email, password, create) => api("POST", "/api/cloud/signin", { email, password, create }), info: () => api("GET", "/api/cloud/info"),
   claim: () => api("POST", "/api/cloud/claim", {}), join: () => api("POST", "/api/cloud/join", {}), pull: () => api("POST", "/api/cloud/pull", {}),
   disconnect: () => api("POST", "/api/cloud/disconnect", {}), members: () => api("GET", "/api/cloud/members"), setMember: m => api("PUT", "/api/cloud/members", m),
   linkMember: m => api("PUT", "/api/cloud/members/link", m),
+  manageUser: m => api("PUT", "/api/cloud/account", m),
 };
 const cloudOn = () => STATIC ? !!(window.BeyondCloud && window.BeyondCloud.joined()) : !!(S.boot && S.boot.cloud && S.boot.cloud.joined);
 
 // Password field(s) with a "Show password" switch; `confirm` adds a second field that must match (new accounts,
 // new passwords). The browser's own validation then refuses to submit until both are the same.
-function pwFields(confirm, label) {
-  const ar = S.lang === "ar";
-  return `<label class="f">${esc(label || t("password"))}<input name="password" type="password" autocomplete="${confirm ? "new-password" : "current-password"}" required minlength="6"></label>
-    ${confirm ? `<label class="f">${ar ? "تأكيد كلمة المرور" : "Confirm password"}<input name="password2" type="password" autocomplete="new-password" required minlength="6" data-input="pwmatch"></label>
+function pwFields(confirm, label, optional, help) {
+  const ar = S.lang === "ar", req = optional ? "" : "required";
+  return `<label class="f">${esc(label || t("password"))}<input name="password" type="password" autocomplete="${confirm ? "new-password" : "current-password"}" ${req} minlength="6">${help ? `<span class="muted" style="font-weight:400">${esc(help)}</span>` : ""}</label>
+    ${confirm ? `<label class="f">${ar ? "تأكيد كلمة المرور" : "Confirm password"}<input name="password2" type="password" autocomplete="new-password" ${req} minlength="6" data-input="pwmatch"></label>
       <div id="pwhint" style="font-size:.8em;min-height:1.1em"></div>` : ""}
     <label class="f chk"><input type="checkbox" data-change="pwshow">${ar ? "إظهار كلمة المرور" : "Show password"}</label>`;
 }
@@ -271,9 +273,9 @@ function pwWire(root) {
   S.H.pwshow = el => $$("input[name=password], input[name=password2]", root).forEach(i => { i.type = el.checked ? "text" : "password"; });
   S.H.pwmatch = () => {
     const a = $("[name=password]", root), b = $("[name=password2]", root), h = $("#pwhint", root); if (!b) return;
-    const same = !b.value || a.value === b.value;
+    const same = a.value === b.value || (!b.value && !b.required && !a.value);
     b.setCustomValidity(same ? "" : (ar ? "كلمتا المرور غير متطابقتين" : "The passwords do not match"));
-    if (h) { h.textContent = !b.value ? "" : same ? (ar ? "✓ متطابقتان" : "✓ Passwords match") : (ar ? "✗ كلمتا المرور غير متطابقتين" : "✗ The passwords do not match");
+    if (h) { h.textContent = !b.value && !a.value ? "" : !b.value ? (ar ? "اكتب كلمة المرور مرة أخرى" : "Type the password again") : same ? (ar ? "✓ متطابقتان" : "✓ Passwords match") : (ar ? "✗ كلمتا المرور غير متطابقتين" : "✗ The passwords do not match");
       h.className = same ? "bal-ok" : "bal-bad"; }
   };
   const a = $("[name=password]", root); if (a) a.addEventListener("input", () => S.H.pwmatch());
@@ -1603,22 +1605,30 @@ PAGES.users = async (view) => {
   const ed = can("users.users", "edit");
   const ar = S.lang === "ar";
   const edit = u => drawer(t("m_users") + (u.username ? " — " + u.username : ""), form([{ k: "username", l: t("username"), v: u.username, req: 1, dis: !!u.id }, { k: "full_name", l: t("full_name"), v: u.full_name },
-    { k: "email", l: t("email"), type: "email", v: u.email, span: "spanall", help: cloudOn()
-      ? (ar ? "البريد الذي يسجل به هذا الشخص في مساحة العمل (Google أو البريد). عند الحفظ يُضاف كعضو تلقائياً ويمكنه أيضاً الدخول باسم المستخدم." : "The address this person signs in with on the shared workspace (Google or email). Saving adds it to the workspace automatically; they can then also sign in with their username.")
+    { k: "email", l: t("email") + (cloudOn() ? (ar ? " (اختياري)" : " (optional)") : ""), type: "email", v: u.email, span: "spanall", help: cloudOn()
+      ? (ar ? "اتركه فارغاً ليسجل الدخول باسم المستخدم وكلمة المرور فقط. أضفه إن أراد الدخول بحساب Google أو استعادة كلمة المرور بنفسه." : "Leave it blank and they simply sign in with username + password. Add it if they want Google sign-in or to reset their own password by email.")
       : (ar ? "اختياري — يُستخدم لتسجيل الدخول إلى مساحة العمل المشتركة عند تفعيلها." : "Optional — used for signing in to the shared workspace when you connect one.") },
-    { k: "password", l: t("password") + (u.id ? " (" + (S.lang === "ar" ? "اتركه فارغاً للإبقاء" : "leave blank to keep") + ")" : ""), type: "password", req: !u.id && !cloudOn(), help: cloudOn() ? (S.lang === "ar" ? "مساحة العمل: يسجل الدخول بحسابه في مساحة العمل (بريده أو اسم المستخدم + كلمة مرور حسابه). كلمة المرور هنا لهذا الجهاز فقط (اختيارية)." : "Workspace: they sign in with their workspace account (their email or this username + that account's password). A password here is for this device only (optional).") : "" },
+    { html: pwFields(true, (cloudOn() ? (ar ? "كلمة مرور الدخول" : "Sign-in password") : t("password")) + (u.id ? (ar ? " (اتركها فارغة للإبقاء)" : " (leave blank to keep)") : ""), !!u.id,
+        cloudOn() ? (ar ? "يسجل بها الدخول فوراً — بدون رسائل تأكيد." : "They can sign in with it right away — no confirmation email.") : ""), span: "spanall" },
     ...(S.boot.user.is_admin ? [{ k: "is_admin", l: t("admin") + (S.lang === "ar" ? " (كل الصلاحيات)" : " (everything, ignores the matrix)"), type: "checkbox", v: u.is_admin }] : []),
-    ...(u.id ? [{ k: "active", l: t("active"), type: "checkbox", v: u.active !== false }] : []),
+    ...(u.id ? [{ k: "active", l: t("active") + (cloudOn() ? (ar ? " (إلغاء التحديد يمنع تسجيل الدخول)" : " (untick to block sign-in)") : ""), type: "checkbox", v: u.active !== false }] : []),
     { html: `<h4 style="margin:8px 0 0">${t("perm_matrix")}</h4>${permMatrix(u.perms || {})}`, span: "spanall" }]),
   async (v, f) => { const perms = readPerms(f);
     const body = { username: v.username || u.username, full_name: v.full_name, email: v.email, password: v.password, is_admin: v.is_admin, active: v.active, perms, _no_password: !v.password };
     if (u.id) await api("PUT", "/api/users/" + u.id, body); else await api("POST", "/api/users", body);
-    toast(t("saved"));
-    if (cloudOn() && v.email) {   // let this person into the shared workspace with that email (and username)
-      try { await CloudAPI.linkMember({ email: v.email, username: body.username, active: v.active !== false }); }
-      catch (e) { toast((ar ? "تم حفظ المستخدم، لكن تعذرت إضافته لمساحة العمل: " : "User saved, but not added to the workspace: ") + e.message, true); }
+    if (!cloudOn()) { toast(t("saved")); return; }
+    // shared workspace: create / update their sign-in account so they can sign in with username + password now
+    try {
+      const r = await CloudAPI.manageUser({ username: body.username, email: v.email, password: v.password, full_name: v.full_name, active: v.active !== false });
+      toast(u.id ? t("saved") : (ar ? `تم — يمكن لـ ${body.username} تسجيل الدخول الآن باسم المستخدم وكلمة المرور.` : `Done — ${body.username} can sign in now with their username and password.`));
+      return r;
+    } catch (e) {
+      if (e.status === 404 && v.email) {   // sign-in function not deployed yet: at least let the email into the workspace
+        await CloudAPI.linkMember({ email: v.email, username: body.username, active: v.active !== false }).catch(() => {});
+        toast(ar ? "تم الحفظ. إنشاء حسابات الدخول من هنا غير مفعّل بعد — يُنشئ الشخص حسابه بنفسه ببريده." : "Saved. Creating sign-in accounts from here isn't set up yet — the person creates their own account with that email.", true);
+      } else toast((ar ? "تم حفظ المستخدم، لكن لم يُنشأ حساب الدخول: " : "User saved, but the sign-in account was not set: ") + e.message, true);
     } },
-  { onOpen: f => wirePerms(f) });
+  { onOpen: f => { wirePerms(f); pwWire(f); } });
   S.H.unew = () => edit({ perms: { dashboard: "view" } });
   S.H.uedit = el => edit(rows.find(x => String(x.id) === el.dataset.id));
   const L = ["none", "view", "add", "edit"];

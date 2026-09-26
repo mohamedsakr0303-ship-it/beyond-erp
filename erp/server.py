@@ -1220,6 +1220,7 @@ def cloud_session(ctx):
     if not getattr(ctx.app, "static", False):
         raise PermissionError()
     email = acc.text(ctx.body.get("email")).lower()
+    email = cloud.username_for(email) or email   # created in Users without an email: internal address -> username
     u = ctx.db.one("SELECT * FROM users WHERE active=1 AND (lower(email)=? OR lower(username)=?) "
                    "ORDER BY lower(email)=? DESC LIMIT 1", (email, email, email))
     if not u:
@@ -1247,7 +1248,7 @@ def _cloud_call(fn):
     except cloud.Offline as e:
         return ok({"error": str(e)}, 503)
     except (PermissionError, RuntimeError, cloud.NeedsUpdate) as e:
-        return ok({"error": str(e) or "Not allowed"}, 400)
+        return ok({"error": str(e) or "Not allowed"}, 404 if getattr(e, "status", 0) == 404 else 400)
 
 
 @route("GET", "/api/cloud-status")
@@ -1320,6 +1321,14 @@ def cloud_member_set(ctx):
     return _cloud_call(lambda: c.client().rpc("set_member", {
         "p_email": b.get("email"), "p_is_admin": bool(b.get("is_admin")), "p_gateway": bool(b.get("gateway")),
         "p_active": b.get("active", True) is not False}, c.token()) or {"ok": True})
+
+
+@route("PUT", "/api/cloud/account")
+def cloud_account(ctx):
+    """Create / update a person's workspace sign-in account (supabase/functions/manage-user)."""
+    c = _cloud(ctx)
+    return _cloud_call(lambda: c.client()._call("POST", "/functions/v1/manage-user", {
+        k: ctx.body.get(k) for k in ("username", "email", "password", "full_name", "active")}, c.token()))
 
 
 @route("PUT", "/api/cloud/members/link")
@@ -1423,6 +1432,7 @@ def handle(app, method, target, headers, raw=b"", as_user=None, dry=False):
         token = headers.get("x-session") or (jar[COOKIE].value if COOKIE in jar else None)
         if as_user is not None:
             token = None
+            as_user = cloud.username_for(as_user) or as_user
             # workspace changes are recorded under the member's email; a gateway relays local usernames
             user = auth.public_user(db.one("SELECT * FROM users WHERE active=1 AND (username=? OR (email<>'' AND lower(email)=lower(?))) "
                                            "ORDER BY username=? DESC LIMIT 1", (as_user, as_user, as_user)))

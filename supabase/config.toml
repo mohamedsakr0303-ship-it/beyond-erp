@@ -11,3 +11,7 @@ enable_signup = true
 # username + password sign-in: called before people are signed in, so no JWT check (it checks the password itself)
 [functions.login]
 verify_jwt = false
+
+# create / update sign-in accounts from the Users screen: checks the caller's token itself
+[functions.manage-user]
+verify_jwt = false
