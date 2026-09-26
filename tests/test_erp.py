@@ -372,6 +372,20 @@ class Workspace(unittest.TestCase):
         self.assertIn("already exists", r["error"])
         self.sb.state.confirm_required = False
         self.assertEqual(self.node_call(0, a, "POST", "/api/cloud/signin", {"email": "owner@x.com", "password": "pw123456"})[0], 200)
+        # a user saved with an email is linked to the workspace; they can then sign in with their username
+        st, r = self.node_call(0, a, "POST", "/api/users", {"username": "ali", "email": "Ali@X.com", "password": "ali12345"})
+        self.assertEqual(st, 200, r)
+        self.assertEqual(self.node_call(0, a, "POST", "/api/users", {"username": "ali2", "email": "ali@x.com"})[1]["error"],
+                         "Another user already has this email address")
+        self.assertEqual(self.node_call(0, a, "PUT", "/api/cloud/members/link", {"email": "ali@x.com", "username": "ali"})[0], 200)
+        self.assertEqual(self.sb.state.members["ali@x.com"]["username"], "ali")
+        self.sb.state.accounts["ali@x.com"] = "alipass1"
+        probe = self.nodes[0][0].cloud.client()
+        self.assertEqual(probe.sign_in_username("ALI", "alipass1")["user"]["email"], "ali@x.com")
+        with self.assertRaises(RuntimeError):
+            probe.sign_in_username("ali", "wrong")
+        with self.assertRaises(RuntimeError):
+            probe.sign_in_username("nobody", "alipass1")
         # A (admin) adds B's account as a gateway member; B joins and gets A's books
         self.assertEqual(self.node_call(0, a, "PUT", "/api/cloud/members",
                                         {"email": "desk@x.com", "gateway": True})[0], 200)

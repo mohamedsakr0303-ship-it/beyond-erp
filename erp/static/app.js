@@ -247,11 +247,13 @@ const CloudAPI = STATIC ? {
   signin: (email, password, create) => window.BeyondCloud.signin(email, password, create), info: () => window.BeyondCloud.info(),
   claim: () => window.BeyondCloud.claim(), join: () => window.BeyondCloud.join(), pull: () => window.BeyondCloud.pull(),
   disconnect: () => window.BeyondCloud.disconnect(), members: () => window.BeyondCloud.members(), setMember: m => window.BeyondCloud.setMember(m),
+  linkMember: m => window.BeyondCloud.linkMember(m),
 } : {
   status: () => api("GET", "/api/cloud"), config: (url, key) => api("PUT", "/api/cloud/config", { url, key }),
   signin: (email, password, create) => api("POST", "/api/cloud/signin", { email, password, create }), info: () => api("GET", "/api/cloud/info"),
   claim: () => api("POST", "/api/cloud/claim", {}), join: () => api("POST", "/api/cloud/join", {}), pull: () => api("POST", "/api/cloud/pull", {}),
   disconnect: () => api("POST", "/api/cloud/disconnect", {}), members: () => api("GET", "/api/cloud/members"), setMember: m => api("PUT", "/api/cloud/members", m),
+  linkMember: m => api("PUT", "/api/cloud/members/link", m),
 };
 const cloudOn = () => STATIC ? !!(window.BeyondCloud && window.BeyondCloud.joined()) : !!(S.boot && S.boot.cloud && S.boot.cloud.joined);
 
@@ -287,14 +289,16 @@ async function renderCloudAuth(msg, kind = "info", mode = "start") {
   const prov = S.providers || (S.providers = await C.providers());
   const googleUrl = C.oauthUrl("google");
   const remember = `<label class="f chk" style="justify-content:center;margin:6px 0"><input type="checkbox" id="remember" ${C.remembered() ? "checked" : ""}>${ar ? "تذكرني لتسجيل دخول أسرع" : "Remember me for faster sign in"}</label>`;
-  const emailField = `<label class="f">${t("email")}<input name="email" type="email" autocomplete="username" required value="${esc(C.email() || store.get("lastEmail", ""))}"></label>`;
+  const emailField = mode === "email"
+    ? `<label class="f">${ar ? "البريد الإلكتروني أو اسم المستخدم" : "Email or username"}<input name="email" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" required value="${esc(store.get("lastEmail", "") || C.email())}"></label>`
+    : `<label class="f">${t("email")}<input name="email" type="email" autocomplete="username" required value="${esc(C.email() || (String(store.get("lastEmail", "")).includes("@") ? store.get("lastEmail", "") : ""))}"></label>`;
   const back = `<a href="#" data-a="mode_start" class="muted" style="font-size:.85em">← ${ar ? "كل طرق تسجيل الدخول" : "All sign-in options"}</a>`;
-  const title = { start: ar ? "مرحباً بعودتك" : "Welcome back.", email: ar ? "تسجيل الدخول بالبريد" : "Sign in with email",
+  const title = { start: ar ? "مرحباً بعودتك" : "Welcome back.", email: ar ? "تسجيل الدخول" : "Sign in",
     signup: ar ? "إنشاء حساب" : "Create your account", help: ar ? "مساعدة في تسجيل الدخول" : "Trouble signing in?" }[mode];
   let body;
   if (mode === "start") body = `
     ${prov.google && googleUrl ? `<button class="btn oauth" type="button" data-a="cgoogle">${GOOGLE_G}<span>${ar ? "تسجيل الدخول بحساب Google" : "Sign in with Google"}</span></button>` : ""}
-    <button class="btn oauth" type="button" data-a="mode_email">${MAIL_ICON}<span>${ar ? "تسجيل الدخول بالبريد الإلكتروني" : "Sign in with email"}</span></button>
+    <button class="btn oauth" type="button" data-a="mode_email">${MAIL_ICON}<span>${ar ? "الدخول بالبريد أو اسم المستخدم" : "Sign in with email or username"}</span></button>
     ${remember}
     <p class="center">${ar ? "ليس لديك حساب؟" : "No account?"} <a href="#" data-a="mode_signup">${ar ? "أنشئ حساباً" : "Create one"}</a></p>
     <p class="center">${ar ? "مشكلة في تسجيل الدخول؟" : "Forgot your password or trouble signing in?"} <a href="#" data-a="mode_help">${ar ? "احصل على مساعدة" : "Get help"}</a></p>`;
@@ -1597,14 +1601,23 @@ function wirePerms(f) {
 PAGES.users = async (view) => {
   const rows = await api("GET", "/api/users");
   const ed = can("users.users", "edit");
+  const ar = S.lang === "ar";
   const edit = u => drawer(t("m_users") + (u.username ? " — " + u.username : ""), form([{ k: "username", l: t("username"), v: u.username, req: 1, dis: !!u.id }, { k: "full_name", l: t("full_name"), v: u.full_name },
-    { k: "password", l: t("password") + (u.id ? " (" + (S.lang === "ar" ? "اتركه فارغاً للإبقاء" : "leave blank to keep") + ")" : ""), type: "password", req: !u.id && !cloudOn(), help: cloudOn() ? (S.lang === "ar" ? "مساحة العمل: اسم المستخدم = البريد الإلكتروني للعضو، ويسجل الدخول بحساب مساحة العمل. كلمة المرور هنا لهذا الجهاز فقط (اختيارية)." : "Workspace: username = the member's email; they sign in with their workspace account. A password here is for this device only (optional).") : "" },
+    { k: "email", l: t("email"), type: "email", v: u.email, span: "spanall", help: cloudOn()
+      ? (ar ? "البريد الذي يسجل به هذا الشخص في مساحة العمل (Google أو البريد). عند الحفظ يُضاف كعضو تلقائياً ويمكنه أيضاً الدخول باسم المستخدم." : "The address this person signs in with on the shared workspace (Google or email). Saving adds it to the workspace automatically; they can then also sign in with their username.")
+      : (ar ? "اختياري — يُستخدم لتسجيل الدخول إلى مساحة العمل المشتركة عند تفعيلها." : "Optional — used for signing in to the shared workspace when you connect one.") },
+    { k: "password", l: t("password") + (u.id ? " (" + (S.lang === "ar" ? "اتركه فارغاً للإبقاء" : "leave blank to keep") + ")" : ""), type: "password", req: !u.id && !cloudOn(), help: cloudOn() ? (S.lang === "ar" ? "مساحة العمل: يسجل الدخول بحسابه في مساحة العمل (بريده أو اسم المستخدم + كلمة مرور حسابه). كلمة المرور هنا لهذا الجهاز فقط (اختيارية)." : "Workspace: they sign in with their workspace account (their email or this username + that account's password). A password here is for this device only (optional).") : "" },
     ...(S.boot.user.is_admin ? [{ k: "is_admin", l: t("admin") + (S.lang === "ar" ? " (كل الصلاحيات)" : " (everything, ignores the matrix)"), type: "checkbox", v: u.is_admin }] : []),
     ...(u.id ? [{ k: "active", l: t("active"), type: "checkbox", v: u.active !== false }] : []),
     { html: `<h4 style="margin:8px 0 0">${t("perm_matrix")}</h4>${permMatrix(u.perms || {})}`, span: "spanall" }]),
   async (v, f) => { const perms = readPerms(f);
-    const body = { username: v.username || u.username, full_name: v.full_name, password: v.password, is_admin: v.is_admin, active: v.active, perms, _no_password: !v.password };
-    if (u.id) await api("PUT", "/api/users/" + u.id, body); else await api("POST", "/api/users", body); toast(t("saved")); },
+    const body = { username: v.username || u.username, full_name: v.full_name, email: v.email, password: v.password, is_admin: v.is_admin, active: v.active, perms, _no_password: !v.password };
+    if (u.id) await api("PUT", "/api/users/" + u.id, body); else await api("POST", "/api/users", body);
+    toast(t("saved"));
+    if (cloudOn() && v.email) {   // let this person into the shared workspace with that email (and username)
+      try { await CloudAPI.linkMember({ email: v.email, username: body.username, active: v.active !== false }); }
+      catch (e) { toast((ar ? "تم حفظ المستخدم، لكن تعذرت إضافته لمساحة العمل: " : "User saved, but not added to the workspace: ") + e.message, true); }
+    } },
   { onOpen: f => wirePerms(f) });
   S.H.unew = () => edit({ perms: { dashboard: "view" } });
   S.H.uedit = el => edit(rows.find(x => String(x.id) === el.dataset.id));
@@ -1619,8 +1632,8 @@ PAGES.users = async (view) => {
       if (vals.every(v => v === vals[0])) return `<span class="chip">${esc(t("mod_" + m))}: ${esc(t("perm_" + (vals[0] === "edit" ? "full" : vals[0])))}</span>`;
       return `<span class="chip warn">${esc(t("mod_" + m))}: ${ss.map((s, i) => vals[i] === "none" ? "" : `${esc(t(window.SUBPERM[`${m}.${s}`] || s))} ${esc({ view: "👁", add: "+", edit: "✎" }[vals[i]])}`).filter(Boolean).join(", ")}</span>`; }).join(" ");
   };
-  view.innerHTML = `<div class="toolbar">${can("users.users", "add") ? `<button class="btn pri" data-a="unew">+ ${t("new")}</button>` : ""}</div><div class="card"><div class="tbl"><table><thead><tr><th>${t("username")}</th><th>${t("full_name")}</th><th>${t("perm_matrix")}</th><th>${t("status")}</th></tr></thead><tbody>
-    ${rows.map(u => `<tr class="click ${u.active ? "" : "void"}" data-a="${ed ? "uedit" : ""}" data-id="${u.id}"><td><b>${esc(u.username)}</b></td><td>${esc(u.full_name)}</td><td>${summary(u)}</td><td>${u.active ? "" : `<span class="chip bad">${t("no")}</span>`}</td></tr>`).join("")}</tbody></table></div>
+  view.innerHTML = `<div class="toolbar">${can("users.users", "add") ? `<button class="btn pri" data-a="unew">+ ${t("new")}</button>` : ""}</div><div class="card"><div class="tbl"><table><thead><tr><th>${t("username")}</th><th>${t("full_name")}</th><th>${t("email")}</th><th>${t("perm_matrix")}</th><th>${t("status")}</th></tr></thead><tbody>
+    ${rows.map(u => `<tr class="click ${u.active ? "" : "void"}" data-a="${ed ? "uedit" : ""}" data-id="${u.id}"><td><b>${esc(u.username)}</b></td><td>${esc(u.full_name)}</td><td>${esc(u.email || "")}</td><td>${summary(u)}</td><td>${u.active ? "" : `<span class="chip bad">${t("no")}</span>`}</td></tr>`).join("")}</tbody></table></div>
     <p class="muted" style="font-size:.82em">👁 ${t("perm_view")} · + ${t("perm_add")} · ✎ ${t("perm_full")}</p></div>`;
 };
 PAGES.audit = async (view, parts, q) => {
@@ -1679,10 +1692,10 @@ async function workspaceTab(view, head) {
       ${!STATIC && !info.gateway ? `<p class="muted" style="font-size:.85em;margin-top:8px">${ar ? "لخادم مكتبي يخدم عدة مستخدمين محليين: فعّل «بوابة» لهذا الحساب في قائمة الأعضاء حتى تُسجل التعديلات بأسماء المستخدمين الفعليين." : "Desktop server for several local users: tick “gateway” for this account in the member list so changes are recorded under each local user rather than this account."}</p>` : ""}` : ""}`
     : `<div class="muted">${ar ? "سجّل الدخول أولاً." : "Sign in first."}</div>`}</div>` : `<div class="banner info">${t("admin_only")}</div>`}
   ${info && info.is_admin ? `<div class="card"><h2>${ar ? "الأعضاء" : "Members"}</h2><p class="muted" style="font-size:.85em">${ar ? "كل عضو يسجل الدخول ببريده. أضف له أيضاً مستخدماً في التطبيق بنفس البريد كاسم مستخدم لتحديد صلاحياته (يتم ذلك تلقائياً هنا)." : "Each member signs in with their email. Adding a member here also creates their app user (username = email) — set their permissions under Users."}</p>
-    <div class="tbl"><table><thead><tr><th>${t("email")}</th><th>${t("admin")}</th><th>Gateway</th><th>${t("active")}</th><th></th></tr></thead><tbody>
-    ${members.map(m => `<tr><td>${esc(m.email)}</td><td><input type="checkbox" data-mf="is_admin" data-e="${esc(m.email)}" ${m.is_admin ? "checked" : ""}></td><td><input type="checkbox" data-mf="gateway" data-e="${esc(m.email)}" ${m.gateway ? "checked" : ""}></td>
+    <div class="tbl"><table><thead><tr><th>${t("email")}</th><th>${t("username")}</th><th>${t("admin")}</th><th>Gateway</th><th>${t("active")}</th><th></th></tr></thead><tbody>
+    ${members.map(m => `<tr><td>${esc(m.email)}</td><td>${esc(m.username || "—")}</td><td><input type="checkbox" data-mf="is_admin" data-e="${esc(m.email)}" ${m.is_admin ? "checked" : ""}></td><td><input type="checkbox" data-mf="gateway" data-e="${esc(m.email)}" ${m.gateway ? "checked" : ""}></td>
       <td><input type="checkbox" data-mf="active" data-e="${esc(m.email)}" ${m.active ? "checked" : ""}></td><td><button class="btn sm" data-a="wsmsave" data-e="${esc(m.email)}">${t("save")}</button></td></tr>`).join("")}
-    <tr><td><input id="wsnew" type="email" placeholder="name@company.com"></td><td><input type="checkbox" id="wsnewadm"></td><td><input type="checkbox" id="wsnewgw"></td><td></td><td><button class="btn sm pri" data-a="wsmadd">+ ${t("new")}</button></td></tr></tbody></table></div></div>` : ""}`;
+    <tr><td><input id="wsnew" type="email" placeholder="name@company.com"></td><td><input id="wsnewuser" placeholder="${t("username")}"></td><td><input type="checkbox" id="wsnewadm"></td><td><input type="checkbox" id="wsnewgw"></td><td></td><td><button class="btn sm pri" data-a="wsmadd">+ ${t("new")}</button></td></tr></tbody></table></div></div>` : ""}`;
   const run = async (fn, okMsg) => { try { await fn(); if (okMsg) toast(okMsg); await refreshBoot(); renderShell(); route(); } catch (e) { fail(e); } };
   S.H.wssave = () => { const v = readForm($("#wscfg")); run(() => CloudAPI.config(v.url, v.key), t("saved")); };
   if ($("#wsin")) pwWire($("#wsin"));
@@ -1699,7 +1712,9 @@ async function workspaceTab(view, head) {
   S.H.wsmsave = el => run(() => CloudAPI.setMember(mrow(el.dataset.e)), t("saved"));
   S.H.wsmadd = () => { const email = $("#wsnew").value.trim().toLowerCase(); if (!email) return;
     run(async () => { await CloudAPI.setMember({ email, is_admin: $("#wsnewadm").checked, gateway: $("#wsnewgw").checked, active: true });
-      await api("POST", "/api/users", { username: email, full_name: email.split("@")[0], is_admin: $("#wsnewadm").checked, _no_password: true, perms: { dashboard: "view" } }).catch(() => {}); }, t("saved")); };
+      const username = ($("#wsnewuser").value.trim() || email.split("@")[0]).toLowerCase();
+      await api("POST", "/api/users", { username, email, full_name: email.split("@")[0], is_admin: $("#wsnewadm").checked, _no_password: true, perms: { dashboard: "view" } }).catch(() => {});
+      await CloudAPI.linkMember({ email, username, active: true }).catch(() => {}); }, t("saved")); };
 }
 
 // ------------------------------------------------------------------ boot

@@ -2,6 +2,7 @@
 import hashlib
 import hmac
 import json
+import re
 import os
 import secrets
 
@@ -73,8 +74,24 @@ def public_user(u):
     if not u:
         return None
     perms = {m: "edit" for m in MODULES} if u["is_admin"] else clean_perms(json.loads(u["perms"] or "{}"))
-    return {"id": u["id"], "username": u["username"], "full_name": u["full_name"], "is_admin": bool(u["is_admin"]),
-            "active": bool(u["active"]), "perms": perms}
+    return {"id": u["id"], "username": u["username"], "full_name": u["full_name"], "email": u.get("email") or "",
+            "is_admin": bool(u["is_admin"]), "active": bool(u["active"]), "perms": perms}
+
+
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def clean_email(db, value, uid=None):
+    """Optional email for a user: the address they sign in with on the shared workspace (Google or email)."""
+    email = (value or "").strip().lower()
+    if not email:
+        return ""
+    if not EMAIL_RE.match(email):
+        raise ValidationError("Enter a valid email address")
+    other = db.one("SELECT id FROM users WHERE lower(email)=? AND id<>?", (email, uid or 0))
+    if other:
+        raise ValidationError("Another user already has this email address")
+    return email
 
 
 def needs_setup(db):
@@ -86,13 +103,14 @@ def create_user(db, d, first=False):
     if db.one("SELECT 1 FROM users WHERE username=?", (username,)):
         raise ValidationError("Username already exists")
     is_admin = 1 if (first or d.get("is_admin")) else 0
+    email = clean_email(db, d.get("email"))
     # "!" = no local password: the person signs in through the shared workspace (Supabase), or the password is
     # set on this device only (passwords are never sent to the workspace)
     pw = "!" if d.get("_no_password") and not d.get("password") else hash_password(d.get("password") or "")
     from .db import now
-    uid = db.x("INSERT INTO users(username,full_name,pw_hash,is_admin,perms,created_at) VALUES (?,?,?,?,?,?)",
+    uid = db.x("INSERT INTO users(username,full_name,pw_hash,is_admin,perms,created_at,email) VALUES (?,?,?,?,?,?,?)",
                (username, text(d.get("full_name")), pw, is_admin,
-                json.dumps(clean_perms(d.get("perms"))), now().strftime("%Y-%m-%d %H:%M:%S"))).lastrowid
+                json.dumps(clean_perms(d.get("perms"))), now().strftime("%Y-%m-%d %H:%M:%S"), email)).lastrowid
     return uid
 
 
@@ -108,9 +126,10 @@ def update_user(db, uid, d, acting_user_id):
             raise ValidationError("At least one active administrator must remain")
     if uid == acting_user_id and not active:
         raise ValidationError("You cannot deactivate yourself")
-    db.x("UPDATE users SET full_name=?, is_admin=?, active=?, perms=? WHERE id=?",
+    email = clean_email(db, d.get("email", u.get("email")), uid)
+    db.x("UPDATE users SET full_name=?, is_admin=?, active=?, perms=?, email=? WHERE id=?",
          (text(d.get("full_name", u["full_name"])), is_admin, active,
-          json.dumps(clean_perms(d.get("perms") or json.loads(u["perms"] or "{}"))), uid))
+          json.dumps(clean_perms(d.get("perms") or json.loads(u["perms"] or "{}"))), email, uid))
     if d.get("password"):
         db.x("UPDATE users SET pw_hash=? WHERE id=?", (hash_password(d["password"]), uid))
         db.x("DELETE FROM sessions WHERE user_id=? ", (uid,))

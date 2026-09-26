@@ -54,6 +54,8 @@ jobs:
         run: |
           supabase link --project-ref "$PROJECT_ID" --password "$SUPABASE_DB_PASSWORD"
           supabase db push --password "$SUPABASE_DB_PASSWORD"
+          # sign in with username + password (supabase/functions/login)
+          supabase functions deploy login --project-ref "$PROJECT_ID" --no-verify-jwt
       - name: Skipped
         if: env.SUPABASE_ACCESS_TOKEN == '' || env.PROJECT_ID == ''
         run: echo "::notice::Supabase secrets not set yet — database step skipped (see docs/SUPABASE_SETUP.md)"

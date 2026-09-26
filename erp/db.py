@@ -547,6 +547,9 @@ class Database:
             for code, ar in ACCOUNT_NAMES_AR.items():
                 self.conn.execute("UPDATE accounts SET name_ar=? WHERE code=? AND name_ar=''", (ar, code))
         self._add_cols("business_units", [("customer", "TEXT DEFAULT ''")])
+        have = self._add_cols("users", [("email", "TEXT DEFAULT ''")])
+        if "email" not in have:  # workspace users created before this column used their email as username
+            self.conn.execute("UPDATE users SET email=lower(username) WHERE username LIKE '%_@_%.%'")
         self._add_cols("rates", [("eta_code", "TEXT DEFAULT ''")])
         self._add_cols("extracts", [("customer", "TEXT DEFAULT ''"), ("vat_code", "TEXT DEFAULT ''"),
                                     ("wht_code", "TEXT DEFAULT ''"), ("eta_uuid", "TEXT DEFAULT ''"),

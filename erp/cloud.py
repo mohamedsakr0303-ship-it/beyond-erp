@@ -210,9 +210,11 @@ def ensure_app_user(db, email, admin=False):
     """A workspace account signs in as the app user whose username is its email."""
     from . import auth
     email = email.strip().lower()
-    u = db.one("SELECT * FROM users WHERE lower(username)=?", (email,))
+    u = db.one("SELECT * FROM users WHERE lower(email)=? OR lower(username)=?", (email, email))
     if not u:
-        auth.create_user(db, {"username": email, "full_name": email.split("@")[0], "is_admin": admin,
+        name = email.split("@")[0]
+        username = name if not db.one("SELECT 1 FROM users WHERE lower(username)=?", (name.lower(),)) else email
+        auth.create_user(db, {"username": username, "email": email, "full_name": name, "is_admin": admin,
                               "_no_password": True, "perms": {"dashboard": "view"}}, first=admin)
     elif admin and not u["is_admin"]:
         db.x("UPDATE users SET is_admin=1, active=1 WHERE id=?", (u["id"],))
@@ -323,6 +325,15 @@ class Supabase:
     def sign_up(self, email, password):
         return self._call("POST", "/auth/v1/signup", {"email": email, "password": password})
 
+    def sign_in_username(self, username, password):
+        try:
+            return self._call("POST", "/functions/v1/login", {"username": username, "password": password})
+        except RuntimeError as e:
+            if getattr(e, "status", 0) == 404:
+                raise PermissionError("Signing in with a username is not set up on this workspace yet — use the email "
+                                      "address (the administrator deploys the “login” function, see the setup guide)") from None
+            raise
+
     def refresh(self, refresh_token):
         return self._call("POST", "/auth/v1/token?grant_type=refresh_token", {"refresh_token": refresh_token})
 
@@ -382,7 +393,7 @@ class CloudSync:
                                       "come back here and choose Sign in.")
             self._save_session(r)
             return self.info()
-        self._save_session(c.sign_in(email, password))
+        self._save_session(c.sign_in(email, password) if "@" in email else c.sign_in_username(email, password))
         return self.info()
 
     def token(self):

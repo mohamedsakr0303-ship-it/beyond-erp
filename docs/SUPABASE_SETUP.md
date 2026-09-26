@@ -69,6 +69,20 @@ open from disk).
    This also creates their app user; set what they may see and change under **Users**.
 4. Colleagues open the app, **Create an account** with that same email, and sign in — they get the shared books.
 
+## Adding people
+
+**Users → New** (or open an existing user): fill in **Username**, **Email** and their permissions. Saving adds the
+email to the workspace automatically (you must be a workspace administrator), and records the username there too.
+
+The person then creates their account once, on the sign-in page (**No account? Create one**, with that same email),
+or uses **Sign in with Google** if it is a Google address. After that they can sign in with **either their email or
+their username** + password (the username sign-in uses the small `login` function that the GitHub workflow deploys
+to Supabase automatically — it looks up the email on Supabase's side, so nobody can find out other people's emails
+from the sign-in page).
+
+To skip the confirmation email for someone: Supabase → Authentication → Users → **Add user**, their email + a
+password, tick **Auto Confirm User**, and tell them the password.
+
 ## Sign in with Google (optional, free)
 
 The app shows a **Sign in with Google** button as soon as Google is switched on in Supabase.

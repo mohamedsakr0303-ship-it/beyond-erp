@@ -7,3 +7,7 @@ schemas = ["public"]
 [auth]
 site_url = "http://localhost:8765"
 enable_signup = true
+
+# username + password sign-in: called before people are signed in, so no JWT check (it checks the password itself)
+[functions.login]
+verify_jwt = false

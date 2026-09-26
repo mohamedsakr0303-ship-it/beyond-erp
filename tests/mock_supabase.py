@@ -116,6 +116,13 @@ class Handler(BaseHTTPRequestHandler):
                     e = body["refresh_token"][4:]
                 return self._send(200, {"access_token": "tok:" + e, "refresh_token": "ref:" + e, "expires_in": 3600,
                                         "user": {"email": e}})
+            if url.path == "/functions/v1/login":    # supabase/functions/login: username -> email -> session
+                u = str(body.get("username", "")).strip().lower()
+                e = next((x["email"] for x in st.members.values() if x.get("username") == u and x["active"]), None)
+                if not e or st.accounts.get(e) != body.get("password") or e in st.unconfirmed:
+                    return self._send(400, {"code": 400, "error_code": "invalid_credentials", "msg": "Invalid login credentials"})
+                return self._send(200, {"access_token": "tok:" + e, "refresh_token": "ref:" + e, "expires_in": 3600,
+                                        "user": {"email": e}})
             if url.path in ("/auth/v1/resend", "/auth/v1/recover"):
                 return self._send(200, {})
             if url.path == "/test/config":          # test helper: switch "Confirm email" on/off
@@ -168,6 +175,16 @@ class Handler(BaseHTTPRequestHandler):
                 return _err("42501", "only administrators can save workspace copies", 403)
             st.snapshots[p["p_seq"]] = {"seq": p["p_seq"], "version": p["p_version"], "data": p["p_data"]}
             return 200, p["p_seq"]
+        if fn == "link_member":
+            if not m or not m["is_admin"]:
+                return _err("42501", "only workspace administrators can add people to the workspace", 403)
+            e, u = p["p_email"].strip().lower(), (p.get("p_username") or "").strip().lower() or None
+            for other in st.members.values():
+                if u and other.get("username") == u and other["email"] != e:
+                    other["username"] = None
+            cur = st.members.get(e, {"email": e, "is_admin": False, "gateway": False})
+            st.members[e] = {**cur, "username": u, "active": p.get("p_active", True)}
+            return 200, None
         if fn == "set_member":
             if not m or not m["is_admin"]:
                 return _err("42501", "only administrators can manage members", 403)

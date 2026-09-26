@@ -1220,10 +1220,11 @@ def cloud_session(ctx):
     if not getattr(ctx.app, "static", False):
         raise PermissionError()
     email = acc.text(ctx.body.get("email")).lower()
-    u = ctx.db.one("SELECT * FROM users WHERE lower(username)=? AND active=1", (email,))
+    u = ctx.db.one("SELECT * FROM users WHERE active=1 AND (lower(email)=? OR lower(username)=?) "
+                   "ORDER BY lower(email)=? DESC LIMIT 1", (email, email, email))
     if not u:
-        raise acc.ValidationError(f"{email} is a workspace member but has no user in the app yet — an administrator "
-                                  "adds it under Users (username = the email address)")
+        raise acc.ValidationError(f"{email} can use the workspace but no app user has this email yet — an administrator "
+                                  "opens Users, edits (or adds) the person and enters this address in Email")
     import secrets
     token = secrets.token_urlsafe(32)
     ctx.db.x("INSERT INTO sessions(token,user_id,expires) VALUES (?,?,datetime('now',?))",
@@ -1321,6 +1322,15 @@ def cloud_member_set(ctx):
         "p_active": b.get("active", True) is not False}, c.token()) or {"ok": True})
 
 
+@route("PUT", "/api/cloud/members/link")
+def cloud_member_link(ctx):
+    c = _cloud(ctx)
+    b = ctx.body
+    return _cloud_call(lambda: c.client().rpc("link_member", {
+        "p_email": b.get("email"), "p_username": b.get("username") or "", "p_active": b.get("active", True) is not False},
+        c.token()) or {"ok": True})
+
+
 def serve_api(app, method, target, headers, raw=b""):
     """Entry point for every API call: changes go through the shared workspace when this device is connected."""
     sync = getattr(app, "cloud", None)
@@ -1413,7 +1423,9 @@ def handle(app, method, target, headers, raw=b"", as_user=None, dry=False):
         token = headers.get("x-session") or (jar[COOKIE].value if COOKIE in jar else None)
         if as_user is not None:
             token = None
-            user = auth.public_user(db.one("SELECT * FROM users WHERE username=? AND active=1", (as_user,)))
+            # workspace changes are recorded under the member's email; a gateway relays local usernames
+            user = auth.public_user(db.one("SELECT * FROM users WHERE active=1 AND (username=? OR (email<>'' AND lower(email)=lower(?))) "
+                                           "ORDER BY username=? DESC LIMIT 1", (as_user, as_user, as_user)))
         else:
             user = auth.user_for_token(db, token)
         for m, rx, module, level, public, fn in ROUTES:

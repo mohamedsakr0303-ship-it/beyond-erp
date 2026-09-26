@@ -335,6 +335,15 @@ def cloud_ensure_admin(email):
             if (r.confirm) throw new CloudError(r.message, "confirm_sent");
             return rpc("workspace_info");
           }
+          if (!email.includes("@")) {   // a username: the workspace's "login" function finds the email on the server
+            try { saveSession(await req("POST", "/functions/v1/login", { username: email, password })); }
+            catch (e) {
+              if (e.status === 404) throw new CloudError("Signing in with a username is not set up on this workspace yet — use your email address (the administrator deploys the “login” function, see the setup guide).");
+              if (e.code === "invalid_credentials" || /invalid login/i.test(e.message)) throw new CloudError("Wrong username or password. Forgot the password? Choose “Get help” and use your email address.", "invalid_credentials");
+              throw friendly(e);
+            }
+            return rpc("workspace_info");
+          }
           try { saveSession(await req("POST", "/auth/v1/token?grant_type=password", { email, password })); } catch (e) { throw friendly(e); }
           return rpc("workspace_info");
         },
@@ -400,6 +409,7 @@ def cloud_ensure_admin(email):
         oauthUrl(provider) { const c = cfg(); return c && appUrl() ? `${c.url}/auth/v1/authorize?provider=${encodeURIComponent(provider)}&redirect_to=${encodeURIComponent(appUrl())}` : ""; },
         members: () => select("members", "select=*&order=email"),
         setMember: m => rpc("set_member", { p_email: m.email, p_is_admin: !!m.is_admin, p_gateway: !!m.gateway, p_active: m.active !== false }),
+        linkMember: m => rpc("link_member", { p_email: m.email, p_username: m.username || "", p_active: m.active !== false }),
         snapshot: () => maybeSnapshot(true),
         // open the app user that matches the signed-in workspace account
         async openSession() {
