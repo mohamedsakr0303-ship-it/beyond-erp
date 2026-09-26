@@ -52,10 +52,18 @@ jobs:
       - name: Apply database migrations
         if: env.SUPABASE_ACCESS_TOKEN != '' && env.PROJECT_ID != ''
         run: |
-          supabase link --project-ref "$PROJECT_ID" --password "$SUPABASE_DB_PASSWORD"
-          supabase db push --password "$SUPABASE_DB_PASSWORD"
-          # sign in with username + password (supabase/functions/login)
-          supabase functions deploy login --project-ref "$PROJECT_ID" --no-verify-jwt
+          set -o pipefail
+          supabase --version
+          { supabase link --project-ref "$PROJECT_ID" --password "$SUPABASE_DB_PASSWORD" &&
+            supabase db push --password "$SUPABASE_DB_PASSWORD"; } 2>&1 | tee out.txt ||
+            { echo "::error title=Database migrations::$(tail -c 1500 out.txt | tr '\n' ' ')"; exit 1; }
+      - name: Deploy the username sign-in function
+        if: env.SUPABASE_ACCESS_TOKEN != '' && env.PROJECT_ID != ''
+        continue-on-error: true   # only username sign-in depends on it; email and Google sign-in keep working
+        run: |
+          set -o pipefail
+          supabase functions deploy login --project-ref "$PROJECT_ID" --no-verify-jwt --use-api 2>&1 | tee out.txt ||
+            { echo "::error title=Sign-in function::$(tail -c 1500 out.txt | tr '\n' ' ')"; exit 1; }
       - name: Skipped
         if: env.SUPABASE_ACCESS_TOKEN == '' || env.PROJECT_ID == ''
         run: echo "::notice::Supabase secrets not set yet — database step skipped (see docs/SUPABASE_SETUP.md)"
