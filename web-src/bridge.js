@@ -187,10 +187,36 @@ def cloud_ensure_admin(email):
             body: body === undefined ? undefined : JSON.stringify(body) });
         } catch (e) { throw new CloudError("Cannot reach the workspace — check your internet connection", "offline"); }
         const text = await r.text(); let data = null; try { data = text ? JSON.parse(text) : null; } catch { data = { message: text }; }
-        if (!r.ok) { const d = data || {}; throw new CloudError(d.message || d.msg || d.error_description || d.error || ("HTTP " + r.status), d.code, r.status); }
+        if (!r.ok) { const d = data || {}; throw new CloudError(d.message || d.msg || d.error_description || d.error || ("HTTP " + r.status), d.error_code || (typeof d.code === "string" ? d.code : ""), r.status); }
         return data;
       }
-      const saveSession = s => { if (!s || !s.access_token) throw new CloudError("Sign-in failed — if Supabase emailed you a confirmation link, open it first");
+      // Plain-language versions of Supabase's sign-in errors
+      const AUTH_HELP = {
+        invalid_credentials: "Wrong email or password. No account yet? Choose “Create an account”. Just created one? Open the confirmation email first. Forgot the password? Choose “Forgot password?”.",
+        email_not_confirmed: "Please confirm your email first: open the link Supabase sent you (check spam), then sign in. “Resend confirmation email” sends a new one.",
+        over_email_send_rate_limit: "Supabase's free email service only sends a few emails per hour. Wait a while and try again, or ask the administrator to create your account in the Supabase dashboard (Authentication → Users → Add user, tick “Auto Confirm User”).",
+        user_already_exists: "An account with this email already exists — choose “Sign in” (or “Forgot password?”).",
+        weak_password: "Choose a longer password (at least 6 characters).",
+        otp_expired: "That email link has expired or was already used. Choose “Resend confirmation email” or “Forgot password?” to get a new one.",
+        signup_disabled: "New accounts are switched off for this workspace — ask the administrator to create your account.",
+      };
+      const friendly = e => { const h = AUTH_HELP[e.code] || (/invalid login credentials/i.test(e.message) && AUTH_HELP.invalid_credentials) ||
+        (/email not confirmed/i.test(e.message) && AUTH_HELP.email_not_confirmed) || (/rate limit/i.test(e.message) && AUTH_HELP.over_email_send_rate_limit) ||
+        (/already registered/i.test(e.message) && AUTH_HELP.user_already_exists); if (h) e.message = h; return e; };
+      // where Supabase's email links should bring people back to (this page)
+      const appUrl = () => location.protocol.startsWith("http") ? location.origin + location.pathname : "";
+      const withRedirect = path => appUrl() ? path + (path.includes("?") ? "&" : "?") + "redirect_to=" + encodeURIComponent(appUrl()) : path;
+      // Links from Supabase emails arrive as #access_token=…&type=signup|recovery (or #error=…): pick them up once
+      let pendingAuth = null;
+      (() => {
+        const hp = new URLSearchParams(location.hash.replace(/^#\/?/, ""));
+        if (hp.get("access_token") || hp.get("error_description")) {
+          pendingAuth = { access: hp.get("access_token"), refresh: hp.get("refresh_token"), expires: Number(hp.get("expires_in") || 3600),
+            type: hp.get("type") || "", error: hp.get("error_description") ? (AUTH_HELP[hp.get("error_code")] || hp.get("error_description")) : "" };
+          history.replaceState(null, "", location.pathname + location.search);
+        }
+      })();
+      const saveSession = s => { if (!s || !s.access_token) throw new CloudError("Please confirm your email first: open the link Supabase sent you, then sign in.", "email_not_confirmed");
         put(SES, { access: s.access_token, refresh: s.refresh_token, exp: Date.now() + ((s.expires_in || 3600) - 60) * 1000, email: ((s.user && s.user.email) || (get(SES) || {}).email || "").toLowerCase() }); };
       async function token() {
         const s = get(SES); if (!s) throw new CloudError("Sign in to the workspace", "signed_out");
@@ -302,10 +328,44 @@ def cloud_ensure_admin(email):
         },
         async signin(email, password, create) {
           email = String(email || "").trim().toLowerCase();
-          if (create) await req("POST", "/auth/v1/signup", { email, password });
-          saveSession(await req("POST", "/auth/v1/token?grant_type=password", { email, password }));
+          if (create) {
+            const r = await this.signup(email, password);
+            if (r.confirm) throw new CloudError(r.message, "confirm_sent");
+            return rpc("workspace_info");
+          }
+          try { saveSession(await req("POST", "/auth/v1/token?grant_type=password", { email, password })); } catch (e) { throw friendly(e); }
           return rpc("workspace_info");
         },
+        // Create an account. With "Confirm email" on (Supabase's default) no session comes back: the person must open
+        // the emailed link first — it returns to this page and signs them in.
+        async signup(email, password) {
+          email = String(email || "").trim().toLowerCase();
+          let r;
+          try { r = await req("POST", withRedirect("/auth/v1/signup"), { email, password }); } catch (e) { throw friendly(e); }
+          if (r && r.access_token) { saveSession(r); return { confirm: false }; }
+          if (r && Array.isArray(r.identities) && !r.identities.length) throw friendly(new CloudError("", "user_already_exists"));
+          return { confirm: true, message: `Almost done: we sent a confirmation email to ${email}. Open the link in it (check spam) — it brings you back here signed in.` +
+            (appUrl() ? "" : " Then come back to this window and sign in.") };
+        },
+        async resend(email) {
+          try { await req("POST", withRedirect("/auth/v1/resend"), { type: "signup", email: String(email || "").trim().toLowerCase() }); } catch (e) { throw friendly(e); }
+        },
+        async recover(email) {
+          try { await req("POST", withRedirect("/auth/v1/recover"), { email: String(email || "").trim().toLowerCase() }); } catch (e) { throw friendly(e); }
+        },
+        async setPassword(password) {
+          try { await req("PUT", "/auth/v1/user", { password }, await token()); } catch (e) { throw friendly(e); }
+        },
+        // A confirmation / password-reset link just brought the person back: finish signing them in.
+        async takePendingAuth() {
+          const p = pendingAuth; pendingAuth = null;
+          if (!p) return null;
+          if (p.error) return { error: p.error };
+          const u = await req("GET", "/auth/v1/user", undefined, p.access);
+          saveSession({ access_token: p.access, refresh_token: p.refresh, expires_in: p.expires, user: u });
+          return { type: p.type, info: await rpc("workspace_info") };
+        },
+        hasPendingAuth: () => !!pendingAuth,
         info: () => rpc("workspace_info"),
         async claim() {
           const info = await rpc("claim_workspace");
@@ -330,8 +390,12 @@ def cloud_ensure_admin(email):
         setMember: m => rpc("set_member", { p_email: m.email, p_is_admin: !!m.is_admin, p_gateway: !!m.gateway, p_active: m.active !== false }),
         snapshot: () => maybeSnapshot(true),
         // open the app user that matches the signed-in workspace account
-        async openSession() { return localRun("POST", "/api/cloud/session", { "x-requested-with": "BeyondERP", "content-type": "application/json", "x-beyond-static": "1" },
-          new TextEncoder().encode(JSON.stringify({ email: (get(SES) || {}).email || "" }))); },
+        async openSession() {
+          const r = localRun("POST", "/api/cloud/session", { "x-requested-with": "BeyondERP", "content-type": "application/json", "x-beyond-static": "1" },
+            new TextEncoder().encode(JSON.stringify({ email: (get(SES) || {}).email || "" })));
+          dirty = true; await persist();   // keep the session through page reloads
+          return r;
+        },
         write, startPolling,
       };
     })();

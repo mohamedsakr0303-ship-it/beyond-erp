@@ -265,6 +265,29 @@ def restore_local_rows(db, keep):
 
 
 # ------------------------------------------------------------------ Supabase REST client (stdlib)
+AUTH_HELP = {
+    "invalid_credentials": "Wrong email or password. No account yet? Use “Create account”. Just created one? Open the "
+                           "confirmation email Supabase sent first.",
+    "email_not_confirmed": "Please confirm your email first: open the link Supabase sent you (check spam), then sign in.",
+    "over_email_send_rate_limit": "Supabase's free email service only sends a few emails per hour — try again later, or "
+                                  "create the account in the Supabase dashboard (Authentication → Users → Add user, "
+                                  "tick “Auto Confirm User”).",
+    "user_already_exists": "An account with this email already exists — sign in instead.",
+    "weak_password": "Choose a longer password (at least 6 characters).",
+}
+
+
+def auth_help(code, msg):
+    if code in AUTH_HELP:
+        return AUTH_HELP[code]
+    low = msg.lower()
+    for needle, key in (("invalid login credentials", "invalid_credentials"), ("email not confirmed", "email_not_confirmed"),
+                        ("rate limit", "over_email_send_rate_limit"), ("already registered", "user_already_exists")):
+        if needle in low:
+            return AUTH_HELP[key]
+    return msg
+
+
 class Supabase:
     def __init__(self, url, key, timeout=25):
         self.url, self.key, self.timeout = url.rstrip("/"), key, timeout
@@ -287,6 +310,7 @@ class Supabase:
             msg = err.get("message") or err.get("msg") or err.get("error_description") or err.get("error") or str(e)
             if err.get("code") == "40001":
                 raise Conflict(msg) from None
+            msg = auth_help(err.get("error_code") or "", msg)
             ex = PermissionError(msg) if e.code in (401, 403) or err.get("code") == "42501" else RuntimeError(msg)
             ex.status = e.code
             raise ex from None
@@ -348,8 +372,16 @@ class CloudSync:
 
     def sign_in(self, email, password, create=False):
         c = self.client()
+        email = (email or "").strip().lower()
         if create:
-            c.sign_up(email, password)
+            r = c.sign_up(email, password) or {}
+            if not r.get("access_token"):   # "Confirm email" is on (Supabase's default)
+                if isinstance(r.get("identities"), list) and not r["identities"]:
+                    raise PermissionError(AUTH_HELP["user_already_exists"])
+                raise PermissionError(f"Almost done: we sent a confirmation email to {email}. Open the link in it, then "
+                                      "come back here and choose Sign in.")
+            self._save_session(r)
+            return self.info()
         self._save_session(c.sign_in(email, password))
         return self.info()
 

@@ -18,6 +18,8 @@ class State:
         self.members = {}       # email -> dict
         self.ops = []
         self.snapshots = {}
+        self.confirm_required = False   # Supabase's "Confirm email" setting
+        self.unconfirmed = set()
 
 
 def _err(code, msg, status=400):
@@ -34,13 +36,23 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Headers", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
 
     def do_OPTIONS(self):
         self._send(204, None)
+
+    def do_PUT(self):
+        st, email = self.server.state, self._email()
+        n = int(self.headers.get("Content-Length") or 0)
+        body = json.loads(self.rfile.read(n) or b"{}")
+        if urlparse(self.path).path == "/auth/v1/user" and email:
+            with st.lock:
+                st.accounts[email] = body.get("password", st.accounts.get(email))
+            return self._send(200, {"email": email})
+        self._send(404, {"message": "not found"})
 
     def _email(self):
         tok = (self.headers.get("Authorization") or "").replace("Bearer ", "")
@@ -51,6 +63,8 @@ class Handler(BaseHTTPRequestHandler):
         q = parse_qs(url.query)
         member = email in st.members and st.members[email]["active"]
         with st.lock:
+            if url.path == "/auth/v1/user":
+                return self._send(200, {"email": email} if email else {"msg": "invalid JWT"})
             if url.path == "/rest/v1/ops":
                 after = int(re.sub(r"^gt\.", "", q.get("seq", ["gt.0"])[0]))
                 limit = int(q.get("limit", ["1000"])[0])
@@ -69,18 +83,36 @@ class Handler(BaseHTTPRequestHandler):
         body = json.loads(self.rfile.read(n) or b"{}")
         with st.lock:
             if url.path == "/auth/v1/signup":
-                st.accounts[body["email"].lower()] = body["password"]
-                return self._send(200, {"user": {"email": body["email"].lower()}})
+                e = body["email"].lower()
+                if e in st.accounts:   # Supabase hides whether an address is registered: empty identities
+                    return self._send(200, {"email": e, "identities": []})
+                st.accounts[e] = body["password"]
+                if st.confirm_required:
+                    st.unconfirmed.add(e)
+                    return self._send(200, {"email": e, "identities": [{"provider": "email"}]})
+                return self._send(200, {"access_token": "tok:" + e, "refresh_token": "ref:" + e, "expires_in": 3600,
+                                        "user": {"email": e}})
             if url.path == "/auth/v1/token":
                 gt = parse_qs(url.query).get("grant_type", [""])[0]
                 if gt == "password":
                     e = body["email"].lower()
                     if st.accounts.get(e) != body["password"]:
-                        return self._send(400, {"error_description": "Invalid login credentials"})
+                        return self._send(400, {"code": 400, "error_code": "invalid_credentials",
+                                                "msg": "Invalid login credentials"})
+                    if e in st.unconfirmed:
+                        return self._send(400, {"code": 400, "error_code": "email_not_confirmed", "msg": "Email not confirmed"})
                 else:
                     e = body["refresh_token"][4:]
                 return self._send(200, {"access_token": "tok:" + e, "refresh_token": "ref:" + e, "expires_in": 3600,
                                         "user": {"email": e}})
+            if url.path in ("/auth/v1/resend", "/auth/v1/recover"):
+                return self._send(200, {})
+            if url.path == "/test/config":          # test helper: switch "Confirm email" on/off
+                st.confirm_required = bool(body.get("confirm_required"))
+                return self._send(200, {})
+            if url.path == "/test/confirm":         # test helper: the person clicked the emailed link
+                st.unconfirmed.discard(body["email"].lower())
+                return self._send(200, {})
             if url.path.startswith("/rest/v1/rpc/"):
                 email = self._email()
                 if not email:

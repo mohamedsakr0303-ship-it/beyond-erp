@@ -252,31 +252,95 @@ const CloudAPI = STATIC ? {
 };
 const cloudOn = () => STATIC ? !!(window.BeyondCloud && window.BeyondCloud.joined()) : !!(S.boot && S.boot.cloud && S.boot.cloud.joined);
 
-// Browser edition connected to a workspace: sign in with the workspace account (email + password).
-async function renderCloudAuth(msg) {
-  applyLook();
+// Password field(s) with a "Show password" switch; `confirm` adds a second field that must match (new accounts,
+// new passwords). The browser's own validation then refuses to submit until both are the same.
+function pwFields(confirm, label) {
   const ar = S.lang === "ar";
+  return `<label class="f">${esc(label || t("password"))}<input name="password" type="password" autocomplete="${confirm ? "new-password" : "current-password"}" required minlength="6"></label>
+    ${confirm ? `<label class="f">${ar ? "تأكيد كلمة المرور" : "Confirm password"}<input name="password2" type="password" autocomplete="new-password" required minlength="6" data-input="pwmatch"></label>
+      <div id="pwhint" style="font-size:.8em;min-height:1.1em"></div>` : ""}
+    <label class="f chk"><input type="checkbox" data-change="pwshow">${ar ? "إظهار كلمة المرور" : "Show password"}</label>`;
+}
+function pwWire(root) {
+  const ar = S.lang === "ar";
+  S.H.pwshow = el => $$("input[name=password], input[name=password2]", root).forEach(i => { i.type = el.checked ? "text" : "password"; });
+  S.H.pwmatch = () => {
+    const a = $("[name=password]", root), b = $("[name=password2]", root), h = $("#pwhint", root); if (!b) return;
+    const same = !b.value || a.value === b.value;
+    b.setCustomValidity(same ? "" : (ar ? "كلمتا المرور غير متطابقتين" : "The passwords do not match"));
+    if (h) { h.textContent = !b.value ? "" : same ? (ar ? "✓ متطابقتان" : "✓ Passwords match") : (ar ? "✗ كلمتا المرور غير متطابقتين" : "✗ The passwords do not match");
+      h.className = same ? "bal-ok" : "bal-bad"; }
+  };
+  const a = $("[name=password]", root); if (a) a.addEventListener("input", () => S.H.pwmatch());
+}
+
+// Browser edition connected to a workspace: sign in (or create an account) with the workspace account.
+async function renderCloudAuth(msg, kind = "info", mode = "signin") {
+  applyLook();
+  const ar = S.lang === "ar", C = window.BeyondCloud, creating = mode === "signup";
   $("#root").innerHTML = `<div class="login"><h1>${esc(S.boot.settings.company_name || "Beyond")} ERP</h1>
-    <p class="muted">${ar ? "تسجيل الدخول إلى مساحة العمل المشتركة" : "Sign in to your shared workspace"}</p><div id="lerr">${msg ? `<div class="banner info">${esc(msg)}</div>` : ""}</div>
-    <form id="lf" class="grid"><label class="f">${t("email")}<input name="email" type="email" autocomplete="username" required value="${esc(window.BeyondCloud.email())}"></label>
-      <label class="f">${t("password")}<input name="password" type="password" autocomplete="current-password" required minlength="6"></label>
-      <button class="btn pri" type="submit">${t("sign_in")}</button>
-      <button class="btn" type="button" data-a="csignup">${ar ? "إنشاء حساب جديد" : "Create an account"}</button>
+    <div class="tabs" style="margin:10px 0 12px"><a href="#" data-a="mode_in" class="${creating ? "" : "on"}">${t("sign_in")}</a>
+      <a href="#" data-a="mode_up" class="${creating ? "on" : ""}">${ar ? "إنشاء حساب" : "Create an account"}</a></div>
+    <p class="muted" style="margin-top:0">${creating ? (ar ? "أنشئ حسابك في مساحة العمل المشتركة. ستصلك رسالة لتأكيد بريدك." : "Create your account for the shared workspace. You will get an email to confirm your address.")
+      : (ar ? "تسجيل الدخول إلى مساحة العمل المشتركة" : "Sign in to your shared workspace")}</p>
+    <div id="lerr">${msg ? `<div class="banner ${kind}">${esc(msg)}</div>` : ""}</div>
+    <form id="lf" class="grid"><label class="f">${t("email")}<input name="email" type="email" autocomplete="username" required value="${esc(C.email() || store.get("lastEmail", ""))}"></label>
+      ${pwFields(creating)}
+      <button class="btn pri" type="submit">${creating ? (ar ? "إنشاء الحساب" : "Create account") : t("sign_in")}</button>
+      <div class="row" style="justify-content:space-between;font-size:.85em">
+        ${creating ? `<a href="#" data-a="cresend">${ar ? "لم تصلك رسالة التأكيد؟ إعادة الإرسال" : "No confirmation email? Send it again"}</a>`
+          : `<a href="#" data-a="cforgot">${ar ? "نسيت كلمة المرور؟" : "Forgot password?"}</a><a href="#" data-a="cresend">${ar ? "إعادة إرسال رسالة التأكيد" : "Resend confirmation email"}</a>`}</div>
       <button class="btn" type="button" data-a="lang2">${t("language")}</button>
       <a href="#" data-a="clocal" class="muted" style="font-size:.85em;text-align:center">${ar ? "استخدام هذا الجهاز بدون مساحة العمل" : "Use this device without the workspace"}</a></form></div>`;
-  const out = m => { $("#lerr").innerHTML = `<div class="banner err">${esc(m)}</div>`; };
-  const go = async create => {
-    const f = $("#lf"); if (!f.reportValidity()) return;
-    const v = Object.fromEntries(new FormData(f));
-    try {
-      $("#lerr").innerHTML = `<div class="banner info">${t("loading")}</div>`;
-      const info = await CloudAPI.signin(v.email, v.password, create);
-      await cloudEnter(info);
-    } catch (e) { out(e.message); }
+  const show = (m, k = "err") => { $("#lerr").innerHTML = `<div class="banner ${k}">${esc(m)}</div>`; };
+  const needEmail = () => { const e = $("[name=email]"); if (!e.value || !e.checkValidity()) { e.reportValidity(); return null; } store.set("lastEmail", e.value.trim()); return e.value.trim(); };
+  S.H = {
+    lang2: () => { store.set("lang", S.lang === "ar" ? "en" : "ar"); renderCloudAuth("", "info", mode); },
+    mode_in: () => renderCloudAuth("", "info", "signin"),
+    mode_up: () => renderCloudAuth("", "info", "signup"),
+    clocal: () => { store.set("cloudLocal", true); renderAuth(); },
+    cforgot: async () => { const email = needEmail(); if (!email) return;
+      try { await C.recover(email); show(ar ? `أرسلنا رابط إعادة تعيين كلمة المرور إلى ${email}. افتحه لاختيار كلمة مرور جديدة.` : `We sent a password-reset link to ${email}. Open it to choose a new password.`, "ok"); } catch (e) { show(e.message); } },
+    cresend: async () => { const email = needEmail(); if (!email) return;
+      try { await C.resend(email); show(ar ? `أعدنا إرسال رسالة التأكيد إلى ${email}.` : `We sent a new confirmation email to ${email}.`, "ok"); } catch (e) { show(e.message); } },
   };
-  S.H = { lang2: () => { store.set("lang", S.lang === "ar" ? "en" : "ar"); renderCloudAuth(); }, csignup: () => go(true),
-    clocal: () => { store.set("cloudLocal", true); renderAuth(); } };
-  $("#lf").addEventListener("submit", e => { e.preventDefault(); go(false); });
+  pwWire($("#lf"));
+  $("#lf").addEventListener("submit", async e => {
+    e.preventDefault();
+    const f = e.target; if (creating) S.H.pwmatch();
+    if (!f.reportValidity()) return;
+    const v = Object.fromEntries(new FormData(f)); store.set("lastEmail", v.email.trim());
+    const btn = $("button[type=submit]", f); btn.disabled = true;
+    try {
+      show(t("loading"), "info");
+      if (creating) {
+        const r = await C.signup(v.email, v.password);
+        if (r.confirm) return renderCloudAuth(r.message, "ok", "signin");
+        await cloudEnter(await C.info());
+      } else await cloudEnter(await CloudAPI.signin(v.email, v.password, false));
+    } catch (x) { show(x.message); } finally { btn.disabled = false; }
+  });
+}
+// A link from a Supabase email (account confirmation or password reset) brought the person back to the app.
+async function cloudReturn() {
+  const ar = S.lang === "ar";
+  let r;
+  try { r = await window.BeyondCloud.takePendingAuth(); } catch (e) { return renderCloudAuth(e.message, "err"); }
+  if (!r) return false;
+  if (r.error) { await renderCloudAuth(r.error, "err"); return true; }
+  if (r.type === "recovery") {
+    applyLook();
+    $("#root").innerHTML = `<div class="login"><h1>${ar ? "كلمة مرور جديدة" : "Choose a new password"}</h1><div id="lerr"></div>
+      <form id="lf" class="grid">${pwFields(true, t("new_pw"))}
+      <button class="btn pri" type="submit">${t("save")}</button></form></div>`;
+    pwWire($("#lf"));
+    $("#lf").addEventListener("submit", async e => { e.preventDefault(); S.H.pwmatch(); if (!e.target.reportValidity()) return;
+      try { await window.BeyondCloud.setPassword(new FormData(e.target).get("password")); await cloudEnter(r.info); }
+      catch (x) { $("#lerr").innerHTML = `<div class="banner err">${esc(x.message)}</div>`; } });
+    return true;
+  }
+  try { await cloudEnter(r.info); } catch (e) { await renderCloudAuth(e.message, "err"); }
+  return true;
 }
 // After a successful workspace sign-in: create / join the workspace if needed, then open the matching app user.
 async function cloudEnter(info) {
@@ -298,6 +362,7 @@ async function cloudEnter(info) {
 }
 
 async function renderAuth() {
+  if (STATIC && window.BeyondCloud && window.BeyondCloud.hasPendingAuth()) { store.set("cloudLocal", false); if (await cloudReturn()) return; }
   if (STATIC && window.BeyondCloud && window.BeyondCloud.configured() && !store.get("cloudLocal", false)) return renderCloudAuth();
   applyLook();
   const setup = S.boot.needs_setup;
@@ -306,12 +371,15 @@ async function renderAuth() {
     <form id="lf" class="grid">${setup ? `<label class="f">${t("company_name")}<input name="company_name" value="${esc(S.boot.settings.company_name || "")}"></label>
       <label class="f">${t("full_name")}<input name="full_name"></label>` : ""}
       <label class="f">${t("username")}<input name="username" autocomplete="username" required></label>
-      <label class="f">${t("password")}<input name="password" type="password" autocomplete="${setup ? "new-password" : "current-password"}" required minlength="${setup ? 8 : 1}"></label>
+      ${setup ? pwFields(true).replace(/minlength="6"/g, 'minlength="8"') : `<label class="f">${t("password")}<input name="password" type="password" autocomplete="current-password" required minlength="1"></label>
+      <label class="f chk"><input type="checkbox" data-change="pwshow">${S.lang === "ar" ? "إظهار كلمة المرور" : "Show password"}</label>`}
       <button class="btn pri" type="submit">${setup ? t("save") : t("sign_in")}</button>
       <button class="btn" type="button" data-a="lang2">${t("language")}</button></form></div>`;
   S.H = { lang2: () => { store.set("lang", S.lang === "ar" ? "en" : "ar"); renderAuth(); } };
+  pwWire($("#lf"));
   $("#lf").addEventListener("submit", async e => {
     e.preventDefault();
+    if (setup) { S.H.pwmatch(); if (!e.target.reportValidity()) return; }
     const v = Object.fromEntries(new FormData(e.target));
     try {
       if (setup) v.language = S.lang;
@@ -1569,8 +1637,11 @@ async function workspaceTab(view, head) {
     ${st.preset ? `<p class="muted">${ar ? "هذه النسخة مربوطة مسبقاً بمشروع الشركة." : "This copy of the app comes pre-linked to your company's project."}</p>` : ""}
     ${form([{ k: "url", l: "Project URL", v: st.url, ph: "https://abcdefgh.supabase.co" }, { k: "key", l: ar ? "المفتاح العام (anon public key)" : "anon public key", v: st.key, ph: "eyJhbGciOi…" }], 2)}
     <div class="row" style="margin-top:8px"><button class="btn" data-a="wssave">${t("save")}</button><span class="muted" style="font-size:.85em">Supabase → Project Settings → API</span></div></div>
-  <div class="card" id="wsin"><h2>2 · ${ar ? "تسجيل الدخول" : "Sign in"}</h2>${form([{ k: "email", l: t("email"), type: "email", v: st.email }, { k: "password", l: t("password"), type: "password" }], 2)}
-    <div class="row" style="margin-top:8px"><button class="btn" data-a="wsin">${t("sign_in")}</button><button class="btn" data-a="wsup">${ar ? "إنشاء حساب" : "Create account"}</button></div></div>
+  <div class="card" id="wsin"><h2>2 · ${S.wsCreate ? (ar ? "إنشاء حساب" : "Create an account") : (ar ? "تسجيل الدخول" : "Sign in")}</h2>
+    <div class="grid g2"><label class="f">${t("email")}<input name="email" type="email" value="${esc(st.email || "")}"></label><div></div>
+      ${pwFields(!!S.wsCreate)}</div>
+    <div class="row" style="margin-top:8px">${S.wsCreate ? `<button class="btn pri" data-a="wsup">${ar ? "إنشاء الحساب" : "Create account"}</button><a href="#" data-a="wsmode">${ar ? "لدي حساب — تسجيل الدخول" : "I have an account — sign in"}</a>`
+      : `<button class="btn" data-a="wsin">${t("sign_in")}</button><a href="#" data-a="wsmode">${ar ? "ليس لديك حساب؟ إنشاء حساب" : "No account yet? Create one"}</a>`}</div></div>
   <div class="card"><h2>3 · ${ar ? "الانضمام" : "Join"}</h2>${info && !info.error ? `
     ${!info.is_member && !info.has_members ? `<p>${ar ? "مساحة العمل فارغة. أنشئها من دفاتر هذا الجهاز لتصبح المسؤول." : "The workspace is empty. Create it from this device's books — you become its administrator."}</p><button class="btn pri" data-a="wsclaim">${ar ? "إنشاء مساحة العمل من هذا الجهاز" : "Create the workspace from this device"}</button>` : ""}
     ${!info.is_member && info.has_members ? `<div class="banner err">${ar ? "هذا الحساب ليس عضواً. اطلب من المسؤول إضافته." : "This account is not a member yet — ask an administrator to add it."}</div>` : ""}
@@ -1585,8 +1656,11 @@ async function workspaceTab(view, head) {
     <tr><td><input id="wsnew" type="email" placeholder="name@company.com"></td><td><input type="checkbox" id="wsnewadm"></td><td><input type="checkbox" id="wsnewgw"></td><td></td><td><button class="btn sm pri" data-a="wsmadd">+ ${t("new")}</button></td></tr></tbody></table></div></div>` : ""}`;
   const run = async (fn, okMsg) => { try { await fn(); if (okMsg) toast(okMsg); await refreshBoot(); renderShell(); route(); } catch (e) { fail(e); } };
   S.H.wssave = () => { const v = readForm($("#wscfg")); run(() => CloudAPI.config(v.url, v.key), t("saved")); };
+  if ($("#wsin")) pwWire($("#wsin"));
+  S.H.wsmode = () => { S.wsCreate = !S.wsCreate; route(); };
   S.H.wsin = () => { const v = readForm($("#wsin")); run(() => CloudAPI.signin(v.email, v.password, false)); };
-  S.H.wsup = () => { const v = readForm($("#wsin")); run(() => CloudAPI.signin(v.email, v.password, true), ar ? "تم إنشاء الحساب — أكّد بريدك إن طُلب ذلك" : "Account created — confirm your email if Supabase asks"); };
+  S.H.wsup = () => { const box = $("#wsin"); S.H.pwmatch(); const bad = $$("input", box).find(i => !i.checkValidity()); if (bad) { bad.reportValidity(); return; }
+    const v = readForm(box); run(async () => { await CloudAPI.signin(v.email, v.password, true); S.wsCreate = false; }); };
   S.H.wsclaim = () => confirm(ar ? "إنشاء مساحة العمل من دفاتر هذا الجهاز؟" : "Create the workspace from this device's books?") && run(() => CloudAPI.claim(), t("saved"));
   S.H.wsjoin = () => confirm(ar ? "سيتم استبدال بيانات هذا الجهاز ببيانات مساحة العمل. متابعة؟" : "This device's books will be replaced by the workspace's. Continue?") && run(async () => {
     await CloudAPI.join(); if (!STATIC) { toast(ar ? "تم الانضمام — سجّل الدخول مجدداً" : "Joined — please sign in again"); setTimeout(() => location.reload(), 1200); } });

@@ -21,6 +21,10 @@ Cloudflare or GitHub Pages; everything shared lives in Supabase.
 3. **Authentication → Sign In / Providers → Email**: keep *Email* enabled. "Confirm email" on (safer) means each
    person clicks a link from Supabase once after creating their account.
 4. **Account (top-right) → Access Tokens**: create a token for GitHub.
+5. **Authentication → URL Configuration** (after step 3, once you know the app's address):
+   set **Site URL** to your app's address, e.g. `https://beyond-erp.pages.dev`, and add the same address under
+   **Redirect URLs**. This is where the "confirm your email" and "reset password" links bring people back to —
+   without it they are sent to `localhost`. (Add the address of every other copy you use, e.g. a static.app site.)
 
 ## 2 · Connect GitHub (once)
 
@@ -64,6 +68,19 @@ open from disk).
 3. **Settings → Workspace (cloud) → Members**: add each colleague's email (tick *Administrator* for other admins).
    This also creates their app user; set what they may see and change under **Users**.
 4. Colleagues open the app, **Create an account** with that same email, and sign in — they get the shared books.
+
+## Signing in — if it says "Invalid login credentials"
+
+* **No account yet** → use the **Create an account** tab (type the password twice).
+* **Just created one** → open the confirmation email from Supabase first (check spam). The link brings you back to
+  the app signed in. No email? "Resend confirmation email". Supabase's built-in mailer only sends a few emails per
+  hour on the free plan.
+* **Forgot the password / not sure which one you used** → "Forgot password?" on the sign-in tab.
+* **Quickest way around email altogether**: Supabase dashboard → **Authentication → Users → Add user → Create new
+  user**, enter the email and a password, tick **Auto Confirm User** — then sign in with those. (Or switch off
+  *Confirm email* under Authentication → Sign In / Providers → Email.)
+* See every account and its status in **Authentication → Users**; you can delete a half-finished one there and
+  start again.
 
 ## Desktop app and the offline web copy
 

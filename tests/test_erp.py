@@ -359,6 +359,19 @@ class Workspace(unittest.TestCase):
         self.assertEqual(self.node_call(0, a, "POST", "/api/users", {"username": "clerk", "password": "clerk1234",
                                                                      "perms": {"sales": "edit"}})[0], 200)
         self.assertNotIn("clerk1234", json.dumps(self.sb.state.ops))  # passwords never leave the device
+        # sign-in problems get plain answers; with "Confirm email" on, sign-up asks the person to open the email first
+        st, r = self.node_call(0, a, "POST", "/api/cloud/signin", {"email": "owner@x.com", "password": "wrong-pass"})
+        self.assertEqual(st, 400)
+        self.assertIn("Wrong email or password", r["error"])
+        self.sb.state.confirm_required = True
+        st, r = self.node_call(0, a, "POST", "/api/cloud/signin", {"email": "new@x.com", "password": "pw123456", "create": True})
+        self.assertIn("confirmation email", r["error"])
+        st, r = self.node_call(0, a, "POST", "/api/cloud/signin", {"email": "new@x.com", "password": "pw123456"})
+        self.assertIn("confirm your email", r["error"])
+        st, r = self.node_call(0, a, "POST", "/api/cloud/signin", {"email": "owner@x.com", "password": "pw123456", "create": True})
+        self.assertIn("already exists", r["error"])
+        self.sb.state.confirm_required = False
+        self.assertEqual(self.node_call(0, a, "POST", "/api/cloud/signin", {"email": "owner@x.com", "password": "pw123456"})[0], 200)
         # A (admin) adds B's account as a gateway member; B joins and gets A's books
         self.assertEqual(self.node_call(0, a, "PUT", "/api/cloud/members",
                                         {"email": "desk@x.com", "gateway": True})[0], 200)
