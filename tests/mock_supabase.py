@@ -63,6 +63,17 @@ class Handler(BaseHTTPRequestHandler):
         q = parse_qs(url.query)
         member = email in st.members and st.members[email]["active"]
         with st.lock:
+            if url.path == "/auth/v1/settings":
+                return self._send(200, {"external": {"email": True, "google": True}})
+            if url.path == "/auth/v1/authorize":     # stand-in for "Sign in with Google": straight back, signed in
+                q2 = parse_qs(url.query)
+                e = "google.user@gmail.com"
+                st.accounts.setdefault(e, None)
+                self.send_response(302)
+                self.send_header("Location", q2["redirect_to"][0] + f"#access_token=tok:{e}&refresh_token=ref:{e}"
+                                 "&expires_in=3600&token_type=bearer&provider_token=x")
+                self.end_headers()
+                return
             if url.path == "/auth/v1/user":
                 return self._send(200, {"email": email} if email else {"msg": "invalid JWT"})
             if url.path == "/rest/v1/ops":

@@ -171,8 +171,10 @@ def cloud_ensure_admin(email):
     // ======================================================== shared workspace (Supabase) — see erp/cloud.py
     const Cloud = window.BeyondCloud = (() => {
       const LS = "berp.cloud", SES = "berp.cloud.session";
-      const get = k => { try { return JSON.parse(localStorage.getItem(k) || "null"); } catch { return null; } };
-      const put = (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, JSON.stringify(v)); } catch { /* private mode */ } };
+      const remembered = () => { try { return localStorage.getItem("berp.remember") !== "false"; } catch { return true; } };
+      const box = k => { try { return k === SES && !remembered() ? sessionStorage : localStorage; } catch { return localStorage; } };
+      const get = k => { try { return JSON.parse(box(k).getItem(k) || "null"); } catch { return null; } };
+      const put = (k, v) => { try { const b = box(k); v == null ? b.removeItem(k) : b.setItem(k, JSON.stringify(v)); } catch { /* private mode */ } };
       const status = { state: "off", error: "", lastSync: "" };
       const listeners = new Set();
       const emit = () => listeners.forEach(f => { try { f(status); } catch { /* ignore */ } });
@@ -385,7 +387,17 @@ def cloud_ensure_admin(email):
         },
         pull: () => pull().then(applied => ({ applied })),
         async disconnect() { ["last_seq", "snap_seq"].forEach(k => local(k, null)); put(SES, null); put(LS, null); dirty = true; await persist(); setStatus("off"); },
-        signout() { put(SES, null); setStatus("signed_out", ""); },
+        signout() { put(SES, null); try { sessionStorage.removeItem(SES); localStorage.removeItem(SES); } catch { /* ignore */ } setStatus("signed_out", ""); },
+        // "Remember me": keep the sign-in after the browser closes (on) or forget it (off). Applies to the next sign-in.
+        setRemember(on) { try { localStorage.setItem("berp.remember", on ? "true" : "false"); } catch { /* ignore */ } },
+        remembered,
+        // Which sign-in methods the Supabase project has switched on (Authentication → Sign In / Providers)
+        async providers() {
+          try { const st = await req("GET", "/auth/v1/settings"); return { google: !!(st && st.external && st.external.google), email: !(st && st.external && st.external.email === false) }; }
+          catch { return { google: false, email: true }; }
+        },
+        // Continue with Google: Supabase sends the person to Google and back here with the sign-in in the address
+        oauthUrl(provider) { const c = cfg(); return c && appUrl() ? `${c.url}/auth/v1/authorize?provider=${encodeURIComponent(provider)}&redirect_to=${encodeURIComponent(appUrl())}` : ""; },
         members: () => select("members", "select=*&order=email"),
         setMember: m => rpc("set_member", { p_email: m.email, p_is_admin: !!m.is_admin, p_gateway: !!m.gateway, p_active: m.active !== false }),
         snapshot: () => maybeSnapshot(true),

@@ -99,6 +99,14 @@ tr.void td{opacity:.5;text-decoration:line-through}
 .dd-menu button:hover,.dd-menu a:hover{background:var(--hover)}
 .login{max-width:380px;margin:10vh auto;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:26px}
 .login h1{margin:0 0 4px;color:var(--brand)}
+.login.auth{max-width:400px;padding:30px 30px 20px}.login.auth h1{font-family:Georgia,"Times New Roman",serif;font-weight:400;font-size:1.9em;margin:6px 0 18px;color:var(--ink)}
+.login .center{text-align:center}.login p.center{margin:10px 0;font-size:.9em}
+.login-logo{display:block;margin:0 auto 8px;max-height:80px;max-width:200px}
+.btn.oauth{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;border-radius:999px;padding:11px 16px;margin:0 0 10px;
+  border:1px solid var(--ink);background:var(--panel);font-weight:500;font-size:.95em;position:relative}
+.btn.oauth svg{position:absolute;inset-inline-start:18px}
+.login .or{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:.8em;margin:6px 0 12px}
+.login .or::before,.login .or::after{content:"";flex:1;border-top:1px solid var(--line)}
 .bar{height:120px;display:flex;align-items:flex-end;gap:6px;padding-top:6px}
 .bar .m{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;font-size:.65em;color:var(--muted)}
 .bar .b{width:100%;display:flex;gap:2px;align-items:flex-end;height:100px}

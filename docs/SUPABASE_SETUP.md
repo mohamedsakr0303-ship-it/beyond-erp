@@ -69,6 +69,30 @@ open from disk).
    This also creates their app user; set what they may see and change under **Users**.
 4. Colleagues open the app, **Create an account** with that same email, and sign in — they get the shared books.
 
+## Sign in with Google (optional, free)
+
+The app shows a **Sign in with Google** button as soon as Google is switched on in Supabase.
+
+1. **Google Cloud Console** (console.cloud.google.com) → create a project (any name).
+2. **APIs & Services → OAuth consent screen**: *External*; app name (e.g. "Beyond ERP"), your support email,
+   developer email. Scopes: leave the defaults (email, profile, openid). Under **Audience / Publishing status**
+   choose **Publish app** — with only these basic scopes Google does not require a review. (While it stays in
+   *Testing*, only the Google accounts you list as test users can sign in.)
+3. **APIs & Services → Credentials → Create credentials → OAuth client ID** → *Web application*:
+   * **Authorized JavaScript origins**: `https://beyond-erp.pages.dev`
+   * **Authorized redirect URIs**: `https://<ref>.supabase.co/auth/v1/callback` — Supabase shows this exact address
+     on its Google provider page (next step); copy it from there.
+   Create, then copy the **Client ID** and **Client secret**.
+4. **Supabase → Authentication → Sign In / Providers → Google**: switch on, paste the Client ID and Client secret, save.
+5. Make sure **Authentication → URL Configuration** has your app address as Site URL and under Redirect URLs.
+
+People who sign in with Google are matched to the workspace by their Google email address: add that address under
+Settings → Workspace (cloud) → Members, exactly as for email accounts. A Google account has no password in the app —
+"Forgot password?" does not apply to it.
+
+**Remember me**: ticked, the browser stays signed in until you sign out; unticked, closing the browser (or tab) signs
+you out — use that on shared computers.
+
 ## Signing in — if it says "Invalid login credentials"
 
 * **No account yet** → use the **Create an account** tab (type the password twice).

@@ -4,8 +4,10 @@
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = v => String(v == null ? "" : v).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const store = { get(k, d) { try { const v = localStorage.getItem("berp." + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
-                set(k, v) { try { localStorage.setItem("berp." + k, JSON.stringify(v)); } catch { /* private mode */ } } };
+// "Remember me" off: the sign-in token lives in sessionStorage, so closing the browser signs the person out
+const box = k => { try { return k === "token" && localStorage.getItem("berp.remember") === "false" ? sessionStorage : localStorage; } catch { return localStorage; } };
+const store = { get(k, d) { try { const v = box(k).getItem("berp." + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+                set(k, v) { try { box(k).setItem("berp." + k, JSON.stringify(v)); if (k === "token" && box(k) === sessionStorage) localStorage.removeItem("berp.token"); } catch { /* private mode */ } } };
 const S = { boot: null, lang: "en", H: {}, cache: {} };
 
 // ------------------------------------------------------------------ i18n
@@ -211,7 +213,8 @@ S.GLOBAL_H = {
   menu: () => $(".app").classList.toggle("menu"),
   lang: () => { store.set("lang", S.lang === "ar" ? "en" : "ar"); applyLook(); renderShell(); route(); },
   theme: () => { const order = ["auto", "light", "dark"]; store.set("theme", order[(order.indexOf(store.get("theme", "auto")) + 1) % 3]); applyLook(); renderShell(); route(); },
-  logout: async () => { await api("POST", "/api/logout"); store.set("token", ""); location.hash = ""; S.boot.user = null; renderAuth(); },
+  logout: async () => { await api("POST", "/api/logout").catch(() => {}); store.set("token", "");
+    if (STATIC && window.BeyondCloud) window.BeyondCloud.signout(); location.hash = ""; S.boot.user = null; renderAuth(); },
   pw: () => drawer(t("change_pw"), form([{ k: "current", l: t("current_pw"), type: "password" }, { k: "new", l: t("new_pw"), type: "password" }]),
     async v => { await api("PUT", "/api/me/password", v); toast(t("saved")); return true; }),
   quicknew: el => openDoc(el.dataset.doc),
@@ -274,48 +277,74 @@ function pwWire(root) {
   const a = $("[name=password]", root); if (a) a.addEventListener("input", () => S.H.pwmatch());
 }
 
-// Browser edition connected to a workspace: sign in (or create an account) with the workspace account.
-async function renderCloudAuth(msg, kind = "info", mode = "signin") {
+// Browser edition connected to a workspace. Start screen: Continue with Google / Sign in with email, remember me,
+// "No account? Create one", "Trouble signing in? Get help" (password reset / confirmation email).
+const GOOGLE_G = `<svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>`;
+const MAIL_ICON = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg>`;
+async function renderCloudAuth(msg, kind = "info", mode = "start") {
   applyLook();
-  const ar = S.lang === "ar", C = window.BeyondCloud, creating = mode === "signup";
-  $("#root").innerHTML = `<div class="login"><h1>${esc(S.boot.settings.company_name || "Beyond")} ERP</h1>
-    <div class="tabs" style="margin:10px 0 12px"><a href="#" data-a="mode_in" class="${creating ? "" : "on"}">${t("sign_in")}</a>
-      <a href="#" data-a="mode_up" class="${creating ? "on" : ""}">${ar ? "إنشاء حساب" : "Create an account"}</a></div>
-    <p class="muted" style="margin-top:0">${creating ? (ar ? "أنشئ حسابك في مساحة العمل المشتركة. ستصلك رسالة لتأكيد بريدك." : "Create your account for the shared workspace. You will get an email to confirm your address.")
-      : (ar ? "تسجيل الدخول إلى مساحة العمل المشتركة" : "Sign in to your shared workspace")}</p>
-    <div id="lerr">${msg ? `<div class="banner ${kind}">${esc(msg)}</div>` : ""}</div>
-    <form id="lf" class="grid"><label class="f">${t("email")}<input name="email" type="email" autocomplete="username" required value="${esc(C.email() || store.get("lastEmail", ""))}"></label>
-      ${pwFields(creating)}
-      <button class="btn pri" type="submit">${creating ? (ar ? "إنشاء الحساب" : "Create account") : t("sign_in")}</button>
-      <div class="row" style="justify-content:space-between;font-size:.85em">
-        ${creating ? `<a href="#" data-a="cresend">${ar ? "لم تصلك رسالة التأكيد؟ إعادة الإرسال" : "No confirmation email? Send it again"}</a>`
-          : `<a href="#" data-a="cforgot">${ar ? "نسيت كلمة المرور؟" : "Forgot password?"}</a><a href="#" data-a="cresend">${ar ? "إعادة إرسال رسالة التأكيد" : "Resend confirmation email"}</a>`}</div>
-      <button class="btn" type="button" data-a="lang2">${t("language")}</button>
-      <a href="#" data-a="clocal" class="muted" style="font-size:.85em;text-align:center">${ar ? "استخدام هذا الجهاز بدون مساحة العمل" : "Use this device without the workspace"}</a></form></div>`;
+  const ar = S.lang === "ar", C = window.BeyondCloud;
+  const prov = S.providers || (S.providers = await C.providers());
+  const googleUrl = C.oauthUrl("google");
+  const remember = `<label class="f chk" style="justify-content:center;margin:6px 0"><input type="checkbox" id="remember" ${C.remembered() ? "checked" : ""}>${ar ? "تذكرني لتسجيل دخول أسرع" : "Remember me for faster sign in"}</label>`;
+  const emailField = `<label class="f">${t("email")}<input name="email" type="email" autocomplete="username" required value="${esc(C.email() || store.get("lastEmail", ""))}"></label>`;
+  const back = `<a href="#" data-a="mode_start" class="muted" style="font-size:.85em">← ${ar ? "كل طرق تسجيل الدخول" : "All sign-in options"}</a>`;
+  const title = { start: ar ? "مرحباً بعودتك" : "Welcome back.", email: ar ? "تسجيل الدخول بالبريد" : "Sign in with email",
+    signup: ar ? "إنشاء حساب" : "Create your account", help: ar ? "مساعدة في تسجيل الدخول" : "Trouble signing in?" }[mode];
+  let body;
+  if (mode === "start") body = `
+    ${prov.google && googleUrl ? `<button class="btn oauth" type="button" data-a="cgoogle">${GOOGLE_G}<span>${ar ? "تسجيل الدخول بحساب Google" : "Sign in with Google"}</span></button>` : ""}
+    <button class="btn oauth" type="button" data-a="mode_email">${MAIL_ICON}<span>${ar ? "تسجيل الدخول بالبريد الإلكتروني" : "Sign in with email"}</span></button>
+    ${remember}
+    <p class="center">${ar ? "ليس لديك حساب؟" : "No account?"} <a href="#" data-a="mode_signup">${ar ? "أنشئ حساباً" : "Create one"}</a></p>
+    <p class="center">${ar ? "مشكلة في تسجيل الدخول؟" : "Forgot your password or trouble signing in?"} <a href="#" data-a="mode_help">${ar ? "احصل على مساعدة" : "Get help"}</a></p>`;
+  else if (mode === "email") body = `<form id="lf" class="grid">${emailField}${pwFields(false)}${remember}
+      <button class="btn pri" type="submit">${t("sign_in")}</button></form>
+    <p class="center">${ar ? "ليس لديك حساب؟" : "No account?"} <a href="#" data-a="mode_signup">${ar ? "أنشئ حساباً" : "Create one"}</a> · <a href="#" data-a="mode_help">${ar ? "نسيت كلمة المرور؟" : "Forgot password?"}</a></p>`;
+  else if (mode === "signup") body = `
+    ${prov.google && googleUrl ? `<button class="btn oauth" type="button" data-a="cgoogle">${GOOGLE_G}<span>${ar ? "المتابعة بحساب Google" : "Continue with Google"}</span></button>
+      <div class="or"><span>${ar ? "أو" : "or"}</span></div>` : ""}
+    <form id="lf" class="grid">${emailField}${pwFields(true)}
+      <button class="btn pri" type="submit">${ar ? "إنشاء الحساب" : "Create account"}</button></form>
+    <p class="center">${ar ? "لديك حساب؟" : "Already have an account?"} <a href="#" data-a="mode_start">${t("sign_in")}</a></p>`;
+  else body = `<form id="lf" class="grid"><p class="muted" style="margin:0">${ar ? "اكتب بريدك واختر ما تحتاجه:" : "Enter your email and choose what you need:"}</p>${emailField}
+      <button class="btn" type="button" data-a="cforgot">${ar ? "إرسال رابط إعادة تعيين كلمة المرور" : "Email me a password-reset link"}</button>
+      <button class="btn" type="button" data-a="cresend">${ar ? "إعادة إرسال رسالة تأكيد الحساب" : "Resend my account confirmation email"}</button></form>
+    <p class="muted" style="font-size:.85em">${ar ? "إن كنت تستخدم Google فسجّل الدخول بزر Google — لا توجد كلمة مرور لهذا الحساب هنا." : "Signed up with Google? Use “Sign in with Google” — that account has no password here."}</p>`;
+  $("#root").innerHTML = `<div class="login auth">${S.boot.app_logo ? `<img class="login-logo" src="data:${S.boot.app_logo.mime};base64,${S.boot.app_logo.data}" alt="">` : ""}
+    <div class="muted center" style="font-weight:600;letter-spacing:.4px">${esc(S.boot.settings.company_name || "Beyond")} ERP</div>
+    <h1 class="center">${esc(title)}</h1><div id="lerr">${msg ? `<div class="banner ${kind}">${esc(msg)}</div>` : ""}</div>${body}
+    ${mode !== "start" ? `<p class="center">${back}</p>` : ""}
+    <div class="row" style="justify-content:space-between;margin-top:14px;font-size:.8em"><a href="#" data-a="lang2">${ar ? "English" : "العربية"}</a>
+      <a href="#" data-a="clocal" class="muted">${ar ? "استخدام هذا الجهاز بدون مساحة العمل" : "Use this device without the workspace"}</a></div></div>`;
   const show = (m, k = "err") => { $("#lerr").innerHTML = `<div class="banner ${k}">${esc(m)}</div>`; };
-  const needEmail = () => { const e = $("[name=email]"); if (!e.value || !e.checkValidity()) { e.reportValidity(); return null; } store.set("lastEmail", e.value.trim()); return e.value.trim(); };
+  const needEmail = () => { const e = $("[name=email]"); if (!e || !e.value || !e.checkValidity()) { if (e) e.reportValidity(); return null; } store.set("lastEmail", e.value.trim()); return e.value.trim(); };
+  const keepChoice = () => { const r = $("#remember"); C.setRemember(r ? r.checked : true); };
   S.H = {
     lang2: () => { store.set("lang", S.lang === "ar" ? "en" : "ar"); renderCloudAuth("", "info", mode); },
-    mode_in: () => renderCloudAuth("", "info", "signin"),
-    mode_up: () => renderCloudAuth("", "info", "signup"),
+    mode_start: () => renderCloudAuth("", "info", "start"), mode_email: () => { keepChoice(); renderCloudAuth("", "info", "email"); },
+    mode_signup: () => renderCloudAuth("", "info", "signup"), mode_help: () => renderCloudAuth("", "info", "help"),
     clocal: () => { store.set("cloudLocal", true); renderAuth(); },
+    cgoogle: () => { keepChoice(); location.href = googleUrl; },
     cforgot: async () => { const email = needEmail(); if (!email) return;
       try { await C.recover(email); show(ar ? `أرسلنا رابط إعادة تعيين كلمة المرور إلى ${email}. افتحه لاختيار كلمة مرور جديدة.` : `We sent a password-reset link to ${email}. Open it to choose a new password.`, "ok"); } catch (e) { show(e.message); } },
     cresend: async () => { const email = needEmail(); if (!email) return;
       try { await C.resend(email); show(ar ? `أعدنا إرسال رسالة التأكيد إلى ${email}.` : `We sent a new confirmation email to ${email}.`, "ok"); } catch (e) { show(e.message); } },
   };
-  pwWire($("#lf"));
-  $("#lf").addEventListener("submit", async e => {
+  const f = $("#lf"); if (!f || mode === "help") return;
+  pwWire(f);
+  f.addEventListener("submit", async e => {
     e.preventDefault();
-    const f = e.target; if (creating) S.H.pwmatch();
+    if (mode === "signup") S.H.pwmatch();
     if (!f.reportValidity()) return;
+    keepChoice();
     const v = Object.fromEntries(new FormData(f)); store.set("lastEmail", v.email.trim());
     const btn = $("button[type=submit]", f); btn.disabled = true;
     try {
       show(t("loading"), "info");
-      if (creating) {
+      if (mode === "signup") {
         const r = await C.signup(v.email, v.password);
-        if (r.confirm) return renderCloudAuth(r.message, "ok", "signin");
+        if (r.confirm) return renderCloudAuth(r.message, "ok", "email");
         await cloudEnter(await C.info());
       } else await cloudEnter(await CloudAPI.signin(v.email, v.password, false));
     } catch (x) { show(x.message); } finally { btn.disabled = false; }
@@ -325,9 +354,9 @@ async function renderCloudAuth(msg, kind = "info", mode = "signin") {
 async function cloudReturn() {
   const ar = S.lang === "ar";
   let r;
-  try { r = await window.BeyondCloud.takePendingAuth(); } catch (e) { return renderCloudAuth(e.message, "err"); }
+  try { r = await window.BeyondCloud.takePendingAuth(); } catch (e) { return renderCloudAuth(e.message, "err", "start"); }
   if (!r) return false;
-  if (r.error) { await renderCloudAuth(r.error, "err"); return true; }
+  if (r.error) { await renderCloudAuth(r.error, "err", "start"); return true; }
   if (r.type === "recovery") {
     applyLook();
     $("#root").innerHTML = `<div class="login"><h1>${ar ? "كلمة مرور جديدة" : "Choose a new password"}</h1><div id="lerr"></div>
@@ -339,7 +368,7 @@ async function cloudReturn() {
       catch (x) { $("#lerr").innerHTML = `<div class="banner err">${esc(x.message)}</div>`; } });
     return true;
   }
-  try { await cloudEnter(r.info); } catch (e) { await renderCloudAuth(e.message, "err"); }
+  try { await cloudEnter(r.info); } catch (e) { await renderCloudAuth(e.message, "err", "start"); }
   return true;
 }
 // After a successful workspace sign-in: create / join the workspace if needed, then open the matching app user.
