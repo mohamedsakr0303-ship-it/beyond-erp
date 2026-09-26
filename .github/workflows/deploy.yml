@@ -84,6 +84,18 @@ jobs:
         uses: actions/upload-pages-artifact@v5
         with:
           path: web
+      - name: Create the Cloudflare Pages project (first deployment only)
+        if: env.CF_TOKEN != ''
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT || 'beyond-erp' }}
+        run: |
+          if npx --yes wrangler@4 pages project list 2>/dev/null | grep -qw "$PROJECT"; then
+            echo "Pages project $PROJECT exists"
+          else
+            npx --yes wrangler@4 pages project create "$PROJECT" --production-branch=main
+          fi
       - name: Publish to Cloudflare Pages
         if: env.CF_TOKEN != ''
         uses: cloudflare/wrangler-action@v4
