@@ -89,9 +89,10 @@ def create_user(db, d, first=False):
     # "!" = no local password: the person signs in through the shared workspace (Supabase), or the password is
     # set on this device only (passwords are never sent to the workspace)
     pw = "!" if d.get("_no_password") and not d.get("password") else hash_password(d.get("password") or "")
-    uid = db.x("INSERT INTO users(username,full_name,pw_hash,is_admin,perms) VALUES (?,?,?,?,?)",
+    from .db import now
+    uid = db.x("INSERT INTO users(username,full_name,pw_hash,is_admin,perms,created_at) VALUES (?,?,?,?,?,?)",
                (username, text(d.get("full_name")), pw, is_admin,
-                json.dumps(clean_perms(d.get("perms"))))).lastrowid
+                json.dumps(clean_perms(d.get("perms"))), now().strftime("%Y-%m-%d %H:%M:%S"))).lastrowid
     return uid
 
 
