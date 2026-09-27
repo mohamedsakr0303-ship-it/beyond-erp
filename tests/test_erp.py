@@ -402,6 +402,11 @@ class Workspace(unittest.TestCase):
         self.sb.state.accounts["ali@x.com"] = "alipass1"
         probe = self.nodes[0][0].cloud.client()
         self.assertEqual(probe.sign_in_username("ALI", "alipass1")["user"]["email"], "ali@x.com")
+        # this device takes the workspace password too — no separate local password to remember
+        d = self.client()
+        st, r = self.node_call(0, d, "POST", "/api/login", {"username": "ali", "password": "alipass1"})
+        self.assertEqual((st, r["user"]["username"]), (200, "ali"))
+        self.assertEqual(self.node_call(0, d, "POST", "/api/login", {"username": "ali", "password": "nope"})[0], 400)
         with self.assertRaises(RuntimeError):
             probe.sign_in_username("ali", "wrong")
         with self.assertRaises(RuntimeError):

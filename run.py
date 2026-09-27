@@ -99,7 +99,11 @@ def main(argv=None):
         if running and a.command == "serve":
             print(f"Beyond ERP is already running — opening {url}")
             if not a.no_browser:
-                webbrowser.open(url)
+                if getattr(sys, "frozen", False):
+                    from erp.appwindow import open_window
+                    open_window(url, "offline-window")
+                else:
+                    webbrowser.open(url)
             return
         sys.exit(f"Port {a.port} is in use by another program — start with --port 8766")
 
@@ -114,8 +118,10 @@ def main(argv=None):
     if a.host == "0.0.0.0":
         print("  Network:  other computers can connect using this computer's IP address and the same port")
     print("  Stop:     press Ctrl+C" + (" or close this window" if getattr(sys, "frozen", False) else ""))
-    if not a.no_browser:
-        threading.Timer(1.0, lambda: webbrowser.open(url)).start()
+    if not a.no_browser:  # the installed app opens in its own window; running from source opens a browser tab
+        opener = (lambda: __import__("erp.appwindow", fromlist=["x"]).open_window(url, "offline-window")) \
+            if getattr(sys, "frozen", False) else (lambda: webbrowser.open(url))
+        threading.Timer(1.0, opener).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:

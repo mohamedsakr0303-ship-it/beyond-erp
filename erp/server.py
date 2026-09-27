@@ -93,6 +93,7 @@ def bootstrap(ctx):
     elif (look["appearance"] or {}).get("logo") == "custom":
         app_logo = branding.asset(db, "app_logo")
     base = {"version": __version__, "needs_setup": auth.needs_setup(db), "user": user,
+            "workspace_preset": bool(workspace_preset() and getattr(ctx.app, "cloud", None) and not ctx.app.cloud.active),
             "app_logo": app_logo and {"mime": app_logo["mime"], "data": app_logo["data"]},
             "settings": {k: v for k, v in look.items()
                          if k in ("company_name", "company_tagline", "font_family", "font_size", "language", "appearance",
@@ -141,9 +142,40 @@ def setup(ctx):
 
 @route("POST", "/api/login", public=True)
 def login(ctx):
-    token, user = auth.login(ctx.db, ctx.body.get("username"), ctx.body.get("password"))
+    try:
+        token, user = auth.login(ctx.db, ctx.body.get("username"), ctx.body.get("password"))
+    except acc.ValidationError:
+        # a device joined to the shared workspace also takes the workspace password (the one used on the website)
+        found = _workspace_login(ctx, acc.text(ctx.body.get("username")), ctx.body.get("password") or "")
+        if not found:
+            raise
+        token, user = found
     ctx.db.log(user["username"], "login")
     return ctx.with_session(ok({"user": user}), token)
+
+
+def _workspace_login(ctx, name, password):
+    sync = getattr(ctx.app, "cloud", None)
+    if not (sync and sync.active and name and password):
+        return None
+    try:
+        c = sync.client()
+        s = c.sign_in(name.lower(), password) if "@" in name else c.sign_in_username(name, password)
+    except Exception:  # wrong password, unknown user, or no connection
+        return None
+    email = ((s or {}).get("user") or {}).get("email", "").lower()
+    if not email:
+        return None
+    key = cloud.username_for(email) or email
+    u = ctx.db.one("SELECT * FROM users WHERE active=1 AND (lower(email)=? OR lower(username)=? OR lower(username)=?) "
+                   "ORDER BY lower(email)=? DESC LIMIT 1", (email, key, name.lower(), email))
+    if not u:
+        return None
+    import secrets
+    token = secrets.token_urlsafe(32)
+    ctx.db.x("INSERT INTO sessions(token,user_id,expires) VALUES (?,?,datetime('now',?))",
+             (token, u["id"], f"+{auth.SESSION_DAYS} days"))
+    return token, auth.public_user(u)
 
 
 @route("POST", "/api/logout", public=True)
@@ -1431,6 +1463,43 @@ def cloud_session(ctx):
     ctx.db.x("INSERT INTO sessions(token,user_id,expires) VALUES (?,?,datetime('now',?))",
              (token, u["id"], f"+{auth.SESSION_DAYS} days"))
     return ctx.with_session(ok({"user": auth.public_user(u)}), token)
+
+
+def workspace_preset():
+    """The shared workspace this desktop build belongs to (written into the installer by the build), if any."""
+    url, key = os.environ.get("BEYOND_SUPABASE_URL", ""), os.environ.get("BEYOND_SUPABASE_ANON_KEY", "")
+    if not (url and key):
+        try:
+            d = json.loads((Path(__file__).resolve().parent / "workspace_preset.json").read_text())
+            url, key = d.get("url", ""), d.get("key", "")
+        except (OSError, ValueError):
+            return None
+    return (url, key) if url and key else None
+
+
+@route("POST", "/api/cloud/first-join", public=True)
+def cloud_first_join(ctx):
+    """A new desktop install: sign in with the workspace account, download the shared books, open that user."""
+    sync, preset = getattr(ctx.app, "cloud", None), workspace_preset()
+    if not (sync and preset) or sync.active or not auth.needs_setup(ctx.db):
+        raise PermissionError()
+    name, pw = acc.text(ctx.body.get("username")), ctx.body.get("password") or ""
+    try:
+        sync.configure(*preset)
+        info = sync.sign_in(name, pw)
+        if not info.get("is_member"):
+            raise acc.ValidationError("This account is not a member of the workspace — ask an administrator to add you")
+        sync.join()
+    except (PermissionError, RuntimeError, cloud.Offline, cloud.NeedsUpdate) as e:
+        sync.disconnect()
+        raise acc.ValidationError(str(e)) from None
+    found = _workspace_login(ctx, name, pw)
+    if not found:
+        raise acc.ValidationError("Signed in, but no app user matches this account — ask an administrator to add your "
+                                  "email or username in Users")
+    token, user = found
+    ctx.db.log(user["username"], "login")
+    return ctx.with_session(ok({"user": user}), token)
 
 
 def _cloud(ctx):

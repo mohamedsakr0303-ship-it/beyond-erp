@@ -406,6 +406,7 @@ async function renderAuth() {
   if (STATIC && window.BeyondCloud && window.BeyondCloud.configured() && !store.get("cloudLocal", false)) return renderCloudAuth();
   applyLook();
   const setup = S.boot.needs_setup;
+  if (setup && S.boot.workspace_preset && !store.get("separateBooks", false)) return renderFirstJoin();
   $("#root").innerHTML = `<div class="login"><h1>${esc(S.boot.settings.company_name || "Beyond")} ERP</h1>
     <p class="muted">${setup ? t("setup_title") : t("sign_in")}</p><div id="lerr"></div>
     <form id="lf" class="grid">${setup ? `<label class="f">${t("company_name")}<input name="company_name" value="${esc(S.boot.settings.company_name || "")}"></label>
@@ -426,6 +427,26 @@ async function renderAuth() {
       await api("POST", setup ? "/api/setup" : "/api/login", v);
       await boot();
     } catch (err) { $("#lerr").innerHTML = `<div class="banner err">${esc(err.message)}</div>`; }
+  });
+}
+
+// New desktop install that belongs to a workspace: sign in with the same account as the website, get the shared books.
+function renderFirstJoin() {
+  const ar = S.lang === "ar";
+  $("#root").innerHTML = `<div class="login auth"><h1 class="center">${esc(S.boot.settings.company_name || "Beyond")} ERP</h1>
+    <p class="muted center">${ar ? "سجّل الدخول بنفس الحساب المستخدم على الموقع" : "Sign in with the same account you use on the website"}</p><div id="lerr"></div>
+    <form id="lf" class="grid"><label class="f">${ar ? "البريد الإلكتروني أو اسم المستخدم" : "Email or username"}<input name="username" autocomplete="username" autocapitalize="none" required></label>
+      ${pwFields(false)}<button class="btn pri" type="submit">${t("sign_in")}</button></form>
+    <div class="row" style="justify-content:space-between;margin-top:14px;font-size:.8em"><a href="#" data-a="lang2">${ar ? "English" : "العربية"}</a>
+      <a href="#" data-a="separate" class="muted">${ar ? "بدء دفاتر منفصلة على هذا الجهاز فقط" : "Start separate books on this computer only"}</a></div></div>`;
+  S.H = { lang2: () => { store.set("lang", S.lang === "ar" ? "en" : "ar"); applyLook(); renderFirstJoin(); },
+    separate: () => { store.set("separateBooks", true); renderAuth(); } };
+  pwWire($("#lf"));
+  $("#lf").addEventListener("submit", async e => {
+    e.preventDefault(); const btn = $("button[type=submit]", e.target); btn.disabled = true;
+    $("#lerr").innerHTML = `<div class="banner info">${ar ? "جارٍ تنزيل الدفاتر المشتركة…" : "Signing in and downloading the shared books…"}</div>`;
+    try { await api("POST", "/api/cloud/first-join", Object.fromEntries(new FormData(e.target))); await boot(); }
+    catch (err) { $("#lerr").innerHTML = `<div class="banner err">${esc(err.message)}</div>`; btn.disabled = false; }
   });
 }
 
@@ -2183,7 +2204,7 @@ PAGES.download = async view => {
   const mb = x => `${(x.size / 1048576).toFixed(1)} MB`;
   const cfg = window.BEYOND_CLOUD_CONFIG || {};
   const card = (title, body) => `<div class="card"><h2>${title}</h2>${body}</div>`;
-  const dl = (x, label) => x ? `<a class="btn pri" href="downloads/${encodeURIComponent(x.file)}" download>⬇ ${esc(label)}</a> <span class="muted">${mb(x)} · ${L2("version", "إصدار")} ${esc(d.version || "")}</span>`
+  const dl = (x, label) => x ? `<a class="btn ${x.kind.includes("offline") ? "" : "pri"}" href="downloads/${encodeURIComponent(x.file)}" download>⬇ ${esc(label)}</a> <span class="muted">${mb(x)} · ${L2("version", "إصدار")} ${esc(d.version || "")}</span>`
     : `<div class="muted">${L2("Not built yet — it appears here after the next update is published.", "لم يُجهز بعد — يظهر هنا بعد نشر التحديث القادم.")}</div>`;
   S.H.pwainstall = async () => { if (!installPrompt) return; installPrompt.prompt(); await installPrompt.userChoice.catch(() => {}); installPrompt = null; route(); };
   S.H.copycfg = async el => { try { await navigator.clipboard.writeText(el.dataset.v); toast(L2("Copied", "تم النسخ")); } catch { prompt("", el.dataset.v); } };
@@ -2194,10 +2215,13 @@ PAGES.download = async view => {
       <p><b>Android (Chrome):</b> ${L2("open this site → menu ⋮ → “Install app” (or “Add to Home screen”).", "افتح الموقع ← القائمة ⋮ ← «تثبيت التطبيق» (أو «إضافة إلى الشاشة الرئيسية»).")}</p>
       <p><b>iPhone / iPad (Safari):</b> ${L2("open this site → Share □↑ → “Add to Home Screen”.", "افتح الموقع ← زر المشاركة □↑ ← «إضافة إلى الشاشة الرئيسية».")}</p>
       <p class="muted">${L2("It opens full-screen like an app, signs in to the same workspace and keeps working without a connection (changes need the connection to be saved).", "يفتح بملء الشاشة كتطبيق، ويدخل لنفس مساحة العمل، ويعمل بدون إنترنت للعرض (الحفظ يحتاج اتصالاً).")}</p>`) +
-    card(L2("Windows computer", "كمبيوتر ويندوز"), `${dl(f("windows"), L2("Download the installer (.exe)", "تحميل برنامج التثبيت (.exe)"))}
-      <p class="muted">${L2("Windows may say “Windows protected your PC” because the installer is not signed: click “More info” → “Run anyway”.", "قد يظهر «Windows protected your PC» لأن البرنامج غير موقّع: اضغط «More info» ثم «Run anyway».")}</p>`) +
-    card(L2("Mac", "ماك"), `${dl(f("mac"), L2("Download for Mac (.zip)", "تحميل للماك (.zip)"))}
-      <p class="muted">${L2("Unzip, move “Beyond ERP” to Applications, then the first time right-click it → Open (it is not signed by Apple).", "فك الضغط وانقل «Beyond ERP» إلى التطبيقات، وأول مرة اضغط بالزر الأيمن ← فتح (غير موقّع من Apple).")}</p>`) +
+    card(L2("Computer app — connected (recommended)", "برنامج الكمبيوتر — متصل (موصى به)"), `<p>${L2("Opens this website in its own clean window with the Beyond icon. Same sign-in, same books: anything done in it is on the website and every phone instantly. Needs internet.", "يفتح هذا الموقع في نافذة مستقلة بأيقونة Beyond. نفس تسجيل الدخول ونفس الدفاتر: أي تعديل يظهر فوراً على الموقع وكل الموبايلات. يحتاج إنترنت.")}</p>
+      <p><b>Windows</b> — ${dl(f("windows"), L2("Download the installer (.exe)", "تحميل برنامج التثبيت (.exe)"))}</p>
+      <p><b>Mac</b> — ${dl(f("mac"), L2("Download for Mac (.zip)", "تحميل للماك (.zip)"))}</p>`) +
+    card(L2("Computer app — offline", "برنامج الكمبيوتر — بدون إنترنت"), `<p>${L2("The whole app runs on the computer and works without internet. The first time, sign in with your usual account: it downloads the shared books and keeps them in step whenever it is online (changes need the connection; without it the books are read-only). You can also keep completely separate books on that computer.", "البرنامج كاملاً يعمل على الكمبيوتر وبدون إنترنت. أول مرة سجّل الدخول بحسابك المعتاد: ينزّل الدفاتر المشتركة ويحدّثها عند الاتصال (التعديل يحتاج اتصالاً؛ بدونه للعرض فقط). ويمكن أيضاً عمل دفاتر منفصلة تماماً على هذا الكمبيوتر.")}</p>
+      <p><b>Windows</b> — ${dl(f("windows_offline"), L2("Download the installer (.exe)", "تحميل برنامج التثبيت (.exe)"))}</p>
+      <p><b>Mac</b> — ${dl(f("mac_offline"), L2("Download for Mac (.zip)", "تحميل للماك (.zip)"))}</p>
+      <p class="muted">${L2("Windows may say “Windows protected your PC” (the installers are not signed): More info → Run anyway. Mac: unzip, move to Applications, the first time right-click → Open. Mac apps need an Apple-chip Mac (M1 or newer).", "قد يظهر «Windows protected your PC» لأن البرامج غير موقّعة: More info ثم Run anyway. الماك: فك الضغط وانقل للتطبيقات وأول مرة زر أيمن ← فتح. نسخ الماك تحتاج ماك بمعالج Apple (M1 أو أحدث).")}</p>`) +
     card(L2("Offline browser copy", "نسخة المتصفح بدون إنترنت"), `${dl(f("web"), L2("Download the offline copy (.zip)", "تحميل النسخة (.zip)"))}
       <p class="muted">${L2("Unzip anywhere and open index.html — no installation. Its data stays in that browser.", "فك الضغط في أي مكان وافتح index.html — بدون تثبيت. بياناتها تبقى في هذا المتصفح.")}</p>`) +
     (cfg.url ? card(L2("Connect the desktop app to this workspace", "ربط برنامج الكمبيوتر بمساحة العمل"), `<p>${L2("In the desktop app: Settings → Workspace (cloud) → paste these two values, then sign in with your usual email or username and password.", "في برنامج الكمبيوتر: الإعدادات ← مساحة العمل ← الصق القيمتين ثم سجّل الدخول بنفس البريد أو اسم المستخدم وكلمة المرور.")}</p>

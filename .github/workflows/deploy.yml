@@ -103,25 +103,41 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt pyinstaller pillow
+      # the installers belong to this workspace and this website
+      - name: Workspace and website for the apps
+        shell: bash
+        env:
+          URL: ${{ vars.SUPABASE_URL }}
+          KEY: ${{ vars.SUPABASE_ANON_KEY }}
+          SITE: ${{ vars.SITE_URL || format('https://{0}.pages.dev/', vars.CLOUDFLARE_PAGES_PROJECT || 'beyond-erp') }}
+        run: |
+          echo "$SITE" > packaging/site_url.txt
+          if [ -n "$URL" ] && [ -n "$KEY" ]; then printf '{"url": "%s", "key": "%s"}' "$URL" "$KEY" > erp/workspace_preset.json; fi
       - run: pyinstaller packaging/beyond_erp.spec --noconfirm
-      - name: Windows installer
+      - run: pyinstaller packaging/online.spec --noconfirm --distpath dist-online --workpath build-online
+      - name: Windows installers
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $v = (Select-String -Path erp/__init__.py -Pattern '__version__ = "([^"]+)"').Matches[0].Groups[1].Value
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress; $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
+          & $iscc "/DAppVersion=$v" /DOnline packaging\installer.iss
+          if ($LASTEXITCODE -ne 0) { exit 1 }
           & $iscc "/DAppVersion=$v" packaging\installer.iss
           if ($LASTEXITCODE -ne 0) { exit 1 }
-      - name: Mac app
+      - name: Mac apps
         if: runner.os == 'macOS'
-        run: ditto -c -k --keepParent "dist/Beyond ERP.app" BeyondERP-mac.zip
+        run: |
+          ditto -c -k --keepParent "dist-online/Beyond ERP.app" BeyondERP-mac.zip
+          ditto -c -k --keepParent "dist/Beyond ERP Offline.app" BeyondERP-Offline-mac.zip
       - uses: actions/upload-artifact@v7
         with:
           name: desktop-${{ runner.os }}
           path: |
-            dist-installer/BeyondERP-Setup.exe
+            dist-installer/*.exe
             BeyondERP-mac.zip
+            BeyondERP-Offline-mac.zip
           if-no-files-found: ignore
 
   web:

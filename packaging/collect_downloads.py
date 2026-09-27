@@ -12,7 +12,8 @@ src = Path(sys.argv[1] if len(sys.argv) > 1 else "dl")
 out = ROOT / "web" / "downloads"
 out.mkdir(parents=True, exist_ok=True)
 version = re.search(r'__version__ = "([^"]+)"', (ROOT / "erp" / "__init__.py").read_text()).group(1)
-wanted = [("windows", "BeyondERP-Setup.exe"), ("mac", "BeyondERP-mac.zip"), ("web", "beyond-erp-web.zip")]
+wanted = [("windows", "BeyondERP-Setup.exe"), ("mac", "BeyondERP-mac.zip"), ("windows_offline", "BeyondERP-Offline-Setup.exe"),
+          ("mac_offline", "BeyondERP-Offline-mac.zip"), ("web", "beyond-erp-web.zip")]
 files = []
 for kind, name in wanted:
     found = next(iter(sorted(src.rglob(name))), None) or (ROOT / name if (ROOT / name).exists() else None)

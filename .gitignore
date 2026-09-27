@@ -19,3 +19,6 @@ dist/
 dist-installer/
 build/
 dl/
+erp/workspace_preset.json
+dist-online/
+build-online/
