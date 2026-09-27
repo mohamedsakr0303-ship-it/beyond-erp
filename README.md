@@ -15,6 +15,15 @@ with their own account, everyone sees the same books, several people can work at
 permission matrix still applies. Code pushed to GitHub is tested and deployed automatically (database to Supabase,
 web app to Cloudflare Pages or GitHub Pages). Step-by-step: **[docs/SUPABASE_SETUP.md](docs/SUPABASE_SETUP.md)**.
 
+## Get the app
+
+On the hosted site open the user menu → **Get the app**:
+* **Windows installer** (`BeyondERP-Setup.exe`) and **Mac app** — built by GitHub Actions on every push
+  (`packaging/`), no Python needed; connect them to the workspace in Settings → Workspace.
+* **Phone / tablet** — the site is installable (Android: ⋮ → Install app; iPhone: Share → Add to Home Screen), opens
+  full-screen and keeps an offline copy of the app.
+* **Offline browser copy** — the zip described below.
+
 ## Three ways to run it
 
 | Edition | For | How |

@@ -195,7 +195,7 @@ function renderShell() {
       <button class="btn sm" data-a="lang">${t("language")}</button>
       <div class="dd"><button class="btn sm">${esc(S.boot.user.full_name || S.boot.user.username)} ▾</button><div class="dd-menu">
         <button data-a="theme">${t("theme")}: ${esc(store.get("theme", "auto"))}</button>
-        <a href="#/settings">${t("m_settings")}</a><button data-a="pw">${t("change_pw")}</button><button data-a="logout">${t("logout")}</button></div></div>
+        <a href="#/settings">${t("m_settings")}</a>${STATIC && /^https?:$/.test(location.protocol) ? `<a href="#/download">⬇ ${S.lang === "ar" ? "تحميل التطبيق" : "Get the app"}</a>` : ""}<button data-a="pw">${t("change_pw")}</button><button data-a="logout">${t("logout")}</button></div></div>
     </header><main class="content" id="view"></main></div></div>`;
   // "+ New": the items chosen in Settings → Menus, in that order, that this user may add
   const items = newMenuItems().filter(i => i.show && i.ok);
@@ -2171,6 +2171,40 @@ function entryOptionWire(view) {
     try { await api("PUT", "/api/entry-types", { types }); await after(); } catch (e) { fail(e); }
   };
 }
+
+// ======================================================== get the app (hosted site)
+// Downloads built by GitHub Actions (downloads/beyond-downloads.json) and installing the site on a phone.
+let installPrompt = null;
+window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); installPrompt = e; });
+PAGES.download = async view => {
+  let d = { files: [] };
+  try { const r = await fetch("downloads/beyond-downloads.json", { cache: "no-store" }); if (r.ok) d = await r.json(); } catch { /* none built yet */ }
+  const f = k => (d.files || []).find(x => x.kind === k);
+  const mb = x => `${(x.size / 1048576).toFixed(1)} MB`;
+  const cfg = window.BEYOND_CLOUD_CONFIG || {};
+  const card = (title, body) => `<div class="card"><h2>${title}</h2>${body}</div>`;
+  const dl = (x, label) => x ? `<a class="btn pri" href="downloads/${encodeURIComponent(x.file)}" download>⬇ ${esc(label)}</a> <span class="muted">${mb(x)} · ${L2("version", "إصدار")} ${esc(d.version || "")}</span>`
+    : `<div class="muted">${L2("Not built yet — it appears here after the next update is published.", "لم يُجهز بعد — يظهر هنا بعد نشر التحديث القادم.")}</div>`;
+  S.H.pwainstall = async () => { if (!installPrompt) return; installPrompt.prompt(); await installPrompt.userChoice.catch(() => {}); installPrompt = null; route(); };
+  S.H.copycfg = async el => { try { await navigator.clipboard.writeText(el.dataset.v); toast(L2("Copied", "تم النسخ")); } catch { prompt("", el.dataset.v); } };
+  const installed = window.matchMedia && window.matchMedia("(display-mode: standalone)").matches;
+  view.innerHTML =
+    card(L2("Phone or tablet (Android / iPhone)", "الموبايل أو التابلت (أندرويد / آيفون)"), installed ? `<div class="banner ok">${L2("You are using the installed app ✓", "أنت تستخدم التطبيق المثبت ✓")}</div>` :
+      `${installPrompt ? `<p><button class="btn pri" data-a="pwainstall">${L2("Install Beyond ERP", "تثبيت Beyond ERP")}</button></p>` : ""}
+      <p><b>Android (Chrome):</b> ${L2("open this site → menu ⋮ → “Install app” (or “Add to Home screen”).", "افتح الموقع ← القائمة ⋮ ← «تثبيت التطبيق» (أو «إضافة إلى الشاشة الرئيسية»).")}</p>
+      <p><b>iPhone / iPad (Safari):</b> ${L2("open this site → Share □↑ → “Add to Home Screen”.", "افتح الموقع ← زر المشاركة □↑ ← «إضافة إلى الشاشة الرئيسية».")}</p>
+      <p class="muted">${L2("It opens full-screen like an app, signs in to the same workspace and keeps working without a connection (changes need the connection to be saved).", "يفتح بملء الشاشة كتطبيق، ويدخل لنفس مساحة العمل، ويعمل بدون إنترنت للعرض (الحفظ يحتاج اتصالاً).")}</p>`) +
+    card(L2("Windows computer", "كمبيوتر ويندوز"), `${dl(f("windows"), L2("Download the installer (.exe)", "تحميل برنامج التثبيت (.exe)"))}
+      <p class="muted">${L2("Windows may say “Windows protected your PC” because the installer is not signed: click “More info” → “Run anyway”.", "قد يظهر «Windows protected your PC» لأن البرنامج غير موقّع: اضغط «More info» ثم «Run anyway».")}</p>`) +
+    card(L2("Mac", "ماك"), `${dl(f("mac"), L2("Download for Mac (.zip)", "تحميل للماك (.zip)"))}
+      <p class="muted">${L2("Unzip, move “Beyond ERP” to Applications, then the first time right-click it → Open (it is not signed by Apple).", "فك الضغط وانقل «Beyond ERP» إلى التطبيقات، وأول مرة اضغط بالزر الأيمن ← فتح (غير موقّع من Apple).")}</p>`) +
+    card(L2("Offline browser copy", "نسخة المتصفح بدون إنترنت"), `${dl(f("web"), L2("Download the offline copy (.zip)", "تحميل النسخة (.zip)"))}
+      <p class="muted">${L2("Unzip anywhere and open index.html — no installation. Its data stays in that browser.", "فك الضغط في أي مكان وافتح index.html — بدون تثبيت. بياناتها تبقى في هذا المتصفح.")}</p>`) +
+    (cfg.url ? card(L2("Connect the desktop app to this workspace", "ربط برنامج الكمبيوتر بمساحة العمل"), `<p>${L2("In the desktop app: Settings → Workspace (cloud) → paste these two values, then sign in with your usual email or username and password.", "في برنامج الكمبيوتر: الإعدادات ← مساحة العمل ← الصق القيمتين ثم سجّل الدخول بنفس البريد أو اسم المستخدم وكلمة المرور.")}</p>
+      <div class="grid g2"><label class="f">${L2("Workspace URL", "رابط مساحة العمل")}<input value="${esc(cfg.url)}" readonly></label><div class="row" style="align-items:end"><button class="btn" data-a="copycfg" data-v="${esc(cfg.url)}">${L2("Copy", "نسخ")}</button></div>
+      <label class="f">${L2("Public key", "المفتاح العام")}<input value="${esc(cfg.key)}" readonly></label><div class="row" style="align-items:end"><button class="btn" data-a="copycfg" data-v="${esc(cfg.key)}">${L2("Copy", "نسخ")}</button></div></div>`) : "");
+  $("#ttl").textContent = L2("Get the app", "تحميل التطبيق");
+};
 
 (window.__beyondReady || Promise.resolve()).then(boot, () => {});
 })();

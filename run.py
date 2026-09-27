@@ -85,20 +85,35 @@ def main(argv=None):
         return
 
     from erp.server import ERPServer
-    server = ERPServer((a.host, a.port), db, data_dir / "backups", verbose=a.verbose)
+    url = f"http://{'127.0.0.1' if a.host in ('0.0.0.0', '') else a.host}:{a.port}/"
+    try:
+        server = ERPServer((a.host, a.port), db, data_dir / "backups", verbose=a.verbose)
+    except OSError:
+        # already running (e.g. the app was opened twice): just show it
+        import urllib.request
+        try:
+            with urllib.request.urlopen(url + "api/bootstrap", timeout=3) as r:
+                running = b'"version"' in r.read(200)
+        except OSError:
+            running = False
+        if running and a.command == "serve":
+            print(f"Beyond ERP is already running — opening {url}")
+            if not a.no_browser:
+                webbrowser.open(url)
+            return
+        sys.exit(f"Port {a.port} is in use by another program — start with --port 8766")
 
     if a.command == "backup":
         print("Backup written:", server.backup("manual"))
         return
 
     server.daily_backup()
-    url = f"http://{'127.0.0.1' if a.host in ('0.0.0.0', '') else a.host}:{a.port}/"
     print(f"Beyond ERP {__version__}")
     print(f"  Open:     {url}")
     print(f"  Data:     {data_dir}")
     if a.host == "0.0.0.0":
         print("  Network:  other computers can connect using this computer's IP address and the same port")
-    print("  Stop:     press Ctrl+C")
+    print("  Stop:     press Ctrl+C" + (" or close this window" if getattr(sys, "frozen", False) else ""))
     if not a.no_browser:
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()
     try:

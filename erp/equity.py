@@ -180,8 +180,8 @@ def _money(db, d):
 
 
 def _pct(v, field):
-    x = num(v, field)
-    x = x / 100 if x > 1 else x
+    """A percentage as typed on the screens (1 = 1%, not 100%)."""
+    x = num(v, field) / 100
     if x > 1 + EPS:
         raise ValidationError(f"{field} cannot be more than 100%")
     return round(x, 6)
@@ -271,7 +271,7 @@ def plan_loan(db, d):
     """Partner lends money to the company — a liability, not ownership. Interest optional."""
     p = partner(db, d.get("partner"))
     amount = num(d.get("amount"), "amount", allow_zero=False)
-    rate = _pct(d.get("rate") if d.get("rate") not in (None, "") else (p["loan_rate"] or 0), "interest rate")
+    rate = (_pct(d.get("rate"), "interest rate") if d.get("rate") not in (None, "") else (p["loan_rate"] or 0))
     lines = [_L(_money(db, d), "", amount), _L(_role(db, "partner_loans"), p["name"], credit=amount)]
     note = [f"Interest {rate * 100:.2f}% a year on {p['name']}'s loan balance — book it with “Loan interest”."] if rate \
         else ["Interest-free loan."]
@@ -314,7 +314,7 @@ def plan_interest(db, d):
     """Interest on a partner's loan from the day after the last interest booked (or the first loan) to a date."""
     p = partner(db, d.get("partner"))
     end = _dt.date.fromisoformat(acc.clean_date(d.get("date")))
-    rate = _pct(d.get("rate") if d.get("rate") not in (None, "") else (p["loan_rate"] or 0), "interest rate")
+    rate = (_pct(d.get("rate"), "interest rate") if d.get("rate") not in (None, "") else (p["loan_rate"] or 0))
     if not rate:
         raise ValidationError(f"{p['name']}'s loans are interest-free — set an interest rate first")
     loan = _role(db, "partner_loans")

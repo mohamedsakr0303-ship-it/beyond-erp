@@ -444,3 +444,7 @@ def cloud_ensure_admin(email):
     say("Could not start: " + (e && e.message || e) + hint); throw e;
   });
 })();
+
+// Installable app: offline copy of the site for "Add to Home screen" / "Install app" (hosted builds only)
+if ("serviceWorker" in navigator && /^https?:$/.test(location.protocol) && location.hostname !== "localhost" && location.hostname !== "127.0.0.1")
+  window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));

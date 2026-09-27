@@ -496,6 +496,7 @@ class Equity(unittest.TestCase):
 
     def test_transfer_admit_exit_and_undo(self):
         db = self.db
+        self.assertEqual(equity.preview(db, "transfer", {"seller": "A", "buyer": "C", "share": 1})["ownership"][-1]["after"], 0.01)
         r = equity.post(db, "transfer", {"seller": "A", "buyer": "C", "share": 30, "price": 99999, "date": "2026-02-01"})
         self.assertEqual(self.shares(), {"A": 0.3, "B": 0.4, "C": 0.3})
         self.assertEqual(equity.balances(db, "C")["capital"], 30000)   # half of A's capital moved with half of A's share

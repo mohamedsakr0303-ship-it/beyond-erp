@@ -15,3 +15,7 @@ samples/BEYOND_Accounting_System_V*.xlsx
 samples/documents/
 supabase/.temp/
 supabase/.branches/
+dist/
+dist-installer/
+build/
+dl/

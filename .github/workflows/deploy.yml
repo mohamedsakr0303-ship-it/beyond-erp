@@ -88,8 +88,45 @@ jobs:
         if: env.SUPABASE_ACCESS_TOKEN == '' || env.PROJECT_ID == ''
         run: echo "::notice::Supabase secrets not set yet — database step skipped (see docs/SUPABASE_SETUP.md)"
 
+  # The desktop app: a Windows installer and a Mac app, offered on the website's "Get the app" page.
+  desktop:
+    needs: test
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt pyinstaller pillow
+      - run: pyinstaller packaging/beyond_erp.spec --noconfirm
+      - name: Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $v = (Select-String -Path erp/__init__.py -Pattern '__version__ = "([^"]+)"').Matches[0].Groups[1].Value
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress; $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
+          & $iscc "/DAppVersion=$v" packaging\installer.iss
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Mac app
+        if: runner.os == 'macOS'
+        run: ditto -c -k --keepParent "dist/Beyond ERP.app" BeyondERP-mac.zip
+      - uses: actions/upload-artifact@v7
+        with:
+          name: desktop-${{ runner.os }}
+          path: |
+            dist-installer/BeyondERP-Setup.exe
+            BeyondERP-mac.zip
+          if-no-files-found: ignore
+
   web:
-    needs: [test, database]
+    needs: [test, database, desktop]
+    if: always() && needs.test.result == 'success' && needs.database.result != 'failure' && needs.database.result != 'cancelled'
     runs-on: ubuntu-24.04
     env:
       BEYOND_SUPABASE_URL: ${{ vars.SUPABASE_URL }}
@@ -110,6 +147,13 @@ jobs:
         with:
           name: beyond-erp-web
           path: beyond-erp-web.zip
+      - uses: actions/download-artifact@v7
+        continue-on-error: true
+        with:
+          pattern: desktop-*
+          path: dl
+      - name: Add the downloads (desktop installers, offline copy)
+        run: python packaging/collect_downloads.py dl
       - name: Keep the site for GitHub Pages
         uses: actions/upload-pages-artifact@v5
         with:

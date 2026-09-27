@@ -81,6 +81,9 @@ def pack(wheel_names):
                                   f"window.BEYOND_PACK_FILES = {json.dumps(files)};\n", encoding="utf-8")
 
 
+PWA_FILES = ("manifest.webmanifest", "sw.js", "icon-192.png", "icon-512.png", "icon-maskable-512.png", "apple-touch-icon.png")
+
+
 def build(make_zip=False):
     if OUT.exists():
         shutil.rmtree(OUT)
@@ -107,6 +110,9 @@ def build(make_zip=False):
         shutil.copy(ROOT / "erp" / "static" / f, OUT / f)
     for f in ("index.html", "bridge.js"):
         shutil.copy(ROOT / "web-src" / f, OUT / f)
+    # installable app (manifest, offline service worker, icons) — used by hosted builds, left out of the zip
+    for f in PWA_FILES:
+        shutil.copy(ROOT / "web-src" / f, OUT / f)
     with zipfile.ZipFile(OUT / "erp.zip", "w", zipfile.ZIP_DEFLATED) as z:
         for p in sorted((ROOT / "erp").glob("*.py")):
             z.write(p, f"erp/{p.name}")
@@ -126,7 +132,7 @@ def build(make_zip=False):
         out = ROOT / "beyond-erp-web.zip"
         with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
             for p in sorted(OUT.rglob("*")):
-                if p.is_file():
+                if p.is_file() and p.name not in PWA_FILES and "downloads" not in p.parts:
                     z.write(p, p.relative_to(OUT).as_posix())
         print(f"Wrote {out}")
 
