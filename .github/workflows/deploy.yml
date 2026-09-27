@@ -28,8 +28,26 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-24.04
+    outputs:
+      desktop: ${{ steps.changed.outputs.desktop }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      # The desktop installers take most of the build minutes (Mac minutes count 10×, Windows 2×), so they are rebuilt
+      # only when the app itself changes — or when the workflow is run by hand. Otherwise the site keeps the current ones.
+      - name: Did the app code change?
+        id: changed
+        run: |
+          before="${{ github.event.before }}"
+          if [ "${{ github.event_name }}" != "push" ] || [ -z "$before" ] || [ "$before" = "0000000000000000000000000000000000000000" ] \
+             || ! git cat-file -e "$before" 2>/dev/null \
+             || git diff --name-only "$before" "${{ github.sha }}" | grep -qE '^(erp/|run\.py$|packaging/|requirements\.txt$)'; then
+            echo "desktop=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "desktop=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::App code unchanged — desktop installers not rebuilt (the website keeps the current ones)"
+          fi
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -91,6 +109,7 @@ jobs:
   # The desktop app: a Windows installer and a Mac app, offered on the website's "Get the app" page.
   desktop:
     needs: test
+    if: needs.test.outputs.desktop == 'true'
     continue-on-error: true
     strategy:
       fail-fast: false
@@ -169,7 +188,9 @@ jobs:
           pattern: desktop-*
           path: dl
       - name: Add the downloads (desktop installers, offline copy)
-        run: python packaging/collect_downloads.py dl
+        env:
+          SITE: ${{ vars.SITE_URL || format('https://{0}.pages.dev/', vars.CLOUDFLARE_PAGES_PROJECT || 'beyond-erp') }}
+        run: python packaging/collect_downloads.py dl "$SITE"
       - name: Keep the site for GitHub Pages
         uses: actions/upload-pages-artifact@v5
         with:
