@@ -18,8 +18,12 @@ web app to Cloudflare Pages or GitHub Pages). Step-by-step: **[docs/SUPABASE_SET
 ## Get the app
 
 On the hosted site open the user menu → **Get the app**:
-* **Windows installer** (`BeyondERP-Setup.exe`) and **Mac app** — built by GitHub Actions on every push
-  (`packaging/`), no Python needed; connect them to the workspace in Settings → Workspace.
+* **Beyond ERP** (Windows installer / Mac app) — opens the website in its own window: same sign-in, same books.
+* **Beyond ERP Offline** (Windows installer / Mac app) — the whole app on the computer; the first launch signs in with the
+  workspace account and downloads the shared books.
+* The installers (`packaging/`) are rebuilt by GitHub Actions only when the app code changes (`erp/`, `run.py`,
+  `packaging/`, `requirements.txt`) or when the workflow is run by hand (Actions → deploy → Run workflow); other
+  pushes keep the ones already on the site. This keeps the free 2,000 build minutes a month far from running out.
 * **Phone / tablet** — the site is installable (Android: ⋮ → Install app; iPhone: Share → Add to Home Screen), opens
   full-screen and keeps an offline copy of the app.
 * **Offline browser copy** — the zip described below.
