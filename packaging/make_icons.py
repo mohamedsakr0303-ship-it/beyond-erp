@@ -31,4 +31,17 @@ for n in (192, 512):
 icon(512, 0.2, white).convert("RGB").save(ROOT / "web-src" / "icon-maskable-512.png", optimize=True)
 icon(180, 0.1, white).convert("RGB").save(ROOT / "web-src" / "apple-touch-icon.png", optimize=True)
 icon(64, 0.04).save(ROOT / "web-src" / "favicon.png")
+# the offline desktop app serves erp/static, and the page itself carries the small icon (works from a zip / file://
+# too): Edge / Chrome use it for the app window's title bar and taskbar
+import base64
+import re
+import shutil
+fav = base64.b64encode((ROOT / "web-src" / "favicon.png").read_bytes()).decode()
+for name in ("favicon.png", "icon-192.png"):
+    shutil.copy(ROOT / "web-src" / name, ROOT / "erp" / "static" / name)
+for page in (ROOT / "web-src" / "index.html", ROOT / "erp" / "static" / "index.html"):
+    html = page.read_text(encoding="utf-8")
+    html = re.sub(r'(<link rel="icon" id="appicon" type="image/png" sizes="64x64" href=")[^"]*(">)',
+                  lambda m: m.group(1) + "data:image/png;base64," + fav + m.group(2), html)
+    page.write_text(html, encoding="utf-8")
 print("icons written")
