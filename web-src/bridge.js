@@ -308,12 +308,19 @@ def cloud_ensure_admin(email):
         try { await rpc("put_snapshot", { p_seq: seq, p_version: window.BEYOND_VERSION || "", p_data: await makeSnapshot() }); local("snap_seq", seq); }
         catch (e) { local("snap_seq", seq); } finally { snapBusy = false; }
       }
-      let timer = null;
+      // Check for other people's changes: every 20 s while someone is using the page, every 3 min when it has been left
+      // open untouched for 10 min, never while it is hidden. Every check is a request Supabase logs, so fewer checks keep
+      // its log usage down; coming back to the page, and every change made here, fetch what is new at once.
+      let timer = null, lastUse = Date.now(), lastPull = 0;
       function startPolling() {
         if (timer) return;
-        const tick = () => { if (joined() && get(SES) && document.visibilityState === "visible" && !blocked) pull().catch(() => {}); };
-        timer = setInterval(tick, 7000);
-        document.addEventListener("visibilitychange", tick); window.addEventListener("online", tick); window.addEventListener("focus", tick);
+        const due = () => Date.now() - lastPull >= (Date.now() - lastUse > 600000 ? 180000 : 20000);
+        const tick = force => { if (joined() && get(SES) && document.visibilityState === "visible" && !blocked && (force === true || due())) { lastPull = Date.now(); pull().catch(() => {}); } };
+        timer = setInterval(tick, 5000);
+        const wake = () => { const was = Date.now() - lastUse > 600000; lastUse = Date.now(); if (was) tick(true); };
+        ["pointerdown", "keydown", "wheel", "touchstart"].forEach(ev => window.addEventListener(ev, wake, { passive: true }));
+        document.addEventListener("visibilitychange", () => { lastUse = Date.now(); tick(true); });
+        window.addEventListener("online", () => tick(true)); window.addEventListener("focus", () => { lastUse = Date.now(); tick(true); });
       }
 
       return {

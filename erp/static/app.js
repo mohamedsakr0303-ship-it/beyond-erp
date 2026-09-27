@@ -186,7 +186,7 @@ async function route() {
 function renderShell() {
   const st = S.boot.settings;
   $("#root").innerHTML = `<div class="app">
-    <aside class="side"><div class="brand">${S.boot.app_logo ? `<img class="brand-logo" src="data:${S.boot.app_logo.mime};base64,${S.boot.app_logo.data}" alt="">` : ""}<b>${esc((st.appearance || {}).app_name || st.company_name || "BEYOND")}</b><small>${esc(st.company_tagline || "")}</small></div><nav class="nav" id="nav"></nav></aside>
+    <aside class="side">${brandBlock(st)}<nav class="nav" id="nav"></nav></aside>
     <div class="main"><header class="top">
       <button class="btn sm menu-btn" data-a="menu">☰</button>
       <div><h1 id="ttl"></h1><div class="crumb" id="crumb"></div></div><span class="spacer"></span>
@@ -200,6 +200,14 @@ function renderShell() {
   // "+ New": the items chosen in Settings → Menus, in that order, that this user may add
   const items = newMenuItems().filter(i => i.show && i.ok);
   $("#newmenu").innerHTML = items.map(i => `<button data-a="quicknew" data-doc="${esc(i.key)}">${esc(i.label)}</button>`).join("") || `<div class="muted" style="padding:8px">${t("view_only")}</div>`;
+}
+// Sidebar header: logo and/or name (Settings → Appearance → Sidebar shows), and an optional tagline
+function brandBlock(st) {
+  const ap = st.appearance || {}, show = ap.brand_show || "logo_name";
+  const logo = S.boot.app_logo && show !== "name" ? `<img class="brand-logo ${show === "logo" ? "only" : ""}" src="data:${S.boot.app_logo.mime};base64,${S.boot.app_logo.data}" alt="${esc(ap.app_name || st.company_name || "")}">` : "";
+  const name = show !== "logo" || !logo ? `<b>${esc(ap.app_name || st.company_name || "BEYOND")}</b>` : "";
+  const tag = ap.tagline_show === false ? "" : (ap.tagline != null ? ap.tagline : st.company_tagline || "");
+  return `<div class="brand ${show === "logo" && logo ? "logo-only" : ""}">${logo}${name}${tag ? `<small>${esc(tag)}</small>` : ""}</div>`;
 }
 // Every possible "+ New" item with its label and whether this user may use it
 function newMenuItems() {
@@ -1462,6 +1470,10 @@ PAGES.settings = async (view, parts, q) => {
       ${can("settings.branding") ? `<div class="card" id="apcard"><h2>${t("appearance")} — ${S.lang === "ar" ? "لكل المستخدمين" : "for everyone"}</h2>${form([
         { k: "app_name", l: t("app_name"), v: ap.app_name || "", ph: (st.company_name || "BEYOND") },
         { k: "logo", l: t("app_logo"), type: "select", opts: [["", t("al_none")], ["document", t("al_doc")], ["custom", t("al_custom")]], v: ap.logo || "" },
+        { k: "brand_show", l: S.lang === "ar" ? "أعلى القائمة الجانبية يعرض" : "Sidebar top shows", type: "select", v: ap.brand_show || "logo_name",
+          opts: [["logo_name", S.lang === "ar" ? "الشعار والاسم" : "Logo and name"], ["logo", S.lang === "ar" ? "الشعار فقط" : "Logo only"], ["name", S.lang === "ar" ? "الاسم فقط" : "Name only"]] },
+        { k: "tagline", l: S.lang === "ar" ? "الوصف تحت الاسم" : "Tagline under the name", v: ap.tagline != null ? ap.tagline : (st.company_tagline || ""), ph: S.lang === "ar" ? "مثال: تصميم وتشطيب داخلي" : "e.g. Interior Design & Finishing" },
+        { k: "tagline_show", l: S.lang === "ar" ? "إظهار الوصف" : "Show the tagline", type: "checkbox", v: ap.tagline_show !== false },
         { html: `<label class="f">${t("accent_col")}<span class="swatch"><input type="color" name="accent" value="${esc(ap.accent || "#1f3a5f")}"><button type="button" class="btn sm" data-a="apnoacc">${t("default")}</button></span></label>` },
         { k: "sidebar", l: t("sidebar"), type: "select", opts: [["light", t("sb_light")], ["dark", t("sb_dark")], ["brand", t("sb_brand")]], v: ap.sidebar || "light" },
         { k: "density", l: t("density"), type: "select", opts: [["comfortable", t("d_comfortable")], ["compact", t("d_compact")]], v: ap.density || "comfortable" },

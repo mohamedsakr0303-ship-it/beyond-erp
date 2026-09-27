@@ -521,15 +521,28 @@ class CloudSync:
         except (PermissionError, RuntimeError, Offline):
             local_set(self.db, "snap_seq", seq)  # not allowed or offline: try again after the next batch
 
-    def start(self, every=5):
+    def touch(self):
+        """Someone is using the app (called on every API request) — keep syncing at the quick pace."""
+        self._used = time.time()
+
+    def start(self, every=20, idle_every=300, idle_after=600):
+        """Check for other people's changes every 20 s while the app is in use, every 5 min when nobody has used it for
+        10 min. Every check is a request Supabase logs, so fewer checks keep its log usage down. A change made here
+        always fetches what is new first, so nothing is missed."""
         if self._thread and self._thread.is_alive():
             return
         self._stop.clear()
+        self._used = getattr(self, "_used", time.time())
 
         def loop():
+            last = 0.0
             while not self._stop.wait(every):
                 if not self.active:
                     continue
+                idle = time.time() - self._used > idle_after
+                if idle and time.time() - last < idle_every:
+                    continue
+                last = time.time()
                 try:
                     self.pull()
                 except Offline as e:

@@ -150,3 +150,7 @@ tr.void td{opacity:.5;text-decoration:line-through}
 }
 @media (max-width:560px){.g2,.g3,.g4,.g6{grid-template-columns:1fr}.span2{grid-column:auto}}
 @media print{.side,.top,.toolbar,.filters,.btn,.pager{display:none!important}.app{display:block}.content{padding:0}.card{border:0}}
+
+/* sidebar header: logo only */
+.brand.logo-only{text-align:center}
+.brand-logo.only{max-width:100%;max-height:96px;display:block;margin:0 auto 4px}

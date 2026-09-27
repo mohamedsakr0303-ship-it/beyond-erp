@@ -1790,6 +1790,9 @@ class Handler(BaseHTTPRequestHandler):
         self.send(r)
 
     def dispatch(self, method):
+        sync = getattr(self.server, "cloud", None)
+        if sync is not None and self.path.startswith("/api/") and not self.path.startswith("/api/cloud-status"):
+            sync.touch()
         url = urlparse(self.path)
         if not url.path.startswith("/api/"):
             if method != "GET":
