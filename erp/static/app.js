@@ -139,6 +139,12 @@ const shown = key => !hiddenMods().includes(String(key).split(".")[0]) && !hidde
 
 // ---------------------------------------------------------------- events
 document.addEventListener("click", e => {
+  // phones / narrow windows: tapping anywhere outside the open side menu closes it
+  const app = $(".app");
+  if (app && app.classList.contains("menu") && !e.target.closest(".side") && !e.target.closest("[data-a=menu]")) {
+    app.classList.remove("menu"); e.preventDefault(); return;
+  }
+  if (app && e.target.closest("a.brand")) app.classList.remove("menu");
   const el = e.target.closest("[data-a]");
   if (el && S.H[el.dataset.a]) { e.preventDefault(); S.H[el.dataset.a](el, e); return; }
   const dd = e.target.closest(".dd > .btn");
@@ -149,7 +155,7 @@ document.addEventListener("click", e => {
 });
 document.addEventListener("change", e => { const el = e.target.closest("[data-change]"); if (el && S.H[el.dataset.change]) S.H[el.dataset.change](el, e); });
 document.addEventListener("input", e => { const el = e.target.closest("[data-input]"); if (el && S.H[el.dataset.input]) S.H[el.dataset.input](el, e); });
-document.addEventListener("keydown", e => { if (e.key === "Escape") closeDrawer(); });
+document.addEventListener("keydown", e => { if (e.key === "Escape") { closeDrawer(); const app = $(".app"); if (app) app.classList.remove("menu"); } });
 window.addEventListener("hashchange", () => route());
 
 // ---------------------------------------------------------------- routing
@@ -207,7 +213,7 @@ function brandBlock(st) {
   const logo = S.boot.app_logo && show !== "name" ? `<img class="brand-logo ${show === "logo" ? "only" : ""}" src="data:${S.boot.app_logo.mime};base64,${S.boot.app_logo.data}" alt="${esc(ap.app_name || st.company_name || "")}">` : "";
   const name = show !== "logo" || !logo ? `<b>${esc(ap.app_name || st.company_name || "BEYOND")}</b>` : "";
   const tag = ap.tagline_show === false ? "" : (ap.tagline != null ? ap.tagline : st.company_tagline || "");
-  return `<div class="brand ${show === "logo" && logo ? "logo-only" : ""}">${logo}${name}${tag ? `<small>${esc(tag)}</small>` : ""}</div>`;
+  return `<a href="#/dashboard" class="brand ${show === "logo" && logo ? "logo-only" : ""}" title="${esc(t("m_dashboard"))}">${logo}${name}${tag ? `<small>${esc(tag)}</small>` : ""}</a>`;
 }
 // Every possible "+ New" item with its label and whether this user may use it
 function newMenuItems() {
