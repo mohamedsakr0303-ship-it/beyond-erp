@@ -224,6 +224,22 @@ class Api(unittest.TestCase):
         except urllib.error.HTTPError as e:
             return e.code, json.loads(e.read() or b"{}")
 
+    def test_supplier_discount_api(self):
+        op = self.client()
+        if self.call(op, "POST", "/api/setup", {"username": "admin", "password": "secret123"})[0] != 200:
+            self.assertEqual(self.call(op, "POST", "/api/login", {"username": "admin", "password": "secret123"})[0], 200)
+        bu = self.call(op, "POST", "/api/bus", {"code": "SD1", "name": "Disc"})[1]["id"]
+        deal = {"bu_id": bu, "description": "Ceramic", "vendor": "Hani", "qty": 1, "rate": 16000, "savings": 1000,
+                "paid": 14000, "deal_ref": "HANI-9", "deal_status": "Settled", "account": "5020"}
+        st, r = self.call(op, "POST", "/api/docs/direct_cost", deal)
+        self.assertEqual(st, 400)
+        self.assertIn("Negotiation discount", r["error"])
+        self.assertEqual(self.call(op, "POST", "/api/docs/direct_cost", {**deal, "deal_status": "Open"})[0], 200)
+        st, d = self.call(op, "GET", "/api/supplier-discount?party=Hani")
+        self.assertEqual((st, d["credit_account"], d["owed"], d["deal_ref"]), (200, "5020", 1000, "HANI-9"))
+        self.assertEqual(self.call(op, "POST", "/api/docs/supplier_discount", {"party": "Hani", "amount": 1000})[0], 200)
+        self.assertEqual(self.call(op, "GET", "/api/supplier-discount?party=Hani")[1]["owed"], 0)
+
     def test_flow(self):
         admin = self.client()
         self.assertEqual(self.call(admin, "GET", "/api/journal")[0], 401)
@@ -627,6 +643,30 @@ class EntryTypes(unittest.TestCase):
         entries.save_menu(db, [{"key": "entry:pay_rent", "show": True}, {"key": "doc:journal", "show": True}, {"key": "bad", "show": True}])
         m = entries.menu(db)
         self.assertEqual([x["key"] for x in m if x["show"]], ["entry:pay_rent", "doc:journal"])
+
+
+class SupplierDiscount(unittest.TestCase):
+    """A deal settled for less than what is still owed: the rest is closed as a discount, not left in payables."""
+
+    def test_settle_with_discount(self):
+        db = seeded()
+        deal = {"bu_code": "PRJ-1", "description": "Ceramic", "vendor": "Hani", "qty": 1, "rate": 16000, "savings": 1000,
+                "paid": 14000, "deal_ref": "HANI-1", "deal_status": "Settled", "account": "5020", "date": "2026-03-01"}
+        with self.assertRaises(a.ValidationError):          # new entries: "Settled" with money still owed is refused
+            a.record_project_cost(db, deal, strict=True)
+        a.record_project_cost(db, deal)                     # old entries / replays still load
+        ap = db.acct("ap")
+        self.assertEqual(a.party_balance(db, ap, "Hani"), 1000)
+        dflt = a.supplier_discount_defaults(db, "Hani")
+        self.assertEqual((dflt["credit_account"], dflt["deal_ref"], dflt["owed"]), ("5020", "HANI-1", 1000))
+        cost_before = a.income_statement(db)["net_profit"]
+        with self.assertRaises(a.ValidationError):          # cannot discount more than is owed
+            a.record_supplier_discount(db, {"party": "Hani", "amount": 1500})
+        a.record_supplier_discount(db, {"party": "Hani", "date": "2026-03-02"})
+        self.assertEqual(a.party_balance(db, ap, "Hani"), 0)
+        self.assertEqual(round(a.income_statement(db)["net_profit"] - cost_before, 2), 1000)
+        g = [x for x in a.deals(db) if x["ref"] == "HANI-1"][0]
+        self.assertEqual((g["quoted"], g["savings"], g["cost"], g["status"]), (16000, 2000, 14000, "Settled"))
 
 
 if __name__ == "__main__":

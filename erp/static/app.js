@@ -950,16 +950,33 @@ PAGES.payroll = voucherPage("payroll", ["Payroll Accrual"], { title: "m_payroll"
 PAGES.payables = async (view, parts, q) => {
   const d = await api("GET", "/api/parties?" + qs({ kind: q.kind || "all", date_to: q.date_to }));
   S.H.pay = el => openDoc("payment", { party: el.dataset.p, amount: el.dataset.b, against: el.dataset.acc });
+  S.H.disc = el => supplierDiscountForm(el.dataset.p, el.dataset.acc, +el.dataset.b);
   const tot = d.rows.reduce((s, r) => s + r.balance, 0);
+  const owedBy = {}; d.rows.forEach(r => { owedBy[r.party] = (owedBy[r.party] || 0) + r.balance; });
+  const ar = S.lang === "ar";
   view.innerHTML = `<div class="toolbar"><span class="spacer"></span>${exportMenu("payables", q)}</div>` +
     filterBar(q, ["asof", ["select", "kind", t("type"), [["payable", t("payable")], ["payroll", t("m_payroll")]]]]) +
     `<div class="card"><h2>${t("m_payables")} — ${money(tot)}</h2>${d.rows.length ? `<div class="tbl stack"><table><thead><tr><th>${t("party")}</th><th>${t("account")}</th><th class="num">${t("amount")}</th><th class="num">${t("paid_now")}</th><th class="num">${t("balance")}</th><th>${t("date")}</th><th></th></tr></thead><tbody>
       ${d.rows.map(r => `<tr class="click" data-href="#/ledger?${qs({ party: r.party, account: r.account })}"><td>${esc(r.party || "—")}</td><td>${esc(r.account)}</td><td class="num">${money(r.owed)}</td><td class="num">${money(r.paid)}</td><td class="num ${r.balance < 0 ? "neg" : ""}"><b>${money(r.balance)}</b></td><td>${fd(r.last_date)}</td>
-      <td>${can("purchasing.payments", "edit") && r.balance > 0 ? `<button class="btn sm" data-a="pay" data-p="${esc(r.party)}" data-b="${r.balance}" data-acc="${r.account}">${t("m_payments")}</button>` : ""}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${t("nothing")}</div>`}</div>
+      <td style="white-space:nowrap">${can("purchasing.payments", "edit") && r.balance > 0 ? `<button class="btn sm" data-a="pay" data-p="${esc(r.party)}" data-b="${r.balance}" data-acc="${r.account}">${t("m_payments")}</button>
+        ${(S.boot.accounts.find(x => String(x.code) === String(r.account)) || {}).subtype === "payable" ? `<button class="btn sm" data-a="disc" data-p="${esc(r.party)}" data-b="${r.balance}" data-acc="${r.account}" title="${ar ? "المورد قبل مبلغاً أقل: إقفال الباقي كخصم" : "The supplier accepted less: close the rest as a discount"}">${ar ? "تسوية بخصم" : "Settle with discount"}</button>` : ""}` : ""}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${t("nothing")}</div>`}</div>
     ${d.deals.length ? `<div class="card"><h2>${t("deal_ref")}</h2><div class="tbl"><table><thead><tr><th>${t("deal_ref")}</th><th>${t("supplier")}</th><th class="num">${t("amount")}</th><th class="num">${t("savings")}</th><th class="num">${t("net_cost")}</th><th>${t("status")}</th></tr></thead><tbody>
-      ${d.deals.map(g => `<tr><td>${esc(g.ref)}</td><td>${esc(g.vendor)}</td><td class="num">${money(g.quoted)}</td><td class="num">${money(g.savings)}</td><td class="num">${money(g.cost)}</td><td>${esc(g.status)}</td></tr>`).join("")}</tbody></table></div></div>` : ""}`;
+      ${d.deals.map(g => `<tr><td>${esc(g.ref)}</td><td>${esc(g.vendor)}</td><td class="num">${money(g.quoted)}</td><td class="num">${money(g.savings)}</td><td class="num">${money(g.cost)}</td><td>${esc(g.status)}${g.status === "Settled" && owedBy[g.vendor] > 0 ? ` <span class="chip warn" title="${ar ? "الحالة «تمت التسوية» لكن المورد ما زال له رصيد — سدده أو «تسوية بخصم»" : "Marked Settled, but this supplier is still owed money — pay it or use “Settle with discount”"}">${ar ? "ما زال مستحقاً" : "still owed"} ${money(owedBy[g.vendor])}</span>` : ""}</td></tr>`).join("")}</tbody></table></div></div>` : ""}`;
 };
 PAGES.receivables = async (view, parts, q) => reportPage(view, "receivables", q, ["dates"]);
+// The supplier accepted less than what is still owed: clear the rest as a discount (it reduces that purchase's cost)
+async function supplierDiscountForm(party, account, balance) {
+  const ar = S.lang === "ar";
+  let dflt = {}; try { dflt = await api("GET", "/api/supplier-discount?" + qs({ party, account })); } catch { /* defaults below */ }
+  drawer(ar ? "تسوية بخصم" : "Settle with discount", `<p class="muted">${ar ? `${esc(party)} له ${money(balance)}. إن قبل مبلغاً أقل، يُقفل الباقي هنا كخصم على تكلفة الشراء (نفس الحساب ووحدة الأعمال) فلا يظهر كمستحق بعد ذلك.`
+      : `${esc(party)} is owed ${money(balance)}. If they accepted less, close the rest here as a discount on the purchase's cost (same account and business unit) — it stops showing as owed.`}</p>` + form([
+    { k: "date", l: t("date"), type: "date", v: today(), req: 1 }, { k: "amount", l: ar ? "مبلغ الخصم" : "Discount amount", type: "number", v: balance, req: 1 },
+    { k: "credit_account", l: ar ? "يُخصم من حساب" : "Take it off", type: "select", v: dflt.credit_account, opts: accts(["COGS", "Expense", "Revenue"]),
+      help: ar ? "افتراضياً: حساب تكلفة آخر شراء من هذا المورد" : "By default: the cost account of the last purchase from this supplier" },
+    { k: "bu_id", l: t("bu"), type: "select", opts: buOpts("—"), v: dflt.bu_id || "" }, { k: "deal_ref", l: t("deal_ref"), v: dflt.deal_ref || "" },
+    { k: "memo", l: t("memo"), span: "spanall" }]),
+  async v => { await api("POST", "/api/docs/supplier_discount", { ...v, party, against: account }); toast(t("posted")); });
+}
 
 // ---------------------------------------------------------- invoices & BOQ
 PAGES.invoices = async (view, parts, q) => {

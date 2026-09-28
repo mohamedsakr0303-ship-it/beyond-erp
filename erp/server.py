@@ -452,6 +452,7 @@ DOCS = {  # type -> (function, module)
     "direct_cost": (acc.record_project_cost, "purchasing.costs"),
     "expense": (acc.record_expense, "purchasing.expenses"),
     "payment": (acc.record_payment, "purchasing.payments"),
+    "supplier_discount": (acc.record_supplier_discount, "purchasing.payments"),
     "payroll": (acc.record_payroll, "payroll"),
     "receipt": (acc.record_collection, "sales.receipts"),
     "partner_tx": (acc.record_partner_tx, "partners.transactions"),
@@ -465,7 +466,11 @@ def post_doc(ctx, dtype):
         return ok({"error": "Unknown document"}, 404)
     fn, module = DOCS[dtype]
     ctx.require(module, "add")
-    eid = fn(ctx.db, ctx.body, ctx.user["username"])
+    from .db import CLOCK
+    if dtype == "direct_cost" and CLOCK["at"] is None:   # typed in now (a replay runs on the change's own clock)
+        eid = fn(ctx.db, ctx.body, ctx.user["username"], strict=True)
+    else:
+        eid = fn(ctx.db, ctx.body, ctx.user["username"])
     ctx.log(f"doc.{dtype}", eid)
     return ok({"id": eid})
 
@@ -494,7 +499,7 @@ def list_docs(ctx, dtype):
     return ok({"rows": [acc.get_entry(ctx.db, i) for i in ids], "total": count, "limit": limit, "offset": offset})
 
 
-KIND_MODULE = {"Direct Cost": "purchasing.costs", "Operating Expense": "purchasing.expenses",
+KIND_MODULE = {"Supplier Discount": "purchasing.payments", "Direct Cost": "purchasing.costs", "Operating Expense": "purchasing.expenses",
                "Payment Voucher": "purchasing.payments", "Payroll Accrual": "payroll", "Receipt Voucher": "sales.receipts",
                "Sales Invoice": "sales.invoices", "Capital Contribution": "partners.transactions",
                "Owner Drawing": "partners.transactions", "Capital Withdrawal": "partners.transactions",
@@ -524,6 +529,11 @@ def _vouchers_report(ctx):
     title = ctx.q.get("title") or reports.L("vouchers", lang)
     sub = " · ".join(f"{k}: {v}" for k, v in ctx.q.items() if k in ("date_from", "date_to", "q", "party") and v)
     return reports.vouchers_table(ctx.db, [acc.get_entry(ctx.db, i) for i in ids], title, lang, sub)
+
+
+@route("GET", "/api/supplier-discount", "purchasing.payables")
+def supplier_discount_info(ctx):
+    return ok(acc.supplier_discount_defaults(ctx.db, acc.text(ctx.q.get("party")), ctx.q.get("account") or None))
 
 
 @route("GET", "/api/parties")

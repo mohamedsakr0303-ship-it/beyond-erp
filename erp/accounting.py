@@ -21,8 +21,8 @@ PAYROLL_TYPES = {  # cost type -> (account role, business unit required?)
     "Administrative Salaries (Shared Overhead)": ("admin_salaries", False),
 }
 STOCK_MOVE_TYPES = ["Receipt", "Issue", "Transfer", "Adjustment"]
-ENTRY_KINDS = ["Direct Cost", "Operating Expense", "Payroll Accrual", "Payment Voucher", "Receipt Voucher",
-               "Sales Invoice", "Capital Contribution", "Capital Withdrawal", "Owner Drawing", "Partner Loan", "Partner Loan Repayment",
+ENTRY_KINDS = ["Direct Cost", "Operating Expense", "Payroll Accrual", "Payment Voucher", "Supplier Discount",
+               "Receipt Voucher", "Sales Invoice", "Capital Contribution", "Capital Withdrawal", "Owner Drawing", "Partner Loan", "Partner Loan Repayment",
                "Partner Loan Interest", "Share Transfer", "Partner Admission", "Partner Exit", "Profit Distribution",
                "Reserve Transfer", "Asset Purchase", "Depreciation", "Asset Disposal", "Journal Voucher",
                "Goods Receipt", "Material Issue", "Stock Transfer", "Stock Adjustment", "Reversing Entry"]
@@ -249,7 +249,7 @@ def _purchase_lines(db, d, debit_account, net, vat, wht, payable, paid):
 
 
 # ---------------------------------------------------------------- purchasing
-def record_project_cost(db, d, user=""):
+def record_project_cost(db, d, user="", strict=False):
     """Direct costs for a business unit (materials, subcontractors, site work)."""
     bu = bu_id_or_none(db, d.get("bu_id") or d.get("bu_code"), required=True)
     account = account_code(db, d.get("account") or db.acct("materials"), types=("COGS",), field="cost account")
@@ -266,6 +266,11 @@ def record_project_cost(db, d, user=""):
     if (paid < cost + vat - wht or wht) and not vendor:
         raise ValidationError("Name the supplier so the unpaid balance / withholding can be tracked")
     payable = account_code(db, d.get("payable_account") or db.acct("ap"), types=("Liability",))
+    # new entries only (strict): replays of the shared log and imports keep whatever was recorded before this rule
+    if strict and text(d.get("deal_status")).lower() == "settled" and paid < cost + vat - wht:
+        raise ValidationError(
+            f"The deal is marked Settled but {to_major(cost + vat - wht - paid):,.2f} is still unpaid. If the supplier "
+            "accepted less, add the difference to Negotiation discount; otherwise leave the status Open until it is paid.")
     lines = _purchase_lines(db, d, account, cost, vat, wht, payable, paid)
     meta = {"qty": qty, "unit": text(d.get("unit")), "rate": rate, "quoted": to_major(quoted),
             "savings": to_major(savings), "deal_ref": text(d.get("deal_ref")),
@@ -332,6 +337,40 @@ def record_payment(db, d, user=""):
                       lines=[{"account": account, "debit": amount},
                              {"account": money_account(db, d.get("method"), d.get("paid_from")), "credit": amount}],
                       meta={"method": text(d.get("method"))}, user=user)
+
+
+def supplier_discount_defaults(db, party, account=None):
+    """Where a late discount from a supplier goes: back to the cost of their latest purchase (same account, business
+    unit and deal), else to Other income."""
+    account = account or db.acct("ap")
+    last = db.one(f"""SELECT e.bu_id, e.meta, (SELECT l.account FROM journal_lines l JOIN accounts a ON a.code=l.account
+                         WHERE l.entry_id=e.id AND l.debit>0 AND a.type IN ('COGS','Expense') ORDER BY l.debit DESC LIMIT 1) AS cost
+                      FROM journal_entries e WHERE {LIVE} AND e.party=?
+                        AND EXISTS (SELECT 1 FROM journal_lines x WHERE x.entry_id=e.id AND x.account=? AND x.credit>0)
+                      ORDER BY e.date DESC, e.id DESC LIMIT 1""", (party, account))
+    meta = json.loads(last["meta"] or "{}") if last else {}
+    fallback = db.one("SELECT code FROM accounts WHERE code='4080' AND active=1") or {"code": db.acct("other_income")}
+    return {"credit_account": (last or {}).get("cost") or fallback["code"], "bu_id": (last or {}).get("bu_id"),
+            "deal_ref": meta.get("deal_ref", ""), "owed": party_balance(db, account, party)}
+
+
+def record_supplier_discount(db, d, user=""):
+    """The supplier accepted less than what is still owed: clear the rest as a discount (reduces that cost)."""
+    party = text(d.get("party"), "supplier", required=True)
+    account = account_code(db, d.get("against") or db.acct("ap"), types=("Liability",), field="payable account")
+    dflt = supplier_discount_defaults(db, party, account)
+    amount = num(d.get("amount") or dflt["owed"], "amount", allow_zero=False)
+    if to_minor(amount) > to_minor(dflt["owed"]):
+        raise ValidationError(f"{party} is only owed {dflt['owed']:,.2f} on {account}")
+    credit = account_code(db, d.get("credit_account") or dflt["credit_account"], types=("COGS", "Expense", "Revenue"),
+                          field="discount account")
+    bu = bu_id_or_none(db, d.get("bu_id") if d.get("bu_id") not in (None, "") else dflt["bu_id"])
+    deal = text(d.get("deal_ref")) or dflt["deal_ref"]
+    return post_entry(db, date=d.get("date"), kind="Supplier Discount",
+                      memo=text(d.get("memo")) or f"Discount agreed with {party}" + (f" — {deal}" if deal else ""),
+                      bu_id=bu, party=party, ref=deal,
+                      lines=[{"account": account, "debit": amount}, {"account": credit, "credit": amount}],
+                      meta={"deal_ref": deal, "savings": amount, "deal_status": "Settled"}, user=user)
 
 
 # ----------------------------------------------------------------------- sales
@@ -1142,7 +1181,7 @@ def bu_summaries(db, date_from=None, date_to=None, status=None, q=None):
         WHERE {w} AND e.bu_id IS NOT NULL GROUP BY e.bu_id""", p)}
     pool = shared_overhead_total(db, date_from, date_to)
     savings = {}
-    for r in db.q(f"SELECT e.bu_id, e.meta FROM journal_entries e WHERE {w} AND kind='Direct Cost'", p):
+    for r in db.q(f"SELECT e.bu_id, e.meta FROM journal_entries e WHERE {w} AND kind IN ('Direct Cost','Supplier Discount')", p):
         savings[r["bu_id"]] = savings.get(r["bu_id"], 0) + to_minor(json.loads(r["meta"]).get("savings", 0))
     bw, bp = [], []
     if status:
@@ -1176,13 +1215,14 @@ def bu_summaries(db, date_from=None, date_to=None, status=None, q=None):
 
 def deals(db):
     m = {}
-    for r in db.q(f"SELECT e.party, e.meta FROM journal_entries e WHERE {LIVE} AND kind='Direct Cost'"):
+    for r in db.q(f"SELECT e.party, e.meta FROM journal_entries e WHERE {LIVE} AND kind IN ('Direct Cost','Supplier Discount')"):
         meta = json.loads(r["meta"] or "{}")
         ref = meta.get("deal_ref")
         if not ref:
             continue
         g = m.setdefault(ref, {"ref": ref, "vendor": r["party"], "quoted": 0, "savings": 0, "entries": 0, "status": ""})
         g["entries"] += 1
+        g["vendor"] = g["vendor"] or r["party"]
         g["quoted"] += to_minor(meta.get("quoted", 0))
         g["savings"] += to_minor(meta.get("savings", 0))
         g["status"] = meta.get("deal_status") or g["status"]
