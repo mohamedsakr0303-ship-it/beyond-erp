@@ -1,7 +1,7 @@
 // Sign in with username + password.
 //
 // Supabase accounts sign in by email, so this function looks up the email that belongs to a workspace username
-// (public.members.username) with the service key — on the server, so the page never learns anyone's email — and
+// (public.people.username — unique across every company) with the service key — on the server, so the page never learns anyone's email — and
 // then asks Supabase Auth for a normal session. An unknown username gets exactly the same answer as a wrong
 // password, so the function cannot be used to find out which usernames or emails exist.
 //
@@ -34,7 +34,7 @@ Deno.serve(async (req) => {
   if (!username || !password || username.length > 100) return invalid();
 
   const found = await fetch(
-    `${URL_}/rest/v1/members?select=email&active=is.true&username=ilike.${encodeURIComponent(username.replace(/[%_*,()]/g, ""))}&limit=1`,
+    `${URL_}/rest/v1/people?select=email&username=ilike.${encodeURIComponent(username.replace(/[%_*,()]/g, ""))}&limit=1`,
     { headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}` } },
   );
   const rows = found.ok ? await found.json() : [];

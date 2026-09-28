@@ -299,6 +299,15 @@ def auth_help(code, msg):
     return msg
 
 
+def fresh_books(company_name=""):
+    """Empty books for a new company (default chart of accounts, settings…), named after the company."""
+    from .db import Database
+    db = Database(":memory:")
+    if company_name:
+        db.set_setting("company_name", company_name)
+    return db
+
+
 class Supabase:
     def __init__(self, url, key, timeout=25):
         self.url, self.key, self.timeout = url.rstrip("/"), key, timeout
@@ -414,32 +423,121 @@ class CloudSync:
         self._save_session(self.client().refresh(rt))
         return self._token
 
+    # -- companies: one workspace holds several companies, each with its own shared books and members. This device
+    # follows one of them (local "company"); switching means disconnecting and joining the other one.
+    @property
+    def company(self):
+        return local_get(self.db, "company") or ""
+
+    def _co(self):
+        if not self.company:
+            raise PermissionError("Choose a company first (Settings → Workspace)")
+        return self.company
+
+    def rpc(self, name, params=None):
+        return self.client().rpc(name, params or {}, self.token())
+
+    def companies(self):
+        return self.rpc("my_companies") or []
+
+    def choose_company(self, cid):
+        cid = (cid or "").strip()
+        if self.active and cid != self.company:
+            raise RuntimeError("This device is connected to another company — disconnect it first")
+        if not any(c["id"] == cid and c.get("active") and not c.get("pending") for c in self.companies()):
+            raise PermissionError("You are not a member of that company")
+        local_set(self.db, "company", cid)
+        return self.info()
+
+    def create_company(self, name):
+        co = self.rpc("create_company", {"p_name": name})
+        if not self.active:
+            local_set(self.db, "company", co["id"])
+        return co
+
+    def join_company(self, code):
+        return self.rpc("join_company", {"p_code": code})
+
     def info(self):
-        return self.client().rpc("workspace_info", {}, self.token())
+        """This device's company as the signed-in person sees it, plus the list of their companies."""
+        cos = self.companies()
+        if not self.company:
+            live = [c for c in cos if c.get("active") and not c.get("pending")]
+            if len(live) == 1:
+                local_set(self.db, "company", live[0]["id"])
+        if not self.company:
+            return {"email": local_get(self.db, "email") or "", "is_member": False, "has_members": True, "companies": cos,
+                    "needs_company": True}
+        return {**(self.rpc("workspace_info", {"p_company": self.company}) or {}), "companies": cos,
+                "company": self.company}
+
+    def members(self):
+        return self.rpc("company_members", {"p_company": self._co()}) or []
+
+    def set_member(self, email, is_admin=False, gateway=False, active=True):
+        return self.rpc("set_member", {"p_company": self._co(), "p_email": email, "p_is_admin": bool(is_admin),
+                                       "p_gateway": bool(gateway), "p_active": active is not False})
+
+    def remove_member(self, email):
+        return self.rpc("remove_member", {"p_company": self._co(), "p_email": email})
+
+    def link_member(self, email, username="", active=True):
+        return self.rpc("link_member", {"p_company": self._co(), "p_email": email, "p_username": username or "",
+                                        "p_active": active is not False})
+
+    def manage_user(self, body):
+        return self.client()._call("POST", "/functions/v1/manage-user", {**body, "company": self._co()}, self.token())
+
+    def rename_company(self, name):
+        return self.rpc("rename_company", {"p_company": self._co(), "p_name": name})
+
+    def new_invite_code(self):
+        return self.rpc("new_invite_code", {"p_company": self._co()})
 
     # -- joining
-    def claim(self):
-        """Create the workspace from this device's books (first administrator)."""
+    def claim(self, name=None):
+        """Start a new company from this device's books (you become its administrator)."""
         with self.lock:
+            if self.active:
+                raise RuntimeError("This device is already connected to a company — disconnect it first")
             c, tok = self.client(), self.token()
-            info = c.rpc("claim_workspace", {}, tok)
-            ensure_app_user(self.db, info["email"], admin=True)
-            c.rpc("put_snapshot", {"p_seq": 0, "p_version": __version__, "p_data": snapshot_native(self.db)}, tok)
+            name = (name or self.db.setting("company_name") or "My company").strip()
+            co = c.rpc("create_company", {"p_name": name}, tok)
+            local_set(self.db, "company", co["id"])
+            ensure_app_user(self.db, local_get(self.db, "email") or "", admin=True)
+            c.rpc("put_snapshot", {"p_company": co["id"], "p_seq": 0, "p_version": __version__,
+                                   "p_data": snapshot_native(self.db)}, tok)
             local_set(self.db, "last_seq", 0)
             local_set(self.db, "snap_seq", 0)
             self.start()
-            return c.rpc("workspace_info", {}, tok)
+            return self.info()
 
-    def join(self):
-        """Replace this device's books with the workspace's (a backup is taken first)."""
+    def join(self, company=None):
+        """Replace this device's books with the company's shared books (a backup is taken first)."""
         with self.lock:
+            if company:
+                self.choose_company(company)
             c, tok = self.client(), self.token()
-            info = c.rpc("workspace_info", {}, tok)
+            info = self.info()
+            if info.get("needs_company"):
+                raise PermissionError("Choose which company to open")
             if not info.get("is_member"):
-                raise PermissionError("This account is not a member of the workspace — ask an administrator to add it")
-            rows = c.select("snapshots", "select=seq,version,data&order=seq.desc&limit=1", tok)
+                raise PermissionError("This account is not a member of this company yet — ask its administrator")
+            rows = c.select("snapshots", f"select=seq,version,data&company_id=eq.{self.company}&order=seq.desc&limit=1", tok)
             if not rows:
-                raise RuntimeError("The workspace has no saved copy yet")
+                if not info.get("is_admin"):
+                    raise RuntimeError("This company's books are not set up yet — its administrator opens it first")
+                # a brand-new company: its administrator starts its books here (empty, with the company's name)
+                if hasattr(self.app, "backup"):
+                    self.app.backup("before-new-company")
+                restore_native(self.db, snapshot_native(fresh_books(info.get("company_name") or "")))
+                ensure_app_user(self.db, info.get("email") or "", admin=True)
+                c.rpc("put_snapshot", {"p_company": self.company, "p_seq": 0, "p_version": __version__,
+                                       "p_data": snapshot_native(self.db)}, tok)
+                local_set(self.db, "last_seq", 0)
+                local_set(self.db, "snap_seq", 0)
+                self.start()
+                return self.info()
             snap = rows[0]
             if version_tuple(snap["version"]) > version_tuple(__version__):
                 raise NeedsUpdate(snap["version"])
@@ -454,7 +552,7 @@ class CloudSync:
 
     def disconnect(self):
         self.stop()
-        for k in ("last_seq", "refresh", "email", "snap_seq"):
+        for k in ("last_seq", "refresh", "email", "snap_seq", "company"):
             local_set(self.db, k, None)
         self._token = None
         self.status = {"state": "off", "error": "", "last_sync": ""}
@@ -465,8 +563,8 @@ class CloudSync:
         with self.lock:
             c, n = self.client(), 0
             while True:
-                rows = c.select("ops", f"select=*&seq=gt.{last_seq(self.db)}&order=seq.asc&limit={PULL_PAGE}",
-                                self.token())
+                rows = c.select("ops", f"select=*&company_id=eq.{self._co()}&seq=gt.{last_seq(self.db)}"
+                                       f"&order=seq.asc&limit={PULL_PAGE}", self.token())
                 for op in rows:
                     if int(op["seq"]) != last_seq(self.db) + 1:
                         raise RuntimeError("The workspace log has a gap — try again in a moment")
@@ -490,7 +588,7 @@ class CloudSync:
                     op["seq"] = last_seq(self.db) + 1
                     try:
                         stored = self.client().rpc("append_op", {
-                            "p_seq": op["seq"], "p_version": op["version"], "p_app_user": op["app_user"],
+                            "p_company": self._co(), "p_seq": op["seq"], "p_version": op["version"], "p_app_user": op["app_user"],
                             "p_device": op["device"], "p_method": op["method"], "p_path": op["path"],
                             "p_body": op["body"], "p_content_type": op["content_type"], "p_clock": op["clock"]},
                             self.token())
@@ -515,8 +613,8 @@ class CloudSync:
         if seq - snap < SNAPSHOT_EVERY:
             return
         try:
-            self.client().rpc("put_snapshot", {"p_seq": seq, "p_version": __version__, "p_data": snapshot_native(self.db)},
-                              self.token())
+            self.client().rpc("put_snapshot", {"p_company": self._co(), "p_seq": seq, "p_version": __version__,
+                                               "p_data": snapshot_native(self.db)}, self.token())
             local_set(self.db, "snap_seq", seq)
         except (PermissionError, RuntimeError, Offline):
             local_set(self.db, "snap_seq", seq)  # not allowed or offline: try again after the next batch
@@ -560,4 +658,5 @@ class CloudSync:
     def public_status(self):
         return {"configured": bool(local_get(self.db, "url")), "url": local_get(self.db, "url") or "",
                 "key": local_get(self.db, "key") or "", "email": local_get(self.db, "email") or "",
-                "joined": self.active, "last_seq": last_seq(self.db), "device": device_id(self.db), **self.status}
+                "joined": self.active, "last_seq": last_seq(self.db), "device": device_id(self.db),
+                "company": self.company, **self.status}

@@ -279,3 +279,4 @@ Object.assign(window.I18N, {
   "Asset Purchase": ["Asset purchase", "شراء أصل"], Depreciation: ["Depreciation", "إهلاك"], "Asset Disposal": ["Asset disposal", "استبعاد أصل"],
   "Ownership Change": ["Ownership change", "تعديل الملكية"],
 });
+Object.assign(window.I18N, { back: ["Back", "رجوع"], filters: ["Filters", "التصفية"] });

@@ -156,7 +156,7 @@ document.addEventListener("click", e => {
 document.addEventListener("change", e => { const el = e.target.closest("[data-change]"); if (el && S.H[el.dataset.change]) S.H[el.dataset.change](el, e); });
 document.addEventListener("input", e => { const el = e.target.closest("[data-input]"); if (el && S.H[el.dataset.input]) S.H[el.dataset.input](el, e); });
 document.addEventListener("keydown", e => { if (e.key === "Escape") { closeDrawer(); const app = $(".app"); if (app) app.classList.remove("menu"); } });
-window.addEventListener("hashchange", () => route());
+window.addEventListener("hashchange", () => { S.navCount = (S.navCount || 0) + 1; route(); });
 
 // ---------------------------------------------------------------- routing
 function parseHash() {
@@ -182,10 +182,21 @@ async function route() {
   $(".app") && $(".app").classList.remove("menu");
   renderNav(parts.join("/"));
   const page = PAGES[parts[0]] || PAGES.dashboard;
-  const view = $("#view");
-  view.innerHTML = `<div class="empty">${t("loading")}</div>`;
+  // each visit draws into its own box: a slower page still loading when the person moved on draws off-screen
+  const host = $("#view"), view = document.createElement("div");
+  view.className = "page"; view.innerHTML = `<div class="empty">${t("loading")}</div>`;
+  host.replaceChildren(view);
   try { await page(view, parts, q); } catch (e) { view.innerHTML = `<div class="banner err">${esc(e.message)}</div>`; }
-  window.scrollTo(0, 0);
+  stackify(view);
+  if (view.isConnected) window.scrollTo(0, 0);
+}
+
+// Phones show list tables (".tbl.stack") as one card per row: each cell carries its column heading.
+function stackify(root) {
+  $$(".tbl.stack table", root).forEach(tb => {
+    const heads = $$("thead th", tb).map(th => th.textContent.trim());
+    $$("tbody tr", tb).forEach(tr => [...tr.children].forEach((td, i) => { if (heads[i] && !td.dataset.l) td.dataset.l = heads[i]; }));
+  });
 }
 
 // ----------------------------------------------------------------- shell
@@ -194,13 +205,15 @@ function renderShell() {
   $("#root").innerHTML = `<div class="app">
     <aside class="side">${brandBlock(st)}<nav class="nav" id="nav"></nav></aside>
     <div class="main"><header class="top">
-      <button class="btn sm menu-btn" data-a="menu">☰</button>
-      <div><h1 id="ttl"></h1><div class="crumb" id="crumb"></div></div><span class="spacer"></span>
-      <div class="dd"><button class="btn pri sm">+ ${t("new")}</button><div class="dd-menu" id="newmenu"></div></div>
+      <button class="btn sm menu-btn" data-a="menu" aria-label="Menu">☰</button>
+      <button class="btn icon sm top-back" data-a="goback" style="display:none" aria-label="${esc(t("back"))}">${BACK_ICON}</button>
+      <div class="ttl-box"><h1 id="ttl"></h1><div class="crumb" id="crumb"></div></div><span class="spacer"></span>
+      <div class="dd"><button class="btn pri sm" aria-label="${esc(t("new"))}">+<span class="lbl"> ${t("new")}</span></button><div class="dd-menu" id="newmenu"></div></div>
       <span id="syncdot" class="chip" style="display:none"></span>
-      <button class="btn sm" data-a="lang">${t("language")}</button>
-      <div class="dd"><button class="btn sm">${esc(S.boot.user.full_name || S.boot.user.username)} ▾</button><div class="dd-menu">
+      <button class="btn sm" data-a="lang"><span class="lbl">${t("language")}</span><span class="lbl-short">${S.lang === "ar" ? "EN" : "ع"}</span></button>
+      <div class="dd"><button class="btn sm user-btn"><span class="avatar">${esc(((S.boot.user.full_name || S.boot.user.username || "?").trim().split(/\s+/).map(w => w[0]).join("").slice(0, 2)).toUpperCase())}</span><span class="lbl">${esc(S.boot.user.full_name || S.boot.user.username)} ▾</span></button><div class="dd-menu">
         <button data-a="theme">${t("theme")}: ${esc(store.get("theme", "auto"))}</button>
+        ${cloudOn() ? `<button data-a="coswitch">⇄ ${S.lang === "ar" ? "الشركات" : "Companies"}</button>` : ""}
         <a href="#/settings">${t("m_settings")}</a>${STATIC && /^https?:$/.test(location.protocol) ? `<a href="#/download">⬇ ${S.lang === "ar" ? "تحميل التطبيق" : "Get the app"}</a>` : ""}<button data-a="pw">${t("change_pw")}</button><button data-a="logout">${t("logout")}</button></div></div>
     </header><main class="content" id="view"></main></div></div>`;
   // "+ New": the items chosen in Settings → Menus, in that order, that this user may add
@@ -237,6 +250,9 @@ S.GLOBAL_H = {
   pw: () => drawer(t("change_pw"), form([{ k: "current", l: t("current_pw"), type: "password" }, { k: "new", l: t("new_pw"), type: "password" }]),
     async v => { await api("PUT", "/api/me/password", v); toast(t("saved")); return true; }),
   quicknew: el => newItem(el.dataset.doc),
+  coswitch: () => companySwitcher(),
+  goback: () => { const h = parseHash().parts; const parent = { bu: "bus", invoice: "invoices", boq: "boqs", offer: "offers", offertypes: "offers", report: "dashboard" }[h[0]];
+    if (S.navCount > 0) history.back(); else location.hash = "#/" + (parent || "dashboard"); },
   closeDrawer: () => closeDrawer(),
 };
 function renderNav(active) {
@@ -257,6 +273,9 @@ function renderNav(active) {
   nav.innerHTML = html;
   $("#ttl").textContent = title || t("m_dashboard");
   $("#crumb").textContent = group;
+  // detail pages (a business unit, an invoice, a quotation, an offer…) get a back arrow to the list they came from
+  const inMenu = window.MENU.some(([, items]) => items.some(i => i[1] === active));
+  const back = $(".top-back"); if (back) back.style.display = inMenu ? "none" : "";
 }
 
 // ------------------------------------------------------------- auth pages
@@ -264,17 +283,24 @@ function renderNav(active) {
 const CloudAPI = STATIC ? {
   status: () => window.BeyondCloud.status(), config: (url, key) => window.BeyondCloud.config(url, key),
   signin: (email, password, create) => window.BeyondCloud.signin(email, password, create), info: () => window.BeyondCloud.info(),
-  claim: () => window.BeyondCloud.claim(), join: () => window.BeyondCloud.join(), pull: () => window.BeyondCloud.pull(),
+  claim: name => window.BeyondCloud.claim(name), join: () => window.BeyondCloud.join(), pull: () => window.BeyondCloud.pull(),
   disconnect: () => window.BeyondCloud.disconnect(), members: () => window.BeyondCloud.members(), setMember: m => window.BeyondCloud.setMember(m),
   linkMember: m => window.BeyondCloud.linkMember(m),
   manageUser: m => window.BeyondCloud.manageUser(m), deleteAccount: m => window.BeyondCloud.deleteAccount(m),
+  companies: () => window.BeyondCloud.companies(), createCompany: n => window.BeyondCloud.createCompany(n), joinCompany: c => window.BeyondCloud.joinCompany(c),
+  renameCompany: n => window.BeyondCloud.renameCompany(n), newInviteCode: () => window.BeyondCloud.newInviteCode(), removeMember: e => window.BeyondCloud.removeMember(e),
+  chooseCompany: id => window.BeyondCloud.chooseCompany(id),
 } : {
   status: () => api("GET", "/api/cloud"), config: (url, key) => api("PUT", "/api/cloud/config", { url, key }),
   signin: (email, password, create) => api("POST", "/api/cloud/signin", { email, password, create }), info: () => api("GET", "/api/cloud/info"),
-  claim: () => api("POST", "/api/cloud/claim", {}), join: () => api("POST", "/api/cloud/join", {}), pull: () => api("POST", "/api/cloud/pull", {}),
+  claim: name => api("POST", "/api/cloud/claim", { name }), join: () => api("POST", "/api/cloud/join", {}), pull: () => api("POST", "/api/cloud/pull", {}),
   disconnect: () => api("POST", "/api/cloud/disconnect", {}), members: () => api("GET", "/api/cloud/members"), setMember: m => api("PUT", "/api/cloud/members", m),
   linkMember: m => api("PUT", "/api/cloud/members/link", m),
   manageUser: m => api("PUT", "/api/cloud/account", m), deleteAccount: m => api("POST", "/api/cloud/account/delete", m),
+  companies: () => api("GET", "/api/cloud/info").then(i => i.companies || []), createCompany: name => api("POST", "/api/cloud/company", { action: "create", name }),
+  joinCompany: code => api("POST", "/api/cloud/company", { action: "join", code }), renameCompany: name => api("POST", "/api/cloud/company", { action: "rename", name }),
+  newInviteCode: () => api("POST", "/api/cloud/company", { action: "code" }).then(r => r.invite_code), removeMember: email => api("POST", "/api/cloud/company", { action: "remove", email }),
+  chooseCompany: id => api("POST", "/api/cloud/company", { action: "choose", company: id }).then(() => false),
 };
 const cloudOn = () => STATIC ? !!(window.BeyondCloud && window.BeyondCloud.joined()) : !!(S.boot && S.boot.cloud && S.boot.cloud.joined);
 
@@ -349,7 +375,7 @@ async function renderCloudAuth(msg, kind = "info", mode = "start") {
     lang2: () => { store.set("lang", S.lang === "ar" ? "en" : "ar"); renderCloudAuth("", "info", mode); },
     mode_start: () => renderCloudAuth("", "info", "start"), mode_email: () => { keepChoice(); renderCloudAuth("", "info", "email"); },
     mode_signup: () => renderCloudAuth("", "info", "signup"), mode_help: () => renderCloudAuth("", "info", "help"),
-    clocal: () => { store.set("cloudLocal", true); renderAuth(); },
+    clocal: () => { store.set("cloudLocal", true); if (C.company()) location.reload(); else renderAuth(); },
     cgoogle: () => { keepChoice(); location.href = googleUrl; },
     cforgot: async () => { const email = needEmail(); if (!email) return;
       try { await C.recover(email); show(ar ? `أرسلنا رابط إعادة تعيين كلمة المرور إلى ${email}. افتحه لاختيار كلمة مرور جديدة.` : `We sent a password-reset link to ${email}. Open it to choose a new password.`, "ok"); } catch (e) { show(e.message); } },
@@ -396,16 +422,14 @@ async function cloudReturn() {
   try { await cloudEnter(r.info); } catch (e) { await renderCloudAuth(e.message, "err", "start"); }
   return true;
 }
-// After a successful workspace sign-in: create / join the workspace if needed, then open the matching app user.
+// After a successful workspace sign-in: choose / create / join a company if needed, get its books, open the user.
 async function cloudEnter(info) {
   const ar = S.lang === "ar", C = window.BeyondCloud;
-  if (!info.is_member) {
-    if (!info.has_members) {
-      if (!confirm(ar ? "مساحة العمل فارغة. إنشاؤها الآن من بيانات هذا الجهاز؟ ستصبح أنت المسؤول." : "This workspace is empty. Create it now from this device's books? You become its administrator.")) return;
-      await C.claim();
-    } else throw new Error(ar ? "حسابك ليس عضواً في مساحة العمل — اطلب من المسؤول إضافتك." : "Your account is not a member of this workspace — ask an administrator to add you.");
-  } else if (!C.joined()) {
-    $("#lerr").innerHTML = `<div class="banner info">${ar ? "جارٍ تنزيل البيانات المشتركة…" : "Downloading the shared books…"}</div>`;
+  // one company and nothing else pending: open it straight away
+  if (info.needs_company && (info.live || []).length === 1 && !(info.companies || []).some(c => c.pending) && C.chooseCompany(info.live[0].id)) return location.reload();
+  if (info.needs_company || !info.is_member) return renderCompanyGate(info);
+  if (!C.joined()) {
+    const box = $("#lerr"); if (box) box.innerHTML = `<div class="banner info">${ar ? "جارٍ تنزيل دفاتر الشركة…" : "Downloading the company's books…"}</div>`;
     await C.join();
   } else await C.pull().catch(() => {});
   const r = await C.openSession();
@@ -415,9 +439,50 @@ async function cloudEnter(info) {
   await boot();
 }
 
+// Signed in, but no company open yet: pick one, start a new one, or ask to join one with its invite code.
+function renderCompanyGate(info, msg, kind = "err") {
+  const ar = S.lang === "ar", C = window.BeyondCloud;
+  const live = info.live || (info.companies || []).filter(c => c.active && !c.pending);
+  const pending = (info.companies || []).filter(c => c.pending);
+  if (!msg && info.pending && info.company_name) { msg = (ar ? "طلبك للانضمام إلى " : "Your request to join ") + info.company_name + (ar ? " بانتظار موافقة المسؤول." : " is waiting for its administrator's approval."); kind = "info"; }
+  applyLook();
+  $("#root").innerHTML = `<div class="login auth co-gate"><h1 class="center">${live.length ? (ar ? "اختر الشركة" : "Choose a company") : (ar ? "ابدأ" : "Get started")}</h1>
+    <p class="muted center">${esc(info.email || C.email())}</p><div id="lerr">${msg ? `<div class="banner ${kind}">${esc(msg)}</div>` : ""}</div>
+    ${live.length ? `<div class="co-list">${live.map(c => `<button class="btn oauth" type="button" data-a="copick" data-id="${esc(c.id)}"><span class="co-ic">${esc((c.name || "?").trim().charAt(0).toUpperCase())}</span><span>${esc(c.name)}</span>${c.is_admin ? `<span class="chip">${t("admin")}</span>` : ""}</button>`).join("")}</div>` : ""}
+    ${pending.length ? `<div class="banner info">${ar ? "بانتظار الموافقة: " : "Waiting for approval: "}${pending.map(c => esc(c.name)).join(", ")}</div>` : ""}
+    <details class="co-more" ${live.length ? "" : "open"}><summary>${ar ? "الانضمام إلى شركة برمز دعوة" : "Join a company with an invite code"}</summary>
+      <form id="cojoin" class="row"><input name="code" required autocapitalize="characters" autocomplete="off" placeholder="${ar ? "رمز الدعوة (8 أحرف)" : "Invite code (8 letters)"}" style="flex:1;text-transform:uppercase"><button class="btn pri" type="submit">${ar ? "طلب الانضمام" : "Ask to join"}</button></form>
+      <p class="muted" style="font-size:.8em;margin:4px 0 0">${ar ? "اطلب الرمز من مسؤول الشركة (الإعدادات ← مساحة العمل)." : "Get it from the company's administrator (Settings → Workspace)."}</p></details>
+    <details class="co-more" ${live.length || pending.length ? "" : "open"}><summary>${ar ? "إنشاء شركة جديدة" : "Create a new company"}</summary>
+      <form id="conew" class="grid"><input name="name" required maxlength="120" placeholder="${ar ? "اسم الشركة" : "Company name"}">
+        <label class="f chk"><input type="checkbox" name="mine">${ar ? "ابدأ بدفاتر هذا الجهاز (بدلاً من دفاتر فارغة)" : "Start from the books on this device (instead of empty books)"}</label>
+        <button class="btn" type="submit">${ar ? "إنشاء — ستكون مسؤولها" : "Create — you become its administrator"}</button></form></details>
+    <p class="center" style="margin-top:14px;font-size:.85em"><a href="#" data-a="coout">${t("logout")}</a></p></div>`;
+  const show = (m, k = "err") => { $("#lerr").innerHTML = `<div class="banner ${k}">${esc(m)}</div>`; };
+  const open = id => { if (C.chooseCompany(id)) location.reload(); else cloudEnter({ ...info, needs_company: false, is_member: true }).catch(e => show(e.message)); };
+  S.H = { copick: el => { show(ar ? "جارٍ فتح الشركة…" : "Opening the company…", "info"); open(el.dataset.id); },
+    coout: () => { C.signout(); renderCloudAuth(); } };
+  $("#cojoin").addEventListener("submit", async e => { e.preventDefault(); const code = new FormData(e.target).get("code").trim();
+    try { const r = await C.joinCompany(code); if (r.is_member) return open(r.id);
+      renderCompanyGate(await C.info(), (ar ? "تم إرسال طلبك إلى مسؤول " : "Request sent to the administrator of ") + r.name + (ar ? ". ستتمكن من الدخول بعد الموافقة." : ". You can open it once they approve."), "ok"); }
+    catch (x) { show(x.message); } });
+  $("#conew").addEventListener("submit", async e => { e.preventDefault(); const v = Object.fromEntries(new FormData(e.target)); const btn = $("button", e.target); btn.disabled = true;
+    try {
+      if (v.mine) { await C.claim(v.name.trim()); return cloudEnter(await C.info()); }
+      const c = await C.createCompany(v.name.trim()); open(c.id);
+    } catch (x) { show(x.message); btn.disabled = false; } });
+}
+
 async function renderAuth() {
   if (STATIC && window.BeyondCloud && window.BeyondCloud.hasPendingAuth()) { store.set("cloudLocal", false); if (await cloudReturn()) return; }
-  if (STATIC && window.BeyondCloud && window.BeyondCloud.configured() && !store.get("cloudLocal", false)) return renderCloudAuth();
+  if (STATIC && window.BeyondCloud && window.BeyondCloud.configured() && !store.get("cloudLocal", false)) {
+    // still signed in to the workspace (e.g. after switching company): carry on without asking again
+    if (window.BeyondCloud.signedIn()) {
+      applyLook(); $("#root").innerHTML = `<div class="login"><div class="empty">${t("loading")}</div><div id="lerr"></div></div>`;
+      try { return await cloudEnter(await window.BeyondCloud.info()); } catch (e) { return renderCloudAuth(e.message, "err"); }
+    }
+    return renderCloudAuth();
+  }
   applyLook();
   const setup = S.boot.needs_setup;
   if (setup && S.boot.workspace_preset && !store.get("separateBooks", false)) return renderFirstJoin();
@@ -465,11 +530,16 @@ function renderFirstJoin() {
 }
 
 // ---------------------------------------------------------------- drawer
+// Side panels: a header with a back arrow, the content, and Save / Cancel always visible at the bottom. On phones the
+// system Back button closes the panel (it gets its own history entry) instead of leaving the page.
+const BACK_ICON = `<svg class="flip" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>`;
+let drawerEntry = null;
 function drawer(title, html, onSubmit, opts = {}) {
-  closeDrawer();
+  closeDrawer(true);
+  if (!drawerEntry) { drawerEntry = location.hash; try { history.pushState({ berpDrawer: 1 }, ""); } catch { drawerEntry = null; } }
   const bg = document.createElement("div");
   bg.className = "drawer-bg";
-  bg.innerHTML = `<div class="drawer" role="dialog" aria-label="${esc(title)}"><h3>${esc(title)}</h3><div id="derr"></div>
+  bg.innerHTML = `<div class="drawer" role="dialog" aria-label="${esc(title)}"><div class="dhead"><button type="button" class="btn icon" data-a="closeDrawer" aria-label="${esc(t("close"))}">${BACK_ICON}</button><h3>${esc(title)}</h3></div><div id="derr"></div>
     <form id="df">${html}<div class="foot">${opts.extraButtons || ""}<button class="btn" type="button" data-a="closeDrawer">${t(opts.readOnly ? "close" : "cancel")}</button>
     ${opts.readOnly ? "" : `<button class="btn pri" type="submit">${esc(opts.submitLabel || t("save"))}</button>`}</div></form></div>`;
   bg.addEventListener("mousedown", e => { if (e.target === bg) closeDrawer(); });
@@ -479,14 +549,22 @@ function drawer(title, html, onSubmit, opts = {}) {
     e.preventDefault();
     const btn = $("button[type=submit]", f); if (btn) btn.disabled = true;
     try { const done = await onSubmit(readForm(f), f); if (done !== false) { closeDrawer(); route(); } }
-    catch (err) { $("#derr").innerHTML = `<div class="banner err">${esc(err.message)}</div>`; }
+    catch (err) { $("#derr").innerHTML = `<div class="banner err">${esc(err.message)}</div>`; $("#derr").scrollIntoView({ block: "nearest", behavior: "smooth" }); }
     finally { if (btn) btn.disabled = false; }
   });
-  const first = $("input:not([type=hidden]),select", f); if (first) first.focus();
+  // with a mouse, start typing at once; on a phone that would pop the keyboard over half the form
+  const first = $("input:not([type=hidden]),select", f); if (first && window.matchMedia && matchMedia("(pointer: fine)").matches) first.focus();
   if (opts.onOpen) opts.onOpen(f);
   return f;
 }
-function closeDrawer() { $$(".drawer-bg").forEach(d => d.remove()); }
+function closeDrawer(keepEntry) {
+  $$(".drawer-bg").forEach(d => d.remove());
+  if (keepEntry === true || drawerEntry === null) return;
+  const was = drawerEntry; drawerEntry = null;
+  // drop the panel's history entry — unless the page has moved on meanwhile
+  setTimeout(() => { if (location.hash === was && history.state && history.state.berpDrawer) history.back(); }, 0);
+}
+window.addEventListener("popstate", () => { if (drawerEntry !== null) { drawerEntry = null; $$(".drawer-bg").forEach(d => d.remove()); } });
 function readForm(f) {
   const v = {};
   $$("[name]", f).forEach(el => {
@@ -554,7 +632,9 @@ function filterBar(q, fields, extra = "") {
     setQ(v);
   };
   S.H.fclear = () => setQ({});
-  return `<div class="card" id="fbar"><div class="filters">${parts.join("")}
+  S.H.ftoggle = () => $("#fbar").classList.toggle("open");
+  const active = Object.entries(q).filter(([k, v]) => v && !["limit", "offset", "tab", "lang"].includes(k)).length;
+  return `<div class="card ${active ? "" : ""}" id="fbar"><button type="button" class="btn sm ftoggle" data-a="ftoggle">⚲ ${t("filters")}${active ? ` <span class="chip">${active}</span>` : ""}</button><div class="filters">${parts.join("")}
     <div class="row"><button class="btn pri" data-a="fapply">${t("apply")}</button><button class="btn" data-a="fclear">${t("clear")}</button></div></div>${extra}</div>`;
 }
 function exportMenu(name, params) {
@@ -599,7 +679,7 @@ function reportTable(tb) {
 }
 function voucherRows(rows) {
   if (!rows.length) return `<div class="empty">${t("nothing")}</div>`;
-  return `<div class="tbl"><table><thead><tr><th>${t("date")}</th><th>#</th><th>${t("kind")}</th><th>${t("description")}</th><th>${t("party")}</th><th>${t("bu")}</th><th class="num">${t("amount")}</th><th></th></tr></thead><tbody>
+  return `<div class="tbl stack"><table><thead><tr><th>${t("date")}</th><th>#</th><th>${t("kind")}</th><th>${t("description")}</th><th>${t("party")}</th><th>${t("bu")}</th><th class="num">${t("amount")}</th><th></th></tr></thead><tbody>
     ${rows.map(e => `<tr class="click ${e.status === "void" || e.reversed_by ? "void" : ""}" data-a="openv" data-id="${e.id}"><td>${fd(e.date)}</td><td>${e.id}</td><td><span class="chip">${esc(tl(e.kind))}</span></td>
       <td>${esc(e.memo)}<div class="lines">${e.lines.map(l => `${l.debit ? t("debit") : "&nbsp;&nbsp;" + t("credit")} ${esc(l.account)} ${esc(aname(l))} ${money(l.debit || l.credit)}`).join("<br>")}</div></td>
       <td>${esc(e.party)}</td><td>${esc(e.bu_code || "")}</td><td class="num">${money(e.amount)}</td>
@@ -775,7 +855,7 @@ PAGES.dashboard = async (view, parts, q) => {
 };
 function buTable(rows) {
   if (!rows.length) return `<div class="empty">${t("nothing")}</div>`;
-  return `<div class="tbl"><table><thead><tr><th>${t("code")}</th><th>${t("name")}</th><th>${t("basis")}</th><th class="num">${t("rev")}</th><th class="num">${t("direct_costs")}</th><th class="num">${t("direct_overhead")}</th><th class="num">${t("allocated_overhead")}</th><th class="num">${t("net_profit")}</th><th class="num">${t("margin")}</th><th class="num">${t("to_collect")}</th></tr></thead><tbody>
+  return `<div class="tbl stack"><table><thead><tr><th>${t("code")}</th><th>${t("name")}</th><th>${t("basis")}</th><th class="num">${t("rev")}</th><th class="num">${t("direct_costs")}</th><th class="num">${t("direct_overhead")}</th><th class="num">${t("allocated_overhead")}</th><th class="num">${t("net_profit")}</th><th class="num">${t("margin")}</th><th class="num">${t("to_collect")}</th></tr></thead><tbody>
     ${rows.map(b => `<tr class="click" data-href="#/bu/${b.id}"><td><b>${esc(b.code)}</b><div class="lines">${esc(tl(b.status))}</div></td><td>${esc(b.name)}</td><td><span class="chip">${esc(tl(b.basis))}${b.basis === "Cost-Plus %" ? " " + pct(b.fee_pct) : ""}</span></td>
       <td class="num">${money(b.revenue)}</td><td class="num">${money(b.cogs)}</td><td class="num">${money(b.direct_overhead)}</td><td class="num">${money(b.allocated_overhead)}<div class="lines">${pct(b.overhead_pct)}</div></td>
       <td class="num ${b.net_profit < 0 ? "neg" : "pos"}"><b>${money(b.net_profit)}</b></td><td class="num">${pct(b.margin)}</td><td class="num">${money(b.to_collect)}</td></tr>`).join("")}</tbody></table></div>`;
@@ -873,7 +953,7 @@ PAGES.payables = async (view, parts, q) => {
   const tot = d.rows.reduce((s, r) => s + r.balance, 0);
   view.innerHTML = `<div class="toolbar"><span class="spacer"></span>${exportMenu("payables", q)}</div>` +
     filterBar(q, ["asof", ["select", "kind", t("type"), [["payable", t("payable")], ["payroll", t("m_payroll")]]]]) +
-    `<div class="card"><h2>${t("m_payables")} — ${money(tot)}</h2>${d.rows.length ? `<div class="tbl"><table><thead><tr><th>${t("party")}</th><th>${t("account")}</th><th class="num">${t("amount")}</th><th class="num">${t("paid_now")}</th><th class="num">${t("balance")}</th><th>${t("date")}</th><th></th></tr></thead><tbody>
+    `<div class="card"><h2>${t("m_payables")} — ${money(tot)}</h2>${d.rows.length ? `<div class="tbl stack"><table><thead><tr><th>${t("party")}</th><th>${t("account")}</th><th class="num">${t("amount")}</th><th class="num">${t("paid_now")}</th><th class="num">${t("balance")}</th><th>${t("date")}</th><th></th></tr></thead><tbody>
       ${d.rows.map(r => `<tr class="click" data-href="#/ledger?${qs({ party: r.party, account: r.account })}"><td>${esc(r.party || "—")}</td><td>${esc(r.account)}</td><td class="num">${money(r.owed)}</td><td class="num">${money(r.paid)}</td><td class="num ${r.balance < 0 ? "neg" : ""}"><b>${money(r.balance)}</b></td><td>${fd(r.last_date)}</td>
       <td>${can("purchasing.payments", "edit") && r.balance > 0 ? `<button class="btn sm" data-a="pay" data-p="${esc(r.party)}" data-b="${r.balance}" data-acc="${r.account}">${t("m_payments")}</button>` : ""}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${t("nothing")}</div>`}</div>
     ${d.deals.length ? `<div class="card"><h2>${t("deal_ref")}</h2><div class="tbl"><table><thead><tr><th>${t("deal_ref")}</th><th>${t("supplier")}</th><th class="num">${t("amount")}</th><th class="num">${t("savings")}</th><th class="num">${t("net_cost")}</th><th>${t("status")}</th></tr></thead><tbody>
@@ -1717,6 +1797,28 @@ if (STATIC) window.addEventListener("beyond-remote-change", () => {
 });
 
 PAGES.workspace = async (view) => view.innerHTML = "";  // (tab under Settings)
+
+// Top bar → Companies: open another company (browser edition: reloads with that company's books), create, join.
+async function companySwitcher() {
+  const ar = S.lang === "ar";
+  let cos = [], cur = "";
+  try { cos = await CloudAPI.companies(); cur = STATIC ? window.BeyondCloud.company() : ((await CloudAPI.status()).company || ""); } catch (e) { return fail(e); }
+  const live = cos.filter(c => c.active && !c.pending), pending = cos.filter(c => c.pending);
+  drawer(ar ? "الشركات" : "Companies", `<div class="co-list">${live.map(c => `<button class="btn oauth ${c.id === cur ? "on" : ""}" type="button" data-a="coopen" data-id="${esc(c.id)}" ${c.id === cur ? "disabled" : ""}>
+      <span class="co-ic">${esc((c.name || "?").trim().charAt(0).toUpperCase())}</span><span>${esc(c.name)}</span>${c.id === cur ? `<span class="chip ok">${ar ? "مفتوحة" : "open"}</span>` : ""}${c.is_admin ? `<span class="chip">${t("admin")}</span>` : ""}</button>`).join("")}</div>
+    ${pending.length ? `<div class="banner info">${ar ? "بانتظار الموافقة: " : "Waiting for approval: "}${pending.map(c => esc(c.name)).join(", ")}</div>` : ""}
+    ${!STATIC ? `<p class="muted" style="font-size:.85em">${ar ? "هذا البرنامج يتابع شركة واحدة. لفتح شركة أخرى: الإعدادات ← مساحة العمل ← فصل هذا الجهاز، ثم سجّل الدخول واختر الشركة." : "This app follows one company. To open another: Settings → Workspace → Disconnect this device, then sign in and choose it."}</p>` : ""}
+    <h4>${ar ? "الانضمام برمز دعوة" : "Join with an invite code"}</h4><div class="row"><input id="cocode" placeholder="${ar ? "رمز الدعوة" : "Invite code"}" style="flex:1;text-transform:uppercase"><button class="btn" type="button" data-a="cojoin2">${ar ? "طلب الانضمام" : "Ask to join"}</button></div>
+    <h4>${ar ? "شركة جديدة" : "New company"}</h4><div class="row"><input id="coname" placeholder="${ar ? "اسم الشركة" : "Company name"}" style="flex:1"><button class="btn" type="button" data-a="conew2">${ar ? "إنشاء" : "Create"}</button></div>
+    <p class="muted" style="font-size:.8em">${ar ? "الشركة الجديدة تبدأ بدفاتر فارغة وتكون أنت مسؤولها. كل شركة لها بياناتها وأعضاؤها." : "A new company starts with empty books and you as its administrator. Every company has its own books and members."}</p>`,
+  null, { readOnly: true });
+  const openCo = id => { if (!STATIC) return toast(ar ? "افصل هذا الجهاز أولاً (الإعدادات ← مساحة العمل)" : "Disconnect this device first (Settings → Workspace)", true);
+    if (CloudAPI.chooseCompany(id)) { store.set("token", ""); location.reload(); } };
+  S.H.coopen = el => openCo(el.dataset.id);
+  S.H.cojoin2 = async () => { try { const r = await CloudAPI.joinCompany($("#cocode").value.trim()); toast(r.is_member ? (ar ? "أنت عضو بالفعل" : "You are already a member") : (ar ? "تم إرسال الطلب" : "Request sent — waiting for approval")); companySwitcher(); } catch (e) { fail(e); } };
+  S.H.conew2 = async () => { const n = $("#coname").value.trim(); if (!n) return;
+    try { const c = await CloudAPI.createCompany(n); toast(t("saved")); if (STATIC && confirm(ar ? "فتح الشركة الجديدة الآن؟" : "Open the new company now?")) openCo(c.id); else companySwitcher(); } catch (e) { fail(e); } };
+}
 async function workspaceTab(view, head) {
   const ar = S.lang === "ar";
   let st; try { st = await CloudAPI.status(); } catch (e) { view.innerHTML = head + `<div class="banner err">${esc(e.message)}</div>`; return; }
@@ -1731,6 +1833,11 @@ async function workspaceTab(view, head) {
       <div><b>${ar ? "الجهاز" : "Device"}</b><br><code>${esc(st.device || "")}</code></div></div>
     ${st.error ? `<div class="banner err" style="margin-top:8px">${esc(st.error)}</div>` : ""}
     ${info && info.error ? `<div class="banner err" style="margin-top:8px">${esc(info.error)}</div>` : ""}</div>
+  ${info && info.company ? `<div class="card" id="wsco"><h2>${ar ? "الشركة" : "Company"}</h2><div class="grid g2">
+      <label class="f">${ar ? "اسم الشركة في مساحة العمل" : "Company name in the workspace"}<input id="wsconame" value="${esc(info.company_name || "")}" ${info.is_admin ? "" : "disabled"}></label>
+      ${info.is_admin ? `<label class="f">${ar ? "رمز الدعوة" : "Invite code"}<span class="row"><input value="${esc(info.invite_code || "")}" readonly style="max-width:160px;font-family:monospace;letter-spacing:2px"><button class="btn sm" type="button" data-a="wscocopy" data-v="${esc(info.invite_code || "")}">${ar ? "نسخ" : "Copy"}</button><button class="btn sm" type="button" data-a="wsconew">${ar ? "رمز جديد" : "New code"}</button></span>
+        <span class="muted" style="font-weight:400">${ar ? "من يسجل الدخول ويدخل هذا الرمز يطلب الانضمام، وتوافق أنت عليه من قائمة الأعضاء. «رمز جديد» يلغي الرمز القديم." : "Anyone who signs in and enters this code asks to join; you approve them in the member list below. “New code” cancels the old one."}</span></label>` : ""}</div>
+      ${info.is_admin ? `<div class="row" style="margin-top:8px"><button class="btn" data-a="wscoren">${ar ? "حفظ الاسم" : "Save name"}</button><button class="btn" data-a="coswitch">⇄ ${ar ? "الشركات" : "Companies"}</button></div>` : `<div class="row" style="margin-top:8px"><button class="btn" data-a="coswitch">⇄ ${ar ? "الشركات" : "Companies"}</button></div>`}</div>` : ""}
   ${admin ? `<div class="card" id="wscfg"><h2>1 · ${ar ? "رابط المشروع" : "Project link"}</h2>
     ${st.preset ? `<p class="muted">${ar ? "هذه النسخة مربوطة مسبقاً بمشروع الشركة." : "This copy of the app comes pre-linked to your company's project."}</p>` : ""}
     ${form([{ k: "url", l: "Project URL", v: st.url, ph: "https://abcdefgh.supabase.co" }, { k: "key", l: ar ? "المفتاح العام (anon public key)" : "anon public key", v: st.key, ph: "eyJhbGciOi…" }], 2)}
@@ -1740,16 +1847,19 @@ async function workspaceTab(view, head) {
       ${pwFields(!!S.wsCreate)}</div>
     <div class="row" style="margin-top:8px">${S.wsCreate ? `<button class="btn pri" data-a="wsup">${ar ? "إنشاء الحساب" : "Create account"}</button><a href="#" data-a="wsmode">${ar ? "لدي حساب — تسجيل الدخول" : "I have an account — sign in"}</a>`
       : `<button class="btn" data-a="wsin">${t("sign_in")}</button><a href="#" data-a="wsmode">${ar ? "ليس لديك حساب؟ إنشاء حساب" : "No account yet? Create one"}</a>`}</div></div>
-  <div class="card"><h2>3 · ${ar ? "الانضمام" : "Join"}</h2>${info && !info.error ? `
-    ${!info.is_member && !info.has_members ? `<p>${ar ? "مساحة العمل فارغة. أنشئها من دفاتر هذا الجهاز لتصبح المسؤول." : "The workspace is empty. Create it from this device's books — you become its administrator."}</p><button class="btn pri" data-a="wsclaim">${ar ? "إنشاء مساحة العمل من هذا الجهاز" : "Create the workspace from this device"}</button>` : ""}
-    ${!info.is_member && info.has_members ? `<div class="banner err">${ar ? "هذا الحساب ليس عضواً. اطلب من المسؤول إضافته." : "This account is not a member yet — ask an administrator to add it."}</div>` : ""}
+  <div class="card"><h2>3 · ${ar ? "الشركة" : "Company"}</h2>${info && !info.error ? `
+    ${info.needs_company ? `${(info.companies || []).filter(c => c.active && !c.pending).length ? `<p>${ar ? "اختر الشركة التي يتابعها هذا الجهاز:" : "Choose the company this device follows:"}</p><div class="row">${(info.companies || []).filter(c => c.active && !c.pending).map(c => `<button class="btn" data-a="wschoose" data-id="${esc(c.id)}">${esc(c.name)}</button>`).join("")}</div>` : ""}
+      <p style="margin-top:10px">${ar ? "أو ابدأ شركة جديدة من دفاتر هذا الجهاز (تصبح مسؤولها):" : "Or start a new company from this device's books (you become its administrator):"}</p><button class="btn pri" data-a="wsclaim">${ar ? "إنشاء شركة من هذا الجهاز" : "Create a company from this device"}</button> <button class="btn" data-a="coswitch">⇄ ${ar ? "الانضمام برمز / شركة جديدة فارغة" : "Join with a code / new empty company"}</button>` : ""}
+    ${!info.needs_company && !info.is_member ? `<div class="banner err">${info.pending ? (ar ? "طلب الانضمام بانتظار موافقة المسؤول." : "Your request to join is waiting for the administrator.") : (ar ? "هذا الحساب ليس عضواً. اطلب من المسؤول إضافته." : "This account is not a member yet — ask an administrator to add it.")}</div>` : ""}
     ${info.is_member ? `<div class="row">${!st.joined ? `<button class="btn pri" data-a="wsjoin">${ar ? "الانضمام (يستبدل بيانات هذا الجهاز)" : "Join (replaces this device's books)"}</button>` : `<button class="btn" data-a="wspull">${ar ? "مزامنة الآن" : "Sync now"}</button>`}
       <button class="btn danger" data-a="wsoff">${ar ? "فصل هذا الجهاز" : "Disconnect this device"}</button></div>
       ${!STATIC && !info.gateway ? `<p class="muted" style="font-size:.85em;margin-top:8px">${ar ? "لخادم مكتبي يخدم عدة مستخدمين محليين: فعّل «بوابة» لهذا الحساب في قائمة الأعضاء حتى تُسجل التعديلات بأسماء المستخدمين الفعليين." : "Desktop server for several local users: tick “gateway” for this account in the member list so changes are recorded under each local user rather than this account."}</p>` : ""}` : ""}`
     : `<div class="muted">${ar ? "سجّل الدخول أولاً." : "Sign in first."}</div>`}</div>` : `<div class="banner info">${t("admin_only")}</div>`}
   ${info && info.is_admin ? `<div class="card"><h2>${ar ? "الأعضاء" : "Members"}</h2><p class="muted" style="font-size:.85em">${ar ? "كل عضو يسجل الدخول ببريده. أضف له أيضاً مستخدماً في التطبيق بنفس البريد كاسم مستخدم لتحديد صلاحياته (يتم ذلك تلقائياً هنا)." : "Each member signs in with their email. Adding a member here also creates their app user (username = email) — set their permissions under Users."}</p>
     <div class="tbl"><table><thead><tr><th>${t("email")}</th><th>${t("username")}</th><th>${t("admin")}</th><th>Gateway</th><th>${t("active")}</th><th></th></tr></thead><tbody>
-    ${members.map(m => `<tr><td>${esc(m.email)}</td><td>${esc(m.username || "—")}</td><td><input type="checkbox" data-mf="is_admin" data-e="${esc(m.email)}" ${m.is_admin ? "checked" : ""}></td><td><input type="checkbox" data-mf="gateway" data-e="${esc(m.email)}" ${m.gateway ? "checked" : ""}></td>
+    ${members.filter(m => m.pending).map(m => `<tr class="pending"><td>${esc(m.email)}<div class="lines">${ar ? "يطلب الانضمام" : "asks to join"}</div></td><td>${esc(m.username || "—")}</td><td colspan="3"></td>
+      <td style="white-space:nowrap"><button class="btn sm pri" data-a="wsapprove" data-e="${esc(m.email)}">${ar ? "موافقة" : "Approve"}</button> <button class="btn sm danger" data-a="wsdecline" data-e="${esc(m.email)}">${ar ? "رفض" : "Decline"}</button></td></tr>`).join("")}
+    ${members.filter(m => !m.pending).map(m => `<tr><td>${esc(m.email)}</td><td>${esc(m.username || "—")}</td><td><input type="checkbox" data-mf="is_admin" data-e="${esc(m.email)}" ${m.is_admin ? "checked" : ""}></td><td><input type="checkbox" data-mf="gateway" data-e="${esc(m.email)}" ${m.gateway ? "checked" : ""}></td>
       <td><input type="checkbox" data-mf="active" data-e="${esc(m.email)}" ${m.active ? "checked" : ""}></td><td style="white-space:nowrap"><button class="btn sm" data-a="wsmsave" data-e="${esc(m.email)}">${t("save")}</button>
         ${m.email !== (info.email || "") ? ` <button class="btn sm danger" data-a="wsmdel" data-e="${esc(m.email)}" title="${ar ? "حذف حساب الدخول" : "Delete the sign-in account"}">✕</button>` : ""}</td></tr>`).join("")}
     <tr><td><input id="wsnew" type="email" placeholder="name@company.com"></td><td><input id="wsnewuser" placeholder="${t("username")}"></td><td><input type="checkbox" id="wsnewadm"></td><td><input type="checkbox" id="wsnewgw"></td><td></td><td><button class="btn sm pri" data-a="wsmadd">+ ${t("new")}</button></td></tr></tbody></table></div></div>` : ""}`;
@@ -1760,7 +1870,17 @@ async function workspaceTab(view, head) {
   S.H.wsin = () => { const v = readForm($("#wsin")); run(() => CloudAPI.signin(v.email, v.password, false)); };
   S.H.wsup = () => { const box = $("#wsin"); S.H.pwmatch(); const bad = $$("input", box).find(i => !i.checkValidity()); if (bad) { bad.reportValidity(); return; }
     const v = readForm(box); run(async () => { await CloudAPI.signin(v.email, v.password, true); S.wsCreate = false; }); };
-  S.H.wsclaim = () => confirm(ar ? "إنشاء مساحة العمل من دفاتر هذا الجهاز؟" : "Create the workspace from this device's books?") && run(() => CloudAPI.claim(), t("saved"));
+  S.H.wsclaim = () => { const name = prompt(ar ? "اسم الشركة الجديدة:" : "Name of the new company:", S.boot.settings.company_name || ""); if (!name) return;
+    run(() => CloudAPI.claim(name.trim()), t("saved")); };
+  S.H.wschoose = el => run(async () => { await CloudAPI.chooseCompany(el.dataset.id); await CloudAPI.join(); if (!STATIC) { toast(ar ? "تم الانضمام — سجّل الدخول مجدداً" : "Joined — please sign in again"); setTimeout(() => location.reload(), 1200); } });
+  S.H.wscoren = () => run(() => CloudAPI.renameCompany($("#wsconame").value.trim()), t("saved"));
+  S.H.wsconew = () => confirm(ar ? "إنشاء رمز دعوة جديد؟ الرمز القديم يتوقف عن العمل." : "Make a new invite code? The old one stops working.") && run(() => CloudAPI.newInviteCode(), t("saved"));
+  S.H.wscocopy = async el => { try { await navigator.clipboard.writeText(el.dataset.v); toast(ar ? "تم النسخ" : "Copied"); } catch { prompt("", el.dataset.v); } };
+  S.H.wsapprove = el => run(async () => { const email = el.dataset.e; await CloudAPI.setMember({ email, is_admin: false, gateway: false, active: true });
+    const username = email.split("@")[0].toLowerCase().replace(/[^a-z0-9._-]/g, "");
+    await api("POST", "/api/users", { username, email, full_name: email.split("@")[0], _no_password: true, perms: { dashboard: "view" } }).catch(() => {}); },
+    ar ? "تمت الموافقة — حدد صلاحياته من المستخدمين" : "Approved — set their permissions under Users");
+  S.H.wsdecline = el => confirm((ar ? "رفض طلب " : "Decline the request from ") + el.dataset.e + "?") && run(() => CloudAPI.removeMember(el.dataset.e), t("saved"));
   S.H.wsjoin = () => confirm(ar ? "سيتم استبدال بيانات هذا الجهاز ببيانات مساحة العمل. متابعة؟" : "This device's books will be replaced by the workspace's. Continue?") && run(async () => {
     await CloudAPI.join(); if (!STATIC) { toast(ar ? "تم الانضمام — سجّل الدخول مجدداً" : "Joined — please sign in again"); setTimeout(() => location.reload(), 1200); } });
   S.H.wspull = () => run(() => CloudAPI.pull(), ar ? "تمت المزامنة" : "Synced");
@@ -2039,7 +2159,7 @@ PAGES.assets = async (view, parts, q) => {
   view.innerHTML = `<div class="toolbar">${add ? `<button class="btn pri" data-a="fanew">+ ${L2("New asset", "أصل جديد")}</button>` : ""}${dep ? `<button class="btn" data-a="fadep">${L2("Run depreciation", "احتساب الإهلاك")}</button>` : ""}<span class="spacer"></span>${exportMenu("fixed_assets", q)}</div>` +
     filterBar(q, ["q", ["select", "state", t("status"), [["active", L2("In use", "قيد الاستخدام")], ["disposed", L2("Disposed", "مستبعد")]]]]) +
     `<div class="kpis">${k(L2("Cost", "التكلفة"), d.totals.cost)}${k(L2("Accumulated depreciation", "مجمع الإهلاك"), d.totals.accumulated)}${k(L2("Book value", "القيمة الدفترية"), d.totals.book_value)}</div>` +
-    `<div class="card">${d.rows.length ? `<div class="tbl"><table><thead><tr><th>${t("code")}</th><th>${L2("Asset", "الأصل")}</th><th>${t("account")}</th><th>${L2("Acquired", "تاريخ الشراء")}</th><th class="num">${L2("Cost", "التكلفة")}</th><th class="num">${L2("Accumulated", "المجمع")}</th><th class="num">${L2("Book value", "القيمة الدفترية")}</th><th class="num">${L2("Monthly", "شهرياً")}</th><th>${L2("Booked to", "محتسب حتى")}</th><th></th></tr></thead><tbody>
+    `<div class="card">${d.rows.length ? `<div class="tbl stack"><table><thead><tr><th>${t("code")}</th><th>${L2("Asset", "الأصل")}</th><th>${t("account")}</th><th>${L2("Acquired", "تاريخ الشراء")}</th><th class="num">${L2("Cost", "التكلفة")}</th><th class="num">${L2("Accumulated", "المجمع")}</th><th class="num">${L2("Book value", "القيمة الدفترية")}</th><th class="num">${L2("Monthly", "شهرياً")}</th><th>${L2("Booked to", "محتسب حتى")}</th><th></th></tr></thead><tbody>
       ${d.rows.map(r => `<tr class="click ${r.disposed ? "void" : ""}" data-a="faopen" data-id="${r.id}"><td><b>${esc(r.code)}</b></td><td>${esc(r.name)}${r.location || r.serial ? `<div class="lines">${esc([r.location, r.serial].filter(Boolean).join(" · "))}</div>` : ""}</td>
         <td>${esc(r.account)} ${esc(aname(S.boot.accounts.find(a => a.code === r.account) || {}))}</td><td>${fd(r.acquired)}</td><td class="num">${money(r.cost)}</td><td class="num">${money(r.accumulated)}</td><td class="num"><b>${money(r.book_value)}</b></td>
         <td class="num">${r.life_months ? money(r.monthly) : "—"}</td><td>${esc(r.booked_through || "—")}</td><td>${stat(r)}</td></tr>`).join("")}</tbody></table></div>`

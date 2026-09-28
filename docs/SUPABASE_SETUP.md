@@ -59,15 +59,17 @@ Source: GitHub Actions**, and add variable `USE_GITHUB_PAGES` = `true`.
 Every build is also attached to the workflow run as `beyond-erp-web.zip` (the same app, to upload anywhere or to
 open from disk).
 
-## 4 · Create the workspace
+## 4 · Create your company
 
 1. Open the published app → **Create an account** with your email → confirm the email → sign in.
-2. The workspace is empty, so the app offers to **create it from this device's books** — you become the
-   administrator. (To start from your existing data, first import your workbook or JSON backup on that device:
-   choose "Use this device without the workspace", import, then Settings → Workspace → sign in → Create.)
-3. **Settings → Workspace (cloud) → Members**: add each colleague's email (tick *Administrator* for other admins).
-   This also creates their app user; set what they may see and change under **Users**.
-4. Colleagues open the app, **Create an account** with that same email, and sign in — they get the shared books.
+2. **Create a new company**: give it a name — you become its administrator. Tick *Start from the books on this
+   device* to bring data you imported on that device first ("Use this device without the workspace" → Import & Export),
+   otherwise it starts with empty books.
+3. **Settings → Workspace (cloud)** shows the company's **invite code**. Colleagues create an account, choose *Join a
+   company with an invite code*, and you **Approve** them in the member list — or add them yourself under **Users**
+   (username + password, no email needed). Set what each person may see and change under **Users**.
+4. More companies: top bar → your name → **Companies** → *New company*. Each company has its own books, members and
+   invite code; people can belong to several and switch between them there.
 
 ## Adding people (all from inside Beyond ERP)
 

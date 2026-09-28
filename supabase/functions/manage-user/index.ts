@@ -1,10 +1,13 @@
 // Create, update or delete a person's sign-in account from inside Beyond ERP (Users screen).
 //
-// Only a workspace administrator may call it (checked from their own sign-in token). It uses the project's
-// service key — which never leaves Supabase — to create the account already confirmed (no email is sent), set or
-// reset the password, block sign-in for inactive users, and record the username in public.members so the person can
-// sign in with username + password straight away. People without an email get an internal placeholder address
-// (<username>@<PLACEHOLDER_DOMAIN>) that is never written to.
+// Only an administrator of the company named in the request may call it (checked from their own sign-in token). It
+// uses the project's service key — which never leaves Supabase — to create the account already confirmed (no email
+// is sent), set or reset the password, block sign-in for inactive users, and record the username (people.username,
+// unique across every company) and the company membership, so the person can sign in with username + password
+// straight away. People without an email get an internal placeholder address (<username>@<PLACEHOLDER_DOMAIN>).
+//
+// An account that also belongs to another company is never changed from here (another company's administrator must
+// not be able to reset its password or take its username); it is only added to / removed from this company.
 //
 // Deployed by .github/workflows/deploy.yml with --no-verify-jwt (it checks the caller's token itself).
 
@@ -22,6 +25,7 @@ const reply = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json" } });
 const fail = (status: number, msg: string) => reply(status, { msg, error: msg });
 const svc = { apikey: SERVICE, Authorization: `Bearer ${SERVICE}`, "Content-Type": "application/json" };
+const enc = encodeURIComponent;
 
 async function call(method: string, path: string, body?: unknown, headers: Record<string, string> = svc) {
   const r = await fetch(`${URL_}${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -36,39 +40,58 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   if (req.method !== "POST") return fail(405, "POST only");
 
-  // 1. who is calling? must be an active workspace administrator
+  let b: any;
+  try { b = await req.json(); } catch { return fail(400, "Send JSON"); }
+
+  // 1. who is calling, for which company? must be an active administrator of it
   const token = (req.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
   const me = await call("GET", "/auth/v1/user", undefined, { apikey: ANON, Authorization: `Bearer ${token}` });
   const caller = String(me.data?.email || "").toLowerCase();
   if (!me.ok || !caller) return fail(401, "Sign in to the workspace again");
-  const adm = await call("GET", `/rest/v1/members?select=email&email=eq.${encodeURIComponent(caller)}&active=is.true&is_admin=is.true`);
-  if (!adm.ok || !adm.data.length) return fail(403, "Only workspace administrators can manage sign-in accounts");
+  let company = String(b.company || "");
+  if (!company) {  // app versions before 1.3: the caller's only company
+    const mine = await call("GET", `/rest/v1/members?select=company_id&email=eq.${enc(caller)}&active=is.true&pending=is.false`);
+    if (mine.ok && mine.data.length === 1) company = mine.data[0].company_id;
+  }
+  if (!/^[0-9a-f-]{36}$/i.test(company)) return fail(400, "Say which company");
+  const inCo = `company_id=eq.${enc(company)}`;
+  const adm = await call("GET", `/rest/v1/members?select=email&${inCo}&email=eq.${enc(caller)}&active=is.true&pending=is.false&is_admin=is.true`);
+  if (!adm.ok || !adm.data.length) return fail(403, "Only administrators of this company can manage sign-in accounts");
 
-  // 2. what to do
-  let b: any;
-  try { b = await req.json(); } catch { return fail(400, "Send JSON"); }
   const username = String(b.username || "").trim().toLowerCase();
   const email = String(b.email || "").trim().toLowerCase();
+  const idOf = async (e: string) => (await call("POST", "/rest/v1/rpc/auth_user_id", { p_email: e })).data || null;
+  const person = async (q: string) => { const r = await call("GET", `/rest/v1/people?select=email,username&${q}&limit=1`); return r.ok && r.data.length ? r.data[0] : null; };
+  const otherCompanies = async (e: string) => {
+    const r = await call("GET", `/rest/v1/members?select=company_id&email=eq.${enc(e)}&company_id=neq.${enc(company)}`);
+    return r.ok ? r.data.length : 0;
+  };
 
-  // delete: remove the person's sign-in account and their workspace membership
+  // delete: remove the person from this company; their sign-in account goes too unless another company still has them
   if (b.action === "delete") {
-    const q = email ? `email=eq.${encodeURIComponent(email)}` : `username=ilike.${encodeURIComponent(username)}`;
-    const row = await call("GET", `/rest/v1/members?select=email,is_admin,active&${q}&limit=1`);
-    const target: string = row.ok && row.data.length ? row.data[0].email : (email || (username ? `${username}@${PLACEHOLDER_DOMAIN}` : ""));
+    const p = email ? await person(`email=eq.${enc(email)}`) : (username ? await person(`username=ilike.${enc(username)}`) : null);
+    const target: string = p ? p.email : (email || (username ? `${username}@${PLACEHOLDER_DOMAIN}` : ""));
     if (!target) return fail(400, "Say which account to delete");
     if (target === caller) return fail(400, "You cannot delete your own sign-in account");
+    const row = await call("GET", `/rest/v1/members?select=is_admin,active&${inCo}&email=eq.${enc(target)}`);
     if (row.ok && row.data.length && row.data[0].is_admin && row.data[0].active) {
-      const admins = await call("GET", "/rest/v1/members?select=email&is_admin=is.true&active=is.true");
-      if (admins.ok && admins.data.length <= 1) return fail(400, "At least one active workspace administrator must remain");
+      const admins = await call("GET", `/rest/v1/members?select=email&${inCo}&is_admin=is.true&active=is.true&pending=is.false`);
+      if (admins.ok && admins.data.length <= 1) return fail(400, "At least one active administrator must remain");
     }
-    const id = (await call("POST", "/rest/v1/rpc/auth_user_id", { p_email: target })).data;
-    if (id) {
-      const r = await call("DELETE", `/auth/v1/admin/users/${id}`);
-      if (!r.ok) return fail(400, msgOf(r.data));
+    await call("DELETE", `/rest/v1/members?${inCo}&email=eq.${enc(target)}`);
+    let account = false;
+    if (!(await otherCompanies(target))) {
+      const id = await idOf(target);
+      if (id) {
+        const r = await call("DELETE", `/auth/v1/admin/users/${id}`);
+        if (!r.ok) return fail(400, msgOf(r.data));
+        account = true;
+      }
+      await call("DELETE", `/rest/v1/people?email=eq.${enc(target)}`);
     }
-    await call("DELETE", `/rest/v1/members?email=eq.${encodeURIComponent(target)}`);
-    return reply(200, { deleted: target, account: !!id });
+    return reply(200, { deleted: target, account });
   }
+
   const password = b.password ? String(b.password) : "";
   const active = b.active !== false;
   if (!/^[a-z0-9][a-z0-9._-]{1,39}$/.test(username)) {
@@ -78,12 +101,18 @@ Deno.serve(async (req) => {
   if (password && password.length < 6) return fail(400, "Passwords need at least 6 characters");
   const wanted = email || `${username}@${PLACEHOLDER_DOMAIN}`;
 
-  // 3. the account this username already has (if any), else the one with this email
-  const cur = await call("GET", `/rest/v1/members?select=email,username&username=ilike.${encodeURIComponent(username)}&limit=1`);
-  const oldEmail: string = cur.ok && cur.data.length ? cur.data[0].email : "";
-  const idOf = async (e: string) => (await call("POST", "/rest/v1/rpc/auth_user_id", { p_email: e })).data || null;
-  let id = oldEmail ? await idOf(oldEmail) : null;
-  if (!id) id = await idOf(wanted);
+  // 2. who is this? the owner of the username, else the owner of the email
+  const byName = await person(`username=ilike.${enc(username)}`);
+  const oldEmail: string = byName ? byName.email : "";
+  if (byName && oldEmail !== wanted && email) {
+    // the username belongs to an account with another email: only allowed when it is this company's own person
+    const mine = await call("GET", `/rest/v1/members?select=email&${inCo}&email=eq.${enc(oldEmail)}`);
+    if (!mine.ok || !mine.data.length) return fail(400, `The username ${username} is already used by another account — choose another`);
+  }
+  const target = oldEmail || wanted;
+  let id = await idOf(target);
+  if (!id && target !== wanted) id = await idOf(wanted);
+  const shared = id ? await otherCompanies(target) : 0;
 
   let created = false;
   if (!id) {
@@ -91,12 +120,14 @@ Deno.serve(async (req) => {
     const r = await call("POST", "/auth/v1/admin/users", {
       email: wanted, password, email_confirm: true, user_metadata: { username, full_name: b.full_name || "" },
     });
-    if (!r.ok) {
-      return fail(400, email ? msgOf(r.data)
-        : `${msgOf(r.data)} — give this person an email address and save again`);
-    }
+    if (!r.ok) return fail(400, email ? msgOf(r.data) : `${msgOf(r.data)} — give this person an email address and save again`);
     id = r.data.id;
     created = true;
+  } else if (shared) {
+    // also a member of another company: leave the account alone (their own password), just add them here
+    if (password) {
+      return fail(400, "This person already has a sign-in account (used by another company too). They keep their own password — leave the password empty to add them.");
+    }
   } else {
     const upd: any = { ban_duration: active ? "none" : "876000h", user_metadata: { username, full_name: b.full_name || "" } };
     if (password) upd.password = password;
@@ -105,15 +136,18 @@ Deno.serve(async (req) => {
     if (!r.ok) return fail(400, msgOf(r.data));
   }
 
-  // 4. workspace membership + username (the username moves if someone else had it)
-  await call("PATCH", `/rest/v1/members?username=ilike.${encodeURIComponent(username)}&email=neq.${encodeURIComponent(oldEmail || wanted)}`,
-    { username: null });
-  if (oldEmail && oldEmail !== wanted) {
-    await call("PATCH", `/rest/v1/members?email=eq.${encodeURIComponent(oldEmail)}`, { email: wanted });
+  // 3. person (username) + membership of this company
+  const finalEmail = shared ? target : wanted;
+  if (!shared && oldEmail && oldEmail !== wanted) {
+    await call("PATCH", `/rest/v1/people?email=eq.${enc(oldEmail)}`, { email: wanted });
+    await call("PATCH", `/rest/v1/members?email=eq.${enc(oldEmail)}`, { email: wanted });
   }
-  const m = await call("POST", "/rest/v1/members?on_conflict=email",
-    { email: wanted, username, active, added_by: caller },
+  const pr = await call("POST", "/rest/v1/people?on_conflict=email", { email: finalEmail, username: shared ? undefined : username },
+    { ...svc, Prefer: "resolution=merge-duplicates,return=minimal" });
+  if (!pr.ok) return fail(400, /duplicate|unique/i.test(msgOf(pr.data)) ? `The username ${username} is already used by another account — choose another` : msgOf(pr.data));
+  const m = await call("POST", "/rest/v1/members?on_conflict=company_id,email",
+    { company_id: company, email: finalEmail, active, pending: false, added_by: caller },
     { ...svc, Prefer: "resolution=merge-duplicates,return=minimal" });
   if (!m.ok) return fail(400, msgOf(m.data));
-  return reply(200, { email: wanted, username, created, placeholder: !email });
+  return reply(200, { email: finalEmail, username, created, placeholder: !email && !shared, shared: !!shared });
 });

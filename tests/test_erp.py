@@ -375,10 +375,10 @@ class Workspace(unittest.TestCase):
         # changes now go through the log
         st, bu = self.node_call(0, a, "POST", "/api/bus", {"code": "B1", "name": "Villa"})
         self.assertEqual(st, 200)
-        self.assertEqual(len(self.sb.state.ops), 1)
+        self.assertEqual(len(self.sb.state.all_ops()), 1)
         self.assertEqual(self.node_call(0, a, "POST", "/api/users", {"username": "clerk", "password": "clerk1234",
                                                                      "perms": {"sales": "edit"}})[0], 200)
-        self.assertNotIn("clerk1234", json.dumps(self.sb.state.ops))  # passwords never leave the device
+        self.assertNotIn("clerk1234", json.dumps(self.sb.state.all_ops()))  # passwords never leave the device
         # sign-in problems get plain answers; with "Confirm email" on, sign-up asks the person to open the email first
         st, r = self.node_call(0, a, "POST", "/api/cloud/signin", {"email": "owner@x.com", "password": "wrong-pass"})
         self.assertEqual(st, 400)
@@ -398,7 +398,7 @@ class Workspace(unittest.TestCase):
         self.assertEqual(self.node_call(0, a, "POST", "/api/users", {"username": "ali2", "email": "ali@x.com"})[1]["error"],
                          "Another user already has this email address")
         self.assertEqual(self.node_call(0, a, "PUT", "/api/cloud/members/link", {"email": "ali@x.com", "username": "ali"})[0], 200)
-        self.assertEqual(self.sb.state.members["ali@x.com"]["username"], "ali")
+        self.assertEqual(self.sb.state.username_of("ali@x.com"), "ali")
         self.sb.state.accounts["ali@x.com"] = "alipass1"
         probe = self.nodes[0][0].cloud.client()
         self.assertEqual(probe.sign_in_username("ALI", "alipass1")["user"]["email"], "ali@x.com")
@@ -450,20 +450,20 @@ class Workspace(unittest.TestCase):
         # a user without permission is refused before anything reaches the log
         c = self.client()
         self.node_call(0, c, "POST", "/api/login", {"username": "clerk", "password": "clerk1234"})
-        n = len(self.sb.state.ops)
+        n = len(self.sb.state.all_ops())
         self.assertEqual(self.node_call(0, c, "POST", "/api/docs/expense", {"description": "x", "amount": 5})[0], 403)
-        self.assertEqual(len(self.sb.state.ops), n)
+        self.assertEqual(len(self.sb.state.all_ops()), n)
         self.assertEqual(self.node_call(0, c, "POST", "/api/docs/receipt", {"bu_id": bu["id"], "amount": 7})[0], 200)
         # gateway relays B's local user; the log records that user, and both copies end up identical
-        self.assertEqual(self.sb.state.ops[-2]["app_user"], "admin")
+        self.assertEqual(self.sb.state.all_ops()[-2]["app_user"], "admin")
         # partners' equity and fixed assets replay the same on every device (previews are never logged)
         for name in ("P1", "P2"):
             st, r = self.node_call(0, a, "POST", "/api/partners", {"name": name, "default_share": 0.5})
             self.assertEqual(st, 200, r)
             self.node_call(0, a, "POST", "/api/docs/partner_tx", {"partner": name, "type": "Capital", "amount": 50000})
-        n = len(self.sb.state.ops)
+        n = len(self.sb.state.all_ops())
         self.assertEqual(self.node_call(0, a, "POST", "/api/equity-preview/transfer", {"seller": "P1", "buyer": "P3", "share": 10})[0], 200)
-        self.assertEqual(len(self.sb.state.ops), n)
+        self.assertEqual(len(self.sb.state.all_ops()), n)
         st, r = self.node_call(1, b, "POST", "/api/equity/transfer", {"seller": "P1", "buyer": "P3", "share": 10})
         self.assertEqual(st, 200, r)
         st, r = self.node_call(0, a, "POST", "/api/assets", {"name": "Laptop", "account": "1430", "cost": 36000,
@@ -631,6 +631,84 @@ class EntryTypes(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Companies(unittest.TestCase):
+    """One workspace, several companies: separate books and members, invite codes, choosing a company."""
+
+    def test_companies(self):
+        import os
+        from erp.cloud import Supabase
+        from erp.server import ERPServer
+        sys.path.insert(0, str(Path(__file__).parent))
+        import mock_supabase
+        sb = mock_supabase.start()
+        url = f"http://127.0.0.1:{sb.server_address[1]}"
+        tmp = tempfile.TemporaryDirectory()
+        nodes = []
+        try:
+            for name in ("a", "b"):
+                db = Database(Path(tmp.name) / f"{name}.sqlite3")
+                srv = ERPServer(("127.0.0.1", 0), db, Path(tmp.name) / f"bk-{name}")
+                threading.Thread(target=srv.serve_forever, daemon=True).start()
+                nodes.append((srv, db, f"http://127.0.0.1:{srv.server_address[1]}"))
+            api = lambda i, op, m, p, b=None: Api.call(type("C", (), {"base": nodes[i][2]})(), op, m, p, b)  # noqa: E731
+            a = Api.client(self)
+            api(0, a, "POST", "/api/setup", {"username": "admin", "password": "secret123"})
+            api(0, a, "PUT", "/api/cloud/config", {"url": url, "key": "anon"})
+            self.assertEqual(api(0, a, "POST", "/api/cloud/signin", {"email": "owner@x.com", "password": "pw123456", "create": True})[0], 200)
+            st, info = api(0, a, "POST", "/api/cloud/claim", {"name": "Alpha"})
+            self.assertEqual((st, info.get("company_name")), (200, "Alpha"), info)
+            self.assertEqual(api(0, a, "POST", "/api/bus", {"code": "A1", "name": "Alpha unit"})[0], 200)
+            st, beta = api(0, a, "POST", "/api/cloud/company", {"action": "create", "name": "Beta"})
+            self.assertEqual(st, 200, beta)
+            alpha, beta = sb.state.company_named("Alpha"), beta["id"]
+            self.assertEqual(api(0, a, "GET", "/api/cloud/info")[1]["company"], alpha)   # this device stays on Alpha
+            # a newcomer signs up and asks to join Alpha with its invite code: pending until an admin approves
+            cli = Supabase(url, "anon")
+            tok = cli.sign_up("new@y.com", "pw654321")["access_token"]
+            code = api(0, a, "GET", "/api/cloud/info")[1]["invite_code"]
+            self.assertTrue(cli.rpc("join_company", {"p_code": code}, tok)["pending"])
+            with self.assertRaises(RuntimeError):
+                cli.rpc("join_company", {"p_code": "WRONG123"}, tok)
+            self.assertEqual(cli.select("ops", f"company_id=eq.{alpha}&seq=gt.0", tok), [])     # nothing yet
+            pending = [m for m in api(0, a, "GET", "/api/cloud/members")[1] if m["pending"]]
+            self.assertEqual([m["email"] for m in pending], ["new@y.com"])
+            self.assertEqual(api(0, a, "PUT", "/api/cloud/members", {"email": "new@y.com", "active": True})[0], 200)
+            self.assertEqual(len(cli.select("ops", f"company_id=eq.{alpha}&seq=gt.0", tok)), 1)
+            self.assertEqual(cli.select("ops", f"company_id=eq.{beta}&seq=gt.0", tok), [])      # Beta stays closed
+            with self.assertRaises(PermissionError):
+                cli.rpc("append_op", {"p_company": beta, "p_seq": 1, "p_version": "1", "p_app_user": "", "p_device": "x",
+                                      "p_method": "POST", "p_path": "/api/bus", "p_body": "{}", "p_content_type": "",
+                                      "p_clock": "2026-01-01T00:00:00"}, tok)
+            # a fresh offline install: the owner belongs to two companies, so it asks which one to open
+            os.environ.update(BEYOND_SUPABASE_URL=url, BEYOND_SUPABASE_ANON_KEY="anon")
+            b = Api.client(self)
+            st, r = api(1, b, "POST", "/api/cloud/first-join", {"username": "owner@x.com", "password": "pw123456"})
+            self.assertEqual(sorted(c["name"] for c in r["choose"]), ["Alpha", "Beta"])
+            st, r = api(1, b, "POST", "/api/cloud/first-join", {"username": "owner@x.com", "password": "pw123456",
+                                                                "company": beta})
+            self.assertEqual(st, 200, r)
+            self.assertEqual(nodes[1][0].cloud.company, beta)
+            self.assertEqual(nodes[1][1].setting("company_name"), "Beta")              # new company: fresh books
+            self.assertIsNone(nodes[1][1].one("SELECT 1 FROM business_units WHERE code='A1'"))
+            self.assertEqual(api(1, b, "POST", "/api/bus", {"code": "B1", "name": "Beta unit"})[0], 200)
+            self.assertEqual([o["path"] for o in sb.state.ops[beta]], ["/api/bus"])
+            self.assertEqual(len(sb.state.ops[alpha]), 1)                                     # Alpha untouched
+            nodes[0][0].cloud.pull()
+            self.assertIsNone(nodes[0][1].one("SELECT 1 FROM business_units WHERE code='B1'"))
+            # switching company on a connected device is refused (disconnect first)
+            self.assertEqual(api(0, a, "POST", "/api/cloud/company", {"action": "choose", "company": beta})[0], 400)
+        finally:
+            os.environ.pop("BEYOND_SUPABASE_URL", None)
+            os.environ.pop("BEYOND_SUPABASE_ANON_KEY", None)
+            for srv, db, _ in nodes:
+                srv.cloud.stop()
+                srv.shutdown()
+                srv.server_close()
+                db.close()
+            sb.shutdown()
+            tmp.cleanup()
 
 
 class Documents(unittest.TestCase):

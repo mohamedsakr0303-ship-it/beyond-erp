@@ -1487,8 +1487,17 @@ def cloud_first_join(ctx):
     try:
         sync.configure(*preset)
         info = sync.sign_in(name, pw)
+        if ctx.body.get("company"):
+            info = sync.choose_company(acc.text(ctx.body.get("company")))
+        if info.get("needs_company"):
+            live = [c for c in info.get("companies") or [] if c.get("active") and not c.get("pending")]
+            sync.disconnect()
+            if not live:
+                raise acc.ValidationError("You are not a member of any company yet — open the website to create one or "
+                                          "to join one with its invite code")
+            return ok({"choose": live})   # several companies: the screen asks which one, then signs in again
         if not info.get("is_member"):
-            raise acc.ValidationError("This account is not a member of the workspace — ask an administrator to add you")
+            raise acc.ValidationError("This account is not a member of this company — ask its administrator to add you")
         sync.join()
     except (PermissionError, RuntimeError, cloud.Offline, cloud.NeedsUpdate) as e:
         sync.disconnect()
@@ -1556,13 +1565,29 @@ def cloud_info(ctx):
 @route("POST", "/api/cloud/claim")
 def cloud_claim(ctx):
     c = _cloud(ctx)
-    return _cloud_call(c.claim)
+    return _cloud_call(lambda: c.claim(acc.text(ctx.body.get("name")) or None))
 
 
 @route("POST", "/api/cloud/join")
 def cloud_join(ctx):
     c = _cloud(ctx)
-    return _cloud_call(c.join)
+    return _cloud_call(lambda: c.join(acc.text(ctx.body.get("company")) or None))
+
+
+@route("POST", "/api/cloud/company")
+def cloud_company(ctx):
+    """Companies: choose the one this device follows, create one, ask to join one, rename, new invite code."""
+    c, b = _cloud(ctx), ctx.body
+    act = b.get("action")
+    fns = {"choose": lambda: c.choose_company(acc.text(b.get("company"))),
+           "create": lambda: c.create_company(acc.text(b.get("name"))),
+           "join": lambda: c.join_company(acc.text(b.get("code"))),
+           "rename": lambda: c.rename_company(acc.text(b.get("name"))) or {"ok": True},
+           "code": lambda: {"invite_code": c.new_invite_code()},
+           "remove": lambda: c.remove_member(acc.text(b.get("email"))) or {"ok": True}}
+    if act not in fns:
+        return ok({"error": "Unknown action"}, 400)
+    return _cloud_call(fns[act])
 
 
 @route("POST", "/api/cloud/pull")
@@ -1580,41 +1605,38 @@ def cloud_disconnect(ctx):
 @route("GET", "/api/cloud/members")
 def cloud_members(ctx):
     c = _cloud(ctx)
-    return _cloud_call(lambda: c.client().select("members", "select=*&order=email", c.token()))
+    return _cloud_call(c.members)
 
 
 @route("PUT", "/api/cloud/members")
 def cloud_member_set(ctx):
     c = _cloud(ctx)
     b = ctx.body
-    return _cloud_call(lambda: c.client().rpc("set_member", {
-        "p_email": b.get("email"), "p_is_admin": bool(b.get("is_admin")), "p_gateway": bool(b.get("gateway")),
-        "p_active": b.get("active", True) is not False}, c.token()) or {"ok": True})
+    return _cloud_call(lambda: c.set_member(b.get("email"), b.get("is_admin"), b.get("gateway"), b.get("active", True))
+                       or {"ok": True})
 
 
 @route("PUT", "/api/cloud/account")
 def cloud_account(ctx):
     """Create / update a person's workspace sign-in account (supabase/functions/manage-user)."""
     c = _cloud(ctx)
-    return _cloud_call(lambda: c.client()._call("POST", "/functions/v1/manage-user", {
-        k: ctx.body.get(k) for k in ("username", "email", "password", "full_name", "active")}, c.token()))
+    return _cloud_call(lambda: c.manage_user({k: ctx.body.get(k) for k in ("username", "email", "password", "full_name",
+                                                                             "active")}))
 
 
 @route("POST", "/api/cloud/account/delete")
 def cloud_account_delete(ctx):
     """Delete a person's workspace sign-in account (supabase/functions/manage-user)."""
     c = _cloud(ctx)
-    return _cloud_call(lambda: c.client()._call("POST", "/functions/v1/manage-user", {
-        "action": "delete", "username": ctx.body.get("username") or "", "email": ctx.body.get("email") or ""}, c.token()))
+    return _cloud_call(lambda: c.manage_user({"action": "delete", "username": ctx.body.get("username") or "",
+                                              "email": ctx.body.get("email") or ""}))
 
 
 @route("PUT", "/api/cloud/members/link")
 def cloud_member_link(ctx):
     c = _cloud(ctx)
     b = ctx.body
-    return _cloud_call(lambda: c.client().rpc("link_member", {
-        "p_email": b.get("email"), "p_username": b.get("username") or "", "p_active": b.get("active", True) is not False},
-        c.token()) or {"ok": True})
+    return _cloud_call(lambda: c.link_member(b.get("email"), b.get("username"), b.get("active", True)) or {"ok": True})
 
 
 def serve_api(app, method, target, headers, raw=b""):

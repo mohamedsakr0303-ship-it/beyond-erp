@@ -47,8 +47,15 @@ window.BEYOND_STATIC = true;
     say("Loading database engine…");
     await load(V + "sql-wasm.js");
     const SQL = await window.initSqlJs({ locateFile: f => V + f, wasmBinary: BLOBS["sql-wasm.wasm"] });
+    // Each company of the shared workspace keeps its own copy of its books in this browser ("db:<company id>");
+    // "db" holds this device's own books (used without the workspace). The company is chosen at sign-in.
+    const lsGet = k => { try { return localStorage.getItem(k); } catch { return null; } };
+    const lsSet = (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch { /* private mode */ } };
+    let company = lsGet("berp.company") || "";
+    const localMode = () => lsGet("berp.cloudLocal") === "true";
+    let dbKey = company && !localMode() ? "db:" + company : "db";
     let saved = null;
-    try { saved = await idbGet("db"); } catch (e) { console.warn("IndexedDB unavailable — data will not persist", e); }
+    try { saved = await idbGet(dbKey); } catch (e) { console.warn("IndexedDB unavailable — data will not persist", e); }
     let db = saved ? new SQL.Database(new Uint8Array(saved)) : new SQL.Database();
     db.run("PRAGMA foreign_keys = ON");
 
@@ -71,7 +78,7 @@ window.BEYOND_STATIC = true;
     globalThis.beyondSqlExport = exportDb;
 
     let timer = null, dirty = false;
-    const persist = async () => { if (!dirty) return; dirty = false; try { await idbPut("db", exportDb()); } catch (e) { console.error("save failed", e); } };
+    const persist = async () => { if (!dirty) return; dirty = false; try { await idbPut(dbKey, exportDb()); } catch (e) { console.error("save failed", e); } };
     const schedule = () => { dirty = true; clearTimeout(timer); timer = setTimeout(persist, 300); };
     window.addEventListener("pagehide", persist);
     document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") persist(); });
@@ -159,6 +166,12 @@ def cloud_after_restore(keep_json):
 
 def cloud_ensure_admin(email):
     C.ensure_app_user(APP.db, email, admin=True)
+
+def cloud_new_books(name, email):
+    # a brand-new company: empty books named after it, its administrator as the first user
+    if name:
+        APP.db.set_setting("company_name", name)
+    C.ensure_app_user(APP.db, email, admin=True)
 `);
     window.beyondPython = py;  // for diagnostics from the browser console
     const P = n => py.globals.get(n);
@@ -230,7 +243,20 @@ def cloud_ensure_admin(email):
       const rpc = async (name, params) => req("POST", "/rest/v1/rpc/" + name, params || {}, await token());
       const select = async (table, q) => req("GET", `/rest/v1/${table}?${q}`, undefined, await token());
       const lastSeq = () => Number(local("last_seq") ?? -1);
-      const joined = () => !!cfg() && lastSeq() >= 0;
+      // connected = a company is open here (not the device-only books) and its books have been downloaded
+      const joined = () => !!cfg() && !!company && dbKey !== "db" && lastSeq() >= 0;
+      const co = () => { if (!company || dbKey === "db") throw new CloudError("Choose a company first", "no_company"); return company; };
+
+      // The open company as the signed-in person sees it, plus all their companies. needs_company: none chosen yet
+      // (or no longer a member of the chosen one) — the screen then offers the list, "create" and "join".
+      async function info() {
+        const cos = await rpc("my_companies") || [];
+        const live = cos.filter(c => c.active && !c.pending);
+        if (company && dbKey !== "db" && !cos.some(c => c.id === company)) { company = ""; lsSet("berp.company", null); }
+        if (!company || dbKey === "db") return { email: (get(SES) || {}).email || "", needs_company: true, is_member: false, companies: cos, live };
+        const me = await rpc("workspace_info", { p_company: company });
+        return { ...me, companies: cos, live, company };
+      }
 
       // --- copies of the books (gzip + base64 of the SQLite image, without device-only tables)
       const gz = async (bytes, dir) => new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(dir ? new CompressionStream("gzip") : new DecompressionStream("gzip"))).arrayBuffer());
@@ -255,7 +281,7 @@ def cloud_ensure_admin(email):
       async function pullNow() {
         let n = 0;
         for (;;) {
-          const rows = await select("ops", `select=*&seq=gt.${lastSeq()}&order=seq.asc&limit=500`);
+          const rows = await select("ops", `select=*&company_id=eq.${co()}&seq=gt.${lastSeq()}&order=seq.asc&limit=500`);
           for (const op of rows) {
             if (Number(op.seq) !== lastSeq() + 1) throw new CloudError("The workspace log has a gap — try again in a moment");
             const r = unpackReply(P("cloud_apply")(JSON.stringify(op)));
@@ -281,7 +307,7 @@ def cloud_ensure_admin(email):
               const op = JSON.parse(pair[1]); op.seq = lastSeq() + 1;
               let stored;
               try {
-                stored = await rpc("append_op", { p_seq: op.seq, p_version: op.version, p_app_user: op.app_user, p_device: op.device, p_method: op.method,
+                stored = await rpc("append_op", { p_company: co(), p_seq: op.seq, p_version: op.version, p_app_user: op.app_user, p_device: op.device, p_method: op.method,
                   p_path: op.path, p_body: op.body, p_content_type: op.content_type, p_clock: op.clock });
               } catch (e) { if (e.code === "40001") continue; throw e; }
               op.app_user = (stored && stored.app_user) || op.app_user;
@@ -305,7 +331,7 @@ def cloud_ensure_admin(email):
         const seq = lastSeq(), done = Number(local("snap_seq") || 0);
         if (snapBusy || (!force && seq - done < 300)) return;
         snapBusy = true;
-        try { await rpc("put_snapshot", { p_seq: seq, p_version: window.BEYOND_VERSION || "", p_data: await makeSnapshot() }); local("snap_seq", seq); }
+        try { await rpc("put_snapshot", { p_company: co(), p_seq: seq, p_version: window.BEYOND_VERSION || "", p_data: await makeSnapshot() }); local("snap_seq", seq); }
         catch (e) { local("snap_seq", seq); } finally { snapBusy = false; }
       }
       // Check for other people's changes: every 20 s while someone is using the page, every 3 min when it has been left
@@ -340,7 +366,7 @@ def cloud_ensure_admin(email):
           if (create) {
             const r = await this.signup(email, password);
             if (r.confirm) throw new CloudError(r.message, "confirm_sent");
-            return rpc("workspace_info");
+            return info();
           }
           if (!email.includes("@")) {   // a username: the workspace's "login" function finds the email on the server
             try { saveSession(await req("POST", "/functions/v1/login", { username: email, password })); }
@@ -349,10 +375,10 @@ def cloud_ensure_admin(email):
               if (e.code === "invalid_credentials" || /invalid login/i.test(e.message)) throw new CloudError("Wrong username or password. Forgot the password? Choose “Get help” and use your email address.", "invalid_credentials");
               throw friendly(e);
             }
-            return rpc("workspace_info");
+            return info();
           }
           try { saveSession(await req("POST", "/auth/v1/token?grant_type=password", { email, password })); } catch (e) { throw friendly(e); }
-          return rpc("workspace_info");
+          return info();
         },
         // Create an account. With "Confirm email" on (Supabase's default) no session comes back: the person must open
         // the emailed link first — it returns to this page and signs them in.
@@ -381,28 +407,55 @@ def cloud_ensure_admin(email):
           if (p.error) return { error: p.error };
           const u = await req("GET", "/auth/v1/user", undefined, p.access);
           saveSession({ access_token: p.access, refresh_token: p.refresh, expires_in: p.expires, user: u });
-          return { type: p.type, info: await rpc("workspace_info") };
+          return { type: p.type, info: await info() };
         },
         hasPendingAuth: () => !!pendingAuth,
-        info: () => rpc("workspace_info"),
-        async claim() {
-          const info = await rpc("claim_workspace");
-          P("cloud_ensure_admin")(info.email);
-          await rpc("put_snapshot", { p_seq: 0, p_version: window.BEYOND_VERSION || "", p_data: await makeSnapshot() });
+        info,
+        signedIn: () => !!get(SES),
+        company: () => (dbKey === "db" ? "" : company),
+        companies: () => rpc("my_companies"),
+        // Open another company: its own books load after the page reloads (returns true when a reload is needed)
+        chooseCompany(id) {
+          lsSet("berp.cloudLocal", null);
+          if (id === company && dbKey === "db:" + id) return false;
+          lsSet("berp.company", id); return true;
+        },
+        createCompany: name => rpc("create_company", { p_name: name }),
+        joinCompany: code => rpc("join_company", { p_code: code }),
+        renameCompany: name => rpc("rename_company", { p_company: co(), p_name: name }),
+        newInviteCode: () => rpc("new_invite_code", { p_company: co() }),
+        removeMember: email => rpc("remove_member", { p_company: co(), p_email: email }),
+        // Start a new company from the books on this device (they become its shared books; you its administrator)
+        async claim(name) {
+          const c = await rpc("create_company", { p_name: name || "My company" });
+          company = c.id; lsSet("berp.company", c.id); lsSet("berp.cloudLocal", null); dbKey = "db:" + c.id;
+          const me = await info();
+          P("cloud_ensure_admin")(me.email);
+          await rpc("put_snapshot", { p_company: c.id, p_seq: 0, p_version: window.BEYOND_VERSION || "", p_data: await makeSnapshot() });
           local("last_seq", 0); local("snap_seq", 0); dirty = true; await persist(); startPolling();
-          return rpc("workspace_info");
+          return info();
         },
         async join() {
-          const info = await rpc("workspace_info");
-          if (!info.is_member) throw new CloudError("This account is not a member of the workspace — ask an administrator to add it");
-          const rows = await select("snapshots", "select=seq,version,data&order=seq.desc&limit=1");
-          if (!rows.length) throw new CloudError("The workspace has no saved copy yet");
-          await exclusive(async () => { await restoreSnapshot(rows[0].data); local("last_seq", rows[0].seq); local("snap_seq", rows[0].seq); await pullNow(); });
+          const me = await info();
+          if (me.needs_company) throw new CloudError("Choose which company to open", "no_company");
+          if (!me.is_member) throw new CloudError(me.pending ? "Your request to join is waiting for the company's administrator" : "This account is not a member of this company — ask its administrator to add it");
+          const rows = await select("snapshots", `select=seq,version,data&company_id=eq.${co()}&order=seq.desc&limit=1`);
+          if (!rows.length) {
+            if (!me.is_admin) throw new CloudError("This company's books are not set up yet — its administrator opens it first");
+            // a brand-new company: its administrator starts its books here (empty, named after the company)
+            await exclusive(async () => {
+              P("cloud_new_books")(me.company_name || "", me.email);
+              await rpc("put_snapshot", { p_company: co(), p_seq: 0, p_version: window.BEYOND_VERSION || "", p_data: await makeSnapshot() });
+              local("last_seq", 0); local("snap_seq", 0);
+            });
+          } else {
+            await exclusive(async () => { await restoreSnapshot(rows[0].data); local("last_seq", rows[0].seq); local("snap_seq", rows[0].seq); await pullNow(); });
+          }
           dirty = true; await persist(); startPolling();
-          return info;
+          return info();
         },
         pull: () => pull().then(applied => ({ applied })),
-        async disconnect() { ["last_seq", "snap_seq"].forEach(k => local(k, null)); put(SES, null); put(LS, null); dirty = true; await persist(); setStatus("off"); },
+        async disconnect() { ["last_seq", "snap_seq"].forEach(k => local(k, null)); put(SES, null); put(LS, null); lsSet("berp.company", null); dirty = true; await persist(); setStatus("off"); },
         signout() { put(SES, null); try { sessionStorage.removeItem(SES); localStorage.removeItem(SES); } catch { /* ignore */ } setStatus("signed_out", ""); },
         // "Remember me": keep the sign-in after the browser closes (on) or forget it (off). Applies to the next sign-in.
         setRemember(on) { try { localStorage.setItem("berp.remember", on ? "true" : "false"); } catch { /* ignore */ } },
@@ -414,12 +467,12 @@ def cloud_ensure_admin(email):
         },
         // Continue with Google: Supabase sends the person to Google and back here with the sign-in in the address
         oauthUrl(provider) { const c = cfg(); return c && appUrl() ? `${c.url}/auth/v1/authorize?provider=${encodeURIComponent(provider)}&redirect_to=${encodeURIComponent(appUrl())}` : ""; },
-        members: () => select("members", "select=*&order=email"),
-        setMember: m => rpc("set_member", { p_email: m.email, p_is_admin: !!m.is_admin, p_gateway: !!m.gateway, p_active: m.active !== false }),
-        linkMember: m => rpc("link_member", { p_email: m.email, p_username: m.username || "", p_active: m.active !== false }),
-        // create / update the person's sign-in account (supabase/functions/manage-user; administrators only)
-        deleteAccount: async m => req("POST", "/functions/v1/manage-user", { action: "delete", username: m.username || "", email: m.email || "" }, await token()),
-        manageUser: async m => req("POST", "/functions/v1/manage-user", { username: m.username, email: m.email || "", password: m.password || "",
+        members: () => rpc("company_members", { p_company: co() }),
+        setMember: m => rpc("set_member", { p_company: co(), p_email: m.email, p_is_admin: !!m.is_admin, p_gateway: !!m.gateway, p_active: m.active !== false }),
+        linkMember: m => rpc("link_member", { p_company: co(), p_email: m.email, p_username: m.username || "", p_active: m.active !== false }),
+        // create / update the person's sign-in account (supabase/functions/manage-user; administrators of this company)
+        deleteAccount: async m => req("POST", "/functions/v1/manage-user", { company: co(), action: "delete", username: m.username || "", email: m.email || "" }, await token()),
+        manageUser: async m => req("POST", "/functions/v1/manage-user", { company: co(), username: m.username, email: m.email || "", password: m.password || "",
           full_name: m.full_name || "", active: m.active !== false }, await token()),
         snapshot: () => maybeSnapshot(true),
         // open the app user that matches the signed-in workspace account

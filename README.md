@@ -15,6 +15,16 @@ with their own account, everyone sees the same books, several people can work at
 permission matrix still applies. Code pushed to GitHub is tested and deployed automatically (database to Supabase,
 web app to Cloudflare Pages or GitHub Pages). Step-by-step: **[docs/SUPABASE_SETUP.md](docs/SUPABASE_SETUP.md)**.
 
+## Several companies, one website
+
+One workspace can hold any number of companies, each with its own books and members (shared-schema multi-tenancy:
+every shared row carries its company and Supabase's row-level security only lets members of a company read it).
+After signing in, someone with one company goes straight in; someone with several picks one (top bar → your name →
+Companies to switch). Anyone signed in can **create a company** (they become its administrator) or **ask to join**
+one with its **invite code** (Settings → Workspace), which that company's administrator approves. Usernames are
+unique across the whole workspace, and an administrator can never reset the password of someone who also belongs to
+another company.
+
 ## Get the app
 
 On the hosted site open the user menu → **Get the app**:
