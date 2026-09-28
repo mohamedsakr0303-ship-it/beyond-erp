@@ -471,6 +471,32 @@ def vouchers_table(db, entries, title, lang="en", subtitle=""):
     return {"title": title, "subtitle": subtitle, "columns": cols, "rows": rows, "lang": lang}
 
 
+def negotiations_table(db, date_from=None, date_to=None, bu_id=None, lang="en"):
+    """Negotiated discounts per business unit and deal: kept as company earnings or passed on as a lower cost."""
+    n = acc.negotiations(db, date_from, date_to, bu_id)
+    ar = lang == "ar"
+    heads = [("Date", "التاريخ", "left"), ("No.", "رقم", "left"), ("Supplier", "المورد", "left"),
+             ("Deal reference", "مرجع الاتفاق", "left"), ("Description", "البيان", "left"),
+             ("Quoted", "السعر المعروض", "right"), ("Negotiated discount", "خصم التفاوض", "right"),
+             ("Company earnings", "أرباح للشركة", "right"), ("Passed to client (lower cost)", "لصالح العميل (تكلفة أقل)", "right")]
+    cols = [{"label": h[1] if ar else h[0], "align": h[2], "fmt": "money" if h[2] == "right" else None} for h in heads]
+    rows = []
+    for g in n["by_bu"]:
+        rows.append({"cells": [f"{g['bu_code']} — {g['bu_name']}" if g["bu_code"] else ("مشترك" if ar else "Shared"),
+                               "", "", "", "", "", "", "", ""], "style": "section", "indent": 0})
+        for r in (x for x in n["rows"] if x["bu_id"] == g["bu_id"]):
+            rows.append({"cells": [r["date"], r["id"], r["party"], r["deal_ref"], r["memo"], r["quoted"] or "",
+                                   r["savings"], r["kept"] or "", r["passed"] or ""], "style": "item", "indent": 1})
+        rows.append({"cells": ["المجموع" if ar else "Subtotal", "", "", "", "", g["quoted"], g["savings"], g["kept"],
+                               g["passed"]], "style": "subtotal", "indent": 0})
+    t = n["total"]
+    rows.append({"cells": [L("total", lang), "", "", "", "", t["quoted"], t["savings"], t["kept"], t["passed"]],
+                 "style": "grand", "indent": 0})
+    pers = [("", date_from or "…", acc.clean_date(date_to))]
+    return {"title": "أرباح التفاوض" if ar else "Negotiation earnings", "subtitle": _subtitle(db, lang, pers, None),
+            "columns": cols, "rows": rows, "lang": lang}
+
+
 def tax_table(db, date_from=None, date_to=None, lang="en"):
     t = acc.tax_summary(db, date_from, date_to)
     ar = lang == "ar"
@@ -531,6 +557,8 @@ def build(db, name, p):
         return tax_table(db, p.get("date_from"), p.get("date_to"), lang)
     if name == "receivables":
         return receivables_table(db, p.get("date_from"), p.get("date_to"), lang)
+    if name == "negotiations":
+        return negotiations_table(db, p.get("date_from"), p.get("date_to"), bu, lang)
     if name == "fixed_assets":
         return fixed_assets_table(db, p.get("date_to"), p.get("q"), p.get("state"), lang)
     raise acc.ValidationError(f"Unknown report {name!r}")
@@ -540,7 +568,8 @@ REPORT_PERMS = {"income_statement": "reports.income_statement", "balance_sheet":
                 "cash_flow": "reports.cash_flow", "trial_balance": "reports.trial_balance",
                 "general_ledger": "accounting.ledger", "bu_pnl": "business_units.profitability",
                 "payables": "purchasing.payables", "stock": "stock.balances", "receivables": "sales.receivables",
-                "tax": "tax.report", "fixed_assets": "assets.register"}
+                "tax": "tax.report", "fixed_assets": "assets.register",
+                "negotiations": "purchasing.negotiations"}
 
 
 # ==================================================================== writers

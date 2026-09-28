@@ -105,7 +105,7 @@ def bootstrap(ctx):
         "cloud": {"joined": bool(sync and sync.active)},
         "settings": settings_dict(db),
         "accounts": db.q("SELECT * FROM accounts ORDER BY code"),
-        "bus": db.q("SELECT id, code, name, status FROM business_units ORDER BY code"),
+        "bus": db.q("SELECT id, code, name, status, basis, negotiation FROM business_units ORDER BY code"),
         "warehouses": db.q("SELECT * FROM warehouses ORDER BY id"),
         "partners": db.q("SELECT * FROM partners ORDER BY id"),
         "items": db.q("SELECT * FROM stock_items ORDER BY name"),
@@ -288,6 +288,15 @@ def _bu_values(b):
             min(acc.num(b.get("overhead_pct"), "overhead %"), 1), acc.text(b.get("notes"), maxlen=4000))
 
 
+def _bu_negotiation(ctx, bid):
+    """keep = negotiated discounts are company earnings (client billed on the full price); pass = lower cost."""
+    if "negotiation" in ctx.body:
+        m = acc.text(ctx.body.get("negotiation")).lower()
+        if m and m not in acc.NEGOTIATION_MODES:
+            raise acc.ValidationError("Negotiation handling must be 'keep' or 'pass'")
+        ctx.db.x("UPDATE business_units SET negotiation=? WHERE id=?", (m, int(bid)))
+
+
 @route("GET", "/api/bus", "business_units.units")
 def bus(ctx):
     q = ctx.q
@@ -302,6 +311,7 @@ def add_bu(ctx):
         raise acc.ValidationError("Code already exists")
     bid = ctx.db.x(f"INSERT INTO business_units({','.join(BU_FIELDS)}) VALUES ({','.join('?' * len(BU_FIELDS))})",
                    v).lastrowid
+    _bu_negotiation(ctx, bid)
     ctx.log("bu.add", v[0])
     return ok({"id": bid})
 
@@ -312,6 +322,7 @@ def edit_bu(ctx, bid):
     if ctx.db.one("SELECT 1 FROM business_units WHERE code=? AND id<>?", (v[0], int(bid))):
         raise acc.ValidationError("Code already exists")
     ctx.db.x(f"UPDATE business_units SET {','.join(f + '=?' for f in BU_FIELDS)} WHERE id=?", v + (int(bid),))
+    _bu_negotiation(ctx, bid)
     ctx.log("bu.edit", v[0])
     return ok()
 
@@ -370,10 +381,21 @@ def journal_filters(q):
         else:
             w.append("EXISTS (SELECT 1 FROM journal_lines l WHERE l.entry_id=e.id AND l.account=?)")
             p.append(a)
-    if q.get("q"):
-        w.append("(e.memo LIKE ? OR e.party LIKE ? OR e.ref LIKE ? OR e.meta LIKE ? OR CAST(e.id AS TEXT)=?)")
-        s = f"%{q['q']}%"
-        p += [s, s, s, s, q["q"].lstrip("#")]
+    for word in (q.get("q") or "").split():   # every word must match something on the entry
+        s = f"%{word}%"
+        cond = ["e.memo LIKE ?", "e.party LIKE ?", "e.ref LIKE ?", "e.meta LIKE ?", "e.kind LIKE ?", "e.date LIKE ?",
+                "CAST(e.id AS TEXT)=?", "e.bu_id IN (SELECT id FROM business_units WHERE code LIKE ? OR name LIKE ?)",
+                "EXISTS (SELECT 1 FROM journal_lines l JOIN accounts a ON a.code=l.account WHERE l.entry_id=e.id AND "
+                "(l.account LIKE ? OR a.name LIKE ? OR a.name_ar LIKE ? OR l.party LIKE ?))"]
+        p += [s, s, s, s, s, s, word.lstrip("#"), s, s, word + "%", s, s, s]
+        amt = word.replace(",", "")
+        try:
+            minor = to_minor(float(amt))
+            cond.append("EXISTS (SELECT 1 FROM journal_lines l WHERE l.entry_id=e.id AND (l.debit=? OR l.credit=?))")
+            p += [minor, minor]
+        except (ValueError, OverflowError):
+            pass
+        w.append("(" + " OR ".join(cond) + ")")
     if q.get("min_amount"):
         w.append("(SELECT SUM(debit) FROM journal_lines WHERE entry_id=e.id) >= ?")
         p.append(to_minor(acc.num(q["min_amount"])))
@@ -409,6 +431,12 @@ def journal_one(ctx, eid):
     if not (ctx.can("accounting.journal") or ctx.can(KIND_MODULE.get(e["kind"], "accounting.journal"))
             or (e["bu_id"] and ctx.can("business_units.units"))):
         raise PermissionError()
+    e["doc"] = FORM_DOCS.get(e["kind"])
+    e["form"] = acc.doc_form(ctx.db, e) if e["doc"] else None
+    if e["meta"].get("form"):
+        del e["meta"]["form"]
+    if not e["form"]:
+        e["doc"] = None
     return ok(e)
 
 
@@ -467,12 +495,56 @@ def post_doc(ctx, dtype):
     fn, module = DOCS[dtype]
     ctx.require(module, "add")
     from .db import CLOCK
-    if dtype == "direct_cost" and CLOCK["at"] is None:   # typed in now (a replay runs on the change's own clock)
-        eid = fn(ctx.db, ctx.body, ctx.user["username"], strict=True)
-    else:
-        eid = fn(ctx.db, ctx.body, ctx.user["username"])
+    kw = {"strict": True} if dtype == "direct_cost" and CLOCK["at"] is None else {}  # typed in now, not a replay
+    eid = fn(ctx.db, ctx.body, ctx.user["username"], **kw)
+    _remember_form(ctx.db, dtype, eid, ctx.body)
     ctx.log(f"doc.{dtype}", eid)
     return ok({"id": eid})
+
+
+FORM_DOCS = {"Direct Cost": "direct_cost", "Operating Expense": "expense", "Payment Voucher": "payment",
+             "Supplier Discount": "supplier_discount", "Payroll Accrual": "payroll", "Receipt Voucher": "receipt",
+             "Capital Contribution": "partner_tx", "Owner Drawing": "partner_tx"}
+
+
+def _remember_form(db, dtype, eid, body):
+    """Keep what was typed so the entry can be edited later through the same form."""
+    if dtype == "stock_move" or not isinstance(eid, int):
+        return
+    row = db.one("SELECT meta FROM journal_entries WHERE id=?", (eid,))
+    if not row:
+        return
+    meta = json.loads(row["meta"] or "{}")
+    meta["form"] = {k: v for k, v in body.items() if isinstance(v, (str, int, float, bool)) or v is None}
+    db.x("UPDATE journal_entries SET meta=? WHERE id=?", (json.dumps(meta, ensure_ascii=False), eid))
+
+
+@route("PUT", "/api/docs/<dtype>/<eid>")
+def edit_doc(ctx, dtype, eid):
+    """Correct a document through its own form (deal reference, negotiation, amounts...): same number, new lines,
+    the old version kept in its history."""
+    if dtype not in DOCS or dtype == "stock_move":
+        return ok({"error": "Unknown document"}, 404)
+    fn, module = DOCS[dtype]
+    if not (ctx.can(module, "edit") or ctx.can("accounting.journal", "edit")):
+        raise PermissionError()
+    from .db import CLOCK
+    e = acc.get_entry(ctx.db, int(eid))
+    if not e or FORM_DOCS.get(e["kind"]) != dtype:
+        raise acc.ValidationError("This entry is not a " + dtype.replace("_", " "))
+    kw = {"strict": True} if dtype == "direct_cost" and CLOCK["at"] is None else {}
+    with ctx.db.tx():
+        acc.replace_doc(ctx.db, int(eid), fn, ctx.body, ctx.user["username"], **kw)
+        _remember_form(ctx.db, dtype, int(eid), ctx.body)
+    ctx.log(f"doc.{dtype}.edit", eid)
+    return ok({"id": int(eid)})
+
+
+@route("GET", "/api/negotiations")
+def negotiations(ctx):
+    if not ctx.can("purchasing.negotiations"):
+        raise PermissionError()
+    return ok(acc.negotiations(ctx.db, ctx.q.get("date_from"), ctx.q.get("date_to"), ctx.q.get("bu_id")))
 
 
 @route("GET", "/api/docs/<dtype>")

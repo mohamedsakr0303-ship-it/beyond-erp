@@ -163,11 +163,28 @@ def check_open(db, date):
         raise ValidationError(f"The books are closed up to {lock} — change the lock date in Settings to post or edit on {date}")
 
 
+# set by replace_doc(): the next posted entry overwrites this one instead of adding a new entry
+_REPLACE = {"eid": None}
+
+
 def _insert_entry(db, *, date, kind, memo="", bu_id=None, party="", ref="", lines, meta=None,
                   reversal_of=None, user=""):
     """Insert a balanced entry. Caller must hold a transaction (db.tx())."""
     check_open(db, clean_date(date))
     vlines = _validate_lines(db, lines)
+    if _REPLACE["eid"]:
+        eid, _REPLACE["eid"] = _REPLACE["eid"], None
+        e = get_entry(db, eid)
+        snap = {k: e[k] for k in ("date", "memo", "bu_code", "party", "lines")}
+        snap.update(ref=e["ref"], edited_at=now_iso(), edited_by=user)
+        db.conn.execute("UPDATE journal_entries SET date=?, kind=?, memo=?, bu_id=?, party=?, ref=?, meta=?, history=? "
+                        "WHERE id=?", (clean_date(date), kind, text(memo, maxlen=1000), bu_id, text(party), text(ref),
+                                       json.dumps(meta or {}, ensure_ascii=False),
+                                       json.dumps(e["history"] + [snap], ensure_ascii=False), eid))
+        db.conn.execute("DELETE FROM journal_lines WHERE entry_id=?", (eid,))
+        db.conn.executemany("INSERT INTO journal_lines(entry_id,account,debit,credit,party) VALUES (?,?,?,?,?)",
+                            [(eid, a, d, c, p) for a, d, c, p in vlines])
+        return eid
     cur = db.conn.execute(
         "INSERT INTO journal_entries(date,kind,memo,bu_id,party,ref,meta,reversal_of,created_by,created_at) "
         "VALUES (?,?,?,?,?,?,?,?,?,?)",
@@ -272,10 +289,14 @@ def record_project_cost(db, d, user="", strict=False):
             f"The deal is marked Settled but {to_major(cost + vat - wht - paid):,.2f} is still unpaid. If the supplier "
             "accepted less, add the difference to Negotiation discount; otherwise leave the status Open until it is paid.")
     lines = _purchase_lines(db, d, account, cost, vat, wht, payable, paid)
+    mode = negotiation_mode(db, bu, d.get("negotiation"))
+    if mode == "keep" and savings:   # cost stays at the full price (what the client is billed on); the discount is ours
+        lines[0]["debit"] = to_major(quoted)
+        lines.append({"account": db.acct("negotiation_income"), "credit": to_major(savings)})
     meta = {"qty": qty, "unit": text(d.get("unit")), "rate": rate, "quoted": to_major(quoted),
             "savings": to_major(savings), "deal_ref": text(d.get("deal_ref")),
             "deal_status": text(d.get("deal_status")), "method": text(d.get("method")),
-            "vat_code": vat_code, "wht_code": wht_code}
+            "vat_code": vat_code, "wht_code": wht_code, "negotiation": mode if savings else ""}
     return post_entry(db, date=d.get("date"), kind="Direct Cost",
                       memo=text(d.get("description"), "description", required=True), bu_id=bu, party=vendor,
                       ref=meta["deal_ref"], lines=lines, meta=meta, user=user)
@@ -339,9 +360,25 @@ def record_payment(db, d, user=""):
                       meta={"method": text(d.get("method"))}, user=user)
 
 
+NEGOTIATION_MODES = ("keep", "pass")
+
+
+def negotiation_mode(db, bu_id, asked=None):
+    """What happens to a negotiated discount: 'keep' = company earnings (the cost and the client's bill stay at the
+    full price), 'pass' = the cost goes down (the client benefits). The entry's own choice wins, then the business
+    unit's; entries from before this option existed were always 'pass'."""
+    asked = text(asked).lower()
+    if asked in NEGOTIATION_MODES:
+        return asked
+    if asked:
+        raise ValidationError("Negotiation discount handling must be 'keep' (company earnings) or 'pass' (lower cost)")
+    b = db.one("SELECT negotiation FROM business_units WHERE id=?", (bu_id,)) if bu_id else None
+    return b["negotiation"] if b and b["negotiation"] in NEGOTIATION_MODES else "pass"
+
+
 def supplier_discount_defaults(db, party, account=None):
-    """Where a late discount from a supplier goes: back to the cost of their latest purchase (same account, business
-    unit and deal), else to Other income."""
+    """Where a late discount from a supplier goes: company earnings or back to the cost of their latest purchase
+    (same account, business unit and deal), following that project's negotiation setting."""
     account = account or db.acct("ap")
     last = db.one(f"""SELECT e.bu_id, e.meta, (SELECT l.account FROM journal_lines l JOIN accounts a ON a.code=l.account
                          WHERE l.entry_id=e.id AND l.debit>0 AND a.type IN ('COGS','Expense') ORDER BY l.debit DESC LIMIT 1) AS cost
@@ -349,9 +386,15 @@ def supplier_discount_defaults(db, party, account=None):
                         AND EXISTS (SELECT 1 FROM journal_lines x WHERE x.entry_id=e.id AND x.account=? AND x.credit>0)
                       ORDER BY e.date DESC, e.id DESC LIMIT 1""", (party, account))
     meta = json.loads(last["meta"] or "{}") if last else {}
-    fallback = db.one("SELECT code FROM accounts WHERE code='4080' AND active=1") or {"code": db.acct("other_income")}
-    return {"credit_account": (last or {}).get("cost") or fallback["code"], "bu_id": (last or {}).get("bu_id"),
-            "deal_ref": meta.get("deal_ref", ""), "owed": party_balance(db, account, party)}
+    bu = (last or {}).get("bu_id")
+    b = db.one("SELECT negotiation FROM business_units WHERE id=?", (bu,)) if bu else None
+    mode = meta.get("negotiation") or (b["negotiation"] if b and b["negotiation"] in NEGOTIATION_MODES else "") \
+        or ("pass" if (last or {}).get("cost") else "keep")
+    keep = db.acct("negotiation_income")
+    cost = (last or {}).get("cost") or keep
+    return {"credit_account": keep if mode == "keep" else cost, "negotiation": mode, "keep_account": keep,
+            "cost_account": cost, "bu_id": bu, "deal_ref": meta.get("deal_ref", ""),
+            "owed": party_balance(db, account, party)}
 
 
 def record_supplier_discount(db, d, user=""):
@@ -362,15 +405,20 @@ def record_supplier_discount(db, d, user=""):
     amount = num(d.get("amount") or dflt["owed"], "amount", allow_zero=False)
     if to_minor(amount) > to_minor(dflt["owed"]):
         raise ValidationError(f"{party} is only owed {dflt['owed']:,.2f} on {account}")
+    mode = text(d.get("negotiation")).lower()
+    if not d.get("credit_account") and mode in NEGOTIATION_MODES:
+        d = {**d, "credit_account": dflt["keep_account"] if mode == "keep" else dflt["cost_account"]}
     credit = account_code(db, d.get("credit_account") or dflt["credit_account"], types=("COGS", "Expense", "Revenue"),
                           field="discount account")
+    mode = "keep" if db.one("SELECT type FROM accounts WHERE code=?", (credit,))["type"] == "Revenue" else "pass"
     bu = bu_id_or_none(db, d.get("bu_id") if d.get("bu_id") not in (None, "") else dflt["bu_id"])
     deal = text(d.get("deal_ref")) or dflt["deal_ref"]
     return post_entry(db, date=d.get("date"), kind="Supplier Discount",
                       memo=text(d.get("memo")) or f"Discount agreed with {party}" + (f" — {deal}" if deal else ""),
                       bu_id=bu, party=party, ref=deal,
                       lines=[{"account": account, "debit": amount}, {"account": credit, "credit": amount}],
-                      meta={"deal_ref": deal, "savings": amount, "deal_status": "Settled"}, user=user)
+                      meta={"deal_ref": deal, "savings": amount, "deal_status": "Settled", "negotiation": mode},
+                      user=user)
 
 
 # ----------------------------------------------------------------------- sales
@@ -503,10 +551,16 @@ def edit_entry(db, eid, d, user=""):
             raise ValidationError("This entry belongs to a stock move or invoice — reverse it and re-enter instead")
         vlines = _validate_lines(db, d.get("lines") or e["lines"])
         snap = {k: e[k] for k in ("date", "memo", "bu_code", "party", "lines")}
-        snap.update(edited_at=now_iso(), edited_by=user)
-        db.conn.execute("UPDATE journal_entries SET date=?, memo=?, bu_id=?, party=?, history=? WHERE id=?",
+        snap.update(ref=e["ref"], edited_at=now_iso(), edited_by=user)
+        meta = dict(e["meta"])
+        for k in ("deal_ref", "deal_status"):   # the deal a cost belongs to can be corrected here too
+            if k in d:
+                meta[k] = text(d.get(k))
+        db.conn.execute("UPDATE journal_entries SET date=?, memo=?, bu_id=?, party=?, ref=?, meta=?, history=? "
+                        "WHERE id=?",
                         (clean_date(d.get("date") or e["date"]), text(d.get("memo", e["memo"]), maxlen=1000),
                          bu_id_or_none(db, d.get("bu_id", e["bu_id"])), text(d.get("party", e["party"])),
+                         text(d.get("ref", e["ref"])), json.dumps(meta, ensure_ascii=False),
                          json.dumps(e["history"] + [snap], ensure_ascii=False), eid))
         db.conn.execute("DELETE FROM journal_lines WHERE entry_id=?", (eid,))
         db.conn.executemany("INSERT INTO journal_lines(entry_id,account,debit,credit,party) VALUES (?,?,?,?,?)",
@@ -1180,9 +1234,12 @@ def bu_summaries(db, date_from=None, date_to=None, status=None, q=None):
         FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id JOIN accounts a ON a.code=l.account
         WHERE {w} AND e.bu_id IS NOT NULL GROUP BY e.bu_id""", p)}
     pool = shared_overhead_total(db, date_from, date_to)
-    savings = {}
+    savings, kept = {}, {}
     for r in db.q(f"SELECT e.bu_id, e.meta FROM journal_entries e WHERE {w} AND kind IN ('Direct Cost','Supplier Discount')", p):
-        savings[r["bu_id"]] = savings.get(r["bu_id"], 0) + to_minor(json.loads(r["meta"]).get("savings", 0))
+        m = json.loads(r["meta"] or "{}")
+        savings[r["bu_id"]] = savings.get(r["bu_id"], 0) + to_minor(m.get("savings", 0))
+        if m.get("negotiation") == "keep":
+            kept[r["bu_id"]] = kept.get(r["bu_id"], 0) + to_minor(m.get("savings", 0))
     bw, bp = [], []
     if status:
         bw.append("status=?")
@@ -1209,8 +1266,106 @@ def bu_summaries(db, date_from=None, date_to=None, status=None, q=None):
                     "margin": round(net / rev, 4) if rev else 0, "receivable": to_major(a.get("receivable") or 0),
                     "advances": to_major(a.get("advances") or 0), "collected": to_major(collected),
                     "expected_billing": to_major(expected), "to_collect": to_major(max(expected - collected, 0)),
-                    "savings": to_major(savings.get(b["id"], 0))})
+                    "savings": to_major(savings.get(b["id"], 0)), "savings_kept": to_major(kept.get(b["id"], 0))})
     return out
+
+
+def negotiations(db, date_from=None, date_to=None, bu_id=None):
+    """Every negotiated discount, per business unit: kept as company earnings or passed on as a lower cost."""
+    w, p = _where(date_from=date_from, date_to=date_to, bu_id=bu_id)
+    keep_acc = db.acct("negotiation_income")
+    rows = []
+    for e in db.q(f"""SELECT e.id, e.date, e.kind, e.memo, e.party, e.ref, e.meta, e.bu_id, b.code AS bu_code,
+                             b.name AS bu_name FROM journal_entries e LEFT JOIN business_units b ON b.id=e.bu_id
+                      WHERE {w} AND (e.kind IN ('Direct Cost','Supplier Discount') OR EXISTS
+                            (SELECT 1 FROM journal_lines x WHERE x.entry_id=e.id AND x.account=?))
+                      ORDER BY e.date, e.id""", p + [keep_acc]):
+        meta = json.loads(e["meta"] or "{}")
+        savings = to_minor(meta.get("savings", 0))
+        if e["kind"] in ("Direct Cost", "Supplier Discount"):
+            mode = meta.get("negotiation") or "pass"
+        else:   # any other entry booked straight to Negotiation Earnings
+            n = db.one("SELECT COALESCE(SUM(credit-debit),0) AS n FROM journal_lines WHERE entry_id=? AND account=?",
+                       (e["id"], keep_acc))["n"]
+            savings, mode = n, "keep"
+        if not savings:
+            continue
+        quoted = to_minor(meta.get("quoted", 0))
+        rows.append({"id": e["id"], "date": e["date"], "kind": e["kind"], "memo": e["memo"], "party": e["party"],
+                     "deal_ref": meta.get("deal_ref") or e["ref"] or "", "bu_id": e["bu_id"], "bu_code": e["bu_code"] or "",
+                     "bu_name": e["bu_name"] or "", "quoted": to_major(quoted), "savings": to_major(savings),
+                     "mode": mode, "kept": to_major(savings if mode == "keep" else 0),
+                     "passed": to_major(savings if mode == "pass" else 0)})
+    by_bu = {}
+    for r in rows:
+        g = by_bu.setdefault(r["bu_id"], {"bu_id": r["bu_id"], "bu_code": r["bu_code"], "bu_name": r["bu_name"],
+                                          "quoted": 0, "savings": 0, "kept": 0, "passed": 0, "count": 0})
+        g["count"] += 1
+        for k in ("quoted", "savings", "kept", "passed"):
+            g[k] = round(g[k] + r[k], 2)
+    modes = {b["id"]: b["negotiation"] or "" for b in db.q("SELECT id, negotiation FROM business_units")}
+    for g in by_bu.values():
+        g["setting"] = modes.get(g["bu_id"], "")
+    total = {k: round(sum(r[k] for r in rows), 2) for k in ("quoted", "savings", "kept", "passed")}
+    return {"rows": rows, "by_bu": sorted(by_bu.values(), key=lambda g: g["bu_code"]), "total": total,
+            "account": keep_acc}
+
+
+def replace_doc(db, eid, fn, d, user="", **kw):
+    """Re-enter a document through its own form: the entry keeps its number and history, its lines are rebuilt."""
+    with db.tx():
+        e = get_entry(db, eid)
+        if not e:
+            raise ValidationError("Entry not found")
+        if e["status"] != "posted" or e["reversed_by"] or e["reversal_of"]:
+            raise ValidationError("Only live entries can be edited")
+        check_open(db, e["date"])
+        if db.one("SELECT 1 FROM stock_moves WHERE entry_id=?", (eid,)) or \
+                db.one("SELECT 1 FROM extracts WHERE entry_id=?", (eid,)):
+            raise ValidationError("This entry belongs to a stock move or invoice — reverse it and re-enter instead")
+        _REPLACE["eid"] = eid
+        try:
+            out = fn(db, d, user, **kw)
+        finally:
+            _REPLACE["eid"] = None
+        if out != eid:
+            raise ValidationError("This document could not be edited in place")
+        return eid
+
+
+def doc_form(db, e):
+    """The values of the form an entry was typed into (for editing it the same way)."""
+    meta = e["meta"] or {}
+    if meta.get("form"):
+        form = {**meta["form"], "date": e["date"]}
+        if e["kind"] == "Direct Cost":   # how the discount was actually booked, even if the form did not say
+            form["negotiation"] = meta.get("negotiation") or form.get("negotiation") or "pass"
+        return form
+    lines = e["lines"]
+    types = {a["code"]: a for a in db.q("SELECT code, type, subtype FROM accounts")}
+    cash = [ln for ln in lines if ln["credit"] and types.get(ln["account"], {}).get("subtype") == "cash"]
+    paid = round(sum(ln["credit"] for ln in cash), 2)
+    base = {"date": e["date"], "bu_id": e["bu_id"] or "", "method": meta.get("method", ""),
+            "paid_from": cash[0]["account"] if cash else "", "vat_code": meta.get("vat_code", ""),
+            "wht_code": meta.get("wht_code", "")}
+    if e["kind"] == "Direct Cost":
+        cost = next((ln for ln in lines if ln["debit"] and types.get(ln["account"], {}).get("type") == "COGS"), None)
+        return {**base, "account": cost["account"] if cost else "", "description": e["memo"], "vendor": e["party"],
+                "deal_ref": meta.get("deal_ref", ""), "deal_status": meta.get("deal_status", ""),
+                "qty": meta.get("qty", 1), "unit": meta.get("unit", ""), "rate": meta.get("rate", ""),
+                "savings": meta.get("savings", 0) or "", "paid": paid,
+                "negotiation": meta.get("negotiation") or ("pass" if meta.get("savings") else "")}
+    if e["kind"] == "Operating Expense":
+        ex = next((ln for ln in lines if ln["debit"] and types.get(ln["account"], {}).get("type") == "Expense"), None)
+        return {**base, "account": ex["account"] if ex else "", "description": e["memo"], "vendor": e["party"],
+                "amount": ex["debit"] if ex else "", "paid": paid}
+    if e["kind"] == "Supplier Discount":
+        dr = next((ln for ln in lines if ln["debit"]), None)
+        cr = next((ln for ln in lines if ln["credit"]), None)
+        return {"date": e["date"], "party": e["party"], "against": dr["account"] if dr else "",
+                "amount": dr["debit"] if dr else "", "credit_account": cr["account"] if cr else "",
+                "bu_id": e["bu_id"] or "", "deal_ref": meta.get("deal_ref", ""), "memo": e["memo"]}
+    return None
 
 
 def deals(db):

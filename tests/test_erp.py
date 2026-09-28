@@ -669,6 +669,88 @@ class SupplierDiscount(unittest.TestCase):
         self.assertEqual((g["quoted"], g["savings"], g["cost"], g["status"]), (16000, 2000, 14000, "Settled"))
 
 
+class Negotiations(unittest.TestCase):
+    """Negotiated discounts: company earnings (cost stays at full price) or a lower cost, per project and per entry."""
+
+    def test_keep_and_pass(self):
+        db = seeded()
+        earn = db.acct("negotiation_income")
+        self.assertEqual(db.one("SELECT type FROM accounts WHERE code=?", (earn,))["type"], "Revenue")
+        base = {"bu_code": "PRJ-1", "description": "Tiles", "vendor": "Hani", "qty": 1, "rate": 15000, "savings": 1000,
+                "paid": 14000, "account": "5020", "deal_ref": "D1", "date": "2026-03-01"}
+        e1 = a.get_entry(db, a.record_project_cost(db, {**base, "negotiation": "keep"}))
+        self.assertEqual({(ln["account"], ln["debit"], ln["credit"]) for ln in e1["lines"]},
+                         {("5020", 15000, 0), (earn, 0, 1000), ("1020", 0, 14000)})
+        e2 = a.get_entry(db, a.record_project_cost(db, {**base, "deal_ref": "D2"}))          # no choice, no BU setting
+        self.assertEqual(e2["meta"]["negotiation"], "pass")
+        self.assertIn(("5020", 14000, 0), {(ln["account"], ln["debit"], ln["credit"]) for ln in e2["lines"]})
+        db.x("UPDATE business_units SET negotiation='keep' WHERE code='PRJ-1'")               # project default
+        e3 = a.get_entry(db, a.record_project_cost(db, {**base, "deal_ref": "D3"}))
+        self.assertEqual(e3["meta"]["negotiation"], "keep")
+        with self.assertRaises(a.ValidationError):
+            a.record_project_cost(db, {**base, "negotiation": "maybe"})
+        n = a.negotiations(db)
+        self.assertEqual((n["total"]["savings"], n["total"]["kept"], n["total"]["passed"]), (3200, 2000, 1200))
+        prj = [g for g in n["by_bu"] if g["bu_code"] == "PRJ-1"][0]
+        self.assertEqual((prj["kept"], prj["setting"]), (2000, "keep"))
+        b = [x for x in a.bu_summaries(db) if x["code"] == "PRJ-1"][0]
+        self.assertEqual(b["savings_kept"], 2000)
+        # a late discount on a 'keep' project goes to Negotiation Earnings by default
+        a.record_project_cost(db, {**base, "savings": 0, "paid": 14000, "deal_ref": "D4", "negotiation": "keep"})
+        d = a.supplier_discount_defaults(db, "Hani")
+        self.assertEqual((d["negotiation"], d["credit_account"], d["owed"]), ("keep", earn, 1000))
+        a.record_supplier_discount(db, {"party": "Hani", "negotiation": "pass"})
+        self.assertEqual(a.party_balance(db, db.acct("ap"), "Hani"), 0)
+        self.assertEqual(a.negotiations(db)["rows"][-1]["mode"], "pass")
+
+    def test_edit_through_form_and_search(self):
+        from erp.server import ERPServer
+        tmp = tempfile.TemporaryDirectory()
+        db = Database(Path(tmp.name) / "t.sqlite3")
+        srv = ERPServer(("127.0.0.1", 0), db, Path(tmp.name) / "backups")
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            api = Api("call")
+            api.base = f"http://127.0.0.1:{srv.server_address[1]}"
+            op = api.client()
+            self.assertEqual(api.call(op, "POST", "/api/setup", {"username": "admin", "password": "secret123"})[0], 200)
+            bu = api.call(op, "POST", "/api/bus", {"code": "P1", "name": "Villa", "negotiation": "keep"})[1]["id"]
+            deal = {"bu_id": bu, "description": "Ceramic", "vendor": "Hani Ceramic", "qty": 1, "rate": 16000,
+                    "savings": 1000, "paid": 14000, "deal_ref": "HANI-1", "deal_status": "Open", "account": "5020"}
+            eid = api.call(op, "POST", "/api/docs/direct_cost", deal)[1]["id"]
+            e = api.call(op, "GET", f"/api/journal/{eid}")[1]
+            self.assertEqual((e["doc"], e["form"]["rate"], e["meta"]["negotiation"]), ("direct_cost", 16000, "keep"))
+            # correct it through the form: the real quote was 15,000; settled; the entry keeps its number
+            st, r = api.call(op, "PUT", f"/api/docs/direct_cost/{eid}", {**deal, "rate": 15000, "deal_ref": "HANI-2",
+                                                                          "deal_status": "Settled", "negotiation": "keep"})
+            self.assertEqual((st, r["id"]), (200, eid))
+            e = api.call(op, "GET", f"/api/journal/{eid}")[1]
+            self.assertEqual((e["ref"], e["meta"]["deal_status"], len(e["history"])), ("HANI-2", "Settled", 1))
+            self.assertEqual(api.call(op, "GET", "/api/supplier-discount?party=Hani%20Ceramic")[1]["owed"], 0)
+            self.assertEqual(api.call(op, "GET", "/api/negotiations")[1]["total"]["kept"], 1000)
+            # search: account name, account code, amount, business unit
+            for word in ("Subcontractor", "5020", "14,000", "P1", "earnings"):
+                rows = api.call(op, "GET", "/api/journal?q=" + urllib.parse.quote(word))[1]["rows"]
+                self.assertIn(eid, [x["id"] for x in rows], word)
+            self.assertEqual(api.call(op, "GET", "/api/journal?q=nothing-like-this")[1]["rows"], [])
+            # journal editor can fix the reference and deal too
+            self.assertEqual(api.call(op, "PUT", f"/api/journal/{eid}", {"ref": "X-9", "deal_ref": "X-9"})[0], 200)
+            self.assertEqual(api.call(op, "GET", f"/api/journal/{eid}")[1]["meta"]["deal_ref"], "X-9")
+            self.assertEqual(api.call(op, "GET", "/api/reports/negotiations?format=json")[0], 200)
+        finally:
+            srv.shutdown()
+            srv.server_close()
+            db.close()
+            tmp.cleanup()
+
+    def test_old_books_get_the_account(self):
+        db = Database(":memory:")
+        db.x("UPDATE accounts SET role=NULL WHERE role='negotiation_income'")
+        db.x("DELETE FROM accounts WHERE code='4085'")
+        db._migrate()
+        self.assertEqual(db.acct("negotiation_income"), "4085")
+
+
 if __name__ == "__main__":
     unittest.main()
 
