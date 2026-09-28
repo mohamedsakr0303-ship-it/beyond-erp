@@ -184,8 +184,12 @@ class Handler(BaseHTTPRequestHandler):
             return 200, {"deleted": tgt}
         wanted = e or f"{u}@users.beyond-erp.invalid"
         old = next((em for em, un in st.people.items() if un == u), None)
-        if old and old != wanted and e and (cid, old) not in st.members:
-            return 400, {"msg": f"The username {u} is already used by another account — choose another"}
+        if old and (cid, old) not in st.members and not (e and e == old and not body.get("password")):
+            tag = re.sub(r"[^a-z0-9]+", " ", st.companies[cid]["name"].lower()).strip().split(" ")[0] or "co"
+            return 409, {"msg": f"The username “{u}” is already taken by someone in another company (usernames are shared "
+                                f"by all companies). Choose another one, for example “{u}.{tag}”."}
+        if e and st.people.get(e) and st.people[e] != u and (cid, e) not in st.members:
+            return 409, {"msg": f"This email already has a sign-in account with the username “{st.people[e]}” — use that username to add them."}
         target = old or wanted
         shared = bool(others(target)) and target in st.accounts
         if shared:

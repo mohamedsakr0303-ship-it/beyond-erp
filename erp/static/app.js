@@ -1541,7 +1541,9 @@ PAGES.settings = async (view, parts, q) => {
     S.H.cosave = async () => { const v = readForm($("#cocard")); const regional = {};
       ["date_format", "negative", "decimals", "digits"].forEach(k => { regional[k] = v[k]; delete v[k]; });
       v.regional = regional; v.units = v.units.split(",").map(x => x.trim()).filter(Boolean);
-      try { await api("PUT", "/api/settings", v); await refreshBoot(); applyLook(); renderShell(); toast(t("saved")); route(); } catch (e) { fail(e); } };
+      try { await api("PUT", "/api/settings", v);
+        if (cloudOn() && v.company_name) await CloudAPI.renameCompany(v.company_name.trim()).catch(() => {});  // the name people pick at sign-in
+        await refreshBoot(); applyLook(); renderShell(); toast(t("saved")); route(); } catch (e) { fail(e); } };
     return;
   }
   if (tab === "docs") return brandingTab(view, head);
@@ -1725,7 +1727,8 @@ PAGES.users = async (view) => {
   const rows = await api("GET", "/api/users");
   const ed = can("users.users", "edit");
   const ar = S.lang === "ar";
-  const edit = u => drawer(t("m_users") + (u.username ? " — " + u.username : ""), form([{ k: "username", l: t("username"), v: u.username, req: 1, dis: !!u.id }, { k: "full_name", l: t("full_name"), v: u.full_name },
+  const edit = u => drawer(t("m_users") + (u.username ? " — " + u.username : ""), form([{ k: "username", l: t("username"), v: u.username, req: 1, dis: !!u.id,
+    help: cloudOn() && !u.id ? (S.lang === "ar" ? "اسم الدخول فريد في كل الشركات — لو كان مستخدماً في شركة أخرى سنقترح اسماً آخر (مثل ahmed.beyond)." : "Sign-in names are unique across all companies — if it is taken in another company you'll be offered another (e.g. ahmed.beyond).") : "" }, { k: "full_name", l: t("full_name"), v: u.full_name },
     { k: "email", l: t("email") + (cloudOn() ? (ar ? " (اختياري)" : " (optional)") : ""), type: "email", v: u.email, span: "spanall", help: cloudOn()
       ? (ar ? "اتركه فارغاً ليسجل الدخول باسم المستخدم وكلمة المرور فقط. أضفه إن أراد الدخول بحساب Google أو استعادة كلمة المرور بنفسه." : "Leave it blank and they simply sign in with username + password. Add it if they want Google sign-in or to reset their own password by email.")
       : (ar ? "اختياري — يُستخدم لتسجيل الدخول إلى مساحة العمل المشتركة عند تفعيلها." : "Optional — used for signing in to the shared workspace when you connect one.") },
@@ -1898,12 +1901,22 @@ async function workspaceTab(view, head) {
 
 // ------------------------------------------------------------------ boot
 async function refreshBoot() { S.boot = await api("GET", "/api/bootstrap"); }
+// Companies created by the upgrade are called "My company": an administrator's app renames it to the company name
+// in Settings → Company the first time it opens.
+async function fixCompanyName() {
+  if (!cloudOn() || !S.boot.user.is_admin) return;
+  try {
+    const info = await CloudAPI.info(), name = (S.boot.settings.company_name || "").trim();
+    if (info && info.is_admin && info.company_name === "My company" && name && name !== "My company") await CloudAPI.renameCompany(name);
+  } catch { /* not an administrator of the workspace company, or offline */ }
+}
 async function boot() {
   try { await refreshBoot(); } catch (e) { $("#root").innerHTML = `<div class="banner err">${esc(e.message)}</div>`; return; }
   applyLook();
   if (!S.boot.user) return renderAuth();
   renderShell();
   route();
+  fixCompanyName();
   if (STATIC && window.BeyondCloud) window.BeyondCloud.onStatus(syncDot);
   else if (S.boot.cloud && S.boot.cloud.joined) {
     const poll = () => api("GET", "/api/cloud-status").then(syncDot).catch(() => {});

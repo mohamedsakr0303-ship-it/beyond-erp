@@ -101,14 +101,30 @@ Deno.serve(async (req) => {
   if (password && password.length < 6) return fail(400, "Passwords need at least 6 characters");
   const wanted = email || `${username}@${PLACEHOLDER_DOMAIN}`;
 
-  // 2. who is this? the owner of the username, else the owner of the email
+  // 2. who is this? Usernames are shared by every company, so a username that belongs to someone outside this company
+  // is refused — unless the administrator adds that very person on purpose, by their email (then no password).
+  const inThis = async (e: string) => {
+    const r = await call("GET", `/rest/v1/members?select=email&${inCo}&email=eq.${enc(e)}`);
+    return r.ok && r.data.length > 0;
+  };
+  const suggest = async () => {
+    const c = await call("GET", `/rest/v1/companies?select=name&id=eq.${enc(company)}`);
+    const tag = String(c.ok && c.data.length ? c.data[0].name : "").toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, " ").trim().split(" ")[0] || "co";
+    for (const cand of [`${username}.${tag}`, `${username}.${tag}2`, `${username}${Math.floor(Math.random() * 90 + 10)}`]) {
+      if (!(await person(`username=ilike.${enc(cand)}`))) return cand;
+    }
+    return `${username}.${tag}${Date.now() % 1000}`;
+  };
   const byName = await person(`username=ilike.${enc(username)}`);
-  const oldEmail: string = byName ? byName.email : "";
-  if (byName && oldEmail !== wanted && email) {
-    // the username belongs to an account with another email: only allowed when it is this company's own person
-    const mine = await call("GET", `/rest/v1/members?select=email&${inCo}&email=eq.${enc(oldEmail)}`);
-    if (!mine.ok || !mine.data.length) return fail(400, `The username ${username} is already used by another account — choose another`);
+  if (byName && !(await inThis(byName.email)) && !(email && email === byName.email && !password)) {
+    return fail(409, `The username “${username}” is already taken by someone in another company (usernames are shared by all companies). ` +
+      `Choose another one, for example “${await suggest()}”.`);
   }
+  const byEmail = email ? await person(`email=eq.${enc(email)}`) : null;
+  if (byEmail && byEmail.username && byEmail.username !== username && !(await inThis(email))) {
+    return fail(409, `This email already has a sign-in account with the username “${byEmail.username}” — use that username to add them.`);
+  }
+  const oldEmail: string = byName ? byName.email : "";
   const target = oldEmail || wanted;
   let id = await idOf(target);
   if (!id && target !== wanted) id = await idOf(wanted);

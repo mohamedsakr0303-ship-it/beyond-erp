@@ -697,6 +697,23 @@ class Companies(unittest.TestCase):
             self.assertEqual(len(sb.state.ops[alpha]), 1)                                     # Alpha untouched
             nodes[0][0].cloud.pull()
             self.assertIsNone(nodes[0][1].one("SELECT 1 FROM business_units WHERE code='B1'"))
+            # usernames are shared by every company: Beta's administrator cannot create or grab Alpha's "ali"
+            self.assertEqual(api(0, a, "POST", "/api/cloud/signin", {"email": "owner@x.com", "password": "pw123456"})[0], 200)
+            self.assertEqual(api(0, a, "PUT", "/api/cloud/account", {"username": "ali", "password": "alipw123"})[0], 200)  # Alpha's ali
+            beta_admin = Supabase(url, "anon")
+            btok = beta_admin.sign_in("owner@x.com", "pw123456")["access_token"]
+            fn = lambda body: beta_admin._call("POST", "/functions/v1/manage-user", {"company": beta, **body}, btok)  # noqa: E731
+            for body in ({"username": "ali"}, {"username": "ali", "password": "other123"},
+                         {"username": "ali", "email": "someone@else.com", "password": "other123"}):
+                with self.assertRaises(RuntimeError) as cm:
+                    fn(body)
+                self.assertIn("already taken", str(cm.exception))
+                self.assertIn("ali.beta", str(cm.exception))                              # a free name is suggested
+            self.assertIsNone(sb.state.members.get((beta, "ali@users.beyond-erp.invalid")))
+            self.assertEqual(sb.state.accounts["ali@users.beyond-erp.invalid"], "alipw123")  # Alpha's ali untouched
+            self.assertEqual(fn({"username": "ali.beta", "password": "betapw1"})["username"], "ali.beta")
+            # adding the very same person on purpose (by their email, no password) is allowed; they keep their password
+            self.assertTrue(fn({"username": "ali", "email": "ali@users.beyond-erp.invalid"})["shared"])
             # switching company on a connected device is refused (disconnect first)
             self.assertEqual(api(0, a, "POST", "/api/cloud/company", {"action": "choose", "company": beta})[0], 400)
         finally:
