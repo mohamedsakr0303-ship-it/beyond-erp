@@ -708,12 +708,16 @@ async function openVoucher(id) {
     if (!["Goods Receipt", "Material Issue", "Stock Transfer", "Stock Adjustment", "Sales Invoice"].includes(e.kind) && can("accounting.journal", "edit"))
       btns.push(`<button class="btn" type="button" data-a="vedit" data-id="${e.id}">${e.doc ? L2("Edit lines", "تعديل البنود") : t("edit")}</button>`);
   }
+  const DUP_MOD = e.doc ? DOC_MOD[e.doc] : "accounting.journal";
+  if (e.doc ? can(DUP_MOD, "add") : (can("accounting.journal", "add") && !["Goods Receipt", "Material Issue", "Stock Transfer", "Stock Adjustment", "Sales Invoice"].includes(e.kind)))
+    btns.push(`<button class="btn" type="button" data-a="vdup">${t("duplicate")}</button>`);
   if (edit && e.status === "void") btns.push(`<button class="btn danger" type="button" data-a="vdel" data-id="${e.id}">${t("delete")}</button>`);
   S.H.vvoid = async () => { const r = prompt(t("void_reason")); if (r === null) return; try { await api("POST", `/api/journal/${e.id}/void`, { reason: r }); closeDrawer(); toast(t("saved")); route(); } catch (x) { fail(x); } };
   S.H.vrev = async () => { try { await api("POST", `/api/journal/${e.id}/reverse`, {}); closeDrawer(); toast(t("posted")); route(); } catch (x) { fail(x); } };
   S.H.vdel = async () => { if (!confirm(t("confirm_delete"))) return; try { await api("DELETE", `/api/journal/${e.id}`); closeDrawer(); route(); } catch (x) { fail(x); } };
   S.H.vedit = () => journalForm(e);
   S.H.vform = () => openDoc(e.doc, null, e);
+  S.H.vdup = () => e.doc ? openDoc(e.doc, null, null, { ...e.form, date: today() }) : journalForm({ ...e, date: today() }, true);
   drawer(`${tl(e.kind)} #${e.id}`, html, null, { readOnly: true, extraButtons: btns.join("") });
 }
 S.GLOBAL_H.openv = el => openVoucher(el.dataset.id);
@@ -807,7 +811,7 @@ function newItem(key) {
   if (kind === "asset") return id === "depr" ? deprForm() : assetForm();
   if (kind === "entry") return entryTypeForm(id);
 }
-async function openDoc(type, pre, edit) {
+async function openDoc(type, pre, edit, copyVals) {
   if (type === "invoice") { location.hash = "#/invoice/new"; return; }
   if (type === "offer") { location.hash = "#/offers"; return; }
   if (type === "journal") return journalForm();
@@ -816,7 +820,7 @@ async function openDoc(type, pre, edit) {
   let names = [];
   try { names = (await api("GET", "/api/parties?kind=all")).names; } catch { /* no permission */ }
   const items = S.boot.items.map(i => i.name);
-  const vals = edit && edit.form;
+  const vals = (edit && edit.form) || copyVals;
   drawer(t(d.title) + " — " + (edit ? `${t("edit")} #${edit.id}` : t("new")), form(d.fields(pre)) + unitsList() + datalist("parties", names) + datalist("items", items),
     async v => { if (edit) { await api("PUT", `/api/docs/${type}/${edit.id}`, v); toast(t("saved")); } else { await api("POST", "/api/docs/" + type, v); toast(t("posted")); } },
     { onOpen: f => { if (d.open) d.open(f, !!edit); if (vals) fillForm(f, vals); if (d.calc) { S.H.calc = () => d.calc(f); d.calc(f); } } });
@@ -837,7 +841,7 @@ function journalLinesEditor(lines) {
     ${datalist("jparties", [...(S.boot.partners || []).map(p => p.name), ...(S.boot.parties || []).map(p => p.name)])}
     <div class="row" style="margin-top:8px"><button type="button" class="btn sm" data-a="jadd">${t("add_line")}</button><span class="spacer"></span><span id="jbal"></span></div>`;
 }
-function journalForm(e) {
+function journalForm(e, copy) {
   const lines = e ? e.lines : [{ account: "", debit: "", credit: "" }, { account: "", debit: "", credit: "" }];
   const tpl = Object.fromEntries((S.boot.enums.entry_types || []).filter(x => x.active !== false).map(x => [x.id, x]));
   const html = form([
@@ -849,9 +853,9 @@ function journalForm(e) {
       { k: "deal_status", l: t("deal_status"), type: "select", opts: [["", "—"], "Open", "Settled"], v: e.meta.deal_status || "" }] : []),
     { k: "memo", l: t("memo"), v: e ? e.memo : "", span: "spanall" }]) + `<div style="margin-top:12px">${journalLinesEditor(lines)}</div>`;
   const collect = f => $$("#jl tbody tr", f).map(tr => ({ account: $(".ja", tr).value, debit: $(".jd", tr).value, credit: $(".jc", tr).value, party: $(".jp", tr).value }));
-  drawer((e ? t("edit") : t("new")) + " — " + t("m_journal"), html, async (v, f) => {
+  drawer((e && !copy ? t("edit") : t("new")) + " — " + t("m_journal"), html, async (v, f) => {
     const body = { ...v, lines: collect(f) };
-    if (e) await api("PUT", "/api/journal/" + e.id, body); else await api("POST", "/api/journal", { ...body, kind: v.template && tpl[v.template] ? tpl[v.template].kind : "Journal Voucher" });
+    if (e && !copy) await api("PUT", "/api/journal/" + e.id, body); else await api("POST", "/api/journal", { ...body, kind: copy ? (Object.values(tpl).some(x => x.kind === e.kind) ? e.kind : "Journal Voucher") : v.template && tpl[v.template] ? tpl[v.template].kind : "Journal Voucher" });
     toast(t("saved"));
   }, { onOpen: f => {
     const bal = () => { const L = collect(f); const d = L.reduce((s, l) => s + (+l.debit || 0), 0), c = L.reduce((s, l) => s + (+l.credit || 0), 0);
@@ -1077,6 +1081,9 @@ function priceSearchBox() {
 PAGES.invoice = async (view, parts, q) => {
   const isNew = parts[1] === "new";
   let x = isNew ? { number: "", date: today(), bu_id: q.bu_id || "", boq_id: q.boq_id || "", lines: [], status: "draft", customer: "", vat_code: "", wht_code: "" } : await api("GET", "/api/extracts/" + parts[1]);
+  if (isNew && q.dup) { const src = await api("GET", "/api/extracts/" + q.dup);   // a new draft copied from another invoice
+    x = { ...x, bu_id: src.bu_id, boq_id: src.boq_id || "", customer: src.customer || "", vat_code: src.vat_code || "", wht_code: src.wht_code || "",
+      lines: (src.lines || []).map(({ id, extract_id, ...l }) => l) }; }
   if (isNew && q.boq_id) { const b = await api("GET", "/api/boqs/" + q.boq_id); x.bu_id = b.bu_id; x.lines = b.lines.map(l => ({ ...l, contract_qty: l.qty, qty: 0 })); }
   const boqs = can("estimating.boqs") ? await api("GET", "/api/boqs") : [];
   const locked = x.status === "posted" || !can("sales.invoices", isNew ? "add" : "edit");
@@ -1084,6 +1091,7 @@ PAGES.invoice = async (view, parts, q) => {
     const withContract = !!x.boq_id;
     view.innerHTML = `<div class="toolbar"><a class="btn" href="#/invoices">← ${t("m_invoices")}</a><span class="spacer"></span>
         ${!isNew ? docMenu(`/api/extracts/${x.id}/file`, [["xlsx", "excel_doc"], ["pdf", "pdf_print"]], `<a href="/api/reports/vouchers?${qs({ q: x.number, kinds: "Sales Invoice", format: "pdf", lang: S.lang })}" target="_blank" rel="noopener">${S.lang === "ar" ? "القيد المحاسبي (طباعة)" : "Accounting voucher (print)"}</a>`) : ""}
+        ${!isNew && can("sales.invoices", "add") ? `<a class="btn" href="#/invoice/new?dup=${x.id}">${t("duplicate")}</a>` : ""}
         ${!locked ? `${!isNew ? `<button class="btn danger" data-a="xdel">${t("delete")}</button>` : ""}<button class="btn" data-a="xsave">${t("save")}</button><button class="btn pri" data-a="xpost">${t("save_post")}</button>` : `<span class="chip ok">${t("invoiced")}</span>`}</div>
       <div class="card">${form([{ k: "bu_id", l: t("bu"), type: "select", opts: buOpts(), v: x.bu_id, dis: locked }, { k: "number", l: t("invoice_no"), v: x.number || `INV-${today().slice(0, 7)}-`, dis: locked },
         { k: "date", l: t("date"), type: "date", v: x.date, dis: locked }, { k: "boq_id", l: t("boq"), type: "select", opts: [["", t("standalone")], ...boqs.map(b => [b.id, `${b.title} (${b.bu_code || ""})`])], v: x.boq_id, dis: locked, change: "xboq" },
@@ -1140,14 +1148,18 @@ PAGES.boqs = async (view, parts, q) => {
     `<div class="card">${rows.length ? `<div class="tbl"><table><thead><tr><th>${t("title")}</th><th>${t("bu")}</th><th>${t("revision")}</th><th>${t("date")}</th><th class="num">${t("lines")}</th><th class="num">${t("budget")}</th></tr></thead><tbody>
     ${rows.map(b => `<tr class="click" data-href="#/boq/${b.id}"><td><b>${esc(b.title)}</b></td><td>${esc(b.bu_code || "")}</td><td>${esc(b.rev)}</td><td>${fd(b.date)}</td><td class="num">${b.lines}</td><td class="num">${money(b.total)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${t("nothing")}</div>`}</div>`;
 };
-PAGES.boq = async (view, parts) => {
+PAGES.boq = async (view, parts, q = {}) => {
   const isNew = parts[1] === "new";
   let b = isNew ? { title: "", rev: "Rev 01", date: today(), bu_id: "", client: "", location: "", lines: [] } : await api("GET", "/api/boqs/" + parts[1]);
+  if (isNew && q.dup) { const src = await api("GET", "/api/boqs/" + q.dup);
+    b = { ...b, title: src.title + (S.lang === "ar" ? " (نسخة)" : " (copy)"), rev: src.rev, bu_id: src.bu_id || "", client: src.client || "", location: src.location || "",
+      lines: (src.lines || []).map(({ id, boq_id, ...l }) => l) }; }
   const ro = !can("estimating.boqs", isNew ? "add" : "edit");
   const render = () => {
     view.innerHTML = `<div class="toolbar"><a class="btn" href="#/boqs">← ${t("m_boqs")}</a><span class="spacer"></span>
       ${!isNew ? docMenu(`/api/boqs/${b.id}/file`, [["xlsx", "excel_doc"], ["pdf", "pdf_print"]]) : ""}
       ${!isNew && can("sales.invoices", "add") ? `<a class="btn" href="#/invoice/new?boq_id=${b.id}">${t("new_invoice_from")}</a>` : ""}
+      ${!isNew && can("estimating.boqs", "add") ? `<a class="btn" href="#/boq/new?dup=${b.id}">${t("duplicate")}</a>` : ""}
       ${!ro ? `${!isNew ? `<button class="btn danger" data-a="bdel">${t("delete")}</button>` : ""}<button class="btn pri" data-a="bsave">${t("save")}</button>` : ""}</div>
       <div class="card">${form([{ k: "title", l: t("title"), v: b.title }, { k: "bu_id", l: t("bu"), type: "select", opts: buOpts("—"), v: b.bu_id },
         { k: "rev", l: t("revision"), v: b.rev }, { k: "date", l: t("date"), type: "date", v: b.date }, { k: "client", l: t("client"), v: b.client }, { k: "location", l: t("location"), v: b.location }], 3)}</div>
@@ -1539,7 +1551,8 @@ PAGES.taxcodes = async (view) => {
     ${rows.map(c => `<tr class="click ${c.active ? "" : "void"}" data-a="${ed ? "tedit" : ""}" data-id="${esc(c.code)}"><td><b>${esc(c.code)}</b></td><td>${esc(S.lang === "ar" && c.name_ar ? c.name_ar : c.name)}</td><td>${c.kind === "vat" ? t("vat_code") : t("wht_code")}</td><td class="num">${pct(c.rate)}</td><td>${esc(c.eta_type)}</td><td>${esc(c.eta_subtype)}</td></tr>`).join("")}</tbody></table></div></div>`;
 };
 PAGES.einvoice = async (view, parts, q) => {
-  const [st, inv] = await Promise.all([api("GET", "/api/einvoice/settings"), can("sales.invoices") ? api("GET", "/api/extracts?" + qs({ ...q, status: "posted" })) : []]);
+  const [st, inv] = await Promise.all([api("GET", "/api/einvoice/settings"), can("sales.invoices") || can("tax.einvoice") ? api("GET", "/api/extracts?" + qs(q)) : []]);
+  const drafts = inv.filter(x => x.status !== "posted").length;
   const ed = can("tax.einvoice", "edit");
   S.H.etasave = async () => { try { await api("PUT", "/api/einvoice/settings", readForm($("#etaset"))); toast(t("saved")); route(); } catch (e) { fail(e); } };
   S.H.etatest = async () => { try { await api("POST", "/api/einvoice/test", {}); toast("✓ ETA"); } catch (e) { fail(e); } };
@@ -1561,7 +1574,9 @@ PAGES.einvoice = async (view, parts, q) => {
       ${ed ? `<div class="row" style="margin-top:10px"><button class="btn pri" data-a="etasave">${t("save")}</button><button class="btn" data-a="etatest">${t("eta_test")}</button></div>` : ""}
       <p class="muted" style="font-size:.8em">${S.lang === "ar" ? "رقم التسجيل الضريبي للشركة يُضبط في الإعدادات ← الشركة." : "Your company's tax registration number is set in Settings → Company."}</p></div></div>
     <div class="card"><h2>${t("m_invoices")}</h2>${inv.length ? `<div class="tbl"><table><thead><tr><th></th><th>${t("invoice_no")}</th><th>${t("customer")}</th><th>${t("date")}</th><th class="num">${t("amount")}</th><th>${t("eta_status")}</th></tr></thead><tbody>
-      ${inv.map(x => `<tr><td>${ed ? `<input type="checkbox" class="etachk" value="${x.id}" ${/valid|submitted/i.test(x.eta_status || "") ? "disabled" : ""}>` : ""}</td><td><a href="#/invoice/${x.id}">${esc(x.number)}</a></td><td>${esc(x.customer)}</td><td>${fd(x.date)}</td><td class="num">${money(x.total)}</td><td>${esc(x.eta_status || "—")}</td></tr>`).join("")}</tbody></table></div>
+      ${inv.map(x => { const draft = x.status !== "posted"; return `<tr class="${draft ? "void" : ""}"><td>${ed ? `<input type="checkbox" class="etachk" value="${x.id}" ${draft || /valid|submitted/i.test(x.eta_status || "") ? "disabled" : ""}>` : ""}</td><td><a href="#/invoice/${x.id}">${esc(x.number)}</a></td><td>${esc(x.customer)}</td><td>${fd(x.date)}</td><td class="num">${money(x.total)}</td>
+        <td>${draft ? `<span class="chip warn">${L2("Draft — post it first", "مسودة — يجب ترحيلها أولاً")}</span> <a class="btn sm" href="#/invoice/${x.id}">${L2("Open", "فتح")}</a>` : esc(x.eta_status || "—")}</td></tr>`; }).join("")}</tbody></table></div>
+      ${drafts ? `<p class="muted" style="margin-top:8px">${L2("The Tax Authority only accepts issued invoices: open a draft and press “Save & post”, then it can be sent or included in the batch files.", "منظومة الضرائب تقبل الفواتير المُصدرة فقط: افتح المسودة واضغط «حفظ وترحيل»، بعدها يمكن إرسالها أو إضافتها لملفات الدفعة.")}</p>` : ""}
       ${ed ? `<div class="row" style="margin-top:10px"><button class="btn pri" data-a="etasel">${t("eta_submit")}</button></div>` : ""}` : `<div class="empty">${t("nothing")}</div>`}</div>`;
   if (!ed) $$("#etaset input, #etaset select").forEach(e => { e.disabled = true; });
 };
