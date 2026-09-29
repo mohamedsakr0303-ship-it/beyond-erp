@@ -884,6 +884,31 @@ class Documents(unittest.TestCase):
         self.assertIn("word/media/watermark.png", docx.namelist())   # offers get the watermark by default
         self.assertEqual(documents.words_ar(60000), "ستون ألف")
 
+    def test_banks_on_offers(self):
+        from erp import documents
+        self.db.set_setting("bank_name", "Old Bank")                 # books from before the bank list
+        self.db.set_setting("bank_account", "111")
+        self.assertEqual([(b["id"], b["acct"]) for b in documents.banks(self.db)], [("main", "111")])
+        self.db.set_setting("banks", json.dumps([{"id": "cib", "label": "CIB", "bank": "CIB", "acct": "222"},
+                                                 {"id": "nbe", "label": "NBE", "bank": "NBE", "acct": "333"}]))
+        self.db.set_setting("bank_default", "nbe")
+        self.assertEqual(documents.company(self.db)["bank"]["acct"], "333")
+        t = documents.list_offer_types(self.db)[0]
+
+        def bank_text(pick, details=None):
+            secs = [dict(x) for x in t["sections"]]
+            for x in secs:
+                if x["kind"] == "bank":
+                    x.update(bank_id=pick, **({"bank_details": details} if details else {}))
+            oid = documents.save_offer(self.db, dict(t, type_id=t["id"], client="Z", sections=secs))
+            blocks, _ = documents.offer_blocks(self.db, documents.get_offer(self.db, oid))
+            return json.dumps(blocks, ensure_ascii=False)
+        self.assertIn("333", bank_text(""))                               # default
+        self.assertIn("222", bank_text("cib"))                            # one of the saved banks
+        out = bank_text("custom", {"bank": "QNB", "acct": "999", "evil": "x"})
+        self.assertIn("999", out)
+        self.assertNotIn("333", out)
+
     def test_lock_date_and_json_extras(self):
         self.db.set_setting("lock_date", "2026-03-31")
         with self.assertRaises(a.ValidationError):

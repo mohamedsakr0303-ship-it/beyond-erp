@@ -917,6 +917,8 @@ PAGES.bus = async (view, parts, q) => {
     `<div class="banner ${alloc > 1.0001 ? "err" : "info"}">${t("shared_pool")}: <b>${money(d.shared_overhead)}</b> · ${t("alloc_total")}: <b>${pct(alloc)}</b> — ${t("overhead_note")}</div>` +
     `<div class="card">${buTable(d.rows)}</div>`;
 };
+const BANK_F = () => [["label", L2("Name for this account", "اسم مختصر للحساب"), "CIB — EGP"], ["bank", t("bank_name")], ["acct", t("bank_account")], ["holder", t("bank_holder")], ["swift", t("swift")], ["iban", t("iban")]];
+const bankName = b => b.label || b.bank || b.acct || "—";
 // what happens to a discount negotiated with a supplier (per business unit; each cost can override it)
 const NEGO_OPTS = () => [["keep", L2("Company earnings — client billed on the full price", "أرباح للشركة — العميل يُحاسب بالسعر الكامل")],
   ["pass", L2("Lower the cost — the client benefits", "تخفيض التكلفة — لصالح العميل")]];
@@ -1306,7 +1308,15 @@ function offerEditor(view, d, opts) {
       body = `<div class="tbl"><table><thead><tr><th>${t("milestone")}</th><th class="num" style="width:110px">%</th><th style="width:40px"></th></tr></thead><tbody>
         ${(s.milestones || []).map((m, j) => `<tr><td><input dir="auto" value="${esc(m.label)}" data-input="oms" data-i="${i}" data-j="${j}" data-k="label"></td><td><input class="num" type="number" step="any" value="${m.pct ?? 0}" data-input="oms" data-i="${i}" data-j="${j}" data-k="pct"></td><td><button class="btn sm danger" data-a="omsdel" data-i="${i}" data-j="${j}">✕</button></td></tr>`).join("")}</tbody></table></div>
         <div class="row" style="margin-top:8px"><button class="btn sm" data-a="omsadd" data-i="${i}">+ ${t("milestone")}</button>${style(t("as_lines"), t("as_table"))}<span id="oms${i}" class="${Math.abs(tot - 100) < 0.001 ? "muted" : "neg"}">${Math.abs(tot - 100) < 0.001 ? t("sum_100") : `${t("sum_not_100")} ${tot}%`}</span></div>`; }
-    if (s.kind === "bank") body = `<div class="row">${style(t("as_lines"), t("as_table"))}<span class="muted">${S.lang === "ar" ? "تُستخدم بيانات البنك من الإعدادات ← الشركة، ويُخفى القسم إن كانت فارغة." : "Uses the bank details in Settings → Company; hidden when they are empty."}</span></div>`;
+    if (s.kind === "bank") { const bs = S.boot.settings.banks || [], dflt = bs.find(b => b.id === S.boot.settings.bank_default) || bs[0];
+      const pick = s.bank_id || "", bd = s.bank_details || {};
+      body = `<div class="grid g2"><label class="f">${L2("Bank account", "الحساب البنكي")}<select data-change="obankpick" data-i="${i}">
+          <option value="">${L2("Default", "الافتراضي")}${dflt ? ` — ${esc(bankName(dflt))}` : ""}</option>
+          ${bs.map(b => `<option value="${esc(b.id)}" ${pick === b.id ? "selected" : ""}>${esc(bankName(b))}</option>`).join("")}
+          <option value="custom" ${pick === "custom" ? "selected" : ""}>${L2("Other — enter details for this offer", "أخرى — إدخال بيانات لهذا العرض")}</option></select></label>${style(t("as_lines"), t("as_table"))}</div>
+        ${pick === "custom" ? `<div class="grid g3" style="margin-top:8px">${BANK_F().slice(1).map(([k, l]) => `<label class="f">${esc(l)}<input dir="auto" value="${esc(bd[k] || "")}" data-input="obank" data-i="${i}" data-k="${k}"></label>`).join("")}</div>
+          ${can("settings.company", "edit") ? `<button class="btn sm" style="margin-top:8px" data-a="obanksave" data-i="${i}">+ ${L2("Save to the company's banks", "حفظ ضمن بنوك الشركة")}</button>` : ""}`
+          : `<div class="muted" style="margin-top:6px">${(() => { const b = bs.find(x => x.id === pick) || dflt; return b ? esc([b.bank, b.acct, b.holder, b.iban].filter(Boolean).join(" · ")) : L2("No bank saved yet — choose Other, or add one in Settings → Company.", "لا يوجد بنك محفوظ — اختر «أخرى» أو أضف بنكاً من الإعدادات ← الشركة."); })()}</div>`}`; }
     return `<div class="sec-ed"><div class="row" style="margin-bottom:8px"><span class="chip">${t("sk_" + s.kind)}</span>
       <input style="flex:1;min-width:160px;font-weight:700" dir="auto" placeholder="${t("heading")}" value="${esc(s.heading || "")}" data-input="osec" data-i="${i}" data-k="heading">
       <button class="btn sm" data-a="osecmv" data-i="${i}" data-d="-1" ${i ? "" : "disabled"} title="${t("move_up")}">↑</button>
@@ -1355,6 +1365,15 @@ function offerEditor(view, d, opts) {
         payment: { heading: ar ? "شروط الدفع" : "PAYMENT TERMS", milestones: [{ label: ar ? "دفعة مقدمة" : "Advance payment", pct: 50 }, { label: ar ? "عند التسليم" : "On completion", pct: 50 }] },
         bank: { heading: ar ? "بيانات البنك" : "BANK DETAILS" }, signature: { heading: ar ? "القبول" : "ACCEPTANCE", body: ar ? "اسم العميل: ____________________\nالتوقيع: ____________________   التاريخ: __________" : "Client name: ____________________\nSignature: ____________________   Date: __________" } }[el.dataset.k];
       d.sections.push({ kind: el.dataset.k, ...blank }); render(); },
+    obankpick: el => { const s = d.sections[+el.dataset.i]; s.bank_id = el.value;
+      if (el.value === "custom" && !s.bank_details) { const b = (S.boot.settings.banks || []).find(x => x.id === S.boot.settings.bank_default) || {}; s.bank_details = { bank: b.bank || "", acct: b.acct || "", holder: b.holder || "", swift: b.swift || "", iban: b.iban || "" }; }
+      render(); },
+    obank: el => { const s = d.sections[+el.dataset.i]; s.bank_details = { ...(s.bank_details || {}), [el.dataset.k]: el.value }; preview(); },
+    obanksave: async el => { const s = d.sections[+el.dataset.i], bd = s.bank_details || {};
+      if (!Object.values(bd).some(Boolean)) return;
+      const id = "b" + Date.now().toString(36); const bs = [...(S.boot.settings.banks || []), { id, label: bd.bank || "", ...bd }];
+      try { await api("PUT", "/api/settings", { banks: bs, bank_default: S.boot.settings.bank_default || id }); await refreshBoot();
+        const saved = (S.boot.settings.banks || []).find(b => b.acct === bd.acct && b.bank === bd.bank) || {}; s.bank_id = saved.id || ""; delete s.bank_details; toast(t("saved")); render(); } catch (e) { fail(e); } },
     osave: async () => { try { await opts.onSave(d); } catch (e) { fail(e); } },
   });
   render();
@@ -1609,8 +1628,8 @@ PAGES.settings = async (view, parts, q) => {
       { k: "font_family", l: t("font_family") + " (" + t("default") + ")", type: "select", opts: FONTS.map(f => [f, f]), v: st.font_family || "system" },
       { k: "font_size", l: t("font_size") + " (" + t("default") + ")", type: "number", v: st.font_size || 15 },
       { k: "units", l: t("units"), v: (st.units || []).join(", "), span: "span2" }], 4)}</div>
-      <div class="card"><h2>${t("bank_details")}</h2>${form([{ k: "bank_name", l: t("bank_name"), v: st.bank_name }, { k: "bank_account", l: t("bank_account"), v: st.bank_account },
-        { k: "bank_holder", l: t("bank_holder"), v: st.bank_holder }, { k: "bank_swift", l: t("swift"), v: st.bank_swift }, { k: "bank_iban", l: t("iban"), v: st.bank_iban, span: "span2" }], 3)}</div>
+      <div class="card"><h2>${t("bank_details")}</h2><p class="muted" style="margin-top:-4px">${L2("Add every account you use. The default one goes on new offers; each offer can pick another or enter its own.", "أضف كل الحسابات التي تستخدمها. الافتراضي يظهر في العروض الجديدة، ويمكن لكل عرض اختيار حساب آخر أو إدخال بيانات خاصة.")}</p><div id="banks"></div>
+        ${ed ? `<button class="btn sm" type="button" data-a="bankadd">+ ${L2("Add bank account", "إضافة حساب بنكي")}</button>` : ""}</div>
       <div class="card"><h2>${t("numbering")}</h2>${form([{ k: "offer_prefix", l: t("offer_prefix"), v: st.offer_prefix || "OFR-", help: "{YYYY} = year" },
         { k: "offer_digits", l: t("offer_digits"), type: "number", v: st.offer_digits || 4 }, { k: "offer_validity_days", l: t("offer_validity"), type: "number", v: st.offer_validity_days || 15 }], 3)}</div>
       <div class="card" id="regcard"><h2>${t("regional")}</h2>${form([
@@ -1619,8 +1638,20 @@ PAGES.settings = async (view, parts, q) => {
         { k: "decimals", l: t("decimals"), type: "select", opts: [["2", "1,234.56"], ["0", "1,235"]], v: String(rg.decimals ?? "2") },
         { k: "digits", l: t("digits"), type: "select", opts: [["latin", t("dg_latin")], ["arabic", t("dg_arabic")]], v: rg.digits || "latin" }], 4)}</div>
       ${ed ? `<div class="row"><button class="btn pri" data-a="cosave">${t("save")}</button></div>` : ""}</div>`;
+    let banks = (st.banks || []).map(b => ({ ...b })), bankDefault = st.bank_default || (banks[0] || {}).id || "";
+    const drawBanks = () => { $("#banks").innerHTML = banks.length ? banks.map((b, i) => `<div class="sec-ed" style="margin-bottom:10px"><div class="row" style="margin-bottom:6px">
+        <label class="f chk" style="margin:0"><input type="radio" name="bank_def_pick" data-skip="1" data-change="bankdef" data-i="${i}" ${b.id === bankDefault ? "checked" : ""}>${L2("Default", "الافتراضي")}</label><span class="spacer"></span>
+        ${ed ? `<button class="btn sm danger" type="button" data-a="bankdel" data-i="${i}">✕</button>` : ""}</div>
+        <div class="grid g3">${BANK_F().map(([k, l, ph]) => `<label class="f">${esc(l)}<input dir="auto" data-skip="1" value="${esc(b[k] || "")}" ${ph ? `placeholder="${esc(ph)}"` : ""} data-input="bankf" data-i="${i}" data-k="${k}"></label>`).join("")}</div></div>`).join("")
+        : `<div class="empty">${L2("No bank accounts yet.", "لا توجد حسابات بنكية بعد.")}</div>`;
+      if (!ed) $$("#banks input").forEach(e => { e.disabled = true; }); };
+    S.H.bankadd = () => { const id = "b" + Date.now().toString(36); banks.push({ id, label: "", bank: "", acct: "", holder: "", swift: "", iban: "" }); if (!bankDefault) bankDefault = id; drawBanks(); };
+    S.H.bankdel = el => { const [gone] = banks.splice(+el.dataset.i, 1); if (gone.id === bankDefault) bankDefault = (banks[0] || {}).id || ""; drawBanks(); };
+    S.H.bankdef = el => { bankDefault = banks[+el.dataset.i].id; };
+    S.H.bankf = el => { banks[+el.dataset.i][el.dataset.k] = el.value; };
+    drawBanks();
     if (!ed) $$("#cocard input, #cocard select").forEach(e => { e.disabled = true; });
-    S.H.cosave = async () => { const v = readForm($("#cocard")); const regional = {};
+    S.H.cosave = async () => { const v = readForm($("#cocard")); const regional = {}; v.banks = banks; v.bank_default = bankDefault;
       ["date_format", "negative", "decimals", "digits"].forEach(k => { regional[k] = v[k]; delete v[k]; });
       v.regional = regional; v.units = v.units.split(",").map(x => x.trim()).filter(Boolean);
       try { await api("PUT", "/api/settings", v);

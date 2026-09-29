@@ -145,11 +145,49 @@ def r2(v):
     return round(float(v or 0) + 0.0, 2)
 
 
+BANK_FIELDS = ("bank", "acct", "holder", "swift", "iban")
+
+
+def clean_bank(b):
+    b = b if isinstance(b, dict) else {}
+    return {k: text(b.get(k), maxlen=200) for k in BANK_FIELDS}
+
+
+def banks(db):
+    """The company's bank accounts (Settings → Company). Books from before the list existed keep their one bank."""
+    try:
+        out = json.loads(db.setting("banks", "") or "[]")
+    except json.JSONDecodeError:
+        out = []
+    out = [{"id": text(b.get("id"), maxlen=40), "label": text(b.get("label"), maxlen=120), **clean_bank(b)}
+           for b in out if isinstance(b, dict) and b.get("id")]
+    if not out:
+        s = lambda k: db.setting(k, "") or ""  # noqa: E731
+        legacy = {"bank": s("bank_name"), "acct": s("bank_account"), "holder": s("bank_holder"),
+                  "swift": s("bank_swift"), "iban": s("bank_iban")}
+        if any(legacy.values()):
+            out = [{"id": "main", "label": legacy["bank"], **legacy}]
+    return out
+
+
+def default_bank(db):
+    bs = banks(db)
+    want = db.setting("bank_default", "") or ""
+    return next((b for b in bs if b["id"] == want), bs[0] if bs else {"id": "", "label": "", **clean_bank({})})
+
+
+def bank_for(db, section):
+    """Bank shown in an offer section: its own details, one of the company's banks, or the default."""
+    pick = (section or {}).get("bank_id") or ""
+    if pick == "custom":
+        return clean_bank(section.get("bank_details"))
+    return next((b for b in banks(db) if b["id"] == pick), None) or default_bank(db)
+
+
 def company(db):
     s = lambda k: db.setting(k, "") or ""  # noqa: E731
     return {"name": s("company_name"), "legal": s("company_legal_name"), "currency": s("currency") or "EGP",
-            "bank": {"bank": s("bank_name"), "acct": s("bank_account"), "holder": s("bank_holder"),
-                     "swift": s("bank_swift"), "iban": s("bank_iban")},
+            "bank": clean_bank(default_bank(db)),
             "validity": int(float(s("offer_validity_days") or 15))}
 
 
@@ -800,7 +838,6 @@ def offer_blocks(db, o):
     mny = lambda n: doc_money(n, lang, cur_code)  # noqa: E731
     cur = AR_SYMBOL.get(cur_code, cur_code) if lang == "ar" else cur_code
     net = offer_totals(pricing(o))["net"]
-    bank = company(db)["bank"]
     T = fill(o.get("title"), cx)
     k = T.find(":")
     out = [{"t": "head"}, {"t": "title", "lead": T[:k + 1] if k >= 0 else T, "rest": T[k + 1:] if k >= 0 else ""}]
@@ -810,6 +847,7 @@ def offer_blocks(db, o):
         table = s.get("style") == "table"
         kind = s.get("kind")
         if kind == "bank":
+            bank = bank_for(db, s)
             rows = [[a, v] for a, v in [[L["bank"], bank["bank"]], [L["acct"], bank["acct"]], [L["holder"], bank["holder"]],
                                         [L["swift"], bank["swift"]], [L["iban"], bank["iban"]]] if v]
             if not rows:
@@ -1208,6 +1246,12 @@ def _content(d):
             x.update(items=[{"desc": text(i.get("desc"), maxlen=1000), "amount": acc.num(i.get("amount"), "amount")}
                             for i in (s.get("items") or [])], discount=acc.num(s.get("discount"), "discount"),
                      vat=acc.num(s.get("vat"), "VAT %"), words=s.get("words") is not False)
+        if s["kind"] == "bank":
+            pick = text(s.get("bank_id"), maxlen=40)
+            if pick:
+                x["bank_id"] = pick
+            if pick == "custom":
+                x["bank_details"] = clean_bank(s.get("bank_details"))
         if s["kind"] == "payment":
             x["milestones"] = [{"label": text(m.get("label"), maxlen=500), "pct": acc.num(m.get("pct"), "%")}
                                for m in (s.get("milestones") or [])]

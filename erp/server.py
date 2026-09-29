@@ -66,10 +66,11 @@ def page(q):
 COMPANY_KEYS = ("company_name", "company_tagline", "company_address", "company_tax_id", "currency", "font_family",
                 "font_size", "units", "fiscal_year_start", "language", "company_legal_name", "company_cr_no",
                 "company_city", "company_phone", "company_email", "company_website", "bank_name", "bank_account",
-                "bank_holder", "bank_swift", "bank_iban", "offer_validity_days", "offer_prefix", "offer_digits", "regional")
+                "bank_holder", "bank_swift", "bank_iban", "offer_validity_days", "offer_prefix", "offer_digits", "regional",
+                "banks", "bank_default")
 PUBLIC_SETTINGS = COMPANY_KEYS + ("menu_labels", "reserve_pct", "report_from", "report_to", "lock_date", "hidden_modules",
                                   "appearance")
-JSON_SETTINGS = {"menu_labels": {}, "units": [], "hidden_modules": [], "appearance": {}, "regional": {}}
+JSON_SETTINGS = {"menu_labels": {}, "units": [], "hidden_modules": [], "appearance": {}, "regional": {}, "banks": []}
 
 
 def settings_dict(db):
@@ -80,6 +81,8 @@ def settings_dict(db):
             out[k] = json.loads(out[k] or json.dumps(empty))
         except json.JSONDecodeError:
             out[k] = empty
+    out["banks"] = documents.banks(db)   # includes the single bank of books from before the list existed
+    out["bank_default"] = documents.default_bank(db)["id"]
     return out
 
 
@@ -201,6 +204,29 @@ def put_settings(ctx):
     if "hidden_modules" in keys:
         ctx.require("settings.menus", "edit")
     allowed = set(PUBLIC_SETTINGS) | {"backup_keep"}
+    if "banks" in ctx.body:   # several bank accounts; one is the default used on documents
+        seen, clean = set(), []
+        for b in ctx.body["banks"] if isinstance(ctx.body["banks"], list) else []:
+            if not isinstance(b, dict):
+                continue
+            row = {"id": acc.text(b.get("id"), maxlen=40), "label": acc.text(b.get("label"), maxlen=120),
+                   **documents.clean_bank(b)}
+            if not any(row[k] for k in documents.BANK_FIELDS):
+                continue
+            if not row["id"] or row["id"] in seen or row["id"] == "custom":
+                row["id"] = "b" + str(len(clean) + 1)
+                while row["id"] in seen:
+                    row["id"] += "x"
+            seen.add(row["id"])
+            clean.append(row)
+        ctx.body["banks"] = clean
+        want = acc.text(ctx.body.get("bank_default", ctx.db.setting("bank_default", "")))
+        dflt = next((b for b in clean if b["id"] == want), clean[0] if clean else None)
+        ctx.body["bank_default"] = dflt["id"] if dflt else ""
+        # older screens and exports read these
+        for k, f in (("bank_name", "bank"), ("bank_account", "acct"), ("bank_holder", "holder"),
+                     ("bank_swift", "swift"), ("bank_iban", "iban")):
+            ctx.body[k] = dflt[f] if dflt else ""
     for k, v in ctx.body.items():
         if k not in allowed:
             continue
