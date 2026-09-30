@@ -1040,6 +1040,68 @@ class Rentals(unittest.TestCase):
         self.assertEqual(R.item_stock(db, self.ids["SC-FRM2"])["on_rent"], 0)
         self.assertEqual([c["check"] for c in a.audit(db) if not c["ok"]], [])
 
+    def test_depreciation(self):
+        R, db = self.R, self.db
+        fid = self.ids["SC-FRM2"]
+        # lots: 150 × 900 (Jan 2025) and 100 × 980 (Jan 2026); 10 years to 10 %
+        pl = R.plan_depreciation(db, "2026-06")
+        lots = {r["lot"]: (r["from"], r["months"], r["amount"]) for r in pl["rows"] if r["item_id"] == fid}
+        self.assertEqual(lots["LOT-00001"], ("2025-01", 18, int(round(150 * 90000 * 0.9 / 120 * 18))))
+        self.assertEqual(lots["LOT-00002"], ("2026-01", 6, int(round(100 * 98000 * 0.9 / 120 * 6))))
+        eid = R.run_depreciation(db, "2026-06")
+        with self.assertRaises(a.ValidationError):
+            R.run_depreciation(db, "2026-06")                 # nothing left for those months
+        st = R.item_stock(db, fid)
+        self.assertEqual(st["accum"], (lots["LOT-00001"][2] + lots["LOT-00002"][2]) / 100)
+        self.assertEqual(R.plan_depreciation(db, "2026-07")["rows"][0]["months"], 1)   # next month only
+        # scrapping 15 pieces of the oldest lot clears 10 % of that lot's depreciation
+        R.scrap(db, {"item_id": fid, "qty": 15, "date": "2026-07-01"})
+        e = a.get_entry(db, db.q("SELECT id FROM journal_entries WHERE kind='Rental Equipment Loss'")[-1]["id"])
+        share = int(round(lots["LOT-00001"][2] * 15 / 150)) / 100
+        self.assertIn((db.acct("rental_accum"), share, 0.0), [(ln["account"], ln["debit"], ln["credit"]) for ln in e["lines"]])
+        self.assertIn(("1415", 0.0, 13500.0), [(ln["account"], ln["debit"], ln["credit"]) for ln in e["lines"]])
+        a.void_entry(db, eid, "redo")                         # a voided run is simply booked again
+        self.assertEqual(R.plan_depreciation(db, "2026-06")["rows"][0]["from"], "2025-01")
+        self.assertEqual([c["check"] for c in a.audit(db) if not c["ok"]], [])
+
+    def test_minimum_period_and_deposit(self):
+        R, db = self.R, self.db
+        rid = R.save(db, {"client": "Client X", "min_days": 30, "deposit": 5000, "deposit_first": True,
+                          "lines": [{"kind": "item", "item_id": self.ids["SC-FRM2"], "qty": 50, "rate": 60}]})
+        R.action(db, rid, "po", {"po_number": "P"})
+        R.action(db, rid, "sign", {"signed_us": "a", "signed_client": "b"})
+        hid = self._deliver(rid)
+        with self.assertRaises(a.ValidationError):            # deposit first
+            R.confirm_handover(db, hid)
+        R.action(db, rid, "deposit", {"type": "receive", "amount": 5000, "date": "2026-07-30"})
+        R.confirm_handover(db, hid)
+        t = R.handover_template(db, rid, "return")
+        t.update(date="2026-08-10", signed=1, our_name="a", client_name="b")
+        t["data"]["units"] = {k: 20 for k in t["data"]["units"]}
+        t["data"]["items"][0]["qty"] = 20
+        R.confirm_handover(db, R.save_handover(db, rid, t))
+        mins = [c for c in R.detail(db, rid)["charges"] if c["kind"] == "minimum"]
+        self.assertEqual(len(mins), 1)
+        self.assertAlmostEqual(mins[0]["total"], 20 * 20 / 30 * 60, delta=0.05)   # 20 frames kept 10 of 30 days
+        xid = R.create_invoice(db, rid, {"from": "2026-08-01", "to": "2026-08-31"})
+        a.post_extract(db, xid)
+        owed = -a.party_balance(db, db.acct("ar"), "Client X")
+        with self.assertRaises(a.ValidationError):            # not more than they owe
+            R.action(db, rid, "deposit", {"type": "apply", "amount": owed + 1})
+        R.action(db, rid, "deposit", {"type": "apply", "amount": owed})
+        self.assertEqual(a.party_balance(db, db.acct("ar"), "Client X"), 0)
+        t = R.handover_template(db, rid, "return")
+        t.update(date="2026-09-01", signed=1, our_name="a", client_name="b")
+        R.confirm_handover(db, R.save_handover(db, rid, t))
+        R.create_invoice(db, rid, {"from": "2026-09-01", "to": "2026-09-01"})
+        with self.assertRaises(a.ValidationError):            # deposit still held
+            R.action(db, rid, "close", {})
+        left = R.detail(db, rid)["rental"]["deposit_held"]
+        R.action(db, rid, "deposit", {"type": "refund", "amount": left})
+        R.action(db, rid, "close", {})
+        self.assertEqual(R.get(db, rid)["status"], "closed")
+        self.assertEqual([c["check"] for c in a.audit(db) if not c["ok"]], [])
+
     def test_undo_short_stock_and_backup(self):
         from erp import interchange, rental_docs
         R, db = self.R, self.db

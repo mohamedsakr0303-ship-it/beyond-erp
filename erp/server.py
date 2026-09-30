@@ -1127,6 +1127,18 @@ def rent_kit_del(ctx, kid):
     return ok()
 
 
+@route("POST", "/api/rent-depreciation-preview", "rentals.fleet", "add")
+def rent_depr_preview(ctx):
+    return ok(rentals.plan_depreciation(ctx.db, ctx.body.get("through")))
+
+
+@route("POST", "/api/rent-depreciation", "rentals.fleet", "add")
+def rent_depr_run(ctx):
+    eid = rentals.run_depreciation(ctx.db, ctx.body.get("through"), ctx.user["username"])
+    ctx.log("rent.depreciation", eid)
+    return ok({"id": eid})
+
+
 @route("POST", "/api/rent-starter", "rentals.fleet", "add")
 def rent_starter(ctx):
     return ok(rentals.starter(ctx.db))

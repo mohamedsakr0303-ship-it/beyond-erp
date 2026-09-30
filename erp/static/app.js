@@ -2686,7 +2686,8 @@ PAGES.rental = async (view, parts) => {
     rhopen: el => { const h = d.handovers.find(x => x.id === +el.dataset.id); handoverForm(d, h.kind, h); },
     rhprint: el => openDocTab(`/api/rental-handovers/${el.dataset.id}/doc?lang=${el.dataset.l || R.lang}`),
     rchdel: async el => { if (!confirm(t("confirm_delete"))) return; try { await api("DELETE", "/api/rental-charges/" + el.dataset.id); route(); } catch (e) { fail(e); } },
-    rbill: async el => { try { await api("POST", `/api/rentals/${R.id}/charge`, { line_id: +el.dataset.id }); toast(t("saved")); route(); } catch (e) { fail(e); } } });
+    rbill: async el => { try { await api("POST", `/api/rentals/${R.id}/charge`, { line_id: +el.dataset.id }); toast(t("saved")); route(); } catch (e) { fail(e); } },
+    rdep: el => rentDeposit(R, el.dataset.k) });
   const docs = k => `<div class="dd"><button class="btn">${k === "offer" ? L2("Print offer", "طباعة العرض") : L2("Print contract", "طباعة العقد")} ▾</button><div class="dd-menu">
     <button data-a="rdoc" data-k="${k}" data-l="ar">العربية</button><button data-a="rdoc" data-k="${k}" data-l="en">English</button></div></div>`;
   const steps = ["quote", "ordered", "active", "returned", "closed"], cur = steps.indexOf(R.status);
@@ -2699,6 +2700,8 @@ PAGES.rental = async (view, parts) => {
       ${!done && add && onSite ? `<button class="btn" data-a="rret">+ ${L2("Return", "إرجاع")}</button>` : ""}
       ${!done && add && R.po_number ? `<button class="btn" data-a="rchg">+ ${L2("Charge", "مبلغ إضافي")}</button>` : ""}
       ${add && delivered && can("sales.invoices", "add") ? `<button class="btn" data-a="rinv">${L2("Invoice", "فاتورة")}</button>` : ""}
+      ${add && R.po_number ? `<div class="dd"><button class="btn">${L2("Deposit", "التأمين")} ▾</button><div class="dd-menu"><button data-a="rdep" data-k="receive">${L2("Receive deposit", "استلام تأمين")}</button>
+        ${R.deposit_held > 0 ? `<button data-a="rdep" data-k="apply">${L2("Apply to invoices", "خصم من الفواتير")}</button><button data-a="rdep" data-k="refund">${L2("Refund deposit", "رد التأمين")}</button>` : ""}</div></div>` : ""}
       <span class="spacer"></span>
       ${ed && !done && R.status === "returned" ? `<button class="btn" data-a="rclose">${L2("Close contract", "إغلاق العقد")}</button>` : ""}
       ${ed && !done && !delivered ? `<button class="btn" data-a="rcancel">${L2("Cancel", "إلغاء")}</button>` : ""}
@@ -2709,12 +2712,14 @@ PAGES.rental = async (view, parts) => {
       ${R.po_number && !R.signed_on && !done ? `<span class="chip bad">${L2("Contract not signed — deliveries need both signatures", "العقد غير موقّع — التسليم يحتاج توقيع الطرفين")}</span>` : ""}</div>
     <div class="kpis">${kpiBox(L2("Rent / month on site", "الإيجار الشهري بالموقع"), d.on_site_monthly, "pos", R.status === "quote" ? `${L2("offer", "العرض")}: ${money(q.monthly)}` : "")}
       ${kpiBox(L2("One-time charges (offer)", "مبالغ لمرة واحدة"), q.one_time)}${kpiBox(L2("Not invoiced yet", "لم تُفوتر بعد"), d.unbilled_charges, d.unbilled_charges ? "neg" : "", L2("charges", "مبالغ"))}
-      ${kpiBox(L2("Pieces on site", "القطع بالموقع"), numf(d.held.reduce((s, h) => s + h.qty, 0)), "", `${L2("value", "القيمة")} ${money(d.held.reduce((s, h) => s + h.value, 0))}`)}</div>
+      ${kpiBox(L2("Pieces on site", "القطع بالموقع"), numf(d.held.reduce((s, h) => s + h.qty, 0)), "", `${L2("value", "القيمة")} ${money(d.held.reduce((s, h) => s + h.value, 0))}`)}
+      ${R.deposit || R.deposit_held ? kpiBox(L2("Security deposit held", "التأمين المحتفظ به"), R.deposit_held, R.deposit && R.deposit_held < R.deposit && !done ? "neg" : "", R.deposit ? `${L2("required", "المطلوب")} ${money(R.deposit)}${R.deposit_first ? " · " + L2("before delivery", "قبل التسليم") : ""}` : "") : ""}</div>
     <div class="card"><div class="tbl"><table><tbody>
       <tr><td class="muted">${t("client")}</td><td>${esc(R.client)}${R.contact || R.phone ? ` · ${esc([R.contact, R.phone].filter(Boolean).join(" · "))}` : ""}</td><td class="muted">${L2("Site", "الموقع")}</td><td>${esc([R.site, R.site_location].filter(Boolean).join(" — "))}</td></tr>
       <tr><td class="muted">${L2("Offer date", "تاريخ العرض")}</td><td>${fd(R.quote_date)}${R.valid_until ? ` · ${L2("valid until", "صالح حتى")} ${fd(R.valid_until)}` : ""}</td><td class="muted">${L2("Client PO", "أمر الشراء")}</td><td>${R.po_number ? `${esc(R.po_number)} · ${fd(R.po_date)}` : "—"}</td></tr>
       <tr><td class="muted">${L2("Contract signed", "توقيع العقد")}</td><td>${R.signed_on ? `${fd(R.signed_on)} · ${esc(R.signed_us)} / ${esc(R.signed_client)}${ed && !delivered ? ` <button class="btn sm" data-a="runsign">${t("edit")}</button>` : ""}` : "—"}</td>
-        <td class="muted">${t("bu")}</td><td>${R.bu_id ? `<a href="#/bu/${R.bu_id}">${esc(R.bu_code)}</a> <span class="muted">${L2("(profit & loss of this contract)", "(أرباح وخسائر هذا العقد)")}</span>` : "—"}</td></tr></tbody></table></div></div>
+        <td class="muted">${t("bu")}</td><td>${R.bu_id ? `<a href="#/bu/${R.bu_id}">${esc(R.bu_code)}</a> <span class="muted">${L2("(profit & loss of this contract)", "(أرباح وخسائر هذا العقد)")}</span>` : "—"}</td></tr>
+      ${R.min_days ? `<tr><td class="muted">${L2("Minimum rental period", "الحد الأدنى لمدة الإيجار")}</td><td>${R.min_days} ${L2("days", "يوم")}</td><td></td><td></td></tr>` : ""}</tbody></table></div></div>
     <div class="card"><h2>${L2("What is rented", "المؤجر")}</h2><div class="tbl stack"><table><thead><tr><th>${t("description")}</th><th>${L2("Type", "النوع")}</th><th class="num">${L2("Planned", "المخطط")}</th><th class="num">${L2("Rate", "السعر")}</th><th class="num">${L2("On site", "بالموقع")}</th><th class="num">${L2("Delivered / returned", "مسلّم / مرتجع")}</th><th></th></tr></thead><tbody>
       ${d.lines.map(l => `<tr><td>${esc(l.description)}${l.kind === "kit" || l.kind === "sqm" ? `<div class="lines">${esc(l.components.map(c => `${nm(c)} × ${numf(c.per_unit * l.qty)}`).join(" · "))}</div>` : ""}</td>
         <td>${{ item: L2("Per piece / unit", "بالقطعة / الوحدة"), kit: L2("Per frame / set", "بالشباك / الطقم"), sqm: L2("Per m²", "بالمتر المربع"), charge: esc((CHG_T().find(x => x[0] === l.charge_type) || [])[1] || "") }[l.kind]}</td>
@@ -2731,6 +2736,8 @@ PAGES.rental = async (view, parts) => {
     ${d.charges.length ? `<div class="card"><h2>${L2("Charges", "المبالغ الإضافية")}</h2><div class="tbl stack"><table><thead><tr><th>${t("date")}</th><th>${t("description")}</th><th class="num">${t("qty")}</th><th class="num">${t("amount")}</th><th class="num">${t("total")}</th><th>${L2("Invoice", "الفاتورة")}</th><th></th></tr></thead><tbody>
       ${d.charges.map(c => `<tr><td>${fd(c.date)}</td><td>${esc(c.description)}</td><td class="num">${numf(c.qty)}</td><td class="num">${money(c.amount)}</td><td class="num">${money(c.total)}</td>
         <td>${c.extract_id ? `<a href="#/invoice/${c.extract_id}">${esc(c.invoice_no)}</a>` : `<span class="chip warn">${L2("not invoiced", "لم تُفوتر")}</span>`}</td><td>${!c.extract_id && ed ? `<button class="btn sm danger" data-a="rchdel" data-id="${c.id}">✕</button>` : ""}</td></tr>`).join("")}</tbody></table></div></div>` : ""}
+    ${d.deposits.length ? `<div class="card"><h2>${L2("Security deposit", "التأمين")}</h2><div class="tbl"><table><tbody>
+      ${d.deposits.map(x => `<tr class="click" data-a="openv" data-id="${x.id}"><td>${fd(x.date)}</td><td>${esc({ receive: L2("Received", "استلام"), refund: L2("Refunded", "رد"), apply: L2("Applied to invoices", "خصم من الفواتير") }[x.type] || "")}</td><td>${esc(x.memo)}</td><td class="num">${money(x.amount)}</td></tr>`).join("")}</tbody></table></div></div>` : ""}
     ${d.invoices.length ? `<div class="card"><h2>${L2("Invoices", "الفواتير")}</h2><div class="tbl"><table><thead><tr><th>${L2("Invoice", "الفاتورة")}</th><th>${L2("Rent period", "فترة الإيجار")}</th><th>${t("status")}</th><th class="num">${t("amount")}</th></tr></thead><tbody>
       ${d.invoices.map(x => `<tr class="click" data-href="#/invoice/${x.extract_id}"><td><b>${esc(x.number)}</b></td><td>${fd(x.period_from)} → ${fd(x.period_to)}</td><td><span class="chip ${x.status === "posted" ? "ok" : "warn"}">${x.status === "posted" ? t("invoiced") : t("draft")}</span></td><td class="num">${money(x.total)}</td></tr>`).join("")}</tbody></table></div></div>` : ""}`;
 };
@@ -2749,6 +2756,9 @@ async function rentalForm(d, pre) {
     { k: "valid_until", l: L2("Valid until", "صالح حتى"), type: "date", v: R.valid_until || "" }, { k: "duration_months", l: L2("Expected duration (months)", "المدة المتوقعة (شهور)"), type: "number", v: R.duration_months ?? 1 },
     { k: "vat_code", l: t("vat_code"), type: "select", opts: taxOpts("vat"), v: R.vat_code || "" }, { k: "wht_code", l: t("wht_code"), type: "select", opts: taxOpts("wht"), v: R.wht_code || "" },
     { k: "lang", l: L2("Documents in", "لغة المستندات"), type: "select", opts: [["ar", "العربية"], ["en", "English"]], v: R.lang || S.boot.settings.language || "ar" },
+    { k: "min_days", l: L2("Minimum rental period (days)", "الحد الأدنى لمدة الإيجار (أيام)"), type: "number", v: R.min_days || 0, help: L2("0 = none. Pieces returned sooner are charged the missing days.", "0 = بدون. القطع المرتجعة قبل ذلك تُحاسب على الأيام الناقصة.") },
+    { k: "deposit", l: L2("Security deposit", "مبلغ التأمين"), type: "number", v: R.deposit || "" },
+    { k: "deposit_first", l: L2("Deposit must be received before the first delivery", "يجب استلام التأمين قبل أول تسليم"), type: "checkbox", v: !!R.deposit_first, span: "spanall" },
     { html: `<div id="rlines"></div>`, span: "spanall" },
     { k: "offer_notes", l: L2("Notes on the offer", "ملاحظات العرض"), type: "textarea", v: R.offer_notes || "", span: "spanall" }, { k: "notes", l: L2("Internal notes", "ملاحظات داخلية"), type: "textarea", v: R.notes || "", span: "spanall" }])
     + datalist("rcl", (S.boot.parties || []).map(p => p.name));
@@ -2824,6 +2834,16 @@ function rentSign(R) {
     { k: "signed_us", l: L2("Signed for us by", "وقّع عن الشركة المؤجرة"), req: 1, v: S.boot.user.full_name || "" }, { k: "signed_client", l: L2("Signed for the client by", "وقّع عن العميل"), req: 1 },
     { k: "signed_on", l: t("date"), type: "date", v: today(), req: 1 }]),
     async v => { await api("POST", `/api/rentals/${R.id}/sign`, v); toast(t("saved")); });
+}
+function rentDeposit(R, type) {
+  const title = { receive: L2("Receive security deposit", "استلام مبلغ التأمين"), refund: L2("Refund security deposit", "رد مبلغ التأمين"), apply: L2("Apply the deposit to invoices", "خصم التأمين من الفواتير") }[type];
+  const dflt = type === "receive" ? Math.max((R.deposit || 0) - (R.deposit_held || 0), 0) : R.deposit_held;
+  drawer(`${title} — ${R.code}`, `<p class="muted">${type === "apply" ? L2("Reduces what the client owes on their invoices; the rest stays held.", "يقلل المستحق على العميل في الفواتير؛ والباقي يظل محتفظاً به.")
+      : type === "receive" ? L2("Held as a liability (2105 Security Deposits from Clients) until it is refunded or applied.", "يُسجل كالتزام (2105 تأمينات العملاء) حتى يُرد أو يُخصم.") : L2("Paid back to the client.", "يُرد للعميل.")}</p>` +
+    form([{ k: "date", l: t("date"), type: "date", v: today(), req: 1 }, { k: "amount", l: t("amount"), type: "number", v: dflt || "", req: 1, help: `${L2("Held now", "المحتفظ به")}: ${money(R.deposit_held)}` },
+      ...(type === "apply" ? [] : [{ k: "paid_from", l: type === "receive" ? L2("Received into", "استُلم في") : L2("Paid from", "دُفع من"), type: "select", opts: moneyAccts(), v: accByRole("bank") }]),
+      { k: "memo", l: t("memo"), span: "spanall" }]),
+    async v => { await api("POST", `/api/rentals/${R.id}/deposit`, { ...v, type }); toast(t("posted")); });
 }
 function rentCharge(d) {
   const R = d.rental;
@@ -2922,23 +2942,34 @@ PAGES.rentfleet = async (view, parts, q) => {
   const d = await api("GET", "/api/rent-items?" + qs(q));
   const add = can("rentals.fleet", "add"), ed = can("rentals.fleet", "edit");
   S.cache.rentCat = null;
-  Object.assign(S.H, { rinew: () => rentItemForm(), rknew: () => rentKitForm(null, d), rkopen: el => rentKitForm(d.kits.find(k => k.id === +el.dataset.id), d),
+  Object.assign(S.H, { rdep2: () => rentDeprForm(), rinew: () => rentItemForm(), rknew: () => rentKitForm(null, d), rkopen: el => rentKitForm(d.kits.find(k => k.id === +el.dataset.id), d),
     riopen: el => rentItemView(+el.dataset.id), rset: () => rentSettingsForm(d.settings),
     rstart: async () => { try { const r = await api("POST", "/api/rent-starter", {}); toast(`${r.items} ${L2("items", "صنف")} · ${r.kits} ${L2("sets", "طقم")} · ${r.models} ${L2("calculator", "حاسبة")}`); route(); } catch (e) { fail(e); } } });
   const util = d.items.reduce((s, i) => s + i.on_rent * i.avg_cost, 0);
   view.innerHTML = `<div class="toolbar">${add ? `<button class="btn pri" data-a="rinew">+ ${L2("Equipment item", "صنف معدات")}</button><button class="btn" data-a="rknew">+ ${L2("Frame / set", "شباك / طقم")}</button>` : ""}
       ${add && !d.items.some(i => i.code === "SC-FRM2") ? `<button class="btn" data-a="rstart">${L2("Add scaffolding starter set", "إضافة المجموعة الأساسية للسقالات")}</button>` : ""}
-      ${ed ? `<button class="btn" data-a="rset">${L2("Terms & checklists", "الشروط وقوائم الفحص")}</button>` : ""}<span class="spacer"></span>${exportMenu("rent_fleet", {})}</div>
-    <div class="kpis">${kpiBox(L2("Equipment value (FIFO)", "قيمة المعدات (الوارد أولاً)"), d.totals.value)}${kpiBox(L2("Out on rent", "مؤجر حالياً"), d.totals.on_rent_value, "pos", d.totals.value ? pct(d.totals.on_rent_value / d.totals.value) + " " + L2("of the fleet", "من المعدات") : "")}</div>
-    ${RENT_CAT().map(([c, label]) => { const rows = d.items.filter(i => i.category === c); return rows.length ? `<div class="card"><h2>${esc(label)}</h2><div class="tbl stack"><table><thead><tr><th>${t("code")}</th><th>${L2("Item", "الصنف")}</th><th class="num">${L2("In the yard", "بالمخزن")}</th><th class="num">${L2("On rent", "مؤجر")}</th><th class="num">${L2("Use", "التشغيل")}</th><th class="num">${L2("Avg cost (FIFO)", "متوسط التكلفة")}</th><th class="num">${L2("Value", "القيمة")}</th><th class="num">${L2("Rent / month", "الإيجار الشهري")}</th><th class="num">${L2("Loss price", "سعر الفقد")}</th></tr></thead><tbody>
+      ${ed ? `<button class="btn" data-a="rset">${L2("Terms & checklists", "الشروط وقوائم الفحص")}</button>` : ""}${add && d.items.length ? `<button class="btn" data-a="rdep2">${L2("Run depreciation", "احتساب الإهلاك")}</button>` : ""}<span class="spacer"></span>${exportMenu("rent_fleet", {})}</div>
+    <div class="kpis">${kpiBox(L2("Equipment cost (FIFO)", "تكلفة المعدات (الوارد أولاً)"), d.totals.value)}${kpiBox(L2("Accumulated depreciation", "مجمع الإهلاك"), d.totals.accum)}${kpiBox(L2("Book value", "القيمة الدفترية"), d.totals.book_value, "pos")}${kpiBox(L2("Out on rent", "مؤجر حالياً"), d.totals.on_rent_value, "pos", d.totals.value ? pct(d.totals.on_rent_value / d.totals.value) + " " + L2("of the fleet", "من المعدات") : "")}</div>
+    ${RENT_CAT().map(([c, label]) => { const rows = d.items.filter(i => i.category === c); return rows.length ? `<div class="card"><h2>${esc(label)}</h2><div class="tbl stack"><table><thead><tr><th>${t("code")}</th><th>${L2("Item", "الصنف")}</th><th class="num">${L2("In the yard", "بالمخزن")}</th><th class="num">${L2("On rent", "مؤجر")}</th><th class="num">${L2("Use", "التشغيل")}</th><th class="num">${L2("Avg cost (FIFO)", "متوسط التكلفة")}</th><th class="num">${L2("Book value", "القيمة الدفترية")}</th><th class="num">${L2("Rent / month", "الإيجار الشهري")}</th><th class="num">${L2("Loss price", "سعر الفقد")}</th></tr></thead><tbody>
       ${rows.map(i => `<tr class="click ${i.active ? "" : "void"}" data-a="riopen" data-id="${i.id}"><td><b>${esc(i.code)}</b></td><td>${esc(nm(i))}<div class="lines">${esc(i.unit)}</div></td><td class="num">${numf(i.in_yard)}</td><td class="num">${numf(i.on_rent)}</td><td class="num">${pct(i.utilisation)}</td>
-        <td class="num">${money(i.avg_cost || i.std_cost)}</td><td class="num">${money(i.value)}</td><td class="num">${money(i.monthly_rate)}</td><td class="num">${money(i.loss_price)}</td></tr>`).join("")}</tbody></table></div></div>` : ""; }).join("")}
+        <td class="num">${money(i.avg_cost || i.std_cost)}</td><td class="num">${money(i.book_value)}${i.accum ? `<div class="lines">${L2("cost", "التكلفة")} ${money(i.value)}</div>` : ""}</td><td class="num">${money(i.monthly_rate)}</td><td class="num">${money(i.loss_price)}</td></tr>`).join("")}</tbody></table></div></div>` : ""; }).join("")}
     ${!d.items.length ? `<div class="card"><div class="empty">${L2("No equipment yet. Add your pieces (frames, braces, clamps, boards…), elevators and cradles — or add the scaffolding starter set taken from the standard handover form, then record your stock with its cost.", "لا توجد معدات بعد. أضف القطع (شبابيك، مقصات، كلبسات، ألواح…) والمصاعد والسقالات المعلقة — أو أضف المجموعة الأساسية المأخوذة من محضر التسليم القياسي، ثم سجّل المخزون بتكلفته.")}</div></div>` : ""}
     <div class="card"><h2>${L2("Frames / sets (rented as one unit)", "الشبابيك / الأطقم (تؤجر كوحدة)")}</h2>${d.kits.length ? `<div class="tbl"><table><thead><tr><th>${t("code")}</th><th>${L2("Name", "الاسم")}</th><th>${L2("Pieces in one", "القطع في الوحدة")}</th><th class="num">${L2("Rent / month", "الإيجار الشهري")}</th></tr></thead><tbody>
       ${d.kits.map(k => `<tr class="click" data-a="rkopen" data-id="${k.id}"><td><b>${esc(k.code)}</b></td><td>${esc(nm(k))}<div class="lines">${L2("per", "لكل")} ${esc(k.unit)}</div></td><td>${esc(k.lines.map(l => `${nm(l)} × ${numf(l.qty)}`).join(" · "))}</td><td class="num">${money(k.monthly_rate)}</td></tr>`).join("")}</tbody></table></div>`
       : `<div class="empty">${L2("A frame (or any set) is a group of pieces rented at one price — its rent is shared over the pieces by their cost.", "الشباك (أو أي طقم) مجموعة قطع تؤجر بسعر واحد — ويُوزع إيجارها على القطع حسب تكلفتها.")}</div>`}</div>`;
 };
 
+function rentDeprForm() {
+  const prev = (() => { const d = new Date(); d.setDate(0); return d.toISOString().slice(0, 7); })();
+  drawer(L2("Depreciation of rental equipment", "إهلاك معدات التأجير"), `<p class="muted">${L2("Straight line per stock lot: (pieces still owned × cost × (1 − residual %)) ÷ useful life, catching up any months not booked yet. One entry: Dr depreciation expense / Cr 1416 accumulated depreciation.", "قسط ثابت لكل دفعة: (القطع المملوكة × التكلفة × (1 − نسبة الخردة)) ÷ العمر الإنتاجي، مع احتساب أي أشهر لم تُسجل. قيد واحد: من ح/ مصروف الإهلاك إلى ح/ 1416 مجمع الإهلاك.")}</p>` +
+    form([{ k: "through", l: L2("Depreciate up to (month)", "الإهلاك حتى شهر"), type: "month", v: prev, req: 1 }]) + `<div id="rdpv" class="muted">…</div>`,
+    async v => { await api("POST", "/api/rent-depreciation", v); toast(t("posted")); },
+    { submitLabel: t("post"), onOpen: f => { const run = async () => { try { const r = await api("POST", "/api/rent-depreciation-preview", readForm(f));
+        $("#rdpv", f).innerHTML = r.items.length ? `<div class="tbl"><table><thead><tr><th>${L2("Item", "الصنف")}</th><th class="num">${L2("Lots", "الدفعات")}</th><th class="num">${t("amount")}</th></tr></thead><tbody>
+          ${r.items.map(x => `<tr><td>${esc(x.code)} — ${esc(nm(x))}</td><td class="num">${x.lots}</td><td class="num">${money(x.amount)}</td></tr>`).join("")}<tr class="total"><td colspan="2">${t("total")}</td><td class="num">${money(r.total)}</td></tr></tbody></table></div>`
+          : L2("Nothing to depreciate up to that month.", "لا يوجد ما يُهلك حتى هذا الشهر."); } catch (e) { $("#rdpv", f).innerHTML = `<span class="neg">${esc(e.message)}</span>`; } };
+      f.addEventListener("change", run); run(); } });
+}
 function rentItemForm(it) {
   it = it || { category: "scaffolding", unit: "piece", active: 1 };
   drawer(it.id ? `${t("edit")} — ${it.code}` : L2("New equipment item", "صنف معدات جديد"), form([
@@ -2947,6 +2978,8 @@ function rentItemForm(it) {
     { k: "monthly_rate", l: L2("Rent per piece / month", "إيجار القطعة شهرياً"), type: "number", v: it.monthly_rate || "" },
     { k: "std_cost", l: L2("Reference cost (until a purchase is recorded)", "التكلفة المرجعية (لحين تسجيل شراء)"), type: "number", v: it.std_cost || "" },
     { k: "loss_price", l: L2("Loss / damage price (blank = latest cost + markup)", "سعر الفقد / التلف (فارغ = آخر تكلفة + النسبة)"), type: "number", v: it.loss_price_set || "" },
+    { k: "life_months", l: L2("Useful life (months, 0 = not depreciated)", "العمر الإنتاجي (أشهر، 0 = بدون إهلاك)"), type: "number", v: it.life_months ?? 120 },
+    { k: "residual_pct", l: L2("Residual (scrap) value %", "قيمة الخردة %"), type: "number", v: it.residual_pct ?? 10 },
     { k: "code", l: t("code"), v: it.code || "", ph: L2("automatic", "تلقائي") }, { k: "active", l: t("active"), type: "checkbox", v: it.active !== 0 },
     { k: "notes", l: t("notes"), type: "textarea", v: it.notes || "", span: "spanall" }]),
     async v => { if (it.id) await api("PUT", "/api/rent-items/" + it.id, v); else await api("POST", "/api/rent-items", v); toast(t("saved")); });
@@ -2954,10 +2987,12 @@ function rentItemForm(it) {
 async function rentItemView(id) {
   const d = await api("GET", "/api/rent-items/" + id), it = d.item, ed = can("rentals.fleet", "edit"), add = can("rentals.fleet", "add");
   const K = { out: L2("Out to site", "خروج للموقع"), back: L2("Back to yard", "عودة للمخزن"), lost: L2("Lost", "مفقود"), damaged: L2("Damaged", "تالف"), scrap: L2("Scrapped", "تكهين") };
-  drawer(`${it.code} — ${nm(it)}`, `<div class="kpis">${kpiBox(L2("In the yard", "بالمخزن"), numf(it.in_yard))}${kpiBox(L2("On rent", "مؤجر"), numf(it.on_rent))}${kpiBox(L2("Value (FIFO)", "القيمة"), it.value)}${kpiBox(L2("Loss price", "سعر الفقد"), it.loss_price)}</div>
-    <h4>${L2("Stock lots — oldest go out first", "دفعات المخزون — الأقدم يخرج أولاً")}</h4><div class="tbl"><table><thead><tr><th>${L2("Lot", "الدفعة")}</th><th>${t("date")}</th><th class="num">${L2("Bought", "المشترى")}</th><th class="num">${L2("Unit cost", "تكلفة القطعة")}</th><th class="num">${L2("In the yard", "بالمخزن")}</th><th class="num">${L2("With clients", "لدى العملاء")}</th><th class="num">${L2("Gone", "مستبعد")}</th><th></th></tr></thead><tbody>
+  drawer(`${it.code} — ${nm(it)}`, `<div class="kpis">${kpiBox(L2("In the yard", "بالمخزن"), numf(it.in_yard))}${kpiBox(L2("On rent", "مؤجر"), numf(it.on_rent))}${kpiBox(L2("Book value", "القيمة الدفترية"), it.book_value, "", `${L2("cost", "التكلفة")} ${money(it.value)} · ${L2("depreciation", "الإهلاك")} ${money(it.accum)}`)}${kpiBox(L2("Loss price", "سعر الفقد"), it.loss_price)}</div>
+    <p class="muted">${it.life_months ? `${L2("Depreciated over", "يُهلك على")} ${it.life_months} ${L2("months to", "شهراً حتى")} ${it.residual_pct}%${it.depr_through ? ` · ${L2("booked to", "محتسب حتى")} ${esc(it.depr_through)}` : ""}` : L2("Not depreciated.", "بدون إهلاك.")}</p>
+    <h4>${L2("Stock lots — oldest go out first", "دفعات المخزون — الأقدم يخرج أولاً")}</h4><div class="tbl"><table><thead><tr><th>${L2("Lot", "الدفعة")}</th><th>${t("date")}</th><th class="num">${L2("Bought", "المشترى")}</th><th class="num">${L2("Unit cost", "تكلفة القطعة")}</th><th class="num">${L2("In the yard", "بالمخزن")}</th><th class="num">${L2("With clients", "لدى العملاء")}</th><th class="num">${L2("Gone", "مستبعد")}</th><th class="num">${L2("Depreciation", "الإهلاك")}</th><th class="num">${L2("Book value", "القيمة الدفترية")}</th><th></th></tr></thead><tbody>
       ${d.lots.map(l => `<tr><td>${esc(l.code)}${l.supplier ? `<div class="lines">${esc(l.supplier)}</div>` : ""}${l.source === "opening" ? `<div class="lines">${L2("already owned", "مملوك سابقاً")}</div>` : ""}</td><td>${fd(l.date)}</td><td class="num">${numf(l.qty)}</td><td class="num">${money(l.unit_cost)}</td><td class="num">${numf(l.in_yard)}</td><td class="num">${numf(l.with_clients)}</td><td class="num">${numf(l.gone)}</td>
-        <td>${ed && !l.m_out && !l.m_scrap ? `<button type="button" class="btn sm danger" data-a="rlotdel" data-id="${l.id}">✕</button>` : ""}</td></tr>`).join("") || `<tr><td colspan="8" class="muted">${L2("No stock recorded yet.", "لا يوجد مخزون مسجل بعد.")}</td></tr>`}</tbody></table></div>
+        <td class="num">${money(l.accum)}${l.depr_through ? `<div class="lines">${esc(l.depr_through)}</div>` : ""}</td><td class="num">${money(l.book_value)}</td>
+        <td>${ed && !l.m_out && !l.m_scrap && !l.depr_through ? `<button type="button" class="btn sm danger" data-a="rlotdel" data-id="${l.id}">✕</button>` : ""}</td></tr>`).join("") || `<tr><td colspan="10" class="muted">${L2("No stock recorded yet.", "لا يوجد مخزون مسجل بعد.")}</td></tr>`}</tbody></table></div>
     ${d.on_rent.length ? `<h4>${L2("On rent now", "مؤجر حالياً")}</h4><div class="tbl"><table><tbody>${d.on_rent.map(r => `<tr><td><a href="#/rental/${r.id}" data-a="vgo2">${esc(r.code)}</a> ${esc(r.client)} — ${esc(r.site)}</td><td class="num">${numf(r.qty)}</td></tr>`).join("")}</tbody></table></div>` : ""}
     ${d.moves.length ? `<h4>${L2("Movements", "الحركات")}</h4><div class="tbl"><table><tbody>${d.moves.slice(0, 60).map(m => `<tr><td>${fd(m.date)}</td><td>${esc(K[m.kind] || m.kind)}</td><td>${esc(m.rental_code || m.note || "")}</td><td>${esc(m.lot_code)}</td><td class="num">${numf(m.qty)}</td></tr>`).join("")}</tbody></table></div>` : ""}`,
     null, { readOnly: true, wide: true, extraButtons: [add ? `<button type="button" class="btn pri" data-a="rlot">+ ${L2("Stock in", "إدخال مخزون")}</button>` : "", ed && it.in_yard > 0 ? `<button type="button" class="btn" data-a="rscrap">${L2("Scrap", "تكهين")}</button>` : "",
@@ -2972,9 +3007,12 @@ function rentLotForm(it) {
     { k: "date", l: t("date"), type: "date", v: today(), req: 1 }, { k: "qty", l: t("qty"), type: "number", req: 1 }, { k: "unit_cost", l: L2("Cost per piece", "تكلفة القطعة"), type: "number", v: it.last_cost || it.std_cost || "", req: 1 },
     { k: "supplier", l: t("supplier"), list: "parties" }, { k: "paid", l: t("paid_now"), type: "number", ph: L2("blank = paid in full", "فارغ = مدفوع بالكامل") },
     { k: "paid_from", l: L2("Paid from", "دُفع من"), type: "select", opts: moneyAccts(), v: accByRole("bank") }, { k: "vat_code", l: t("vat_code"), type: "select", opts: taxOpts("vat") },
+    { k: "opening_accum", l: L2("Depreciation already taken (total for this lot)", "الإهلاك المحتسب سابقاً (إجمالي الدفعة)"), type: "number" },
+    { k: "depr_start", l: L2("Depreciation starts (month)", "بداية الإهلاك (شهر)"), type: "month", help: L2("Blank = the month of the date above", "فارغ = شهر التاريخ أعلاه") },
     { k: "notes", l: t("notes"), span: "spanall" }]) + datalist("parties", (S.boot.parties || []).map(p => p.name)),
     async v => { await api("POST", `/api/rent-items/${it.id}/lots`, v); toast(t("saved")); route(); rentItemView(it.id); return false; },
-    { onOpen: f => { S.H.rlsrc = () => { const buy = $("[name=source]", f).value === "purchase"; ["supplier", "paid", "paid_from", "vat_code"].forEach(k => { const el = $(`[name=${k}]`, f); el.closest("label").style.display = buy ? "" : "none"; el.dataset.skip = buy ? "" : "1"; }); }; S.H.rlsrc(); } });
+    { onOpen: f => { S.H.rlsrc = () => { const buy = $("[name=source]", f).value === "purchase"; ["supplier", "paid", "paid_from", "vat_code"].forEach(k => { const el = $(`[name=${k}]`, f); el.closest("label").style.display = buy ? "" : "none"; el.dataset.skip = buy ? "" : "1"; });
+      ["opening_accum"].forEach(k => { const el = $(`[name=${k}]`, f); el.closest("label").style.display = buy ? "none" : ""; el.dataset.skip = buy ? "1" : ""; }); }; S.H.rlsrc(); } });
 }
 function rentScrapForm(it) {
   drawer(`${L2("Scrap pieces", "تكهين قطع")} — ${it.code} ${nm(it)}`, `<p class="muted">${L2("Pieces in the yard that are no longer usable. Their FIFO cost is written off.", "قطع بالمخزن لم تعد صالحة. تُستبعد تكلفتها بطريقة الوارد أولاً.")}</p>` + form([

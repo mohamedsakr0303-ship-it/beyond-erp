@@ -28,7 +28,8 @@ ENTRY_KINDS = ["Direct Cost", "Operating Expense", "Payroll Accrual", "Payment V
                "Goods Receipt", "Material Issue", "Stock Transfer", "Stock Adjustment", "Reversing Entry",
                "Loan Received", "Loan Repayment", "Loan Given", "Loan Collection", "Loan Interest", "Loan Charges",
                "Loan Forgiven", "Loan Written Off", "Custody Issued", "Custody Settlement", "Custody Return",
-               "Custody Deduction", "Rental Equipment Purchase", "Rental Equipment Loss"]
+               "Custody Deduction", "Rental Equipment Purchase", "Rental Equipment Loss", "Rental Equipment Depreciation",
+               "Rental Deposit"]
 
 
 class ValidationError(Exception):

@@ -27,7 +27,8 @@ LINE_KINDS = ("item", "kit", "sqm", "charge")
 CHARGE_TYPES = ("install", "dismantle", "transport", "materials", "other")
 CHARGE_WHEN = ("delivery", "return", "manual")
 STATUSES = ("quote", "ordered", "active", "returned", "closed", "cancelled")
-KINDS = ("Rental Equipment Purchase", "Rental Equipment Loss")
+KINDS = ("Rental Equipment Purchase", "Rental Equipment Loss", "Rental Equipment Depreciation", "Rental Deposit")
+LIVE_REF = f"{acc.LIVE} AND e.reversed_by IS NULL AND e.reversal_of IS NULL"
 EPS = 1e-9
 
 
@@ -148,7 +149,7 @@ def save_settings(db, d):
 # ================================================================ equipment
 def _item_row(db, it, stock=None):
     st = stock if stock is not None else item_stock(db, it["id"])
-    return {**it, "monthly_rate": to_major(it["monthly_rate"]), "std_cost": to_major(it["std_cost"]),
+    return {**it, "residual_pct": round((it["residual_pct"] or 0) * 100, 4), "monthly_rate": to_major(it["monthly_rate"]), "std_cost": to_major(it["std_cost"]),
             "loss_price_set": to_major(it["loss_price"]), "loss_price": to_major(loss_price(db, it)), **st}
 
 
@@ -174,12 +175,117 @@ def _lot_states(db, item_id=None, lot_id=None):
                 "COALESCE((SELECT SUM(CASE WHEN kind IN ('lost','damaged') THEN qty ELSE 0 END) FROM rent_moves m WHERE m.lot_id=l.id),0) AS m_lost, "
                 "COALESCE((SELECT SUM(CASE WHEN kind='scrap' THEN qty ELSE 0 END) FROM rent_moves m WHERE m.lot_id=l.id),0) AS m_scrap "
                 "FROM rent_lots l" + (" WHERE " + " AND ".join(w) if w else "") + " ORDER BY l.date, l.id", p)
+    dep = lot_depreciation(db)
     for r in rows:
         r["with_clients"] = r["m_out"] - r["m_back"] - r["m_lost"]
         r["in_yard"] = r["qty"] - r["m_out"] + r["m_back"] - r["m_scrap"]
         r["gone"] = r["m_lost"] + r["m_scrap"]
         r["owned"] = r["qty"] - r["gone"]
+        d = dep.get(r["code"], {})
+        r["accum"] = r["opening_accum"] + d.get("booked", 0) - d.get("out", 0)
+        r["depr_through"] = d.get("through") or ""
     return rows
+
+
+# ---------------------------------------------------------------- depreciation of the rental equipment
+def _month(v, field="month"):
+    v = text(v)[:7]
+    if len(v) != 7 or v[4] != "-" or not v[:4].isdigit() or not v[5:].isdigit() or not 1 <= int(v[5:]) <= 12:
+        raise ValidationError(f"{field} must be YYYY-MM")
+    return v
+
+
+def _add_months_m(m, n):
+    y, mo = int(m[:4]), int(m[5:]) + n
+    y, mo = y + (mo - 1) // 12, (mo - 1) % 12 + 1
+    return f"{y:04d}-{mo:02d}"
+
+
+def _month_end(m):
+    y, mo = int(m[:4]), int(m[5:])
+    return (_dt.date(y + (mo == 12), mo % 12 + 1, 1) - _dt.timedelta(days=1)).isoformat()
+
+
+def lot_depreciation(db):
+    """{lot code: {booked, out, through}} from the books: depreciation runs, and the share cleared when pieces
+    are lost, damaged or scrapped. A voided run or write-off simply stops counting."""
+    out = {}
+    for e in db.q(f"SELECT e.meta FROM journal_entries e WHERE {LIVE_REF} AND e.kind IN (?,?)", (KINDS[2], KINDS[1])):
+        m = _j(e["meta"], {})
+        for code, (frm, to, amt) in (m.get("rent_dep") or {}).items():
+            d = out.setdefault(code, {"booked": 0, "out": 0, "through": ""})
+            d["booked"] += int(amt)
+            d["through"] = max(d["through"], to)
+        for code, amt in (m.get("accum_out") or {}).items():
+            out.setdefault(code, {"booked": 0, "out": 0, "through": ""})["out"] += int(amt)
+    return out
+
+
+def plan_depreciation(db, through):
+    """Straight line per lot, month by month: (pieces still owned × cost × (1 − residual %)) ÷ useful life, catching up
+    any months not booked yet and never going below the residual value."""
+    through = _month(through, "depreciate up to")
+    rows = []
+    items = {i["id"]: i for i in db.q("SELECT * FROM rent_items")}
+    for lot in _lot_states(db):
+        it = items.get(lot["item_id"])
+        if not it or not it["life_months"] or lot["owned"] <= EPS or not lot["unit_cost"]:
+            continue
+        start = lot["depr_start"] or lot["date"][:7]
+        nxt = _add_months_m(lot["depr_through"], 1) if lot["depr_through"] else start
+        if nxt > through:
+            continue
+        months = (int(through[:4]) - int(nxt[:4])) * 12 + int(through[5:]) - int(nxt[5:]) + 1
+        base = lot["owned"] * lot["unit_cost"] * (1 - (it["residual_pct"] or 0))
+        remaining = int(round(base - lot["accum"]))
+        amount = min(int(round(base / it["life_months"] * months)), remaining)
+        if amount <= 0:
+            continue
+        rows.append({"lot": lot["code"], "item_id": it["id"], "code": it["code"], "name": it["name"], "name_ar": it["name_ar"],
+                     "from": nxt, "to": through, "months": months, "amount": amount})
+    by_item = {}
+    for r in rows:
+        g = by_item.setdefault(r["item_id"], {"code": r["code"], "name": r["name"], "name_ar": r["name_ar"], "lots": 0, "amount": 0})
+        g["lots"] += 1
+        g["amount"] += r["amount"]
+    return {"through": through, "rows": rows, "items": [{**g, "amount": to_major(g["amount"])} for g in by_item.values()],
+            "total": to_major(sum(r["amount"] for r in rows))}
+
+
+def run_depreciation(db, through, user=""):
+    plan = plan_depreciation(db, through)
+    if not plan["rows"]:
+        raise ValidationError(f"Nothing to depreciate up to {plan['through']}")
+    total = sum(r["amount"] for r in plan["rows"])
+    with db.tx():
+        return acc._insert_entry(db, date=_month_end(plan["through"]), kind=KINDS[2], memo=f"Depreciation of rental equipment to {plan['through']}",
+                                 ref=f"RENT:DEP:{plan['through']}",
+                                 lines=[{"account": _role_or(db, "depreciation"), "debit": to_major(total)},
+                                        {"account": _role_or(db, "rental_accum"), "credit": to_major(total)}],
+                                 meta={"rent_dep": {r["lot"]: [r["from"], r["to"], r["amount"]] for r in plan["rows"]}}, user=user)
+
+
+def _write_off_lines(db, taken):
+    """Pieces leaving for good [(lot, qty)]: their cost leaves the fleet, their share of the depreciation booked is
+    cleared, the rest is the loss. -> (lines, meta accum_out, cost)."""
+    cost, share = 0, {}
+    left = {}
+    for lot, q in taken:
+        owned = left.get(lot["id"], lot["owned"])
+        acc_now = left.get(("a", lot["id"]), lot["accum"])
+        part = int(round(acc_now * q / owned)) if owned > EPS else 0
+        share[lot["code"]] = share.get(lot["code"], 0) + part
+        left[lot["id"]], left[("a", lot["id"])] = owned - q, acc_now - part
+        cost += q * lot["unit_cost"]
+    cost = int(round(cost))
+    cleared = sum(share.values())
+    lines = []
+    if cleared:
+        lines.append({"account": _role_or(db, "rental_accum"), "debit": to_major(cleared)})
+    if cost - cleared:
+        lines.append({"account": _role_or(db, "rental_loss"), "debit": to_major(cost - cleared)})
+    lines.append({"account": _role_or(db, "rental_fleet"), "credit": to_major(cost)})
+    return lines, {k: v for k, v in share.items() if v}, cost
 
 
 def item_stock(db, item_id):
@@ -187,7 +293,10 @@ def item_stock(db, item_id):
     yard = sum(r["in_yard"] for r in lots)
     out = sum(r["with_clients"] for r in lots)
     value = sum(r["owned"] * r["unit_cost"] for r in lots)
-    return {"in_yard": round(yard, 4), "on_rent": round(out, 4), "owned": round(yard + out, 4),
+    accum = sum(r["accum"] for r in lots)
+    return {"accum": to_major(accum), "book_value": to_major(int(round(value - accum))),
+            "depr_through": min((r["depr_through"] for r in lots if r["owned"] > EPS), default="") ,
+            "in_yard": round(yard, 4), "on_rent": round(out, 4), "owned": round(yard + out, 4),
             "gone": round(sum(r["gone"] for r in lots), 4), "value": to_major(int(round(value))),
             "avg_cost": to_major(int(round(value / (yard + out)))) if yard + out > EPS else 0,
             "last_cost": to_major(lots[-1]["unit_cost"]) if lots else 0,
@@ -235,7 +344,8 @@ def list_items(db, q=None, category=None, active_only=False):
         w.append("active=1")
     items = [_item_row(db, it) for it in db.q(f"SELECT * FROM rent_items WHERE {' AND '.join(w)} ORDER BY category, code", p)]
     kits = [kit_row(db, k) for k in db.q("SELECT * FROM rent_kits ORDER BY code")]
-    tot = {"value": round(sum(i["value"] for i in items), 2),
+    tot = {"value": round(sum(i["value"] for i in items), 2), "accum": round(sum(i["accum"] for i in items), 2),
+           "book_value": round(sum(i["book_value"] for i in items), 2),
            "on_rent_value": round(sum(i["on_rent"] * i["avg_cost"] for i in items), 2)}
     return {"items": items, "kits": kits, "totals": tot, "next_code": _code(db, "rent_items", "EQ-"),
             "next_kit": _code(db, "rent_kits", "KIT-", 3), "settings": settings(db)}
@@ -250,17 +360,22 @@ def save_item(db, d, iid=None):
     vals = (code, text(d.get("name"), "name", required=True), text(d.get("name_ar")), cat, text(d.get("unit")) or "piece",
             to_minor(num(d.get("monthly_rate"), "monthly rent")), to_minor(num(d.get("std_cost"), "reference cost")),
             to_minor(num(d.get("loss_price"), "loss price")), num(d.get("weight"), "weight"),
-            0 if d.get("active") in (False, 0, "0", "false") else 1, text(d.get("notes"), maxlen=2000))
+            0 if d.get("active") in (False, 0, "0", "false") else 1, text(d.get("notes"), maxlen=2000),
+            int(num(d.get("life_months") if d.get("life_months") not in (None, "") else (old["life_months"] if old else 120), "useful life (months)")),
+            min(max(num(d.get("residual_pct") if d.get("residual_pct") not in (None, "") else
+                        ((old["residual_pct"] * 100) if old else 10), "residual value %") / 100, 0), 1))
+    if vals[-2] < 0 or vals[-2] > 1200:
+        raise ValidationError("Useful life must be 0 (not depreciated) to 1200 months")
     with db.tx():
         dup = db.one("SELECT id FROM rent_items WHERE code=?", (code,))
         if dup and (not old or dup["id"] != old["id"]):
             raise ValidationError(f"Item code {code} is already used")
         if old:
             db.conn.execute("UPDATE rent_items SET code=?, name=?, name_ar=?, category=?, unit=?, monthly_rate=?, std_cost=?, "
-                            "loss_price=?, weight=?, active=?, notes=? WHERE id=?", vals + (old["id"],))
+                            "loss_price=?, weight=?, active=?, notes=?, life_months=?, residual_pct=? WHERE id=?", vals + (old["id"],))
             return old["id"]
         return db.conn.execute("INSERT INTO rent_items(code,name,name_ar,category,unit,monthly_rate,std_cost,loss_price,weight,"
-                               "active,notes) VALUES (?,?,?,?,?,?,?,?,?,?,?)", vals).lastrowid
+                               "active,notes,life_months,residual_pct) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", vals).lastrowid
 
 
 def delete_item(db, iid):
@@ -284,8 +399,10 @@ def item_detail(db, iid):
                    "GROUP BY r.id HAVING held>0.0000001 ORDER BY r.code", (it["id"],))
     for x in on_rent:
         x["qty"] = x.pop("held")
-    return {"item": _item_row(db, it), "lots": [{**l, "unit_cost": to_major(l["unit_cost"]),
-                                                  "value": to_major(int(round(l["owned"] * l["unit_cost"])))} for l in lots],
+    return {"item": _item_row(db, it), "lots": [{**l, "unit_cost": to_major(l["unit_cost"]), "accum": to_major(l["accum"]),
+                                                  "opening_accum": to_major(l["opening_accum"]),
+                                                  "value": to_major(int(round(l["owned"] * l["unit_cost"]))),
+                                                  "book_value": to_major(int(round(l["owned"] * l["unit_cost"] - l["accum"])))} for l in lots],
             "moves": moves, "on_rent": on_rent}
 
 
@@ -302,9 +419,14 @@ def add_lot(db, iid, d, user=""):
         raise ValidationError("Unknown stock source")
     with db.tx():
         code = _code(db, "rent_lots", "LOT-", 5)
-        lid = db.conn.execute("INSERT INTO rent_lots(code,item_id,date,qty,unit_cost,supplier,source,notes) VALUES (?,?,?,?,?,?,?,?)",
+        opening_accum = to_minor(num(d.get("opening_accum"), "depreciation already taken")) if source == "opening" else 0
+        if opening_accum > qty * unit_cost:
+            raise ValidationError("Depreciation already taken cannot be more than the cost")
+        start = _month(d.get("depr_start"), "depreciation starts") if d.get("depr_start") else ""
+        lid = db.conn.execute("INSERT INTO rent_lots(code,item_id,date,qty,unit_cost,supplier,source,notes,opening_accum,depr_start) "
+                              "VALUES (?,?,?,?,?,?,?,?,?,?)",
                               (code, it["id"], date, qty, unit_cost, text(d.get("supplier")), source,
-                               text(d.get("notes"), maxlen=1000))).lastrowid
+                               text(d.get("notes"), maxlen=1000), opening_accum, start)).lastrowid
         if source == "purchase" and unit_cost:
             fleet = acc.account_code(db, d.get("account") or _role_or(db, "rental_fleet"), types=("Asset",), field="equipment account")
             net = int(round(qty * unit_cost))
@@ -329,6 +451,8 @@ def delete_lot(db, lot_id, user=""):
         raise ValidationError("Stock lot not found")
     if db.one("SELECT 1 FROM rent_moves WHERE lot_id=?", (lot_id,)):
         raise ValidationError("Pieces from this lot have been rented or scrapped — it cannot be removed")
+    if lot_depreciation(db).get(lot["code"], {}).get("booked"):
+        raise ValidationError("Depreciation is booked on this lot — void that depreciation run first")
     with db.tx():
         for e in db.q(f"SELECT id FROM journal_entries e WHERE {acc.LIVE} AND e.ref=?", (f"RENT:LOT:{lot['code']}",)):
             acc.void_entry(db, e["id"], "Stock lot removed", user)
@@ -341,18 +465,15 @@ def scrap(db, d, user=""):
     qty = num(d.get("qty"), "quantity", allow_zero=False)
     date = acc.clean_date(d.get("date") or acc.today())
     with db.tx():
-        cost = 0
-        for lot, take in _fifo_take(db, it["id"], qty, where="yard"):
+        taken = _fifo_take(db, it["id"], qty, where="yard")
+        for lot, take in taken:
             db.conn.execute("INSERT INTO rent_moves(date,item_id,lot_id,qty,kind,note) VALUES (?,?,?,?,?,?)",
                             (date, it["id"], lot["id"], take, "scrap", text(d.get("reason"), maxlen=300)))
-            cost += take * lot["unit_cost"]
-        cost = int(round(cost))
+        lines, cleared, cost = _write_off_lines(db, taken)
         if cost:
             acc._insert_entry(db, date=date, kind=KINDS[1], memo=f"Scrapped: {it['name']} × {qty:g}" +
                               (f" — {text(d.get('reason'))}" if d.get("reason") else ""), ref=f"RENT:SCRAP:{it['code']}",
-                              lines=[{"account": _role_or(db, "rental_loss"), "debit": to_major(cost)},
-                                     {"account": _role_or(db, "rental_fleet"), "credit": to_major(cost)}],
-                              meta={"rent_item": it["code"], "qty": qty}, user=user)
+                              lines=lines, meta={"rent_item": it["code"], "qty": qty, "accum_out": cleared}, user=user)
     return {"cost": to_major(cost)}
 
 
@@ -636,8 +757,8 @@ def starter(db):
         for code, name, ar, cat, unit, cost in STARTER_ITEMS:
             if db.one("SELECT 1 FROM rent_items WHERE code=?", (code,)):
                 continue
-            db.conn.execute("INSERT INTO rent_items(code,name,name_ar,category,unit,monthly_rate,std_cost,loss_price) VALUES (?,?,?,?,?,?,?,?)",
-                            (code, name, ar, cat, unit, 0, to_minor(cost), 0))
+            db.conn.execute("INSERT INTO rent_items(code,name,name_ar,category,unit,monthly_rate,std_cost,loss_price,life_months,residual_pct) "
+                            "VALUES (?,?,?,?,?,?,?,?,?,?)", (code, name, ar, cat, unit, 0, to_minor(cost), 0, 120, 0.10))
             made["items"] += 1
         if not db.one("SELECT 1 FROM rent_kits WHERE code='KIT-FRAME'"):
             ids = {r["code"]: r["id"] for r in db.q("SELECT id, code FROM rent_items")}
@@ -739,12 +860,17 @@ def save(db, d, rid=None, user=""):
             acc.clean_date(d.get("start_date"), "start") if d.get("start_date") else "",
             num(d.get("duration_months") if d.get("duration_months") not in (None, "") else 1, "expected duration"),
             vat_code, wht_code, text(d.get("offer_notes"), maxlen=4000), text(d.get("notes"), maxlen=4000),
-            d.get("lang") if d.get("lang") in ("en", "ar") else (old["lang"] if old else (db.setting("language") or "en")))
+            d.get("lang") if d.get("lang") in ("en", "ar") else (old["lang"] if old else (db.setting("language") or "en")),
+            int(num(d.get("min_days"), "minimum rental period (days)")), to_minor(num(d.get("deposit"), "security deposit")),
+            1 if d.get("deposit_first") in (True, 1, "1", "true", "on") else 0)
+    if head[-3] < 0 or head[-3] > 3650:
+        raise ValidationError("The minimum rental period is 0 to 3650 days")
     with db.tx():
         if old:
             rid = old["id"]
             db.conn.execute("UPDATE rentals SET client=?, contact=?, phone=?, site=?, site_location=?, quote_date=?, valid_until=?, "
-                            "start_date=?, duration_months=?, vat_code=?, wht_code=?, offer_notes=?, notes=?, lang=? WHERE id=?", head + (rid,))
+                            "start_date=?, duration_months=?, vat_code=?, wht_code=?, offer_notes=?, notes=?, lang=?, min_days=?, deposit=?, "
+                            "deposit_first=? WHERE id=?", head + (rid,))
             used = {int(x) for h in db.q("SELECT data FROM rental_handovers WHERE rental_id=?", (rid,))
                     for x in (_j(h["data"], {}).get("units") or {}).keys()}
             used |= {r["line_id"] for r in db.q("SELECT DISTINCT line_id FROM rental_charges WHERE rental_id=? AND line_id IS NOT NULL", (rid,))}
@@ -757,8 +883,9 @@ def save(db, d, rid=None, user=""):
         else:
             code = _code(db, "rentals", "RC-")
             rid = db.conn.execute("INSERT INTO rentals(client,contact,phone,site,site_location,quote_date,valid_until,start_date,"
-                                  "duration_months,vat_code,wht_code,offer_notes,notes,lang,code,status,created_at,created_by) "
-                                  "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", head + (code, "quote", _now(), user)).lastrowid
+                                  "duration_months,vat_code,wht_code,offer_notes,notes,lang,min_days,deposit,deposit_first,code,status,"
+                                  "created_at,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                                  head + (code, "quote", _now(), user)).lastrowid
         for ln in lines:
             vals = (ln["seq"], ln["kind"], ln["item_id"], ln["kit_id"], ln["model_id"], ln["description"], ln["unit"], ln["qty"], ln["rate"],
                     ln["charge_type"], ln["charge_when"], json.dumps(ln["components"]), json.dumps(ln["inputs"], ensure_ascii=False), ln["notes"])
@@ -818,10 +945,14 @@ def action(db, rid, what, d, user=""):
                 raise ValidationError("Equipment was delivered — return it and close the rental instead")
             db.conn.execute("UPDATE rentals SET status='cancelled', closed_on=? WHERE id=?", (acc.today(), r["id"]))
             return
+        elif what == "deposit":
+            deposit(db, r, d, user)
         elif what == "close":
             held = _held(db, r["id"])
             if held:
                 raise ValidationError("Pieces are still on site — record their return first")
+            if deposit_balance(db, r):
+                raise ValidationError(f"{to_major(deposit_balance(db, r)):,.2f} of security deposit is still held — refund it or apply it first")
             if db.one("SELECT 1 FROM rental_charges WHERE rental_id=? AND extract_id IS NULL", (r["id"],)):
                 raise ValidationError("Some charges are not invoiced yet — invoice them (or delete them) first")
             db.conn.execute("UPDATE rentals SET status='closed', closed_on=? WHERE id=?", (acc.clean_date(d.get("date") or acc.today()), r["id"]))
@@ -939,7 +1070,10 @@ def detail(db, rid):
              "one_time": round(sum(ln["qty"] * ln["rate"] for ln in out_lines if ln["kind"] == "charge"), 2)}
     quote["estimate"] = round(quote["monthly"] * (r["duration_months"] or 0) + quote["one_time"], 2)
     bu = db.one("SELECT code FROM business_units WHERE id=?", (r["bu_id"],)) if r["bu_id"] else None
-    return {"rental": {**r, "bu_code": bu["code"] if bu else ""}, "lines": out_lines, "held": sorted(held.values(), key=lambda x: x["code"] or ""),
+    deposits = [acc.get_entry(db, e["id"]) for e in db.q(f"SELECT e.id FROM journal_entries e WHERE {LIVE_REF} AND e.ref LIKE ? ORDER BY e.date, e.id",
+                                                             (f"RENT:{r['code']}:DEP%",))]
+    return {"rental": {**r, "bu_code": bu["code"] if bu else "", "deposit": to_major(r["deposit"]), "deposit_held": to_major(deposit_balance(db, r))},
+            "deposits": [{"id": e["id"], "date": e["date"], "type": e["meta"].get("deposit"), "memo": e["memo"], "amount": e["amount"]} for e in deposits], "lines": out_lines, "held": sorted(held.values(), key=lambda x: x["code"] or ""),
             "handovers": handovers, "charges": charges, "invoices": invoices, "quote": quote,
             "on_site_monthly": round(rent_monthly, 2), "next_period": next_period(db, r["id"]),
             "unbilled_charges": round(sum(c["total"] for c in charges if not c["extract_id"]), 2)}
@@ -1126,6 +1260,9 @@ def confirm_handover(db, hid, user=""):
                 raise ValidationError("No purchase order yet — record the client's PO before delivering anything")
             if not r["signed_on"]:
                 raise ValidationError("The contract is not signed yet — record both signatures on the contract first")
+            if r["deposit"] and r["deposit_first"] and deposit_balance(db, r) < r["deposit"]:
+                raise ValidationError(f"The security deposit ({to_major(r['deposit']):,.2f}) must be received before delivering — "
+                                      f"{to_major(deposit_balance(db, r)):,.2f} received so far")
             if any(c["ok"] == "no" for c in checklist) and h["decision"] != "unsafe":
                 raise ValidationError("A safety check failed — fix it, or record the handover as 'not safe'")
             if not h["decision"]:
@@ -1151,7 +1288,8 @@ def confirm_handover(db, hid, user=""):
             for lid, u in (data.get("units") or {}).items():
                 if u > on.get(int(lid), 0) + 1e-6:
                     raise ValidationError(f"Returning {u:g} but only {on.get(int(lid), 0):g} are on site for that line")
-            cost = 0
+            gone = []
+            _minimum_charges(db, r, h, date, data.get("units") or {})
             for x in data.get("items") or []:
                 for what, q in (("back", x["qty"]), ("damaged", x["damaged"]), ("lost", x["lost"])):
                     if q <= EPS:
@@ -1160,20 +1298,19 @@ def confirm_handover(db, hid, user=""):
                         db.conn.execute("INSERT INTO rent_moves(date,item_id,lot_id,rental_id,handover_id,qty,kind) VALUES (?,?,?,?,?,?,?)",
                                         (date, x["item_id"], lot["id"], r["id"], h["id"], take, what))
                         if what != "back":
-                            cost += take * lot["unit_cost"]
+                            gone.append((lot, take))
                     if what != "back":
                         db.conn.execute("INSERT INTO rental_charges(rental_id,date,kind,description,qty,amount,handover_id,account) "
                                         "VALUES (?,?,?,?,?,?,?,?)",
                                         (r["id"], date, "loss" if what == "lost" else "damage",
                                          f"{'Lost' if what == 'lost' else 'Damaged'}: {x['name']}", q, to_minor(x["loss_price"]), h["id"],
                                          _role_or(db, "rental_compensation") or ""))
-            cost = int(round(cost))
-            if cost:
-                acc._insert_entry(db, date=date, kind=KINDS[1], memo=f"Pieces lost / damaged on {r['code']} ({r['client']}) — {h['number']}",
-                                  bu_id=_ensure_bu(db, r), party=r["client"], ref=f"RENT:{r['code']}:{h['number']}",
-                                  lines=[{"account": _role_or(db, "rental_loss"), "debit": to_major(cost)},
-                                         {"account": _role_or(db, "rental_fleet"), "credit": to_major(cost)}],
-                                  meta={"rental": r["code"], "handover": h["number"]}, user=user)
+            if gone:
+                lines, cleared, cost = _write_off_lines(db, gone)
+                if cost:
+                    acc._insert_entry(db, date=date, kind=KINDS[1], memo=f"Pieces lost / damaged on {r['code']} ({r['client']}) — {h['number']}",
+                                      bu_id=_ensure_bu(db, r), party=r["client"], ref=f"RENT:{r['code']}:{h['number']}", lines=lines,
+                                      meta={"rental": r["code"], "handover": h["number"], "accum_out": cleared}, user=user)
         db.conn.execute("UPDATE rental_handovers SET status='confirmed', confirmed_at=?, confirmed_by=? WHERE id=?", (_now(), user, h["id"]))
         if kind == "return" and not any(v > EPS for v in units_on_site(db, r["id"]).values()):
             _trigger_charges(db, r, "return", date, h["id"])
@@ -1214,10 +1351,88 @@ def delete_handover(db, hid):
 
 
 # ---------------------------------------------------------------- charges & invoices
+def _minimum_charges(db, r, h, date, returned):
+    """Pieces returned before the minimum rental period are charged the days they fell short (per line, the units
+    returned are matched to the oldest deliveries first)."""
+    if not r["min_days"]:
+        return
+    tranches = {}
+    for when, kind, units in _events(db, r["id"]):
+        for lid, u in units.items():
+            q = tranches.setdefault(lid, [])
+            if kind == "delivery":
+                q.append([when, u])
+            else:
+                while u > EPS and q:
+                    take = min(q[0][1], u)
+                    q[0][1] -= take
+                    u -= take
+                    if q[0][1] <= EPS:
+                        q.pop(0)
+    ret = _dt.date.fromisoformat(date)
+    for lid, u in returned.items():
+        lid, u = int(lid), float(u or 0)
+        short = 0.0
+        q = tranches.get(lid, [])
+        while u > EPS and q:
+            take = min(q[0][1], u)
+            kept = (ret - _dt.date.fromisoformat(q[0][0])).days + 1
+            if kept < r["min_days"]:
+                short += take * (r["min_days"] - kept)
+            q[0][1] -= take
+            u -= take
+            if q[0][1] <= EPS:
+                q.pop(0)
+        ln = db.one("SELECT * FROM rental_lines WHERE id=?", (lid,))
+        if short > EPS and ln and ln["rate"]:
+            db.conn.execute("INSERT INTO rental_charges(rental_id,date,kind,description,qty,amount,line_id,handover_id,account) VALUES (?,?,?,?,?,?,?,?,?)",
+                            (r["id"], date, "minimum", f"Minimum rental period ({r['min_days']} days): {ln['description']} — {short:g} {ln['unit']}-days short",
+                             round(short / 30, 4), ln["rate"], None, h["id"], _role_or(db, "rental_revenue") or ""))
+
+
+def deposit_balance(db, r):
+    """Security deposit the company holds for this rental (minor units)."""
+    acc_code = _role_or(db, "rental_deposits")
+    row = db.one(f"SELECT COALESCE(SUM(l.credit-l.debit),0) AS n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id "
+                 f"WHERE {LIVE_REF} AND l.account=? AND e.ref LIKE ?", (acc_code, f"RENT:{r['code']}:DEP%"))
+    return row["n"]
+
+
+def deposit(db, r, d, user=""):
+    """receive (Dr cash / Cr client deposits), refund (the reverse) or apply to what the client owes (Dr deposits / Cr receivables)."""
+    what = d.get("type")
+    if what not in ("receive", "refund", "apply"):
+        raise ValidationError("Receive, refund or apply the deposit?")
+    amount = to_minor(num(d.get("amount"), "amount", allow_zero=False))
+    held = deposit_balance(db, r)
+    if what != "receive" and amount > held:
+        raise ValidationError(f"Only {to_major(held):,.2f} of deposit is held")
+    dep = _role_or(db, "rental_deposits")
+    date = acc.clean_date(d.get("date") or acc.today())
+    party = r["client"]
+    if what == "apply":
+        owed = -to_minor(acc.party_balance(db, db.acct("ar"), party))
+        if amount > owed:
+            raise ValidationError(f"{party} only owes {to_major(max(owed, 0)):,.2f} on invoices — apply at most that, or refund the rest")
+        other = {"account": db.acct("ar"), "credit": to_major(amount), "party": party}
+        lines = [{"account": dep, "debit": to_major(amount), "party": party}, other]
+        memo = f"Security deposit applied to {party}'s invoices ({r['code']})"
+    else:
+        money = acc.money_account(db, d.get("method"), d.get("paid_from") or d.get("received_into"))
+        if what == "receive":
+            lines = [{"account": money, "debit": to_major(amount)}, {"account": dep, "credit": to_major(amount), "party": party}]
+            memo = f"Security deposit received from {party} ({r['code']})"
+        else:
+            lines = [{"account": dep, "debit": to_major(amount), "party": party}, {"account": money, "credit": to_major(amount)}]
+            memo = f"Security deposit refunded to {party} ({r['code']})"
+    return acc._insert_entry(db, date=date, kind=KINDS[3], memo=text(d.get("memo")) or memo, bu_id=_ensure_bu(db, r), party=party,
+                             ref=f"RENT:{r['code']}:DEP-{what.upper()}", lines=lines, meta={"rental": r["code"], "deposit": what}, user=user)
+
+
 def _charge_account(db, kind):
     if kind in ("loss", "damage"):
         return _role_or(db, "rental_compensation")
-    if kind == "rent":
+    if kind in ("rent", "minimum"):
         return _role_or(db, "rental_revenue")
     return _role_or(db, "rental_services")
 
@@ -1302,7 +1517,8 @@ def invoice_lines(db, rid, frm, to, lang="en"):
                     "qty": months, "price": to_major(ln["rate"]), "account": _role_or(db, "rental_revenue") or "", "unit_days": round(ud, 4)})
     charges = db.q("SELECT * FROM rental_charges WHERE rental_id=? AND extract_id IS NULL AND date<=? ORDER BY date, id", (r["id"], to))
     for c in charges:
-        out.append({"category": ("تعويض" if ar else "Compensation") if c["kind"] in ("loss", "damage") else ("مبالغ لمرة واحدة" if ar else "One-time"),
+        out.append({"category": ("تعويض" if ar else "Compensation") if c["kind"] in ("loss", "damage") else
+                    ("حد أدنى للإيجار" if ar else "Minimum rent") if c["kind"] == "minimum" else ("مبالغ لمرة واحدة" if ar else "One-time"),
                     "item_no": "", "unit": "", "description": c["description"], "qty": c["qty"], "price": to_major(c["amount"]),
                     "account": c["account"] or _charge_account(db, c["kind"]), "charge_id": c["id"]})
     return {"from": frm, "to": to, "lines": out, "total": round(sum(x["qty"] * x["price"] for x in out), 2)}

@@ -592,11 +592,14 @@ def rent_fleet_table(db, lang="en"):
     d = rentals.list_items(db)
     cols = _mkcols([("Code", "الكود", "left"), ("Item", "الصنف", "left"), ("Unit", "الوحدة", "left"), ("In the yard", "بالمخزن", "right", "num"),
                     ("On rent", "مؤجر", "right", "num"), ("Owned", "المملوك", "right", "num"), ("Utilisation %", "نسبة التشغيل", "right", "pct"),
-                    ("Avg cost (FIFO)", "متوسط التكلفة", "right"), ("Fleet value", "قيمة المعدات", "right"), ("Rent / month", "الإيجار الشهري", "right"),
+                    ("Avg cost (FIFO)", "متوسط التكلفة", "right"), ("Cost", "التكلفة", "right"), ("Accumulated depreciation", "مجمع الإهلاك", "right"),
+                    ("Book value", "القيمة الدفترية", "right"), ("Rent / month", "الإيجار الشهري", "right"),
                     ("Loss price", "سعر الفقد", "right")], lang)
     rows = [{"cells": [i["code"], (i["name_ar"] if ar and i["name_ar"] else i["name"]), i["unit"], i["in_yard"], i["on_rent"], i["owned"],
-                       i["utilisation"], i["avg_cost"], i["value"], i["monthly_rate"], i["loss_price"]], "style": "item", "indent": 0} for i in d["items"]]
-    rows.append({"cells": [L("total", lang), "", "", "", "", "", "", "", d["totals"]["value"], "", ""], "style": "grand", "indent": 0})
+                       i["utilisation"], i["avg_cost"], i["value"], i["accum"], i["book_value"], i["monthly_rate"], i["loss_price"]],
+             "style": "item", "indent": 0} for i in d["items"]]
+    rows.append({"cells": [L("total", lang), "", "", "", "", "", "", "", d["totals"]["value"], d["totals"]["accum"], d["totals"]["book_value"], "", ""],
+                 "style": "grand", "indent": 0})
     return {"title": "معدات التأجير" if ar else "Rental equipment", "subtitle": f"{L('as_of', lang)} {acc.today()} · {db.setting('currency')}",
             "columns": cols, "rows": rows, "lang": lang}
 

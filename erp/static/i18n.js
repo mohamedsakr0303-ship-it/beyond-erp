@@ -16,7 +16,7 @@ window.I18N = {
   m_payments: ["Payment Vouchers", "سندات الصرف"], m_payables: ["Accounts Payable", "أرصدة الدائنين"], m_nego: ["Negotiation Earnings", "أرباح التفاوض"],
   g_fin: ["Loans & custody", "القروض والعهد"], g_rent: ["Equipment rental", "تأجير المعدات"], mod_rentals: ["Equipment rental", "تأجير المعدات"],
   m_rentals: ["Rental contracts", "عقود التأجير"], m_rentfleet: ["Equipment & stock", "المعدات والمخزون"], m_rentcalc: ["Scaffold calculator", "حاسبة السقالات"],
-  "Rental Equipment Purchase": ["Rental Equipment Purchase", "شراء معدات تأجير"], "Rental Equipment Loss": ["Rental Equipment Loss", "خسائر معدات تأجير"], m_loans: ["Loans", "القروض"], m_custody: ["Cash Custody (Petty Cash)", "العهد النقدية"],
+  "Rental Equipment Purchase": ["Rental Equipment Purchase", "شراء معدات تأجير"], "Rental Equipment Loss": ["Rental Equipment Loss", "خسائر معدات تأجير"], "Rental Equipment Depreciation": ["Rental Equipment Depreciation", "إهلاك معدات تأجير"], "Rental Deposit": ["Rental Deposit", "تأمين تأجير"], m_loans: ["Loans", "القروض"], m_custody: ["Cash Custody (Petty Cash)", "العهد النقدية"],
   "Loan Received": ["Loan Received", "استلام قرض"], "Loan Repayment": ["Loan Repayment", "سداد قرض"], "Loan Given": ["Loan Given", "صرف قرض ممنوح"],
   "Loan Collection": ["Loan Collection", "تحصيل قرض"], "Loan Interest": ["Loan Interest", "فوائد قرض"], "Loan Charges": ["Loan Charges", "مصاريف قرض"],
   "Loan Forgiven": ["Loan Forgiven", "إعفاء من قرض"], "Loan Written Off": ["Loan Written Off", "إعدام قرض"], "Custody Issued": ["Custody Issued", "صرف عهدة"],

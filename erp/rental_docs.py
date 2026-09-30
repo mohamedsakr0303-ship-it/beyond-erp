@@ -38,6 +38,9 @@ T = {
     "cat_cradle_manual": ("cradle (manual)", "سقالة معلقة يدوية"), "cat_cradle_motorized": ("cradle (motorized)", "سقالة معلقة كهربائية"),
     "cat_other": ("equipment", "معدات"), "one_when": ("Billed", "تُحاسب"), "w_delivery": ("on delivery", "عند التسليم"),
     "w_return": ("on final return", "عند الإرجاع النهائي"), "w_manual": ("as agreed", "حسب الاتفاق"),
+    "min": ("Minimum rental period", "الحد الأدنى لمدة الإيجار"), "days": ("days", "يوم"), "deposit": ("Security deposit", "مبلغ التأمين"),
+    "deposit_first": ("payable before delivery", "يُسدد قبل التسليم"),
+    "min_note": ("Pieces returned earlier are charged up to the minimum period.", "القطع المرتجعة قبل ذلك تُحاسب حتى الحد الأدنى."),
     "rent_basis": ("Rent is billed monthly on the quantity on site, counted by day.", "يُحاسب الإيجار شهرياً على الكمية الموجودة بالموقع باليوم."),
 }
 
@@ -128,6 +131,15 @@ def _lines_tables(d, ar):
     return out
 
 
+def _extra_terms(r, ar):
+    out = []
+    if r.get("min_days"):
+        out.append((_lbl("min", ar), f'{r["min_days"]} {_lbl("days", ar)} — {_lbl("min_note", ar)}'))
+    if r.get("deposit"):
+        out.append((_lbl("deposit", ar), _money(r["deposit"]) + (f' ({_lbl("deposit_first", ar)})' if r.get("deposit_first") else "")))
+    return out
+
+
 def offer_html(db, rid, lang=None):
     d = rentals.detail(db, rid)
     r = d["rental"]
@@ -136,7 +148,8 @@ def offer_html(db, rid, lang=None):
     q = d["quote"]
     body = (f'<h1>{_lbl("offer", ar)} — {E(r["code"])}</h1>'
             + _kv([(_lbl("client", ar), E(r["client"])), (_lbl("date", ar), E(r["quote_date"])), (_lbl("site", ar), E(r["site"])),
-                   (_lbl("valid", ar), E(r["valid_until"])), (_lbl("location", ar), E(r["site_location"])), (_lbl("contact", ar), E(" · ".join(x for x in (r["contact"], r["phone"]) if x)))])
+                   (_lbl("valid", ar), E(r["valid_until"])), (_lbl("location", ar), E(r["site_location"])), (_lbl("contact", ar), E(" · ".join(x for x in (r["contact"], r["phone"]) if x))),
+                   *_extra_terms(r, ar)])
             + f'<h2>{_lbl("summary", ar)}</h2>' + _lines_tables(d, ar)
             + f'<table><tr class="tot"><td>{_lbl("est", ar)} {r["duration_months"]:g} {_lbl("months", ar)}</td><td class="n">{_money(q["estimate"])}</td></tr>'
             + (f'<tr><td>{_lbl("vat", ar)} {vat_rate * 100:g}%</td><td class="n">{_money(q["estimate"] * vat_rate)}</td></tr>'
@@ -162,7 +175,8 @@ def contract_html(db, rid, lang=None):
             + _kv([(_lbl("lessor", ar), E(s("company_legal_name") or s("company_name"))), (_lbl("lessee", ar), E(r["client"])),
                    (_lbl("site", ar), E(r["site"])), (_lbl("location", ar), E(r["site_location"])),
                    (_lbl("po", ar), E(f'{r["po_number"]} — {r["po_date"]}' if r["po_number"] else "")), (_lbl("start", ar), E(r["start_date"])),
-                   (_lbl("duration", ar), f'{r["duration_months"]:g} {_lbl("months", ar)}'), (_lbl("date", ar), E(r["signed_on"] or acc.today()))])
+                   (_lbl("duration", ar), f'{r["duration_months"]:g} {_lbl("months", ar)}'), (_lbl("date", ar), E(r["signed_on"] or acc.today())),
+                   *_extra_terms(r, ar)])
             + f'<h2>{_lbl("summary", ar)}</h2>' + _lines_tables(d, ar)
             + f'<h2>{_lbl("pieces", ar)}</h2><table><tr><th>#</th><th>{_lbl("piece", ar)}</th><th>{_lbl("unit", ar)}</th><th class="n">{_lbl("loss_price", ar)}</th></tr>'
             + "".join(f'<tr><td>{i + 1}</td><td>{E(_name(it, ar))}</td><td>{E(it["unit"])}</td><td class="n">{_money(lp)}</td></tr>'
