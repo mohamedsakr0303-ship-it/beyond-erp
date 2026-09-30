@@ -14,7 +14,7 @@ import io
 import json
 
 from . import accounting as acc
-from . import custody, loans
+from . import custody, loans, rentals
 from .db import SUBTYPES, to_major, to_minor
 
 FORMAT = "beyond-erp"
@@ -690,7 +690,7 @@ def export_extras(db):
             "offer_types": db.q("SELECT id, name, content FROM offer_types ORDER BY id"),
             "offers": db.q("SELECT o.*, u.code AS bu_code FROM offers o LEFT JOIN business_units u ON u.id=o.bu_id ORDER BY o.id"),
             "ownership_changes": _ownership_export(db), "loans": loans.export_rows(db),
-            "custodies": custody.export_rows(db)}
+            "custodies": custody.export_rows(db), "rentals": rentals.export_rows(db)}
 
 
 def _ownership_export(db):
@@ -719,6 +719,8 @@ def _imp_extras(db, ex, mode, counts):
         counts["Loans"] = loans.import_rows(db, ex["loans"])
     if ex.get("custodies"):
         counts["Cash custody"] = custody.import_rows(db, ex["custodies"])
+    if isinstance(ex.get("rentals"), dict) and (mode == "replace" or not db.one("SELECT 1 FROM rentals")):
+        rentals.import_rows(db, ex["rentals"], counts)
     for a in ex.get("assets") or []:
         if isinstance(a, dict) and a.get("key") in branding.ASSET_KEYS and a.get("data"):
             db.conn.execute("INSERT OR REPLACE INTO assets(key,mime,w,h,data) VALUES (?,?,?,?,?)",
@@ -777,7 +779,8 @@ def to_csv(db, sheet_name, template=False):
     return ("﻿" + buf.getvalue()).encode("utf-8")
 
 
-WIPE_ORDER = ("loans", "custodies", "parties", "ownership_changes", "fixed_assets", "stock_moves", "stock_levels", "stock_items", "extract_lines", "extracts", "boq_lines", "boqs",
+WIPE_ORDER = ("rent_moves", "rental_invoices", "rental_charges", "rental_handovers", "rental_lines", "rentals", "rent_lots",
+              "rent_kit_lines", "rent_kits", "rent_models", "rent_items", "loans", "custodies", "parties", "ownership_changes", "fixed_assets", "stock_moves", "stock_levels", "stock_items", "extract_lines", "extracts", "boq_lines", "boqs",
               "journal_lines", "journal_entries", "partner_shares", "partners", "rates", "business_units")
 
 

@@ -586,6 +586,37 @@ def custody_statement_table(db, code, lang="en"):
             "subtitle": f"{c['purpose']} · {db.setting('currency')}", "columns": cols, "rows": rows, "lang": lang}
 
 
+def rent_fleet_table(db, lang="en"):
+    from . import rentals
+    ar = lang == "ar"
+    d = rentals.list_items(db)
+    cols = _mkcols([("Code", "الكود", "left"), ("Item", "الصنف", "left"), ("Unit", "الوحدة", "left"), ("In the yard", "بالمخزن", "right", "num"),
+                    ("On rent", "مؤجر", "right", "num"), ("Owned", "المملوك", "right", "num"), ("Utilisation %", "نسبة التشغيل", "right", "pct"),
+                    ("Avg cost (FIFO)", "متوسط التكلفة", "right"), ("Fleet value", "قيمة المعدات", "right"), ("Rent / month", "الإيجار الشهري", "right"),
+                    ("Loss price", "سعر الفقد", "right")], lang)
+    rows = [{"cells": [i["code"], (i["name_ar"] if ar and i["name_ar"] else i["name"]), i["unit"], i["in_yard"], i["on_rent"], i["owned"],
+                       i["utilisation"], i["avg_cost"], i["value"], i["monthly_rate"], i["loss_price"]], "style": "item", "indent": 0} for i in d["items"]]
+    rows.append({"cells": [L("total", lang), "", "", "", "", "", "", "", d["totals"]["value"], "", ""], "style": "grand", "indent": 0})
+    return {"title": "معدات التأجير" if ar else "Rental equipment", "subtitle": f"{L('as_of', lang)} {acc.today()} · {db.setting('currency')}",
+            "columns": cols, "rows": rows, "lang": lang}
+
+
+def rentals_table(db, status=None, lang="en"):
+    from . import rentals
+    ar = lang == "ar"
+    d = rentals.list_rentals(db, status=status)
+    st = {"quote": ("Price offer", "عرض سعر"), "ordered": ("PO received", "أمر شراء"), "active": ("On site", "بالموقع"),
+          "returned": ("Returned", "تم الإرجاع"), "closed": ("Closed", "مغلق"), "cancelled": ("Cancelled", "ملغي")}
+    cols = _mkcols([("Code", "الكود", "left"), ("Client", "العميل", "left"), ("Site", "الموقع", "left"), ("Status", "الحالة", "left"),
+                    ("PO", "أمر الشراء", "left"), ("Start", "البداية", "left"), ("Rent / month on site", "الإيجار الشهري بالموقع", "right"),
+                    ("Pieces out", "القطع بالموقع", "right", "num"), ("Invoiced to", "تمت الفوترة حتى", "left")], lang)
+    rows = [{"cells": [r["code"], r["client"], r["site"], st.get(r["status"], (r["status"],) * 2)[1 if ar else 0], r["po_number"], r["start_date"],
+                       r["monthly_on_site"], r["pieces_out"], r["billed_to"]], "style": "item", "indent": 0} for r in d["rows"]]
+    rows.append({"cells": [L("total", lang), "", "", "", "", "", d["totals"]["monthly"], "", ""], "style": "grand", "indent": 0})
+    return {"title": "عقود التأجير" if ar else "Rental contracts", "subtitle": f"{L('as_of', lang)} {acc.today()} · {db.setting('currency')}",
+            "columns": cols, "rows": rows, "lang": lang}
+
+
 def tax_table(db, date_from=None, date_to=None, lang="en"):
     t = acc.tax_summary(db, date_from, date_to)
     ar = lang == "ar"
@@ -646,6 +677,10 @@ def build(db, name, p):
         return tax_table(db, p.get("date_from"), p.get("date_to"), lang)
     if name == "receivables":
         return receivables_table(db, p.get("date_from"), p.get("date_to"), lang)
+    if name == "rent_fleet":
+        return rent_fleet_table(db, lang)
+    if name == "rentals":
+        return rentals_table(db, p.get("status"), lang)
     if name == "loans":
         return loans_table(db, p.get("direction"), p.get("state"), lang)
     if name == "loan_schedule":
@@ -667,7 +702,8 @@ REPORT_PERMS = {"income_statement": "reports.income_statement", "balance_sheet":
                 "payables": "purchasing.payables", "stock": "stock.balances", "receivables": "sales.receivables",
                 "tax": "tax.report", "fixed_assets": "assets.register",
                 "negotiations": "purchasing.negotiations", "loans": "accounting.loans", "loan_schedule": "accounting.loans",
-                "custody": "purchasing.custody", "custody_statement": "purchasing.custody"}
+                "custody": "purchasing.custody", "custody_statement": "purchasing.custody", "rent_fleet": "rentals.fleet",
+                "rentals": "rentals.contracts"}
 
 
 # ==================================================================== writers

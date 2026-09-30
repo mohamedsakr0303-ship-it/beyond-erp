@@ -369,7 +369,8 @@ class Workspace(unittest.TestCase):
     def dump(self, db):
         out = {t: db.q(f"SELECT * FROM {t} ORDER BY 1") for t in
                ("business_units", "journal_entries", "journal_lines", "users", "offers", "partners", "accounts",
-                "settings", "audit_log", "ownership_changes", "fixed_assets", "partner_shares", "loans", "custodies")}
+                "settings", "audit_log", "ownership_changes", "fixed_assets", "partner_shares", "loans", "custodies",
+                "rent_items", "rent_lots", "rentals", "rental_lines", "rental_handovers", "rent_moves", "rental_charges")}
         for u in out["users"]:
             u.pop("pw_hash")          # passwords stay on the device where they were set
         out["audit_log"] = [r for r in out["audit_log"] if r["action"] not in ("login", "setup")]  # device-local
@@ -500,10 +501,27 @@ class Workspace(unittest.TestCase):
         st, r2 = self.node_call(0, a, "POST", f"/api/custody/{r['id']}/settle",
                                 {"date": "2026-02-05", "lines": [{"description": "Cement", "account": "5010", "amount": 1140, "vat_code": "VAT14"}]})
         self.assertEqual(st, 200, r2)
+        # equipment rental: stock bought on one device, rented out and delivered from the other
+        self.assertEqual(self.node_call(0, a, "POST", "/api/rent-starter", {})[0], 200)
+        self.nodes[1][0].cloud.pull()
+        fid = self.nodes[1][1].one("SELECT id FROM rent_items WHERE code='SC-FRM2'")["id"]
+        self.assertEqual(self.node_call(1, b, "POST", f"/api/rent-items/{fid}/lots", {"qty": 50, "unit_cost": 900, "source": "opening"})[0], 200)
+        st, r = self.node_call(0, a, "POST", "/api/rentals", {"client": "C", "lines": [{"kind": "item", "item_id": fid, "qty": 10, "rate": 60}]})
+        self.assertEqual(st, 200, r)
+        rid = r["id"]
+        self.node_call(0, a, "POST", f"/api/rentals/{rid}/po", {"po_number": "P1"})
+        self.node_call(0, a, "POST", f"/api/rentals/{rid}/sign", {"signed_us": "x", "signed_client": "y"})
+        self.nodes[1][0].cloud.pull()
+        st, t = self.node_call(1, b, "GET", f"/api/rentals/{rid}/handover-template?kind=delivery")
+        st, r = self.node_call(1, b, "POST", f"/api/rentals/{rid}/handovers", {**t, "signed": 1, "decision": "safe",
+                                                                               "checklist": [dict(c, ok="yes") for c in t["checklist"]]})
+        self.assertEqual(st, 200, r)
+        st, r = self.node_call(1, b, "POST", f"/api/rental-handovers/{r['id']}/confirm", {})
+        self.assertEqual(st, 200, r)
         for srv, _, _ in self.nodes:
             srv.cloud.pull()
         self.assertEqual(self.dump(self.nodes[0][1]), self.dump(self.nodes[1][1]))
-        self.assertEqual(self.nodes[0][1].one("SELECT COUNT(*) n FROM business_units")["n"], 10)
+        self.assertEqual(self.nodes[0][1].one("SELECT COUNT(*) n FROM business_units")["n"], 11)
         # offline: changes are refused with a clear message instead of forking the books
         url = self.sb_url
         self.nodes[1][0].cloud.configure("http://127.0.0.1:9", "anon")
@@ -898,6 +916,161 @@ class Custody(unittest.TestCase):
         interchange.import_data(db2, interchange.read_json(interchange.to_json(db).encode()), mode="replace")
         self.assertEqual(custody.status(db2, custody.get(db2, "CU-0002"))["balance"], 1000)
         self.assertEqual(len(custody.statement(db2, "CU-0001")["rows"]), 5)
+
+
+class Rentals(unittest.TestCase):
+    """Equipment rental: FIFO stock, frames, the scaffold calculator, PO → signed contract → signed handovers → invoices."""
+
+    def setUp(self):
+        from erp import rentals
+        self.R = rentals
+        self.db = db = Database(":memory:")
+        a.record_journal(db, {"date": "2026-01-01", "lines": [{"account": "1020", "debit": 5000000}, {"account": "3010", "credit": 5000000}]})
+        rentals.starter(db)
+        self.ids = {i["code"]: i["id"] for i in rentals.list_items(db)["items"]}
+        rentals.add_lot(db, self.ids["SC-FRM2"], {"qty": 150, "unit_cost": 900, "date": "2025-01-01", "source": "opening"})
+        rentals.add_lot(db, self.ids["SC-FRM2"], {"qty": 100, "unit_cost": 980, "date": "2026-01-05", "supplier": "Steel Co", "paid": 0})
+        for c, q, cost in (("SC-BRC3", 250, 340), ("SC-PLT60", 80, 150), ("SC-JACK", 80, 220), ("SC-CLF", 100, 110), ("SC-CLS", 30, 110),
+                           ("SC-TUB6", 20, 750), ("SC-BRD36", 60, 700), ("EL-HOIST", 1, 450000)):
+            rentals.add_lot(db, self.ids[c], {"qty": q, "unit_cost": cost, "date": "2026-01-05", "source": "opening"})
+
+    def test_calculator_and_fifo(self):
+        R, db = self.R, self.db
+        ev = R.evaluate(db, R.list_models(db)[0]["spec"])
+        q = {c["item"]: c["qty"] for c in ev["components"]}
+        self.assertEqual((ev["area"], q["SC-FRM2"], q["SC-JACK"], q["SC-CLF"], q["SC-BRD36"]), (1152, 200, 50, 52, 24))  # the handover form
+        taller = R.evaluate(db, R.list_models(db)[0]["spec"], {"height": 24})
+        self.assertEqual({c["item"]: c["qty"] for c in taller["components"]}["SC-BRC3"], 360)   # 12 lifts, +25 % bracing above 20 m
+        for bad in ("__import__('os')", "length.real", "[1][0]", "2 ** 99"):
+            with self.assertRaises(a.ValidationError):
+                R.safe_eval(bad, {"length": 1})
+        self.assertEqual(R.safe_eval("ceil(10 / 3) if h > 5 else 0", {"h": 6}), 4)
+        st = R.item_stock(db, self.ids["SC-FRM2"])
+        self.assertEqual((st["in_yard"], st["value"]), (250, 233000))
+        self.assertEqual(round(R.unit_cost_next(db, self.ids["SC-FRM2"], 160) / 100, 2), 905)     # 150 × 900 + 10 × 980
+        self.assertEqual(a.party_balance(db, db.acct("ap"), "Steel Co"), 98000)                    # the purchase is booked
+        R.scrap(db, {"item_id": self.ids["SC-FRM2"], "qty": 5, "reason": "bent"})                 # oldest lot first
+        self.assertEqual(R.item_detail(db, self.ids["SC-FRM2"])["lots"][0]["gone"], 5)
+
+    def _contract(self):
+        R, db = self.R, self.db
+        ev = R.evaluate(db, R.list_models(db)[0]["spec"])
+        kit = R.list_items(db)["kits"][0]
+        rid = R.save(db, {"client": "Sawag", "site": "Agora — building 3", "vat_code": "VAT14", "lines": [
+            {"kind": "sqm", "qty": ev["area"], "rate": 9, "components": [{"item_id": c["item_id"], "per_unit": c["qty"] / ev["area"]} for c in ev["components"]]},
+            {"kind": "kit", "kit_id": kit["id"], "qty": 20, "rate": 120},
+            {"kind": "item", "item_id": self.ids["EL-HOIST"], "qty": 1, "rate": 25000},
+            {"kind": "charge", "charge_type": "install", "qty": 1, "rate": 15000},
+            {"kind": "charge", "charge_type": "dismantle", "qty": 1, "rate": 10000},
+            {"kind": "charge", "charge_type": "transport", "qty": 2, "rate": 3000}]})
+        return rid
+
+    def _deliver(self, rid, date="2026-08-01"):
+        t = self.R.handover_template(self.db, rid, "delivery")
+        t.update(date=date, signed=1, decision="safe", our_name="Hossam", client_name="Karim",
+                 checklist=[dict(c, ok="yes") for c in t["checklist"]])
+        return self.R.save_handover(self.db, rid, t)
+
+    def test_contract_flow(self):
+        R, db = self.R, self.db
+        rid = self._contract()
+        hid = self._deliver(rid)
+        with self.assertRaises(a.ValidationError):                       # no purchase order yet
+            R.confirm_handover(db, hid)
+        R.action(db, rid, "po", {"po_number": "PO-778", "po_date": "2026-08-01"})
+        with self.assertRaises(a.ValidationError):                       # contract not signed yet
+            R.confirm_handover(db, hid)
+        R.action(db, rid, "sign", {"signed_us": "Hossam", "signed_client": "Karim", "signed_on": "2026-08-01"})
+        R.confirm_handover(db, hid)
+        d = R.detail(db, rid)
+        self.assertEqual(d["rental"]["status"], "active")
+        self.assertEqual(sorted(c["kind"] for c in d["charges"]), ["install", "transport"])      # billed on delivery
+        frames = R.item_detail(db, self.ids["SC-FRM2"])["lots"]
+        self.assertEqual([(l["with_clients"], l["in_yard"]) for l in frames], [(150, 0), (70, 30)])   # FIFO: oldest first
+        al = R.allocation(db, rid, d["lines"][0]["id"])                    # m² rent shared by FIFO cost
+        self.assertAlmostEqual(sum(x["monthly"] for x in al["rows"]), al["rent"], delta=0.05)
+        self.assertEqual(al["basis"], "cost")
+        yields = {round(x["yield"], 4) for x in al["rows"]}
+        self.assertEqual(len(yields), 1)                                  # every piece earns the same % of its cost
+        # August invoice: a full calendar month = 1 month on every line
+        p = R.next_period(db, rid)
+        self.assertEqual((p["from"], p["to"]), ("2026-08-01", "2026-08-31"))
+        xid = R.create_invoice(db, rid, {"from": p["from"], "to": p["to"]})
+        x = a.get_extract(db, xid)
+        self.assertEqual([ln["qty"] for ln in x["lines"][:3]], [1152, 20, 1])
+        self.assertEqual(x["total"], 1152 * 9 + 20 * 120 + 25000 + 15000 + 6000)
+        with self.assertRaises(a.ValidationError):                       # the same period twice
+            R.create_invoice(db, rid, {"from": "2026-08-15", "to": "2026-09-10"})
+        a.post_extract(db, xid)
+        e = a.get_entry(db, a.get_extract(db, xid)["entry_id"])
+        self.assertEqual({ln["account"] for ln in e["lines"] if ln["credit"]}, {"4045", "4046", "2200"})
+        # return the frame sets on 15 Sep: 2 braces lost, 1 frame damaged
+        t = R.handover_template(db, rid, "return")
+        kl = d["lines"][1]["id"]
+        t["date"] = "2026-09-15"
+        t["data"]["units"] = {k: (v if int(k) == kl else 0) for k, v in t["data"]["units"].items()}
+        items = [x for x in t["data"]["items"] if x["line_id"] == kl]
+        for x in items:
+            if x["code"] == "SC-BRC3":
+                x["qty"], x["lost"] = x["qty"] - 2, 2
+            if x["code"] == "SC-FRM2":
+                x["qty"], x["damaged"] = x["qty"] - 1, 1
+        t["data"]["items"] = items
+        t["signed"] = 1
+        with self.assertRaises(a.ValidationError):                       # not signed by both parties
+            R.confirm_handover(db, R.save_handover(db, rid, {**t, "client_name": ""}))
+        R.confirm_handover(db, R.save_handover(db, rid, t))
+        loss = next(x for x in a.account_totals(db) if x["code"] == "7046")["net"]
+        self.assertEqual(loss, 90000 + 2 * 34000)                         # written off at FIFO cost (frame 900, braces 340)
+        sep = R.invoice_lines(db, rid, "2026-09-01", "2026-09-30")
+        self.assertEqual([ln["qty"] for ln in sep["lines"] if ln["category"] == "Rent"], [1152, 10, 1])   # sets out 15 of 30 days
+        self.assertAlmostEqual(sum(ln["qty"] * ln["price"] for ln in sep["lines"] if ln["category"] == "Compensation"), 2 * 391 + 1127)
+        # everything back → dismantling is charged, then the contract can close once invoiced
+        t = R.handover_template(db, rid, "return")
+        t.update(date="2026-10-10", signed=1)
+        R.confirm_handover(db, R.save_handover(db, rid, t))
+        d = R.detail(db, rid)
+        self.assertEqual(d["rental"]["status"], "returned")
+        self.assertIn("dismantle", [c["kind"] for c in d["charges"]])
+        with self.assertRaises(a.ValidationError):
+            R.action(db, rid, "close", {})
+        R.create_invoice(db, rid, {"from": "2026-09-01", "to": "2026-10-10"})
+        R.action(db, rid, "close", {})
+        self.assertEqual(R.get(db, rid)["status"], "closed")
+        self.assertEqual(R.item_stock(db, self.ids["SC-FRM2"])["on_rent"], 0)
+        self.assertEqual([c["check"] for c in a.audit(db) if not c["ok"]], [])
+
+    def test_undo_short_stock_and_backup(self):
+        from erp import interchange, rental_docs
+        R, db = self.R, self.db
+        rid = self._contract()
+        R.action(db, rid, "po", {"po_number": "PO-1"})
+        R.action(db, rid, "sign", {"signed_us": "A", "signed_client": "B"})
+        t = R.handover_template(db, rid, "delivery")
+        t.update(signed=1, decision="safe", checklist=[dict(c, ok="yes") for c in t["checklist"]])
+        t["data"]["items"][0]["qty"] = 999
+        with self.assertRaises(a.ValidationError):                       # more than the yard holds
+            R.confirm_handover(db, R.save_handover(db, rid, t))
+        t["data"]["items"][0]["qty"] = 200
+        t["checklist"][0]["ok"] = "no"
+        with self.assertRaises(a.ValidationError):                       # a failed safety check needs 'not safe'
+            R.confirm_handover(db, R.save_handover(db, rid, t))
+        t["checklist"][0]["ok"] = "yes"
+        hid = R.save_handover(db, rid, t)
+        R.confirm_handover(db, hid)
+        R.undo_handover(db, hid)
+        self.assertEqual(R.item_stock(db, self.ids["SC-FRM2"])["on_rent"], 0)
+        self.assertEqual(R.detail(db, rid)["charges"], [])
+        R.confirm_handover(db, hid)
+        for html in (rental_docs.offer_html(db, rid, "ar"), rental_docs.contract_html(db, rid, "en"), rental_docs.handover_html(db, hid, "ar")):
+            self.assertTrue(html.startswith("<!doctype html>"))
+        self.assertIn("الأرضية صلبة", rental_docs.handover_html(db, hid, "ar"))
+        R.create_invoice(db, rid, {"from": "2026-09-01", "to": "2026-09-30"})
+        db2 = Database(":memory:")
+        interchange.import_data(db2, interchange.read_json(interchange.to_json(db).encode()), mode="replace")
+        self.assertEqual(R.detail(db2, "RC-0001")["rental"]["status"], "active")
+        self.assertEqual(R.item_stock(db2, R.get_item(db2, "SC-FRM2")["id"])["on_rent"], 220)
+        self.assertEqual(len(R.detail(db2, "RC-0001")["invoices"]), 1)
 
 
 if __name__ == "__main__":

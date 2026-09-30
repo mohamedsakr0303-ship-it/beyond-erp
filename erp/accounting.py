@@ -28,7 +28,7 @@ ENTRY_KINDS = ["Direct Cost", "Operating Expense", "Payroll Accrual", "Payment V
                "Goods Receipt", "Material Issue", "Stock Transfer", "Stock Adjustment", "Reversing Entry",
                "Loan Received", "Loan Repayment", "Loan Given", "Loan Collection", "Loan Interest", "Loan Charges",
                "Loan Forgiven", "Loan Written Off", "Custody Issued", "Custody Settlement", "Custody Return",
-               "Custody Deduction"]
+               "Custody Deduction", "Rental Equipment Purchase", "Rental Equipment Loss"]
 
 
 class ValidationError(Exception):
@@ -780,7 +780,7 @@ def _lines_in(raw):
         out.append({"seq": i, "category": text(ln.get("category")), "sub": text(ln.get("sub")),
                     "item_no": text(ln.get("item_no")), "description": desc, "unit": text(ln.get("unit")),
                     "qty": num(ln.get("qty"), "quantity"), "price": to_minor(num(ln.get("price"), "price")),
-                    "cost": to_minor(num(ln.get("cost"), "cost"))})
+                    "cost": to_minor(num(ln.get("cost"), "cost")), "account": text(ln.get("account"), maxlen=20)})
     return out
 
 
@@ -850,10 +850,13 @@ def save_extract(db, d, extract_id=None):
                 raise ValidationError(f"Invoice number {number} already exists")
             extract_id = db.conn.execute("INSERT INTO extracts(bu_id,boq_id,number,date,customer,vat_code,wht_code) "
                                          "VALUES (?,?,?,?,?,?,?)", vals).lastrowid
-        db.conn.executemany("INSERT INTO extract_lines(extract_id,seq,category,sub,item_no,description,unit,qty,price) "
-                            "VALUES (?,?,?,?,?,?,?,?,?)",
+        for ln in lines:   # a line may earn into its own revenue account (rent, services, compensation...)
+            if ln["account"]:
+                account_code(db, ln["account"], types=("Revenue",), field="revenue account")
+        db.conn.executemany("INSERT INTO extract_lines(extract_id,seq,category,sub,item_no,description,unit,qty,price,account) "
+                            "VALUES (?,?,?,?,?,?,?,?,?,?)",
                             [(extract_id, ln["seq"], ln["category"], ln["sub"], ln["item_no"], ln["description"],
-                              ln["unit"], ln["qty"], ln["price"]) for ln in lines])
+                              ln["unit"], ln["qty"], ln["price"], ln["account"]) for ln in lines])
     return extract_id
 
 
@@ -924,7 +927,15 @@ def post_extract(db, xid, date=None, user="", ar_account=None, revenue_account=N
     lines = [{"account": ar, "debit": x["receivable"]}]
     if x["wht"]:
         lines.append({"account": db.acct("wht_receivable"), "debit": x["wht"]})
-    lines.append({"account": rev, "credit": x["total"]})
+    by_acc = {}
+    for ln in x["lines"]:
+        a = ln.get("account") or rev
+        by_acc[a] = by_acc.get(a, 0) + to_minor(ln["amount"])
+    diff = to_minor(x["total"]) - sum(by_acc.values())   # rounding lands on the main revenue account
+    by_acc[rev] = by_acc.get(rev, 0) + diff
+    for a, v in by_acc.items():
+        if v:
+            lines.append({"account": a, "credit": to_major(v)} if v > 0 else {"account": a, "debit": to_major(-v)})
     if x["vat"]:
         lines.append({"account": db.acct("vat_output"), "credit": x["vat"]})
     with db.tx():

@@ -301,6 +301,150 @@ CREATE TABLE IF NOT EXISTS loans (
     created_at TEXT DEFAULT ''
 );
 
+-- Equipment rental (scaffolding, construction elevators, cradles). Stock is tracked FIFO by purchase lot.
+CREATE TABLE IF NOT EXISTS rent_items (
+    id INTEGER PRIMARY KEY,
+    code TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    name_ar TEXT DEFAULT '',
+    category TEXT NOT NULL DEFAULT 'scaffolding',   -- scaffolding | elevator | cradle_manual | cradle_motorized | other
+    unit TEXT DEFAULT 'piece',
+    monthly_rate INTEGER NOT NULL DEFAULT 0,        -- rent per piece per month
+    std_cost INTEGER NOT NULL DEFAULT 0,            -- reference cost when no purchase is recorded yet
+    loss_price INTEGER NOT NULL DEFAULT 0,          -- 0 = latest cost × (1 + loss markup)
+    weight REAL DEFAULT 0,
+    active INTEGER NOT NULL DEFAULT 1,
+    notes TEXT DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS rent_kits (
+    id INTEGER PRIMARY KEY,
+    code TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    name_ar TEXT DEFAULT '',
+    unit TEXT DEFAULT 'frame',
+    monthly_rate INTEGER NOT NULL DEFAULT 0,
+    notes TEXT DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS rent_kit_lines (
+    id INTEGER PRIMARY KEY,
+    kit_id INTEGER NOT NULL REFERENCES rent_kits(id) ON DELETE CASCADE,
+    item_id INTEGER NOT NULL REFERENCES rent_items(id),
+    qty REAL NOT NULL DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS rent_lots (
+    id INTEGER PRIMARY KEY,
+    code TEXT NOT NULL UNIQUE,
+    item_id INTEGER NOT NULL REFERENCES rent_items(id),
+    date TEXT NOT NULL,
+    qty REAL NOT NULL,
+    unit_cost INTEGER NOT NULL DEFAULT 0,
+    supplier TEXT DEFAULT '',
+    source TEXT DEFAULT 'purchase',                 -- purchase (booked) | opening (already owned)
+    notes TEXT DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS rent_models (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    name_ar TEXT DEFAULT '',
+    category TEXT DEFAULT 'scaffolding',
+    spec TEXT NOT NULL DEFAULT '{}',                -- inputs, params, derived values, component formulas
+    notes TEXT DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS rentals (
+    id INTEGER PRIMARY KEY,
+    code TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL DEFAULT 'quote',          -- quote | ordered | active | returned | closed | cancelled
+    client TEXT NOT NULL,
+    contact TEXT DEFAULT '',
+    phone TEXT DEFAULT '',
+    site TEXT DEFAULT '',
+    site_location TEXT DEFAULT '',
+    bu_id INTEGER REFERENCES business_units(id) ON DELETE SET NULL,
+    quote_date TEXT DEFAULT '',
+    valid_until TEXT DEFAULT '',
+    po_number TEXT DEFAULT '',
+    po_date TEXT DEFAULT '',
+    po_notes TEXT DEFAULT '',
+    signed_us TEXT DEFAULT '',
+    signed_client TEXT DEFAULT '',
+    signed_on TEXT DEFAULT '',
+    start_date TEXT DEFAULT '',
+    duration_months REAL DEFAULT 1,
+    vat_code TEXT DEFAULT '',
+    wht_code TEXT DEFAULT '',
+    offer_notes TEXT DEFAULT '',
+    notes TEXT DEFAULT '',
+    lang TEXT DEFAULT 'en',
+    closed_on TEXT DEFAULT '',
+    created_at TEXT DEFAULT '',
+    created_by TEXT DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS rental_lines (
+    id INTEGER PRIMARY KEY,
+    rental_id INTEGER NOT NULL REFERENCES rentals(id) ON DELETE CASCADE,
+    seq INTEGER DEFAULT 0,
+    kind TEXT NOT NULL,                             -- item | kit | sqm | charge
+    item_id INTEGER, kit_id INTEGER, model_id INTEGER,
+    description TEXT DEFAULT '',
+    unit TEXT DEFAULT '',
+    qty REAL NOT NULL DEFAULT 0,
+    rate INTEGER NOT NULL DEFAULT 0,                -- monthly per unit (rent) or the amount (charge)
+    charge_type TEXT DEFAULT '',
+    charge_when TEXT DEFAULT '',
+    components TEXT DEFAULT '[]',                   -- [{item_id, per_unit}] pieces per billing unit
+    inputs TEXT DEFAULT '{}',
+    notes TEXT DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS rental_handovers (
+    id INTEGER PRIMARY KEY,
+    rental_id INTEGER NOT NULL REFERENCES rentals(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,                             -- delivery | return
+    number TEXT DEFAULT '',
+    date TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'draft',
+    data TEXT DEFAULT '{}',                         -- {units: {line_id: n}, items: [{line_id, item_id, qty, damaged, lost, loss_price}]}
+    checklist TEXT DEFAULT '[]',
+    decision TEXT DEFAULT '',
+    our_name TEXT DEFAULT '',
+    client_name TEXT DEFAULT '',
+    signed INTEGER NOT NULL DEFAULT 0,
+    notes TEXT DEFAULT '',
+    confirmed_at TEXT DEFAULT '',
+    confirmed_by TEXT DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS rent_moves (
+    id INTEGER PRIMARY KEY,
+    date TEXT NOT NULL,
+    item_id INTEGER NOT NULL REFERENCES rent_items(id),
+    lot_id INTEGER NOT NULL REFERENCES rent_lots(id),
+    rental_id INTEGER REFERENCES rentals(id) ON DELETE CASCADE,
+    handover_id INTEGER REFERENCES rental_handovers(id) ON DELETE CASCADE,
+    qty REAL NOT NULL,
+    kind TEXT NOT NULL,                             -- out | back | lost | damaged | scrap
+    note TEXT DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS ix_rent_moves_lot ON rent_moves(lot_id);
+CREATE INDEX IF NOT EXISTS ix_rent_moves_rental ON rent_moves(rental_id);
+CREATE TABLE IF NOT EXISTS rental_charges (
+    id INTEGER PRIMARY KEY,
+    rental_id INTEGER NOT NULL REFERENCES rentals(id) ON DELETE CASCADE,
+    date TEXT NOT NULL,
+    kind TEXT NOT NULL,                             -- install | dismantle | transport | materials | other | loss | damage
+    description TEXT DEFAULT '',
+    qty REAL NOT NULL DEFAULT 1,
+    amount INTEGER NOT NULL DEFAULT 0,
+    line_id INTEGER, handover_id INTEGER,
+    account TEXT DEFAULT '',
+    extract_id INTEGER REFERENCES extracts(id) ON DELETE SET NULL
+);
+CREATE TABLE IF NOT EXISTS rental_invoices (
+    id INTEGER PRIMARY KEY,
+    rental_id INTEGER NOT NULL REFERENCES rentals(id) ON DELETE CASCADE,
+    extract_id INTEGER NOT NULL REFERENCES extracts(id) ON DELETE CASCADE,
+    period_from TEXT NOT NULL,
+    period_to TEXT NOT NULL
+);
+
 -- Cash custody (petty cash advances) held by employees; movements are journal entries with ref CU:<code>...
 CREATE TABLE IF NOT EXISTS custodies (
     id INTEGER PRIMARY KEY,
@@ -439,6 +583,7 @@ DEFAULT_ACCOUNTS = [
     ("1340", "Letters of Guarantee — Cash Margin", "Asset", "other_current_asset", None),
     ("1400", "Furniture & Office Equipment", "Asset", "fixed_asset", "fixed_asset"),
     ("1410", "Tools & Site Equipment", "Asset", "fixed_asset", None),
+    ("1415", "Rental Equipment (Scaffolding, Elevators, Cradles)", "Asset", "fixed_asset", "rental_fleet"),
     ("1420", "Vehicles", "Asset", "fixed_asset", None),
     ("1430", "Computers & IT Equipment", "Asset", "fixed_asset", None),
     ("1440", "Land", "Asset", "fixed_asset", None),
@@ -490,6 +635,9 @@ DEFAULT_ACCOUNTS = [
     ("4070", "Rental Income", "Revenue", "other_income", None),
     ("4080", "Discounts Received", "Revenue", "other_income", None),
     ("4085", "Negotiation Earnings", "Revenue", "operating_revenue", "negotiation_income"),
+    ("4045", "Equipment Rental Revenue", "Revenue", "operating_revenue", "rental_revenue"),
+    ("4046", "Installation, Dismantling & Transport Revenue", "Revenue", "operating_revenue", "rental_services"),
+    ("4075", "Compensation for Lost / Damaged Equipment", "Revenue", "other_income", "rental_compensation"),
     ("4090", "Other Income", "Revenue", "other_income", "other_income"),
     ("4095", "Interest Income", "Revenue", "other_income", "interest_income"),
     # ---- Cost of sales
@@ -525,6 +673,7 @@ DEFAULT_ACCOUNTS = [
     ("7030", "Interest Expense", "Expense", "interest", "interest"),
     ("7040", "Foreign Exchange Loss / (Gain)", "Expense", "other_nonoperating", None),
     ("7045", "Loss on Disposal of Fixed Assets", "Expense", "other_nonoperating", "disposal_loss"),
+    ("7046", "Loss on Rental Equipment (Lost / Scrapped)", "Expense", "other_nonoperating", "rental_loss"),
     ("7050", "Income Tax Expense", "Expense", "income_tax", "income_tax"),
     ("7060", "Bad Debts & Loan Write-offs", "Expense", "other_nonoperating", "bad_debt"),
 ]
@@ -541,7 +690,7 @@ SUBTYPES = {
     "Expense": ["employee", "general_admin", "marketing", "utilities", "other_operating",
                 "depreciation", "amortization", "interest", "other_nonoperating", "income_tax"],
 }
-ACCOUNT_NAMES_AR = {'1010': 'النقدية بالصندوق', '1020': 'الحساب البنكي', '1030': 'العهد النقدية', '1035': 'عهد نقدية لدى العاملين', '1175': 'قروض ممنوحة للغير (قصيرة الأجل)', '1185': 'فوائد مستحقة التحصيل', '1610': 'قروض ممنوحة للغير (طويلة الأجل)', '7060': 'ديون معدومة وإعدام قروض', '1100': 'العملاء (المدينون)', '1150': 'محتجزات لدى العملاء (ضمان أعمال)', '1160': 'سلف العاملين', '1200': 'مخزون الخامات', '1300': 'مصروفات مدفوعة مقدماً', '1310': 'دفعات مقدمة للموردين', '1320': 'ضريبة القيمة المضافة (مدخلات)', '1330': 'ضريبة خصم وتحصيل لدى العملاء', '1400': 'أثاث ومعدات مكتبية', '1410': 'عدد ومعدات مواقع', '1420': 'سيارات', '1430': 'أجهزة حاسب ومعدات تقنية', '1490': 'مجمع الإهلاك', '1500': 'برامج وتراخيص', '1510': 'العلامة التجارية والموقع ومكتبة التصميمات', '1590': 'مجمع الاستهلاك', '1600': 'تأمينات لدى الغير', '2010': 'الموردون (الدائنون)', '2015': 'مقاولو الباطن', '2020': 'أجور مستحقة', '2030': 'مصروفات مستحقة', '2040': 'تأمينات اجتماعية مستحقة', '2100': 'دفعات مقدمة من العملاء (إيرادات مؤجلة)', '2110': 'محتجزات مقاولي الباطن', '2200': 'ضريبة القيمة المضافة (مخرجات)', '2210': 'ضريبة الخصم والتحصيل المستحقة (من الموردين)', '2220': 'ضريبة الدخل المستحقة', '2300': 'قروض قصيرة الأجل', '2310': 'بطاقات ائتمان مستحقة', '2400': 'قروض طويلة الأجل', '2500': 'قروض الشركاء', '3010': 'رأس مال الشركاء', '3100': 'الأرباح المحتجزة', '3200': 'مسحوبات الشركاء / توزيعات الأرباح', '4010': 'إيرادات المشروعات — التنفيذ', '4020': 'أتعاب التصميم', '4030': 'أتعاب الإشراف والإدارة', '4040': 'مبيعات أثاث وتوريدات', '4050': 'خصومات ومسموحات المبيعات', '4085': 'أرباح التفاوض', '4090': 'إيرادات أخرى', '4095': 'إيرادات فوائد', '5010': 'خامات', '5020': 'تكاليف مقاولي الباطن', '5030': 'عمالة مباشرة', '5040': 'تجهيز الموقع', '5050': 'إيجار معدات', '5060': 'نقل وتشوين', '5070': 'تصميم خارجي ورندرات', '5080': 'تسويات المخزون', '6010': 'الإيجار', '6020': 'برامج واشتراكات', '6030': 'دعاية وإعلان', '6040': 'كهرباء ومياه', '6045': 'هاتف وإنترنت', '6050': 'رواتب إدارية', '6055': 'تأمينات اجتماعية ومزايا', '6060': 'أتعاب مهنية (قانونية ومراجعة)', '6065': 'مصروفات بنكية', '6070': 'مصروفات المشروعات غير المحملة', '6075': 'انتقالات وسفر', '6080': 'أدوات مكتبية', '6085': 'تأمين', '6090': 'مصروفات تشغيلية أخرى', '7010': 'مصروف الإهلاك', '7020': 'مصروف الاستهلاك', '7030': 'مصروفات الفوائد', '7040': 'خسائر (أرباح) فروق العملة', '7050': 'مصروف ضريبة الدخل'}
+ACCOUNT_NAMES_AR = {'1010': 'النقدية بالصندوق', '1020': 'الحساب البنكي', '1030': 'العهد النقدية', '1415': 'معدات التأجير (سقالات، مصاعد، سقالات معلقة)', '4045': 'إيرادات تأجير المعدات', '4046': 'إيرادات التركيب والفك والنقل', '4075': 'تعويضات المعدات المفقودة / التالفة', '7046': 'خسائر معدات التأجير (فقد / تكهين)', '1035': 'عهد نقدية لدى العاملين', '1175': 'قروض ممنوحة للغير (قصيرة الأجل)', '1185': 'فوائد مستحقة التحصيل', '1610': 'قروض ممنوحة للغير (طويلة الأجل)', '7060': 'ديون معدومة وإعدام قروض', '1100': 'العملاء (المدينون)', '1150': 'محتجزات لدى العملاء (ضمان أعمال)', '1160': 'سلف العاملين', '1200': 'مخزون الخامات', '1300': 'مصروفات مدفوعة مقدماً', '1310': 'دفعات مقدمة للموردين', '1320': 'ضريبة القيمة المضافة (مدخلات)', '1330': 'ضريبة خصم وتحصيل لدى العملاء', '1400': 'أثاث ومعدات مكتبية', '1410': 'عدد ومعدات مواقع', '1420': 'سيارات', '1430': 'أجهزة حاسب ومعدات تقنية', '1490': 'مجمع الإهلاك', '1500': 'برامج وتراخيص', '1510': 'العلامة التجارية والموقع ومكتبة التصميمات', '1590': 'مجمع الاستهلاك', '1600': 'تأمينات لدى الغير', '2010': 'الموردون (الدائنون)', '2015': 'مقاولو الباطن', '2020': 'أجور مستحقة', '2030': 'مصروفات مستحقة', '2040': 'تأمينات اجتماعية مستحقة', '2100': 'دفعات مقدمة من العملاء (إيرادات مؤجلة)', '2110': 'محتجزات مقاولي الباطن', '2200': 'ضريبة القيمة المضافة (مخرجات)', '2210': 'ضريبة الخصم والتحصيل المستحقة (من الموردين)', '2220': 'ضريبة الدخل المستحقة', '2300': 'قروض قصيرة الأجل', '2310': 'بطاقات ائتمان مستحقة', '2400': 'قروض طويلة الأجل', '2500': 'قروض الشركاء', '3010': 'رأس مال الشركاء', '3100': 'الأرباح المحتجزة', '3200': 'مسحوبات الشركاء / توزيعات الأرباح', '4010': 'إيرادات المشروعات — التنفيذ', '4020': 'أتعاب التصميم', '4030': 'أتعاب الإشراف والإدارة', '4040': 'مبيعات أثاث وتوريدات', '4050': 'خصومات ومسموحات المبيعات', '4085': 'أرباح التفاوض', '4090': 'إيرادات أخرى', '4095': 'إيرادات فوائد', '5010': 'خامات', '5020': 'تكاليف مقاولي الباطن', '5030': 'عمالة مباشرة', '5040': 'تجهيز الموقع', '5050': 'إيجار معدات', '5060': 'نقل وتشوين', '5070': 'تصميم خارجي ورندرات', '5080': 'تسويات المخزون', '6010': 'الإيجار', '6020': 'برامج واشتراكات', '6030': 'دعاية وإعلان', '6040': 'كهرباء ومياه', '6045': 'هاتف وإنترنت', '6050': 'رواتب إدارية', '6055': 'تأمينات اجتماعية ومزايا', '6060': 'أتعاب مهنية (قانونية ومراجعة)', '6065': 'مصروفات بنكية', '6070': 'مصروفات المشروعات غير المحملة', '6075': 'انتقالات وسفر', '6080': 'أدوات مكتبية', '6085': 'تأمين', '6090': 'مصروفات تشغيلية أخرى', '7010': 'مصروف الإهلاك', '7020': 'مصروف الاستهلاك', '7030': 'مصروفات الفوائد', '7040': 'خسائر (أرباح) فروق العملة', '7050': 'مصروف ضريبة الدخل'}
 ACCOUNT_NAMES_AR.update({'1120': 'أوراق القبض (شيكات تحت التحصيل)', '1170': 'مستحق من الشركاء', '1180': 'إيرادات مستحقة غير مفوترة (أعمال منفذة)', '1190': 'مخصص الديون المشكوك في تحصيلها', '1340': 'غطاء خطابات الضمان', '1440': 'أراضي', '1450': 'مباني وتحسينات أماكن مستأجرة', '1460': 'مشروعات تحت التنفيذ', '1520': 'الشهرة', '1700': 'استثمارات طويلة الأجل', '2050': 'أوراق الدفع (شيكات صادرة)', '2060': 'فوائد مستحقة', '2120': 'توزيعات أرباح مستحقة للشركاء', '2130': 'مستحق للشركاء المنسحبين', '2510': 'مخصص مكافأة نهاية الخدمة', '3020': 'جاري الشركاء', '3030': 'علاوة إصدار / علاوة حصص', '3110': 'الاحتياطي القانوني', '3120': 'الاحتياطي العام', '4060': 'أرباح بيع أصول ثابتة', '4070': 'إيرادات إيجار', '4080': 'خصم مكتسب', '6015': 'صيانة وإصلاحات', '6078': 'وقود ومصروفات سيارات', '6088': 'ديون معدومة', '7045': 'خسائر بيع أصول ثابتة'})
 NEW_IN_V12 = {"1120", "1170", "1180", "1190", "1340", "1440", "1450", "1460", "1520", "1700", "2050", "2060", "2120",
               "2130", "2510", "3020", "3030", "3110", "3120", "4060", "4070", "4080", "6015", "6078", "6088", "7045"}
@@ -559,7 +708,7 @@ def normal_for(acc_type: str, subtype: str) -> str:
     return "Debit" if debit else "Credit"
 
 
-MODULES = ["dashboard", "business_units", "sales", "estimating", "purchasing", "stock", "payroll", "assets",
+MODULES = ["dashboard", "business_units", "sales", "estimating", "purchasing", "stock", "rentals", "payroll", "assets",
            "accounting", "partners", "reports", "tax", "import_export", "settings", "users"]
 
 # Second-level permissions: each screen can have its own level, or inherit its section's.
@@ -570,6 +719,7 @@ SUBMODULES = {
     "estimating": ["boqs", "prices"],
     "purchasing": ["costs", "expenses", "payments", "payables", "negotiations", "custody"],
     "stock": ["balances", "moves", "warehouses"],
+    "rentals": ["contracts", "fleet", "calculator"],
     "payroll": [],
     "assets": ["register", "depreciation"],
     "accounting": ["journal", "ledger", "coa", "loans"],
@@ -697,6 +847,7 @@ class Database:
                                           "VALUES (?,?,?,?,?,?,?)", (code, name, ACCOUNT_NAMES_AR.get(code, ""),
                                                                      typ, sub, normal_for(typ, sub), role))
         self._add_cols("journal_lines", [("party", "TEXT DEFAULT ''")])
+        self._add_cols("extract_lines", [("account", "TEXT DEFAULT ''")])
         self._add_cols("partners", [("active", "INTEGER NOT NULL DEFAULT 1"), ("joined", "TEXT DEFAULT ''"),
                                     ("left_on", "TEXT DEFAULT ''"), ("capital_interest", "REAL DEFAULT 0"),
                                     ("loan_rate", "REAL DEFAULT 0"),
@@ -711,7 +862,8 @@ class Database:
                 if not self.conn.execute("SELECT 1 FROM accounts WHERE role=?", (role,)).fetchone():
                     self.conn.execute("UPDATE accounts SET role=? WHERE code=? AND role IS NULL", (role, code))
             for code, name, typ, sub, role in DEFAULT_ACCOUNTS:
-                if role not in ("custody", "loans_receivable", "interest_receivable", "loans_receivable_lt", "bad_debt") or \
+                if role not in ("custody", "loans_receivable", "interest_receivable", "loans_receivable_lt", "bad_debt", "rental_fleet",
+                                "rental_revenue", "rental_services", "rental_compensation", "rental_loss") or \
                         self.conn.execute("SELECT 1 FROM accounts WHERE role=?", (role,)).fetchone():
                     continue
                 c = code

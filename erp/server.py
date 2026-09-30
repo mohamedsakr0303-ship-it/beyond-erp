@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from . import assets, custody, entries, equity, loans, __version__
+from . import assets, custody, entries, equity, loans, rental_docs, rentals, __version__
 from . import accounting as acc
 from . import auth, branding, cloud, documents, einvoice, interchange, reports
 from .db import MODULES, SUBMODULES, SUBTYPES, to_major, to_minor
@@ -607,7 +607,8 @@ KIND_MODULE = {"Supplier Discount": "purchasing.payments", "Direct Cost": "purch
                "Partner Exit": "partners.ownership", "Asset Purchase": "assets.register", "Depreciation": "assets.depreciation",
                "Asset Disposal": "assets.register", "Goods Receipt": "stock.moves", "Material Issue": "stock.moves",
                "Stock Transfer": "stock.moves", "Stock Adjustment": "stock.moves",
-               **{k: "accounting.loans" for k in loans.ALL_KINDS}, **{k: "purchasing.custody" for k in custody.ALL_KINDS}}
+               **{k: "accounting.loans" for k in loans.ALL_KINDS}, **{k: "purchasing.custody" for k in custody.ALL_KINDS},
+               **{k: "rentals.fleet" for k in rentals.KINDS}}
 
 
 def _vouchers_report(ctx):
@@ -1052,6 +1053,240 @@ def custody_action(ctx, cid, action):
     ids = custody.post(ctx.db, cid, action, ctx.body, ctx.user["username"])
     ctx.log(f"custody.{action}", f"{cid} -> {ids}")
     return ok({"ids": ids})
+
+
+# ================================================================ rentals
+@route("GET", "/api/rent-items", "rentals.fleet")
+def rent_items(ctx):
+    q = ctx.q
+    return ok(rentals.list_items(ctx.db, q.get("q"), q.get("category")))
+
+
+@route("GET", "/api/rent-catalog")
+def rent_catalog(ctx):
+    """What can be put on a quote (contracts or calculator users need it too)."""
+    if not (ctx.can("rentals.contracts") or ctx.can("rentals.fleet") or ctx.can("rentals.calculator")):
+        raise PermissionError()
+    return ok(rentals.list_items(ctx.db, active_only=True))
+
+
+@route("GET", "/api/rent-items/<iid>", "rentals.fleet")
+def rent_item_one(ctx, iid):
+    return ok(rentals.item_detail(ctx.db, iid))
+
+
+@route("POST", "/api/rent-items", "rentals.fleet", "add")
+def rent_item_add(ctx):
+    return ok({"id": rentals.save_item(ctx.db, ctx.body)})
+
+
+@route("PUT", "/api/rent-items/<iid>", "rentals.fleet", "edit")
+def rent_item_edit(ctx, iid):
+    rentals.save_item(ctx.db, ctx.body, iid)
+    return ok()
+
+
+@route("DELETE", "/api/rent-items/<iid>", "rentals.fleet", "edit")
+def rent_item_del(ctx, iid):
+    rentals.delete_item(ctx.db, iid)
+    return ok()
+
+
+@route("POST", "/api/rent-items/<iid>/lots", "rentals.fleet", "add")
+def rent_lot_add(ctx, iid):
+    lid = rentals.add_lot(ctx.db, iid, ctx.body, ctx.user["username"])
+    ctx.log("rent.lot", lid)
+    return ok({"id": lid})
+
+
+@route("DELETE", "/api/rent-lots/<lid>", "rentals.fleet", "edit")
+def rent_lot_del(ctx, lid):
+    rentals.delete_lot(ctx.db, int(lid), ctx.user["username"])
+    return ok()
+
+
+@route("POST", "/api/rent-scrap", "rentals.fleet", "edit")
+def rent_scrap(ctx):
+    return ok(rentals.scrap(ctx.db, ctx.body, ctx.user["username"]))
+
+
+@route("POST", "/api/rent-kits", "rentals.fleet", "add")
+def rent_kit_add(ctx):
+    return ok({"id": rentals.save_kit(ctx.db, ctx.body)})
+
+
+@route("PUT", "/api/rent-kits/<kid>", "rentals.fleet", "edit")
+def rent_kit_edit(ctx, kid):
+    rentals.save_kit(ctx.db, ctx.body, int(kid))
+    return ok()
+
+
+@route("DELETE", "/api/rent-kits/<kid>", "rentals.fleet", "edit")
+def rent_kit_del(ctx, kid):
+    rentals.delete_kit(ctx.db, kid)
+    return ok()
+
+
+@route("POST", "/api/rent-starter", "rentals.fleet", "add")
+def rent_starter(ctx):
+    return ok(rentals.starter(ctx.db))
+
+
+@route("GET", "/api/rent-settings")
+def rent_settings(ctx):
+    if not (ctx.can("rentals.contracts") or ctx.can("rentals.fleet")):
+        raise PermissionError()
+    return ok(rentals.settings(ctx.db))
+
+
+@route("PUT", "/api/rent-settings", "rentals.fleet", "edit")
+def rent_settings_put(ctx):
+    return ok(rentals.save_settings(ctx.db, ctx.body))
+
+
+@route("GET", "/api/rent-models")
+def rent_models(ctx):
+    if not (ctx.can("rentals.calculator") or ctx.can("rentals.contracts")):
+        raise PermissionError()
+    return ok({"models": rentals.list_models(ctx.db)})
+
+
+@route("POST", "/api/rent-models", "rentals.calculator", "add")
+def rent_model_add(ctx):
+    return ok({"id": rentals.save_model(ctx.db, ctx.body)})
+
+
+@route("PUT", "/api/rent-models/<mid>", "rentals.calculator", "edit")
+def rent_model_edit(ctx, mid):
+    rentals.save_model(ctx.db, ctx.body, mid)
+    return ok()
+
+
+@route("DELETE", "/api/rent-models/<mid>", "rentals.calculator", "edit")
+def rent_model_del(ctx, mid):
+    rentals.delete_model(ctx.db, mid)
+    return ok()
+
+
+@route("POST", "/api/rent-models-preview/eval")
+def rent_model_eval(ctx):
+    if not (ctx.can("rentals.calculator") or ctx.can("rentals.contracts")):
+        raise PermissionError()
+    spec = ctx.body.get("spec")
+    if not spec and ctx.body.get("model_id"):
+        m = ctx.db.one("SELECT spec FROM rent_models WHERE id=?", (int(ctx.body["model_id"]),))
+        spec = json.loads(m["spec"]) if m else {}
+    return ok(rentals.evaluate(ctx.db, spec or {}, ctx.body.get("values") or {}))
+
+
+@route("GET", "/api/rentals", "rentals.contracts")
+def rentals_list(ctx):
+    return ok(rentals.list_rentals(ctx.db, ctx.q.get("q"), ctx.q.get("status")))
+
+
+@route("GET", "/api/rentals/<rid>", "rentals.contracts")
+def rental_one(ctx, rid):
+    return ok(rentals.detail(ctx.db, rid))
+
+
+@route("POST", "/api/rentals", "rentals.contracts", "add")
+def rental_add(ctx):
+    rid = rentals.save(ctx.db, ctx.body, user=ctx.user["username"])
+    ctx.log("rental.add", rid)
+    return ok({"id": rid})
+
+
+@route("PUT", "/api/rentals/<rid>", "rentals.contracts", "edit")
+def rental_edit(ctx, rid):
+    rentals.save(ctx.db, ctx.body, rid, ctx.user["username"])
+    ctx.log("rental.edit", rid)
+    return ok()
+
+
+@route("DELETE", "/api/rentals/<rid>", "rentals.contracts", "edit")
+def rental_del(ctx, rid):
+    rentals.delete(ctx.db, rid)
+    return ok()
+
+
+@route("GET", "/api/rentals/<rid>/allocation", "rentals.contracts")
+def rental_allocation(ctx, rid):
+    return ok(rentals.allocation(ctx.db, rid, ctx.q.get("line")))
+
+
+@route("GET", "/api/rentals/<rid>/handover-template", "rentals.contracts")
+def rental_handover_template(ctx, rid):
+    return ok(rentals.handover_template(ctx.db, rid, ctx.q.get("kind") or "delivery"))
+
+
+@route("GET", "/api/rentals/<rid>/invoice-preview", "rentals.contracts")
+def rental_invoice_preview(ctx, rid):
+    return ok(rentals.invoice_lines(ctx.db, rid, ctx.q.get("from"), ctx.q.get("to"), ctx.q.get("lang") or "en"))
+
+
+@route("GET", "/api/rentals/<rid>/doc", "rentals.contracts")
+def rental_doc(ctx, rid):
+    fn = {"offer": rental_docs.offer_html, "contract": rental_docs.contract_html}.get(ctx.q.get("kind") or "offer")
+    if not fn:
+        return ok({"error": "Unknown document"}, 404)
+    return Reply(fn(ctx.db, rid, ctx.q.get("lang")).encode("utf-8"), ctype="text/html; charset=utf-8")
+
+
+@route("POST", "/api/rentals/<rid>/handovers", "rentals.contracts", "add")
+def rental_handover_add(ctx, rid):
+    return ok({"id": rentals.save_handover(ctx.db, rid, ctx.body)})
+
+
+@route("PUT", "/api/rental-handovers/<hid>", "rentals.contracts", "edit")
+def rental_handover_edit(ctx, hid):
+    h = ctx.db.one("SELECT rental_id FROM rental_handovers WHERE id=?", (int(hid),))
+    if not h:
+        raise acc.ValidationError("Handover not found")
+    rentals.save_handover(ctx.db, h["rental_id"], ctx.body, hid)
+    return ok()
+
+
+@route("POST", "/api/rental-handovers/<hid>/<what>", "rentals.contracts", "edit")
+def rental_handover_action(ctx, hid, what):
+    if what == "confirm":
+        rentals.confirm_handover(ctx.db, hid, ctx.user["username"])
+    elif what == "undo":
+        rentals.undo_handover(ctx.db, hid, ctx.user["username"])
+    else:
+        raise acc.ValidationError("Unknown action")
+    ctx.log(f"rental.handover.{what}", hid)
+    return ok()
+
+
+@route("DELETE", "/api/rental-handovers/<hid>", "rentals.contracts", "edit")
+def rental_handover_del(ctx, hid):
+    rentals.delete_handover(ctx.db, hid)
+    return ok()
+
+
+@route("GET", "/api/rental-handovers/<hid>/doc", "rentals.contracts")
+def rental_handover_doc(ctx, hid):
+    return Reply(rental_docs.handover_html(ctx.db, hid, ctx.q.get("lang")).encode("utf-8"), ctype="text/html; charset=utf-8")
+
+
+@route("DELETE", "/api/rental-charges/<cid>", "rentals.contracts", "edit")
+def rental_charge_del(ctx, cid):
+    rentals.delete_charge(ctx.db, cid)
+    return ok()
+
+
+@route("POST", "/api/rentals/<rid>/<what>", "rentals.contracts", "add")
+def rental_action(ctx, rid, what):
+    if what == "invoice":
+        ctx.require("sales.invoices", "add")
+        xid = rentals.create_invoice(ctx.db, rid, ctx.body, ctx.user["username"])
+        ctx.log("rental.invoice", f"{rid} -> {xid}")
+        return ok({"id": xid})
+    if what in ("cancel", "close", "reopen", "unsign"):
+        ctx.require("rentals.contracts", "edit")
+    rentals.action(ctx.db, rid, what, ctx.body, ctx.user["username"])
+    ctx.log(f"rental.{what}", rid)
+    return ok()
 
 
 # ============================================================ fixed assets
@@ -1604,9 +1839,11 @@ def offer_type_del(ctx, tid):
 
 # ============================================================ erase all data
 ERASE_TRANSACTIONS = ("stock_moves", "stock_levels", "extract_lines", "extracts", "ownership_changes", "journal_lines",
-                      "journal_entries", "offers", "loans", "custodies")
+                      "journal_entries", "offers", "loans", "custodies", "rent_moves", "rental_invoices", "rental_charges",
+                      "rental_handovers", "rental_lines", "rentals", "rent_lots")
 ERASE_ALL = ERASE_TRANSACTIONS + ("parties", "stock_items", "boq_lines", "boqs", "partner_shares", "partners", "rates",
-                                  "fixed_assets", "business_units", "offer_types", "tax_codes", "assets")
+                                  "fixed_assets", "business_units", "offer_types", "tax_codes", "assets", "rent_kit_lines", "rent_kits",
+                                  "rent_items", "rent_models")
 
 
 @route("POST", "/api/erase")

@@ -251,7 +251,7 @@ S.GLOBAL_H = {
     async v => { await api("PUT", "/api/me/password", v); toast(t("saved")); return true; }),
   quicknew: el => newItem(el.dataset.doc),
   coswitch: () => companySwitcher(),
-  goback: () => { const h = parseHash().parts; const parent = { bu: "bus", invoice: "invoices", boq: "boqs", offer: "offers", offertypes: "offers", report: "dashboard", loan: "loans", cust: "custody" }[h[0]];
+  goback: () => { const h = parseHash().parts; const parent = { bu: "bus", invoice: "invoices", boq: "boqs", offer: "offers", offertypes: "offers", report: "dashboard", loan: "loans", cust: "custody", rental: "rentals" }[h[0]];
     if (S.navCount > 0) history.back(); else location.hash = "#/" + (parent || "dashboard"); },
   closeDrawer: () => closeDrawer(),
 };
@@ -1061,7 +1061,7 @@ function linesEditor(lines, withCost, withContract) {
   return `<div class="tbl"><table id="le"><thead><tr><th>${t("item_no")}</th><th>${t("category")}</th><th style="min-width:260px">${t("description")}</th><th>${t("unit")}</th>
     ${withContract ? `<th class="num">${t("contract_qty")}</th><th class="num">${t("billed_before")}</th>` : ""}<th class="num">${withContract ? t("executed") : t("qty")}</th><th class="num">${t("unit_price")}</th>${withCost ? `<th class="num">${t("unit_cost")}</th>` : ""}<th class="num">${t("amount")}</th><th></th></tr></thead><tbody>
     ${lines.map((l, i) => `<tr data-i="${i}"><td><input class="l-item_no" value="${esc(l.item_no)}" style="width:70px"></td><td><input class="l-category" value="${esc(l.category)}"></td>
-      <td><input class="l-description" value="${esc(l.description)}"><input type="hidden" class="l-sub" value="${esc(l.sub || "")}"></td><td><input class="l-unit" value="${esc(l.unit)}" style="width:70px" list="units"></td>
+      <td><input class="l-description" value="${esc(l.description)}"><input type="hidden" class="l-sub" value="${esc(l.sub || "")}"><input type="hidden" class="l-account" value="${esc(l.account || "")}"></td><td><input class="l-unit" value="${esc(l.unit)}" style="width:70px" list="units"></td>
       ${withContract ? `<td class="num">${l.contract_qty == null ? "—" : numf(l.contract_qty)}</td><td class="num">${numf(l.billed_before || 0)}</td>` : ""}
       <td><input class="l-qty num" type="number" step="any" value="${l.qty ?? 0}" data-input="letot" style="width:90px"></td><td><input class="l-price num" type="number" step="any" value="${l.price ?? 0}" data-input="letot" style="width:110px"></td>
       ${withCost ? `<td><input class="l-cost num" type="number" step="any" value="${l.cost ?? 0}" data-input="letot" style="width:110px"></td>` : ""}
@@ -1069,7 +1069,7 @@ function linesEditor(lines, withCost, withContract) {
 }
 function readLines() {
   return $$("#le tbody tr").map(tr => { const g = c => { const el = $(".l-" + c, tr); return el ? el.value : ""; };
-    return { item_no: g("item_no"), category: g("category"), sub: g("sub"), description: g("description"), unit: g("unit"), qty: +g("qty") || 0, price: +g("price") || 0, cost: +g("cost") || 0 }; })
+    return { item_no: g("item_no"), category: g("category"), sub: g("sub"), description: g("description"), unit: g("unit"), qty: +g("qty") || 0, price: +g("price") || 0, cost: +g("cost") || 0, account: g("account") }; })
     .filter(l => l.description.trim());
 }
 function priceSearchBox() {
@@ -2644,6 +2644,452 @@ async function pickThen(kind, fn) {
     opts: d.rows.map(r => [r.id, isLoan ? `${r.code} — ${r.party} · ${money(r.outstanding)}${r.next_due ? ` · ${L2("next", "القادم")} ${fd(r.next_due)}` : ""}` : `${r.code} — ${r.holder} · ${money(r.balance)}`]) }]),
     async v => { const r = d.rows.find(x => String(x.id) === String(v.pick)); await fn(isLoan ? r.id : r); return false; }, { submitLabel: L2("Continue", "متابعة") });
 }
+
+// ================================================================ equipment rental
+const RENT_CAT = () => [["scaffolding", L2("Scaffolding", "سقالات")], ["elevator", L2("Construction elevator", "مصعد إنشائي")],
+  ["cradle_manual", L2("Cradle — manual", "سقالة معلقة يدوية")], ["cradle_motorized", L2("Cradle — motorized", "سقالة معلقة كهربائية")], ["other", L2("Other", "أخرى")]];
+const RENT_ST = s => ({ quote: ["", L2("Price offer", "عرض سعر")], ordered: ["warn", L2("PO received", "أمر شراء مستلم")], active: ["ok", L2("On site", "بالموقع")],
+  returned: ["", L2("Returned", "تم الإرجاع")], closed: ["", L2("Closed", "مغلق")], cancelled: ["bad", L2("Cancelled", "ملغي")] }[s] || ["", s]);
+const CHG_T = () => [["install", L2("Installation", "التركيب")], ["dismantle", L2("Dismantling", "الفك")], ["transport", L2("Transport", "النقل")],
+  ["materials", L2("Installation materials", "مواد التركيب")], ["other", L2("Other", "أخرى")]];
+const CHG_W = () => [["delivery", L2("On first delivery", "عند أول تسليم")], ["return", L2("On final return", "عند الإرجاع النهائي")], ["manual", L2("When I add it", "يدوياً")]];
+const nm = x => (S.lang === "ar" && x.name_ar ? x.name_ar : x.name) || "";
+const openDocTab = url => openApi(url, true);
+async function rentCatalog() { if (!S.cache.rentCat) S.cache.rentCat = await api("GET", "/api/rent-catalog"); return S.cache.rentCat; }
+
+PAGES.rentals = async (view, parts, q) => {
+  const d = await api("GET", "/api/rentals?" + qs(q));
+  S.H.rnew = () => rentalForm();
+  view.innerHTML = `<div class="toolbar">${can("rentals.contracts", "add") ? `<button class="btn pri" data-a="rnew">+ ${L2("New price offer", "عرض سعر جديد")}</button>` : ""}<span class="spacer"></span>${exportMenu("rentals", q)}</div>
+    <div class="kpis">${kpiBox(L2("On site now", "بالموقع حالياً"), String(d.totals.active), "", L2("contracts", "عقود"))}${kpiBox(L2("Rent / month on site", "الإيجار الشهري بالموقع"), d.totals.monthly, "pos")}
+      ${kpiBox(L2("Open price offers", "عروض أسعار مفتوحة"), String(d.totals.quotes))}</div>` +
+    filterBar(q, ["q", ["select", "status", t("status"), [["open", L2("Open contracts", "العقود المفتوحة")], ...["quote", "ordered", "active", "returned", "closed", "cancelled"].map(s => [s, RENT_ST(s)[1]])]]]) +
+    `<div class="card">${d.rows.length ? `<div class="tbl stack"><table><thead><tr><th>${t("code")}</th><th>${t("client")}</th><th>${L2("Site", "الموقع")}</th><th>${t("status")}</th><th>${L2("PO", "أمر الشراء")}</th><th class="num">${L2("Rent / month", "الإيجار الشهري")}</th><th class="num">${L2("Pieces out", "قطع بالموقع")}</th><th>${L2("Invoiced to", "تمت الفوترة حتى")}</th></tr></thead><tbody>
+      ${d.rows.map(r => { const [c, l] = RENT_ST(r.status); return `<tr class="click ${["closed", "cancelled"].includes(r.status) ? "void" : ""}" data-href="#/rental/${r.id}"><td><b>${esc(r.code)}</b></td><td>${esc(r.client)}</td><td>${esc(r.site)}</td><td><span class="chip ${c}">${esc(l)}</span></td>
+        <td>${esc(r.po_number || "—")}</td><td class="num">${money(r.status === "quote" ? r.monthly_quoted : r.monthly_on_site)}</td><td class="num">${numf(r.pieces_out)}</td><td>${r.billed_to ? fd(r.billed_to) : "—"}</td></tr>`; }).join("")}</tbody></table></div>`
+      : `<div class="empty">${L2("No rentals yet. Start with a price offer: scaffolding by piece, frame or square metre, elevators, cradles — plus installation, dismantling and transport. Set up your equipment first under Equipment & stock.", "لا توجد عقود بعد. ابدأ بعرض سعر: سقالات بالقطعة أو الشباك أو المتر المربع، مصاعد، سقالات معلقة — مع التركيب والفك والنقل. جهّز معداتك أولاً من «المعدات والمخزون».")}</div>`}</div>`;
+};
+
+PAGES.rental = async (view, parts) => {
+  const d = await api("GET", "/api/rentals/" + encodeURIComponent(parts[1]));
+  const R = d.rental, add = can("rentals.contracts", "add"), ed = can("rentals.contracts", "edit"), done = ["closed", "cancelled"].includes(R.status);
+  $("#ttl").textContent = `${R.code} — ${R.client}`;
+  const onSite = d.lines.some(l => l.on_site > 0), delivered = d.handovers.some(h => h.kind === "delivery" && h.status === "confirmed");
+  const act = (w, body = {}) => async () => { try { await api("POST", `/api/rentals/${R.id}/${w}`, body); toast(t("saved")); S.cache.rentCat = null; route(); } catch (e) { fail(e); } };
+  Object.assign(S.H, {
+    redit: () => rentalForm(d), rpo: () => rentPO(R), rsign: () => rentSign(R), rdel: () => handoverForm(d, "delivery"), rret: () => handoverForm(d, "return"),
+    rchg: () => rentCharge(d), rinv: () => rentInvoice(d), rclose: act("close"), rreopen: act("reopen"), runsign: act("unsign"),
+    rcancel: async () => { if (confirm(L2("Cancel this rental?", "إلغاء هذا العقد؟"))) await act("cancel")(); },
+    rdelete: () => confirmDelete(R.code, "/api/rentals/" + R.id, async () => { location.hash = "#/rentals"; }),
+    rdoc: el => openDocTab(`/api/rentals/${R.id}/doc?kind=${el.dataset.k}&lang=${el.dataset.l}`),
+    ralloc: el => rentAllocation(R, +el.dataset.id),
+    rhopen: el => { const h = d.handovers.find(x => x.id === +el.dataset.id); handoverForm(d, h.kind, h); },
+    rhprint: el => openDocTab(`/api/rental-handovers/${el.dataset.id}/doc?lang=${el.dataset.l || R.lang}`),
+    rchdel: async el => { if (!confirm(t("confirm_delete"))) return; try { await api("DELETE", "/api/rental-charges/" + el.dataset.id); route(); } catch (e) { fail(e); } },
+    rbill: async el => { try { await api("POST", `/api/rentals/${R.id}/charge`, { line_id: +el.dataset.id }); toast(t("saved")); route(); } catch (e) { fail(e); } } });
+  const docs = k => `<div class="dd"><button class="btn">${k === "offer" ? L2("Print offer", "طباعة العرض") : L2("Print contract", "طباعة العقد")} ▾</button><div class="dd-menu">
+    <button data-a="rdoc" data-k="${k}" data-l="ar">العربية</button><button data-a="rdoc" data-k="${k}" data-l="en">English</button></div></div>`;
+  const steps = ["quote", "ordered", "active", "returned", "closed"], cur = steps.indexOf(R.status);
+  const q = d.quote;
+  view.innerHTML = `<div class="toolbar"><a class="btn" href="#/rentals">← ${t("m_rentals")}</a>
+      ${!done && ed ? `<button class="btn" data-a="redit">${R.status === "quote" ? L2("Edit offer", "تعديل العرض") : L2("Edit contract lines", "تعديل بنود العقد")}</button>` : ""}${docs("offer")}
+      ${!done && add && !R.po_number ? `<button class="btn pri" data-a="rpo">${L2("Record client PO", "تسجيل أمر شراء العميل")}</button>` : ""}
+      ${R.po_number ? docs("contract") : ""}${!done && add && R.po_number && !R.signed_on ? `<button class="btn pri" data-a="rsign">${L2("Contract signed", "توقيع العقد")}</button>` : ""}
+      ${!done && add && R.signed_on ? `<button class="btn ${onSite ? "" : "pri"}" data-a="rdel">+ ${L2("Delivery", "تسليم")}</button>` : ""}
+      ${!done && add && onSite ? `<button class="btn" data-a="rret">+ ${L2("Return", "إرجاع")}</button>` : ""}
+      ${!done && add && R.po_number ? `<button class="btn" data-a="rchg">+ ${L2("Charge", "مبلغ إضافي")}</button>` : ""}
+      ${add && delivered && can("sales.invoices", "add") ? `<button class="btn" data-a="rinv">${L2("Invoice", "فاتورة")}</button>` : ""}
+      <span class="spacer"></span>
+      ${ed && !done && R.status === "returned" ? `<button class="btn" data-a="rclose">${L2("Close contract", "إغلاق العقد")}</button>` : ""}
+      ${ed && !done && !delivered ? `<button class="btn" data-a="rcancel">${L2("Cancel", "إلغاء")}</button>` : ""}
+      ${ed && done ? `<button class="btn" data-a="rreopen">${L2("Reopen", "إعادة فتح")}</button>` : ""}
+      ${ed && !delivered && !d.invoices.length ? `<button class="btn danger" data-a="rdelete">${t("delete")}</button>` : ""}</div>
+    <div class="row" style="gap:6px;margin-bottom:10px;flex-wrap:wrap">${R.status === "cancelled" ? `<span class="chip bad">${RENT_ST("cancelled")[1]}</span>` :
+      steps.map((s, i) => `<span class="chip ${i < cur ? "ok" : i === cur ? "warn" : ""}">${i < cur ? "✓ " : ""}${esc(RENT_ST(s)[1])}</span>`).join("<span class='muted'>→</span>")}
+      ${R.po_number && !R.signed_on && !done ? `<span class="chip bad">${L2("Contract not signed — deliveries need both signatures", "العقد غير موقّع — التسليم يحتاج توقيع الطرفين")}</span>` : ""}</div>
+    <div class="kpis">${kpiBox(L2("Rent / month on site", "الإيجار الشهري بالموقع"), d.on_site_monthly, "pos", R.status === "quote" ? `${L2("offer", "العرض")}: ${money(q.monthly)}` : "")}
+      ${kpiBox(L2("One-time charges (offer)", "مبالغ لمرة واحدة"), q.one_time)}${kpiBox(L2("Not invoiced yet", "لم تُفوتر بعد"), d.unbilled_charges, d.unbilled_charges ? "neg" : "", L2("charges", "مبالغ"))}
+      ${kpiBox(L2("Pieces on site", "القطع بالموقع"), numf(d.held.reduce((s, h) => s + h.qty, 0)), "", `${L2("value", "القيمة")} ${money(d.held.reduce((s, h) => s + h.value, 0))}`)}</div>
+    <div class="card"><div class="tbl"><table><tbody>
+      <tr><td class="muted">${t("client")}</td><td>${esc(R.client)}${R.contact || R.phone ? ` · ${esc([R.contact, R.phone].filter(Boolean).join(" · "))}` : ""}</td><td class="muted">${L2("Site", "الموقع")}</td><td>${esc([R.site, R.site_location].filter(Boolean).join(" — "))}</td></tr>
+      <tr><td class="muted">${L2("Offer date", "تاريخ العرض")}</td><td>${fd(R.quote_date)}${R.valid_until ? ` · ${L2("valid until", "صالح حتى")} ${fd(R.valid_until)}` : ""}</td><td class="muted">${L2("Client PO", "أمر الشراء")}</td><td>${R.po_number ? `${esc(R.po_number)} · ${fd(R.po_date)}` : "—"}</td></tr>
+      <tr><td class="muted">${L2("Contract signed", "توقيع العقد")}</td><td>${R.signed_on ? `${fd(R.signed_on)} · ${esc(R.signed_us)} / ${esc(R.signed_client)}${ed && !delivered ? ` <button class="btn sm" data-a="runsign">${t("edit")}</button>` : ""}` : "—"}</td>
+        <td class="muted">${t("bu")}</td><td>${R.bu_id ? `<a href="#/bu/${R.bu_id}">${esc(R.bu_code)}</a> <span class="muted">${L2("(profit & loss of this contract)", "(أرباح وخسائر هذا العقد)")}</span>` : "—"}</td></tr></tbody></table></div></div>
+    <div class="card"><h2>${L2("What is rented", "المؤجر")}</h2><div class="tbl stack"><table><thead><tr><th>${t("description")}</th><th>${L2("Type", "النوع")}</th><th class="num">${L2("Planned", "المخطط")}</th><th class="num">${L2("Rate", "السعر")}</th><th class="num">${L2("On site", "بالموقع")}</th><th class="num">${L2("Delivered / returned", "مسلّم / مرتجع")}</th><th></th></tr></thead><tbody>
+      ${d.lines.map(l => `<tr><td>${esc(l.description)}${l.kind === "kit" || l.kind === "sqm" ? `<div class="lines">${esc(l.components.map(c => `${nm(c)} × ${numf(c.per_unit * l.qty)}`).join(" · "))}</div>` : ""}</td>
+        <td>${{ item: L2("Per piece / unit", "بالقطعة / الوحدة"), kit: L2("Per frame / set", "بالشباك / الطقم"), sqm: L2("Per m²", "بالمتر المربع"), charge: esc((CHG_T().find(x => x[0] === l.charge_type) || [])[1] || "") }[l.kind]}</td>
+        <td class="num">${numf(l.qty)} ${esc(l.unit)}</td><td class="num">${money(l.rate)}${l.kind === "charge" ? "" : `<div class="lines">/ ${L2("month", "شهر")}</div>`}</td>
+        <td class="num">${l.kind === "charge" ? "" : `<b>${numf(l.on_site)}</b>`}</td><td class="num">${l.kind === "charge" ? (CHG_W().find(x => x[0] === l.charge_when) || [])[1] || "" : `${numf(l.delivered)} / ${numf(l.returned)}`}</td>
+        <td>${l.kind !== "charge" ? `<button class="btn sm" data-a="ralloc" data-id="${l.id}">${L2("Per-piece rent", "إيجار القطعة")}</button>` : !d.charges.some(c => c.line_id === l.id) && add && R.po_number && !done ? `<button class="btn sm" data-a="rbill" data-id="${l.id}">${L2("Charge now", "احتساب الآن")}</button>` : `<span class="chip ok">${L2("charged", "محتسب")}</span>`}</td></tr>`).join("")}</tbody></table></div></div>
+    ${d.held.length ? `<div class="card"><h2>${L2("Pieces on site", "القطع بالموقع")}</h2><div class="tbl"><table><thead><tr><th>${L2("Piece", "القطعة")}</th><th class="num">${t("qty")}</th><th class="num">${L2("Cost (FIFO)", "التكلفة (الوارد أولاً)")}</th></tr></thead><tbody>
+      ${d.held.map(h => `<tr><td>${esc(h.code)} — ${esc(nm(h))}</td><td class="num">${numf(h.qty)}</td><td class="num">${money(h.value)}</td></tr>`).join("")}</tbody></table></div></div>` : ""}
+    <div class="card"><h2>${L2("Handovers (signed by both parties)", "محاضر التسليم والاستلام (بتوقيع الطرفين)")}</h2>${d.handovers.length ? `<div class="tbl stack"><table><thead><tr><th>${t("date")}</th><th>#</th><th>${L2("Type", "النوع")}</th><th>${t("status")}</th><th>${L2("Signed", "التوقيع")}</th><th></th></tr></thead><tbody>
+      ${d.handovers.map(h => `<tr><td>${fd(h.date)}</td><td>${esc(h.number)}</td><td>${h.kind === "delivery" ? L2("Delivery", "تسليم") : L2("Return", "إرجاع")}</td>
+        <td><span class="chip ${h.status === "confirmed" ? "ok" : "warn"}">${h.status === "confirmed" ? L2("Confirmed", "معتمد") : L2("Draft", "مسودة")}</span>${h.decision === "unsafe" ? ` <span class="chip bad">${L2("not safe", "غير آمن")}</span>` : ""}</td>
+        <td>${h.signed ? `✓ ${esc(h.our_name)} / ${esc(h.client_name)}` : `<span class="muted">—</span>`}</td>
+        <td style="white-space:nowrap"><button class="btn sm" data-a="rhopen" data-id="${h.id}">${h.status === "draft" ? t("edit") : L2("View", "عرض")}</button> <button class="btn sm" data-a="rhprint" data-id="${h.id}" data-l="ar">🖶 ع</button> <button class="btn sm" data-a="rhprint" data-id="${h.id}" data-l="en">🖶 EN</button></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${R.signed_on ? L2("No deliveries yet.", "لا يوجد تسليم بعد.") : L2("Deliveries start after the client's PO and the signed contract.", "يبدأ التسليم بعد أمر شراء العميل وتوقيع العقد.")}</div>`}</div>
+    ${d.charges.length ? `<div class="card"><h2>${L2("Charges", "المبالغ الإضافية")}</h2><div class="tbl stack"><table><thead><tr><th>${t("date")}</th><th>${t("description")}</th><th class="num">${t("qty")}</th><th class="num">${t("amount")}</th><th class="num">${t("total")}</th><th>${L2("Invoice", "الفاتورة")}</th><th></th></tr></thead><tbody>
+      ${d.charges.map(c => `<tr><td>${fd(c.date)}</td><td>${esc(c.description)}</td><td class="num">${numf(c.qty)}</td><td class="num">${money(c.amount)}</td><td class="num">${money(c.total)}</td>
+        <td>${c.extract_id ? `<a href="#/invoice/${c.extract_id}">${esc(c.invoice_no)}</a>` : `<span class="chip warn">${L2("not invoiced", "لم تُفوتر")}</span>`}</td><td>${!c.extract_id && ed ? `<button class="btn sm danger" data-a="rchdel" data-id="${c.id}">✕</button>` : ""}</td></tr>`).join("")}</tbody></table></div></div>` : ""}
+    ${d.invoices.length ? `<div class="card"><h2>${L2("Invoices", "الفواتير")}</h2><div class="tbl"><table><thead><tr><th>${L2("Invoice", "الفاتورة")}</th><th>${L2("Rent period", "فترة الإيجار")}</th><th>${t("status")}</th><th class="num">${t("amount")}</th></tr></thead><tbody>
+      ${d.invoices.map(x => `<tr class="click" data-href="#/invoice/${x.extract_id}"><td><b>${esc(x.number)}</b></td><td>${fd(x.period_from)} → ${fd(x.period_to)}</td><td><span class="chip ${x.status === "posted" ? "ok" : "warn"}">${x.status === "posted" ? t("invoiced") : t("draft")}</span></td><td class="num">${money(x.total)}</td></tr>`).join("")}</tbody></table></div></div>` : ""}`;
+};
+
+// price offer / contract lines editor, with the scaffold calculator inline for square-metre lines
+async function rentalForm(d, pre) {
+  const R = d ? d.rental : {}, cat = await rentCatalog();
+  const models = (await api("GET", "/api/rent-models")).models;
+  let lines = d ? d.lines.map(l => ({ id: l.id, kind: l.kind, item_id: l.item_id, kit_id: l.kit_id, model_id: l.model_id, description: l.description, unit: l.unit, qty: l.qty, rate: l.rate,
+    charge_type: l.charge_type, charge_when: l.charge_when, components: l.components.map(c => ({ item_id: c.item_id, per_unit: c.per_unit })), inputs: l.inputs })) : (pre && pre.lines) || [];
+  const itemById = id => cat.items.find(i => i.id === +id) || {};
+  const html = form([
+    { k: "client", l: t("client"), v: R.client || (pre && pre.client) || "", list: "rcl", req: 1 }, { k: "contact", l: L2("Contact person", "المسؤول"), v: R.contact || "" },
+    { k: "phone", l: t("phone"), v: R.phone || "" }, { k: "site", l: L2("Project / site", "المشروع / الموقع"), v: R.site || "" },
+    { k: "site_location", l: L2("Location", "العنوان"), v: R.site_location || "" }, { k: "quote_date", l: L2("Offer date", "تاريخ العرض"), type: "date", v: R.quote_date || today() },
+    { k: "valid_until", l: L2("Valid until", "صالح حتى"), type: "date", v: R.valid_until || "" }, { k: "duration_months", l: L2("Expected duration (months)", "المدة المتوقعة (شهور)"), type: "number", v: R.duration_months ?? 1 },
+    { k: "vat_code", l: t("vat_code"), type: "select", opts: taxOpts("vat"), v: R.vat_code || "" }, { k: "wht_code", l: t("wht_code"), type: "select", opts: taxOpts("wht"), v: R.wht_code || "" },
+    { k: "lang", l: L2("Documents in", "لغة المستندات"), type: "select", opts: [["ar", "العربية"], ["en", "English"]], v: R.lang || S.boot.settings.language || "ar" },
+    { html: `<div id="rlines"></div>`, span: "spanall" },
+    { k: "offer_notes", l: L2("Notes on the offer", "ملاحظات العرض"), type: "textarea", v: R.offer_notes || "", span: "spanall" }, { k: "notes", l: L2("Internal notes", "ملاحظات داخلية"), type: "textarea", v: R.notes || "", span: "spanall" }])
+    + datalist("rcl", (S.boot.parties || []).map(p => p.name));
+  drawer(d ? `${t("edit")} — ${R.code}` : L2("New price offer", "عرض سعر جديد"), html, async (v) => {
+    const body = { ...v, lines: lines.map(l => ({ ...l })) };
+    if (d) { await api("PUT", "/api/rentals/" + R.id, body); toast(t("saved")); }
+    else { const r = await api("POST", "/api/rentals", body); toast(t("saved")); closeDrawer(); location.hash = "#/rental/" + r.id; return false; }
+  }, { wide: true, onOpen: f => {
+    let calc = null, tm;
+    const draw = () => {
+      const tot = lines.filter(l => l.kind !== "charge").reduce((s, l) => s + (+l.qty || 0) * (+l.rate || 0), 0), one = lines.filter(l => l.kind === "charge").reduce((s, l) => s + (+l.qty || 0) * (+l.rate || 0), 0);
+      $("#rlines", f).innerHTML = `<h4 style="margin:6px 0">${L2("What is rented", "المؤجر")}</h4><div class="tbl"><table><thead><tr><th>${L2("Type", "النوع")}</th><th style="min-width:200px">${t("description")}</th><th>${t("unit")}</th><th class="num">${t("qty")}</th><th class="num">${L2("Rate / month (or amount)", "السعر شهرياً (أو المبلغ)")}</th><th class="num">${t("total")}</th><th></th></tr></thead><tbody>
+        ${lines.map((l, i) => `<tr><td>${{ item: L2("Piece / unit", "قطعة / وحدة"), kit: L2("Frame / set", "شباك / طقم"), sqm: L2("m²", "م²"), charge: L2("One-time", "لمرة واحدة") }[l.kind]}
+            ${l.kind === "charge" ? `<div><select data-skip="1" data-change="rln" data-i="${i}" data-k="charge_type">${CHG_T().map(([v, n]) => `<option value="${v}" ${v === l.charge_type ? "selected" : ""}>${esc(n)}</option>`).join("")}</select>
+              <select data-skip="1" data-change="rln" data-i="${i}" data-k="charge_when">${CHG_W().map(([v, n]) => `<option value="${v}" ${v === l.charge_when ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></div>` : ""}</td>
+          <td><input data-skip="1" dir="auto" value="${esc(l.description || "")}" data-input="rln" data-i="${i}" data-k="description" style="min-width:190px">
+            ${l.kind === "kit" || l.kind === "sqm" ? `<div class="lines">${esc(l.components.map(c => `${nm(itemById(c.item_id))} × ${numf(Math.ceil(c.per_unit * (+l.qty || 0) - 1e-4))}`).join(" · "))}</div>` : ""}</td>
+          <td><input data-skip="1" value="${esc(l.unit || "")}" data-input="rln" data-i="${i}" data-k="unit" style="width:80px"></td>
+          <td><input data-skip="1" class="num" type="number" step="any" value="${l.qty ?? ""}" data-input="rln" data-i="${i}" data-k="qty" style="width:90px"></td>
+          <td><input data-skip="1" class="num" type="number" step="any" value="${l.rate ?? ""}" data-input="rln" data-i="${i}" data-k="rate" style="width:110px"></td>
+          <td class="num" data-tot="${i}">${money((+l.qty || 0) * (+l.rate || 0))}</td><td><button type="button" class="btn sm danger" data-a="rlndel" data-i="${i}">✕</button></td></tr>`).join("") || `<tr><td colspan="7" class="muted">${L2("Add lines below.", "أضف البنود من الأسفل.")}</td></tr>`}</tbody></table></div>
+        <div class="row" style="margin-top:6px;flex-wrap:wrap;gap:6px">
+          <select data-skip="1" id="rpick" style="max-width:260px"><option value="">${L2("+ Piece / unit…", "+ قطعة / وحدة…")}</option>${cat.items.map(i => `<option value="${i.id}">${esc(i.code)} — ${esc(nm(i))} (${money(i.monthly_rate)})</option>`).join("")}</select>
+          <select data-skip="1" id="rkpick" style="max-width:220px"><option value="">${L2("+ Frame / set…", "+ شباك / طقم…")}</option>${cat.kits.map(k => `<option value="${k.id}">${esc(k.code)} — ${esc(nm(k))} (${money(k.monthly_rate)})</option>`).join("")}</select>
+          <button type="button" class="btn sm" data-a="rcalc">+ ${L2("By m² (calculator)", "بالمتر المربع (الحاسبة)")}</button><button type="button" class="btn sm" data-a="rcharge">+ ${L2("One-time charge", "مبلغ لمرة واحدة")}</button>
+          <span class="spacer"></span><span>${L2("Monthly rent", "الإيجار الشهري")}: <b id="rmt">${money(tot)}</b> · ${L2("one-time", "لمرة واحدة")}: <b id="rot">${money(one)}</b></span></div>
+        <div id="rcalcbox"></div>`;
+      drawCalc(); };
+    const totals = () => { const tot = lines.filter(l => l.kind !== "charge").reduce((s, l) => s + (+l.qty || 0) * (+l.rate || 0), 0), one = lines.filter(l => l.kind === "charge").reduce((s, l) => s + (+l.qty || 0) * (+l.rate || 0), 0);
+      if ($("#rmt", f)) $("#rmt", f).textContent = money(tot); if ($("#rot", f)) $("#rot", f).textContent = money(one);
+      lines.forEach((l, i) => { const c = $(`[data-tot="${i}"]`, f); if (c) c.textContent = money((+l.qty || 0) * (+l.rate || 0)); }); };
+    const drawCalc = () => { const box = $("#rcalcbox", f); if (!box) return; if (!calc) { box.innerHTML = ""; return; }
+      const m = models.find(x => x.id === +calc.model_id) || models[0]; if (!m) { box.innerHTML = `<div class="banner info">${L2("No calculator model yet — open Scaffold calculator (or Equipment & stock → Starter set).", "لا يوجد نموذج حاسبة بعد — افتح حاسبة السقالات (أو المعدات والمخزون ← المجموعة الأساسية).")}</div>`; return; }
+      calc.model_id = m.id; const sp = m.spec;
+      box.innerHTML = `<div class="sec-ed" style="margin-top:10px"><div class="row" style="gap:8px;flex-wrap:wrap"><b>${L2("Scaffold calculator", "حاسبة السقالات")}</b>
+        <select data-skip="1" data-change="rcm">${models.map(x => `<option value="${x.id}" ${x.id === m.id ? "selected" : ""}>${esc(nm(x))}</option>`).join("")}</select>
+        ${[...sp.inputs, ...sp.params].map(p => `<label class="f" style="max-width:150px">${esc(S.lang === "ar" && p.label_ar ? p.label_ar : p.label)}${p.unit ? ` (${esc(p.unit)})` : ""}<input data-skip="1" class="num" type="number" step="any" value="${calc.values[p.key] ?? p.value}" data-input="rcv" data-k="${p.key}"></label>`).join("")}</div>
+        <div id="rcres" class="muted">…</div><div class="row" style="margin-top:6px"><label class="f" style="max-width:160px">${L2("Rent per m² / month", "إيجار المتر شهرياً")}<input data-skip="1" class="num" type="number" step="any" id="rcrate" value="${calc.rate ?? ""}"></label>
+        <button type="button" class="btn pri sm" data-a="rcadd">${L2("Add to the offer", "إضافة للعرض")}</button><button type="button" class="btn sm" data-a="rcx">${t("cancel")}</button></div></div>`;
+      evalCalc(); };
+    const evalCalc = async () => { const box = $("#rcres", f); if (!box || !calc) return;
+      try { const r = await api("POST", "/api/rent-models-preview/eval", { model_id: calc.model_id, values: calc.values }); calc.result = r;
+        box.innerHTML = `<div class="tbl" style="margin-top:6px"><table><thead><tr><th>${L2("Piece", "القطعة")}</th><th class="num">${t("qty")}</th><th class="num">${L2("In the yard", "بالمخزن")}</th><th class="num">${L2("Value", "القيمة")}</th></tr></thead><tbody>
+          ${r.components.map(c => `<tr><td>${c.missing ? `<span class="neg">${esc(c.item)} — ${L2("not in your equipment", "غير موجود بالمعدات")}</span>` : `${esc(c.item)} — ${esc(nm(c))}`}</td><td class="num"><b>${numf(c.qty)}</b></td><td class="num ${c.short ? "neg" : ""}">${c.missing ? "" : numf(c.in_yard)}${c.short ? ` (${L2("short", "عجز")} ${numf(c.short)})` : ""}</td><td class="num">${c.missing ? "" : money(c.value)}</td></tr>`).join("")}</tbody></table></div>
+          <div>${L2("Area", "المساحة")}: <b>${numf(r.area)} m²</b> · ${L2("equipment value", "قيمة المعدات")} ${money(r.value)} (${money(r.value_per_m2)} / m²)${r.piece_rent ? ` · ${L2("by piece rates", "بأسعار القطع")} ${money(r.piece_rent_per_m2)} / m²` : ""}</div>`;
+      } catch (e) { box.innerHTML = `<span class="neg">${esc(e.message)}</span>`; } };
+    Object.assign(S.H, {
+      rln: el => { const l = lines[+el.dataset.i]; l[el.dataset.k] = el.value; totals(); },
+      rlndel: el => { lines.splice(+el.dataset.i, 1); draw(); },
+      rcharge: () => { lines.push({ kind: "charge", charge_type: "install", charge_when: "delivery", description: L2("Installation", "التركيب"), unit: L2("lump sum", "مقطوعية"), qty: 1, rate: "" }); draw(); },
+      rcalc: () => { calc = { model_id: (models[0] || {}).id, values: {}, rate: "" }; drawCalc(); $("#rcalcbox", f).scrollIntoView({ behavior: "smooth", block: "nearest" }); },
+      rcm: el => { calc.model_id = +el.value; calc.values = {}; drawCalc(); },
+      rcv: el => { calc.values[el.dataset.k] = el.value; clearTimeout(tm); tm = setTimeout(evalCalc, 350); },
+      rcx: () => { calc = null; drawCalc(); },
+      rcadd: () => { const r = calc && calc.result; if (!r || !r.area) return toast(L2("Enter the size first", "أدخل المقاسات أولاً"));
+        const comps = r.components.filter(c => !c.missing && c.qty > 0).map(c => ({ item_id: c.item_id, per_unit: c.qty / r.area }));
+        const vals = r.values, m = models.find(x => x.id === +calc.model_id);
+        lines.push({ kind: "sqm", model_id: calc.model_id, description: `${nm(m)} — ${Object.values(vals).slice(0, 2).map(numf).join(" × ")} m`, unit: "m²", qty: r.area, rate: $("#rcrate", f).value || "", components: comps, inputs: vals });
+        calc = null; draw(); } });
+    f.addEventListener("change", e => { if (e.target.id === "rpick" && e.target.value) { const it = itemById(e.target.value); lines.push({ kind: "item", item_id: it.id, description: nm(it), unit: it.unit, qty: 1, rate: it.monthly_rate || "", components: [{ item_id: it.id, per_unit: 1 }] }); draw(); }
+      if (e.target.id === "rkpick" && e.target.value) { const k = cat.kits.find(x => x.id === +e.target.value); lines.push({ kind: "kit", kit_id: k.id, description: nm(k), unit: k.unit, qty: 1, rate: k.monthly_rate || "", components: k.lines.map(x => ({ item_id: x.item_id, per_unit: x.qty })) }); draw(); } });
+    draw(); } });
+}
+
+function rentPO(R) {
+  drawer(`${L2("Client purchase order", "أمر شراء العميل")} — ${R.code}`, `<p class="muted">${L2("Nothing is delivered before the client's purchase order is recorded.", "لا يتم أي تسليم قبل تسجيل أمر شراء العميل.")}</p>` + form([
+    { k: "po_number", l: L2("PO number", "رقم أمر الشراء"), req: 1 }, { k: "po_date", l: t("date"), type: "date", v: today(), req: 1 },
+    { k: "start_date", l: L2("Rental starts", "بداية الإيجار"), type: "date", v: R.start_date || today() }, { k: "po_notes", l: t("notes"), span: "spanall" }]),
+    async v => { await api("POST", `/api/rentals/${R.id}/po`, v); toast(t("saved")); });
+}
+function rentSign(R) {
+  drawer(`${L2("Contract signed", "توقيع العقد")} — ${R.code}`, `<p class="muted">${L2("Print the contract, have both parties sign it, then record the signatories here.", "اطبع العقد ووقّعه من الطرفين ثم سجّل أسماء الموقعين هنا.")}</p>` + form([
+    { k: "signed_us", l: L2("Signed for us by", "وقّع عن الشركة المؤجرة"), req: 1, v: S.boot.user.full_name || "" }, { k: "signed_client", l: L2("Signed for the client by", "وقّع عن العميل"), req: 1 },
+    { k: "signed_on", l: t("date"), type: "date", v: today(), req: 1 }]),
+    async v => { await api("POST", `/api/rentals/${R.id}/sign`, v); toast(t("saved")); });
+}
+function rentCharge(d) {
+  const R = d.rental;
+  drawer(`${L2("Add a charge", "إضافة مبلغ")} — ${R.code}`, form([
+    { k: "kind", l: L2("Type", "النوع"), type: "select", opts: [...CHG_T(), ["damage", L2("Damage", "تلف")], ["loss", L2("Loss", "فقد")]] },
+    { k: "description", l: t("description"), req: 1, span: "spanall" }, { k: "qty", l: t("qty"), type: "number", v: 1 }, { k: "amount", l: t("amount"), type: "number", req: 1 },
+    { k: "date", l: t("date"), type: "date", v: today() }]),
+    async v => { await api("POST", `/api/rentals/${R.id}/charge`, v); toast(t("saved")); });
+}
+async function rentInvoice(d) {
+  const R = d.rental, p = d.next_period || { from: today(), to: today() };
+  drawer(`${L2("Invoice rent", "فاتورة إيجار")} — ${R.code}`, `<p class="muted">${L2("Rent is worked out day by day on the quantity on site; one-time and loss charges not invoiced yet are added. The invoice is created as a draft — check it, then Save & post (and send it to the Tax Authority from there).", "يُحسب الإيجار يومياً على الكمية بالموقع وتُضاف المبالغ لمرة واحدة والتعويضات غير المفوترة. تُنشأ الفاتورة كمسودة — راجعها ثم احفظ ورحّل (ومنها تُرسل لمنظومة الضرائب).")}</p>` +
+    form([{ k: "from", l: L2("Rent from", "الإيجار من"), type: "date", v: p.from, req: 1 }, { k: "to", l: L2("to", "إلى"), type: "date", v: p.to, req: 1 },
+      { k: "date", l: L2("Invoice date", "تاريخ الفاتورة"), type: "date", v: p.to }, { k: "number", l: t("invoice_no"), ph: L2("automatic", "تلقائي") }]) + `<div id="rivp" class="muted" style="margin-top:8px">…</div>`,
+    async v => { const r = await api("POST", `/api/rentals/${R.id}/invoice`, v); toast(t("saved")); closeDrawer(); location.hash = "#/invoice/" + r.id; return false; },
+    { submitLabel: L2("Create draft invoice", "إنشاء مسودة الفاتورة"), onOpen: f => { let tm;
+      const run = async () => { const v = readForm(f); try { const r = await api("GET", `/api/rentals/${R.id}/invoice-preview?` + qs({ from: v.from, to: v.to, lang: R.lang }));
+        $("#rivp", f).innerHTML = r.lines.length ? `<div class="tbl"><table><thead><tr><th>${t("description")}</th><th class="num">${t("qty")}</th><th class="num">${L2("Price", "السعر")}</th><th class="num">${t("amount")}</th></tr></thead><tbody>
+          ${r.lines.map(l => `<tr><td>${esc(l.description)}</td><td class="num">${numf(l.qty)}</td><td class="num">${money(l.price)}</td><td class="num">${money(l.qty * l.price)}</td></tr>`).join("")}
+          <tr class="total"><td colspan="3">${t("total")} (${L2("before tax", "قبل الضريبة")})</td><td class="num">${money(r.total)}</td></tr></tbody></table></div>` : L2("Nothing to invoice for this period.", "لا يوجد ما يُفوتر لهذه الفترة."); }
+        catch (e) { $("#rivp", f).innerHTML = `<span class="neg">${esc(e.message)}</span>`; } };
+      f.addEventListener("change", () => { clearTimeout(tm); tm = setTimeout(run, 150); }); run(); } });
+}
+async function rentAllocation(R, lineId) {
+  const a = await api("GET", `/api/rentals/${R.id}/allocation?line=${lineId}`);
+  drawer(`${L2("Rent per piece", "إيجار القطعة")} — ${a.line.description}`, `<p class="muted">${a.basis === "cost" ? L2("The line's rent is shared over its pieces by their FIFO cost — every piece earns the same % of what it cost.", "يُوزَّع إيجار البند على قطعه حسب تكلفتها بطريقة الوارد أولاً يُصرف أولاً — كل قطعة تحقق نفس النسبة من تكلفتها.")
+      : L2("No purchase costs recorded yet, so the rent is shared by the pieces' own rent rates (or equally).", "لا توجد تكاليف شراء بعد، فيُوزَّع الإيجار حسب أسعار إيجار القطع (أو بالتساوي).")}</p>
+    <div class="kpis">${kpiBox(L2("Rent / month", "الإيجار الشهري"), a.rent, "pos", `${numf(a.units)} ${esc(a.line.unit)} × ${money(a.line.rate)}${a.on_site ? "" : " — " + L2("planned", "مخطط")}`)}
+      ${a.value != null ? kpiBox(L2("Pieces' cost (FIFO)", "تكلفة القطع"), a.value) + kpiBox(L2("Monthly return on cost", "العائد الشهري على التكلفة"), pct(a.yield), "pos") : ""}</div>
+    <div class="tbl"><table><thead><tr><th>${L2("Piece", "القطعة")}</th><th class="num">${t("qty")}</th>${a.value != null ? `<th class="num">${L2("Unit cost", "تكلفة القطعة")}</th>` : ""}<th class="num">${L2("Share", "النسبة")}</th><th class="num">${L2("Rent / month", "الإيجار الشهري")}</th><th class="num">${L2("Per piece / month", "للقطعة شهرياً")}</th><th class="num">${L2("Per piece / day", "للقطعة يومياً")}</th><th class="num">${L2("Piece list rate", "سعر القطعة المعتاد")}</th></tr></thead><tbody>
+      ${a.rows.map(x => `<tr><td>${esc(x.code)} — ${esc(nm(x))}</td><td class="num">${numf(x.qty)}</td>${a.value != null ? `<td class="num">${money(x.unit_cost)}</td>` : ""}<td class="num">${pct(x.share)}</td><td class="num">${money(x.monthly)}</td><td class="num"><b>${money(x.per_piece_month)}</b></td><td class="num">${money(x.per_piece_day)}</td><td class="num">${x.list_rate ? money(x.list_rate) : "—"}</td></tr>`).join("")}</tbody></table></div>`,
+    null, { readOnly: true, wide: true });
+}
+
+async function handoverForm(d, kind, h) {
+  const R = d.rental, tpl = h ? { ...h } : await api("GET", `/api/rentals/${R.id}/handover-template?kind=${kind}`);
+  const locked = h && h.status === "confirmed", del = kind === "delivery";
+  const data = JSON.parse(JSON.stringify(tpl.data)), checklist = JSON.parse(JSON.stringify(tpl.checklist || []));
+  const lineById = id => d.lines.find(l => l.id === +id) || {};
+  const html = form([{ k: "number", l: L2("No.", "رقم المحضر"), v: tpl.number }, { k: "date", l: t("date"), type: "date", v: tpl.date, req: 1 }]) + `<div id="rho"></div>` + form([
+    ...(del ? [{ k: "decision", l: L2("Final decision", "القرار الفني"), type: "select", opts: [["", "—"], ["safe", L2("Safe — ready for use", "آمنة وجاهزة للاستخدام")], ["unsafe", L2("Not safe — rejected until fixed", "غير آمنة — مرفوضة لحين التعديل")]], v: tpl.decision }] : []),
+    { k: "our_name", l: L2("Signed for us by", "عن الشركة المؤجرة"), v: tpl.our_name }, { k: "client_name", l: L2("Signed for the client by", "عن العميل"), v: tpl.client_name },
+    { k: "signed", l: L2("Both parties signed the printed form", "وقّع الطرفان على المحضر المطبوع"), type: "checkbox", v: !!tpl.signed, span: "spanall" },
+    { k: "notes", l: t("notes"), type: "textarea", v: tpl.notes || "", span: "spanall" }]);
+  const title = `${del ? L2("Delivery", "تسليم") : L2("Return", "إرجاع")} — ${R.code} · ${R.client}`;
+  const body = f => ({ ...readForm(f), kind, data, checklist });
+  const save = async f => h ? (await api("PUT", "/api/rental-handovers/" + h.id, body(f)), h.id) : (await api("POST", `/api/rentals/${R.id}/handovers`, body(f))).id;
+  drawer(title, html, locked ? null : async (v, f) => { const id = await save(f); toast(t("saved")); h = h || { id }; },
+    { wide: true, readOnly: locked, submitLabel: L2("Save draft", "حفظ كمسودة"),
+      extraButtons: locked ? (can("rentals.contracts", "edit") ? `<button type="button" class="btn danger" data-a="rhundo">${L2("Undo (mistake)", "تراجع (خطأ)")}</button>` : "")
+        : `${h ? `<button type="button" class="btn danger" data-a="rhdel">${t("delete")}</button>` : ""}<button type="button" class="btn" data-a="rhprint2">🖶 ${L2("Print", "طباعة")}</button><button type="button" class="btn pri" data-a="rhconf">${L2("Save & confirm", "حفظ واعتماد")}</button>`,
+      onOpen: f => {
+        const draw = () => {
+          const lines = Object.keys(data.units);
+          $("#rho", f).innerHTML = `<h4 style="margin:10px 0 4px">${del ? L2("Quantities delivered (rent starts)", "الكميات المسلمة (يبدأ الإيجار)") : L2("Quantities returned (rent stops)", "الكميات المرتجعة (يتوقف الإيجار)")}</h4>
+            <div class="tbl"><table><thead><tr><th>${t("description")}</th><th class="num">${L2("Units", "الوحدات")}</th><th class="muted">${del ? L2("planned / delivered", "مخطط / مسلّم") : L2("on site", "بالموقع")}</th></tr></thead><tbody>
+            ${lines.map(id => { const l = lineById(id); return `<tr><td>${esc(l.description)}</td><td><input data-skip="1" class="num" type="number" step="any" value="${data.units[id]}" data-input="rhu" data-id="${id}" style="width:100px" ${locked ? "disabled" : ""}> ${esc(l.unit)}</td>
+              <td class="muted">${del ? `${numf(l.qty)} / ${numf(l.delivered)}` : numf(l.on_site)}</td></tr>`; }).join("")}</tbody></table></div>
+            <h4 style="margin:10px 0 4px">${L2("Pieces", "القطع")}</h4><div class="tbl"><table><thead><tr><th>${L2("Piece", "القطعة")}</th><th class="num">${del ? L2("Qty delivered", "الكمية المسلمة") : L2("Returned good", "مرتجع سليم")}</th>
+              ${del ? `<th class="num">${L2("In the yard", "بالمخزن")}</th>` : `<th class="num">${L2("Damaged", "تالف")}</th><th class="num">${L2("Lost", "مفقود")}</th>`}<th class="num">${L2("Loss / damage price", "سعر الفقد / التلف")}</th><th>${L2("Serial no.", "الرقم التسلسلي")}</th></tr></thead><tbody>
+            ${data.items.map((x, i) => `<tr><td>${esc(x.code)} — ${esc(nm(x))}<div class="lines">${esc(lineById(x.line_id).description || "")}</div></td>
+              <td><input data-skip="1" class="num" type="number" step="any" value="${x.qty}" data-input="rhi" data-i="${i}" data-k="qty" style="width:90px" ${locked ? "disabled" : ""}></td>
+              ${del ? `<td class="num ${x.in_yard != null && x.qty > x.in_yard ? "neg" : ""}">${x.in_yard != null ? numf(x.in_yard) : ""}</td>` : ["damaged", "lost"].map(k => `<td><input data-skip="1" class="num" type="number" step="any" value="${x[k] || 0}" data-input="rhi" data-i="${i}" data-k="${k}" style="width:80px" ${locked ? "disabled" : ""}></td>`).join("")}
+              <td><input data-skip="1" class="num" type="number" step="any" value="${x.loss_price}" data-input="rhi" data-i="${i}" data-k="loss_price" style="width:100px" ${locked ? "disabled" : ""}></td>
+              <td><input data-skip="1" value="${esc(x.serial || "")}" data-input="rhi" data-i="${i}" data-k="serial" style="width:110px" ${locked ? "disabled" : ""}></td></tr>`).join("")}</tbody></table></div>
+            ${!del ? `<div id="rhchg" class="muted"></div>` : ""}
+            ${del && checklist.length ? `<h4 style="margin:10px 0 4px">${L2("Safety inspection checklist", "قائمة فحص السلامة")}</h4><div class="tbl"><table><thead><tr><th>${L2("Inspection item", "بند الفحص")}</th><th>${L2("Complies?", "مطابق؟")}</th><th>${t("notes")}</th></tr></thead><tbody>
+              ${checklist.map((c, i) => `<tr><td dir="auto">${esc(S.lang === "ar" && c.text_ar ? c.text_ar : c.text)}</td><td><select data-skip="1" data-change="rhc" data-i="${i}" data-k="ok" ${locked ? "disabled" : ""}><option value="">—</option><option value="yes" ${c.ok === "yes" ? "selected" : ""}>${L2("Yes", "نعم")}</option><option value="no" ${c.ok === "no" ? "selected" : ""}>${L2("No", "لا")}</option><option value="na" ${c.ok === "na" ? "selected" : ""}>${L2("N/A", "لا ينطبق")}</option></select></td>
+                <td><input data-skip="1" value="${esc(c.note || "")}" data-input="rhc" data-i="${i}" data-k="note" ${locked ? "disabled" : ""}></td></tr>`).join("")}</tbody></table></div>
+              ${!locked ? `<button type="button" class="btn sm" data-a="rhall">${L2("All checks: yes", "كل البنود: نعم")}</button>` : ""}` : ""}`;
+          chg(); };
+        const chg = () => { const el = $("#rhchg", f); if (!el) return; const c = data.items.reduce((s, x) => s + ((+x.damaged || 0) + (+x.lost || 0)) * (+x.loss_price || 0), 0);
+          el.textContent = c ? `${L2("Charged to the client for lost / damaged pieces", "يُطالب العميل عن القطع المفقودة / التالفة")}: ${money(c)}` : ""; };
+        Object.assign(S.H, {
+          rhu: el => { const id = el.dataset.id, u = +el.value || 0; data.units[id] = el.value; const l = lineById(id);
+            data.items.forEach((x, i) => { if (+x.line_id === +id) { const c = (l.components || []).find(c => c.item_id === x.item_id); if (c) { x.qty = Math.max(Math.ceil(c.per_unit * u - 1e-4) - (+x.damaged || 0) - (+x.lost || 0), 0); const inp = $(`[data-input=rhi][data-i="${i}"][data-k=qty]`, f); if (inp) inp.value = x.qty; } } }); },
+          rhi: el => { const i = +el.dataset.i, x = data.items[i], k = el.dataset.k;
+            if (k === "damaged" || k === "lost") {   // what comes back damaged or not at all is taken off "returned good"
+              const total = (+x.qty || 0) + (+x.damaged || 0) + (+x.lost || 0); x[k] = el.value;
+              x.qty = Math.max(total - (+x.damaged || 0) - (+x.lost || 0), 0); const q = $(`[data-input=rhi][data-i="${i}"][data-k=qty]`, f); if (q) q.value = x.qty;
+            } else x[k] = el.value; chg(); },
+          rhc: el => { checklist[+el.dataset.i][el.dataset.k] = el.value; },
+          rhall: () => { checklist.forEach(c => { c.ok = "yes"; }); draw(); },
+          rhconf: async () => { if (!confirm(del ? L2("Confirm the delivery? Pieces leave the yard and rent starts.", "اعتماد التسليم؟ تخرج القطع من المخزن ويبدأ الإيجار.") : L2("Confirm the return? Pieces come back; lost / damaged are charged.", "اعتماد الإرجاع؟ تعود القطع ويُطالب بالمفقود / التالف."))) return;
+            try { const id = await save(f); h = h || { id }; await api("POST", `/api/rental-handovers/${id}/confirm`, {}); toast(t("saved")); closeDrawer(); S.cache.rentCat = null; route(); }
+            catch (e) { $("#derr").innerHTML = `<div class="banner err">${esc(e.message)}</div>`; $("#derr").scrollIntoView({ block: "nearest" }); } },
+          rhprint2: async () => { try { const id = await save(f); h = h || { id }; openDocTab(`/api/rental-handovers/${id}/doc?lang=${R.lang}`); } catch (e) { fail(e); } },
+          rhdel: async () => { if (!confirm(t("confirm_delete"))) return; try { await api("DELETE", "/api/rental-handovers/" + h.id); closeDrawer(); route(); } catch (e) { fail(e); } },
+          rhundo: async () => { if (!confirm(L2("Undo this handover? Its pieces, charges and write-off are reversed.", "التراجع عن هذا المحضر؟ تُعكس حركات القطع والمطالبات والإعدام."))) return;
+            try { await api("POST", `/api/rental-handovers/${h.id}/undo`, {}); toast(t("saved")); closeDrawer(); route(); } catch (e) { fail(e); } } });
+        draw(); } });
+}
+
+// ------------------------------------------------------------ equipment & stock
+PAGES.rentfleet = async (view, parts, q) => {
+  const d = await api("GET", "/api/rent-items?" + qs(q));
+  const add = can("rentals.fleet", "add"), ed = can("rentals.fleet", "edit");
+  S.cache.rentCat = null;
+  Object.assign(S.H, { rinew: () => rentItemForm(), rknew: () => rentKitForm(null, d), rkopen: el => rentKitForm(d.kits.find(k => k.id === +el.dataset.id), d),
+    riopen: el => rentItemView(+el.dataset.id), rset: () => rentSettingsForm(d.settings),
+    rstart: async () => { try { const r = await api("POST", "/api/rent-starter", {}); toast(`${r.items} ${L2("items", "صنف")} · ${r.kits} ${L2("sets", "طقم")} · ${r.models} ${L2("calculator", "حاسبة")}`); route(); } catch (e) { fail(e); } } });
+  const util = d.items.reduce((s, i) => s + i.on_rent * i.avg_cost, 0);
+  view.innerHTML = `<div class="toolbar">${add ? `<button class="btn pri" data-a="rinew">+ ${L2("Equipment item", "صنف معدات")}</button><button class="btn" data-a="rknew">+ ${L2("Frame / set", "شباك / طقم")}</button>` : ""}
+      ${add && !d.items.some(i => i.code === "SC-FRM2") ? `<button class="btn" data-a="rstart">${L2("Add scaffolding starter set", "إضافة المجموعة الأساسية للسقالات")}</button>` : ""}
+      ${ed ? `<button class="btn" data-a="rset">${L2("Terms & checklists", "الشروط وقوائم الفحص")}</button>` : ""}<span class="spacer"></span>${exportMenu("rent_fleet", {})}</div>
+    <div class="kpis">${kpiBox(L2("Equipment value (FIFO)", "قيمة المعدات (الوارد أولاً)"), d.totals.value)}${kpiBox(L2("Out on rent", "مؤجر حالياً"), d.totals.on_rent_value, "pos", d.totals.value ? pct(d.totals.on_rent_value / d.totals.value) + " " + L2("of the fleet", "من المعدات") : "")}</div>
+    ${RENT_CAT().map(([c, label]) => { const rows = d.items.filter(i => i.category === c); return rows.length ? `<div class="card"><h2>${esc(label)}</h2><div class="tbl stack"><table><thead><tr><th>${t("code")}</th><th>${L2("Item", "الصنف")}</th><th class="num">${L2("In the yard", "بالمخزن")}</th><th class="num">${L2("On rent", "مؤجر")}</th><th class="num">${L2("Use", "التشغيل")}</th><th class="num">${L2("Avg cost (FIFO)", "متوسط التكلفة")}</th><th class="num">${L2("Value", "القيمة")}</th><th class="num">${L2("Rent / month", "الإيجار الشهري")}</th><th class="num">${L2("Loss price", "سعر الفقد")}</th></tr></thead><tbody>
+      ${rows.map(i => `<tr class="click ${i.active ? "" : "void"}" data-a="riopen" data-id="${i.id}"><td><b>${esc(i.code)}</b></td><td>${esc(nm(i))}<div class="lines">${esc(i.unit)}</div></td><td class="num">${numf(i.in_yard)}</td><td class="num">${numf(i.on_rent)}</td><td class="num">${pct(i.utilisation)}</td>
+        <td class="num">${money(i.avg_cost || i.std_cost)}</td><td class="num">${money(i.value)}</td><td class="num">${money(i.monthly_rate)}</td><td class="num">${money(i.loss_price)}</td></tr>`).join("")}</tbody></table></div></div>` : ""; }).join("")}
+    ${!d.items.length ? `<div class="card"><div class="empty">${L2("No equipment yet. Add your pieces (frames, braces, clamps, boards…), elevators and cradles — or add the scaffolding starter set taken from the standard handover form, then record your stock with its cost.", "لا توجد معدات بعد. أضف القطع (شبابيك، مقصات، كلبسات، ألواح…) والمصاعد والسقالات المعلقة — أو أضف المجموعة الأساسية المأخوذة من محضر التسليم القياسي، ثم سجّل المخزون بتكلفته.")}</div></div>` : ""}
+    <div class="card"><h2>${L2("Frames / sets (rented as one unit)", "الشبابيك / الأطقم (تؤجر كوحدة)")}</h2>${d.kits.length ? `<div class="tbl"><table><thead><tr><th>${t("code")}</th><th>${L2("Name", "الاسم")}</th><th>${L2("Pieces in one", "القطع في الوحدة")}</th><th class="num">${L2("Rent / month", "الإيجار الشهري")}</th></tr></thead><tbody>
+      ${d.kits.map(k => `<tr class="click" data-a="rkopen" data-id="${k.id}"><td><b>${esc(k.code)}</b></td><td>${esc(nm(k))}<div class="lines">${L2("per", "لكل")} ${esc(k.unit)}</div></td><td>${esc(k.lines.map(l => `${nm(l)} × ${numf(l.qty)}`).join(" · "))}</td><td class="num">${money(k.monthly_rate)}</td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="empty">${L2("A frame (or any set) is a group of pieces rented at one price — its rent is shared over the pieces by their cost.", "الشباك (أو أي طقم) مجموعة قطع تؤجر بسعر واحد — ويُوزع إيجارها على القطع حسب تكلفتها.")}</div>`}</div>`;
+};
+
+function rentItemForm(it) {
+  it = it || { category: "scaffolding", unit: "piece", active: 1 };
+  drawer(it.id ? `${t("edit")} — ${it.code}` : L2("New equipment item", "صنف معدات جديد"), form([
+    { k: "name", l: L2("Name", "الاسم"), v: it.name, req: 1 }, { k: "name_ar", l: L2("Arabic name", "الاسم بالعربية"), v: it.name_ar },
+    { k: "category", l: L2("Category", "الفئة"), type: "select", opts: RENT_CAT(), v: it.category }, { k: "unit", l: t("unit"), v: it.unit, ph: "piece / unit / m" },
+    { k: "monthly_rate", l: L2("Rent per piece / month", "إيجار القطعة شهرياً"), type: "number", v: it.monthly_rate || "" },
+    { k: "std_cost", l: L2("Reference cost (until a purchase is recorded)", "التكلفة المرجعية (لحين تسجيل شراء)"), type: "number", v: it.std_cost || "" },
+    { k: "loss_price", l: L2("Loss / damage price (blank = latest cost + markup)", "سعر الفقد / التلف (فارغ = آخر تكلفة + النسبة)"), type: "number", v: it.loss_price_set || "" },
+    { k: "code", l: t("code"), v: it.code || "", ph: L2("automatic", "تلقائي") }, { k: "active", l: t("active"), type: "checkbox", v: it.active !== 0 },
+    { k: "notes", l: t("notes"), type: "textarea", v: it.notes || "", span: "spanall" }]),
+    async v => { if (it.id) await api("PUT", "/api/rent-items/" + it.id, v); else await api("POST", "/api/rent-items", v); toast(t("saved")); });
+}
+async function rentItemView(id) {
+  const d = await api("GET", "/api/rent-items/" + id), it = d.item, ed = can("rentals.fleet", "edit"), add = can("rentals.fleet", "add");
+  const K = { out: L2("Out to site", "خروج للموقع"), back: L2("Back to yard", "عودة للمخزن"), lost: L2("Lost", "مفقود"), damaged: L2("Damaged", "تالف"), scrap: L2("Scrapped", "تكهين") };
+  drawer(`${it.code} — ${nm(it)}`, `<div class="kpis">${kpiBox(L2("In the yard", "بالمخزن"), numf(it.in_yard))}${kpiBox(L2("On rent", "مؤجر"), numf(it.on_rent))}${kpiBox(L2("Value (FIFO)", "القيمة"), it.value)}${kpiBox(L2("Loss price", "سعر الفقد"), it.loss_price)}</div>
+    <h4>${L2("Stock lots — oldest go out first", "دفعات المخزون — الأقدم يخرج أولاً")}</h4><div class="tbl"><table><thead><tr><th>${L2("Lot", "الدفعة")}</th><th>${t("date")}</th><th class="num">${L2("Bought", "المشترى")}</th><th class="num">${L2("Unit cost", "تكلفة القطعة")}</th><th class="num">${L2("In the yard", "بالمخزن")}</th><th class="num">${L2("With clients", "لدى العملاء")}</th><th class="num">${L2("Gone", "مستبعد")}</th><th></th></tr></thead><tbody>
+      ${d.lots.map(l => `<tr><td>${esc(l.code)}${l.supplier ? `<div class="lines">${esc(l.supplier)}</div>` : ""}${l.source === "opening" ? `<div class="lines">${L2("already owned", "مملوك سابقاً")}</div>` : ""}</td><td>${fd(l.date)}</td><td class="num">${numf(l.qty)}</td><td class="num">${money(l.unit_cost)}</td><td class="num">${numf(l.in_yard)}</td><td class="num">${numf(l.with_clients)}</td><td class="num">${numf(l.gone)}</td>
+        <td>${ed && !l.m_out && !l.m_scrap ? `<button type="button" class="btn sm danger" data-a="rlotdel" data-id="${l.id}">✕</button>` : ""}</td></tr>`).join("") || `<tr><td colspan="8" class="muted">${L2("No stock recorded yet.", "لا يوجد مخزون مسجل بعد.")}</td></tr>`}</tbody></table></div>
+    ${d.on_rent.length ? `<h4>${L2("On rent now", "مؤجر حالياً")}</h4><div class="tbl"><table><tbody>${d.on_rent.map(r => `<tr><td><a href="#/rental/${r.id}" data-a="vgo2">${esc(r.code)}</a> ${esc(r.client)} — ${esc(r.site)}</td><td class="num">${numf(r.qty)}</td></tr>`).join("")}</tbody></table></div>` : ""}
+    ${d.moves.length ? `<h4>${L2("Movements", "الحركات")}</h4><div class="tbl"><table><tbody>${d.moves.slice(0, 60).map(m => `<tr><td>${fd(m.date)}</td><td>${esc(K[m.kind] || m.kind)}</td><td>${esc(m.rental_code || m.note || "")}</td><td>${esc(m.lot_code)}</td><td class="num">${numf(m.qty)}</td></tr>`).join("")}</tbody></table></div>` : ""}`,
+    null, { readOnly: true, wide: true, extraButtons: [add ? `<button type="button" class="btn pri" data-a="rlot">+ ${L2("Stock in", "إدخال مخزون")}</button>` : "", ed && it.in_yard > 0 ? `<button type="button" class="btn" data-a="rscrap">${L2("Scrap", "تكهين")}</button>` : "",
+      ed ? `<button type="button" class="btn" data-a="riedit">${t("edit")}</button>` : "", ed && !d.lots.length ? `<button type="button" class="btn danger" data-a="ridel">${t("delete")}</button>` : ""].join("") });
+  Object.assign(S.H, { riedit: () => rentItemForm(it), rlot: () => rentLotForm(it), rscrap: () => rentScrapForm(it),
+    ridel: () => confirmDelete(it.code, "/api/rent-items/" + it.id), vgo2: el => { const hh = el.getAttribute("href"); closeDrawer(); location.hash = hh; },
+    rlotdel: async el => { if (!confirm(t("confirm_delete"))) return; try { await api("DELETE", "/api/rent-lots/" + el.dataset.id); rentItemView(id); } catch (e) { fail(e); } } });
+}
+function rentLotForm(it) {
+  drawer(`${L2("Stock in", "إدخال مخزون")} — ${it.code} ${nm(it)}`, `<p class="muted">${L2("Each purchase is a lot with its own cost; pieces go out oldest lot first (FIFO).", "كل عملية شراء دفعة بتكلفتها؛ تخرج القطع من الأقدم أولاً.")}</p>` + form([
+    { k: "source", l: L2("Source", "المصدر"), type: "select", change: "rlsrc", opts: [["purchase", L2("Bought now — book it", "شراء الآن — يُسجل محاسبياً")], ["opening", L2("Already owned (in the books)", "مملوك سابقاً (مسجل بالدفاتر)")]] },
+    { k: "date", l: t("date"), type: "date", v: today(), req: 1 }, { k: "qty", l: t("qty"), type: "number", req: 1 }, { k: "unit_cost", l: L2("Cost per piece", "تكلفة القطعة"), type: "number", v: it.last_cost || it.std_cost || "", req: 1 },
+    { k: "supplier", l: t("supplier"), list: "parties" }, { k: "paid", l: t("paid_now"), type: "number", ph: L2("blank = paid in full", "فارغ = مدفوع بالكامل") },
+    { k: "paid_from", l: L2("Paid from", "دُفع من"), type: "select", opts: moneyAccts(), v: accByRole("bank") }, { k: "vat_code", l: t("vat_code"), type: "select", opts: taxOpts("vat") },
+    { k: "notes", l: t("notes"), span: "spanall" }]) + datalist("parties", (S.boot.parties || []).map(p => p.name)),
+    async v => { await api("POST", `/api/rent-items/${it.id}/lots`, v); toast(t("saved")); route(); rentItemView(it.id); return false; },
+    { onOpen: f => { S.H.rlsrc = () => { const buy = $("[name=source]", f).value === "purchase"; ["supplier", "paid", "paid_from", "vat_code"].forEach(k => { const el = $(`[name=${k}]`, f); el.closest("label").style.display = buy ? "" : "none"; el.dataset.skip = buy ? "" : "1"; }); }; S.H.rlsrc(); } });
+}
+function rentScrapForm(it) {
+  drawer(`${L2("Scrap pieces", "تكهين قطع")} — ${it.code} ${nm(it)}`, `<p class="muted">${L2("Pieces in the yard that are no longer usable. Their FIFO cost is written off.", "قطع بالمخزن لم تعد صالحة. تُستبعد تكلفتها بطريقة الوارد أولاً.")}</p>` + form([
+    { k: "qty", l: t("qty"), type: "number", req: 1 }, { k: "date", l: t("date"), type: "date", v: today() }, { k: "reason", l: L2("Reason", "السبب"), span: "spanall" }]),
+    async v => { await api("POST", "/api/rent-scrap", { ...v, item_id: it.id }); toast(t("posted")); route(); rentItemView(it.id); return false; });
+}
+function rentKitForm(k, d) {
+  k = k || { unit: "frame", lines: [] };
+  let rows = k.lines.map(l => ({ item_id: l.item_id, qty: l.qty }));
+  drawer(k.id ? `${t("edit")} — ${k.code}` : L2("New frame / set", "شباك / طقم جديد"), form([
+    { k: "name", l: L2("Name", "الاسم"), v: k.name, req: 1 }, { k: "name_ar", l: L2("Arabic name", "الاسم بالعربية"), v: k.name_ar },
+    { k: "unit", l: t("unit"), v: k.unit }, { k: "monthly_rate", l: L2("Rent per unit / month", "الإيجار للوحدة شهرياً"), type: "number", v: k.monthly_rate || "", input: "rkcalc" },
+    { k: "code", l: t("code"), v: k.code || "", ph: L2("automatic", "تلقائي") }, { html: `<div id="rkl"></div>`, span: "spanall" }]),
+    async v => { const body = { ...v, lines: rows }; if (k.id) await api("PUT", "/api/rent-kits/" + k.id, body); else await api("POST", "/api/rent-kits", body); toast(t("saved")); },
+    { extraButtons: k.id && can("rentals.fleet", "edit") ? `<button type="button" class="btn danger" data-a="rkdel">${t("delete")}</button>` : "", onOpen: f => {
+      const draw = () => { const rate = +$("[name=monthly_rate]", f).value || 0, cost = r => { const i = d.items.find(x => x.id === +r.item_id) || {}; return i.avg_cost || i.last_cost || i.std_cost || 0; };
+        const val = rows.reduce((s, r) => s + (+r.qty || 0) * cost(r), 0);
+        $("#rkl", f).innerHTML = `<h4 style="margin:8px 0 4px">${L2("Pieces in one unit — and the rent each piece earns", "القطع في الوحدة — وإيجار كل قطعة")}</h4><div class="tbl"><table><thead><tr><th>${L2("Piece", "القطعة")}</th><th class="num">${t("qty")}</th><th class="num">${L2("Cost", "التكلفة")}</th><th class="num">${L2("Per piece / month", "للقطعة شهرياً")}</th><th></th></tr></thead><tbody>
+          ${rows.map((r, i) => `<tr><td><select data-skip="1" data-change="rkrow" data-i="${i}" data-k="item_id">${d.items.map(x => `<option value="${x.id}" ${x.id === +r.item_id ? "selected" : ""}>${esc(x.code)} — ${esc(nm(x))}</option>`).join("")}</select></td>
+            <td><input data-skip="1" class="num" type="number" step="any" value="${r.qty}" data-input="rkrow" data-i="${i}" data-k="qty" style="width:90px"></td><td class="num">${money(cost(r))}</td>
+            <td class="num">${val ? money(rate * cost(r) / val) : "—"}</td><td><button type="button" class="btn sm danger" data-a="rkrdel" data-i="${i}">✕</button></td></tr>`).join("")}</tbody></table></div>
+          <div class="row" style="margin-top:6px"><button type="button" class="btn sm" data-a="rkradd">+ ${L2("Piece", "قطعة")}</button><span class="spacer"></span><span class="muted">${val ? `${L2("Pieces' cost", "تكلفة القطع")} ${money(val)} · ${L2("monthly return", "العائد الشهري")} ${pct(rate / val)}` : ""}</span></div>`; };
+      Object.assign(S.H, { rkrow: el => { rows[+el.dataset.i][el.dataset.k] = el.value; if (el.dataset.k === "item_id") draw(); }, rkradd: () => { rows.push({ item_id: (d.items[0] || {}).id, qty: 1 }); draw(); },
+        rkrdel: el => { rows.splice(+el.dataset.i, 1); draw(); }, rkcalc: () => draw(),
+        rkdel: () => confirmDelete(k.code, "/api/rent-kits/" + k.id) });
+      f.addEventListener("change", e => { if (e.target.dataset.k === "qty") draw(); }); draw(); } });
+}
+function rentSettingsForm(st) {
+  const cl = st.checklists || {};
+  drawer(L2("Rental terms & safety checklists", "شروط التأجير وقوائم فحص السلامة"), form([
+    { k: "loss_markup", l: L2("Loss price = latest cost + %", "سعر الفقد = آخر تكلفة + %"), type: "number", v: +(st.loss_markup * 100).toFixed(2) },
+    { k: "day_basis", l: L2("A rent month is", "شهر الإيجار"), type: "select", opts: [["0", L2("The calendar month (a full month = 1 month)", "الشهر الميلادي (الشهر الكامل = شهر)")], ["30", L2("30 days", "30 يوماً")]], v: String(st.day_basis || 0) },
+    { k: "terms_ar", l: L2("Handover terms (Arabic)", "شروط المحضر (عربي)"), type: "textarea", v: st.terms.ar || "", span: "spanall" }, { k: "terms_en", l: L2("Handover terms (English)", "شروط المحضر (إنجليزي)"), type: "textarea", v: st.terms.en || "", span: "spanall" },
+    { k: "ct_ar", l: L2("Contract terms (Arabic)", "شروط العقد (عربي)"), type: "textarea", v: st.contract_terms.ar || "", span: "spanall" }, { k: "ct_en", l: L2("Contract terms (English)", "شروط العقد (إنجليزي)"), type: "textarea", v: st.contract_terms.en || "", span: "spanall" },
+    ...RENT_CAT().map(([c, label]) => ({ k: "cl_" + c, l: `${L2("Safety checklist", "قائمة الفحص")} — ${label} (${L2("one per line: English | Arabic", "بند في كل سطر: إنجليزي | عربي")})`, type: "textarea", span: "spanall",
+      v: (cl[c] || []).map(r => `${r[0]} | ${r[1] || ""}`).join("\n") }))]),
+    async v => { const checklists = {}; RENT_CAT().forEach(([c]) => { checklists[c] = String(v["cl_" + c] || "").split("\n").map(s => s.split("|").map(x => x.trim())).filter(r => r[0]); });
+      await api("PUT", "/api/rent-settings", { loss_markup: v.loss_markup, day_basis: v.day_basis, terms: { ar: v.terms_ar, en: v.terms_en }, contract_terms: { ar: v.ct_ar, en: v.ct_en }, checklists }); toast(t("saved")); },
+    { wide: true });
+}
+
+// ------------------------------------------------------------ scaffold calculator
+PAGES.rentcalc = async (view, parts, q) => {
+  let { models } = await api("GET", "/api/rent-models");
+  const ed = can("rentals.calculator", "edit"), add = can("rentals.calculator", "add");
+  if (!models.length) {
+    S.H.rstart2 = async () => { try { await api("POST", "/api/rent-starter", {}); route(); } catch (e) { fail(e); } };
+    view.innerHTML = `<div class="card"><div class="empty">${L2("No calculator model yet. Add the scaffolding starter set: the pieces from the standard handover form and a frame-scaffold model you can tune.", "لا يوجد نموذج حاسبة بعد. أضف المجموعة الأساسية: القطع من محضر التسليم القياسي ونموذج سقالة شبابيك قابل للتعديل.")}</div>
+      ${can("rentals.fleet", "add") ? `<div class="row"><button class="btn pri" data-a="rstart2">${L2("Add scaffolding starter set", "إضافة المجموعة الأساسية للسقالات")}</button></div>` : ""}</div>`; return; }
+  let m = models.find(x => String(x.id) === String(q.model)) || models[0], values = {}, res = null, tm;
+  const lab = p => esc(S.lang === "ar" && p.label_ar ? p.label_ar : p.label || p.key);
+  const draw = () => {
+    const sp = m.spec;
+    view.innerHTML = `<div class="toolbar"><select data-change="rcmodel">${models.map(x => `<option value="${x.id}" ${x.id === m.id ? "selected" : ""}>${esc(nm(x))}</option>`).join("")}</select>
+        ${ed ? `<button class="btn" data-a="rcedit">${L2("Edit formulas", "تعديل المعادلات")}</button><button class="btn" data-a="rcsave">${L2("Save these settings as the model's defaults", "حفظ الإعدادات كافتراضي للنموذج")}</button>` : ""}
+        ${add ? `<button class="btn" data-a="rccopy">${L2("Copy model", "نسخ النموذج")}</button>` : ""}<span class="spacer"></span>
+        ${can("rentals.contracts", "add") ? `<button class="btn pri" data-a="rcoffer">${L2("Start a price offer from this", "بدء عرض سعر من هذا")}</button>` : ""}</div>
+      <div class="grid g2"><div class="card"><h2>${L2("Size", "المقاسات")}</h2><div class="grid g2">${sp.inputs.map(p => `<label class="f">${lab(p)}${p.unit ? ` (${esc(p.unit)})` : ""}<input class="num" type="number" step="any" value="${values[p.key] ?? p.value}" data-input="rcval" data-k="${p.key}" style="font-size:1.2em"></label>`).join("")}</div>
+          <h2 style="margin-top:14px">${L2("Settings you can tweak", "إعدادات قابلة للتعديل")}</h2><div class="grid g2">${sp.params.map(p => `<label class="f">${lab(p)}${p.unit ? ` (${esc(p.unit)})` : ""}<input class="num" type="number" step="any" value="${values[p.key] ?? p.value}" data-input="rcval" data-k="${p.key}"></label>`).join("")}</div></div>
+        <div class="card"><h2>${L2("Worked out", "المحسوب")}</h2><div id="rcder" class="muted">…</div>
+          <h2 style="margin-top:14px">${L2("Pricing", "التسعير")}</h2><label class="f" style="max-width:220px">${L2("Target monthly return on equipment cost %", "العائد الشهري المستهدف على تكلفة المعدات %")}<input class="num" type="number" step="any" id="rcpct" value="${values._pct ?? 3.5}" data-input="rcpctv"></label><div id="rcprice"></div></div></div>
+      <div class="card"><h2>${L2("Pieces needed", "القطع المطلوبة")}</h2><div id="rcres">…</div></div>`;
+    run(); };
+  const run = async () => { try { res = await api("POST", "/api/rent-models-preview/eval", { spec: m.spec, values });
+      $("#rcder").innerHTML = `<div class="tbl"><table><tbody>${res.derived.map(x => `<tr><td>${esc(S.lang === "ar" && x.label_ar ? x.label_ar : x.label || x.key)}</td><td class="num"><b>${numf(x.value)}</b></td><td class="muted" style="font-size:.8em">${esc(x.expr)}</td></tr>`).join("")}</tbody></table></div>`;
+      $("#rcres").innerHTML = `<div class="tbl stack"><table><thead><tr><th>${L2("Piece", "القطعة")}</th><th class="num">${t("qty")}</th><th class="num">${L2("Per m²", "لكل م²")}</th><th class="num">${L2("In the yard", "بالمخزن")}</th><th class="num">${L2("Unit cost", "تكلفة القطعة")}</th><th class="num">${L2("Value", "القيمة")}</th><th class="muted">${L2("Formula", "المعادلة")}</th></tr></thead><tbody>
+        ${res.components.map(c => `<tr><td>${c.missing ? `<span class="neg">${esc(c.item)} — ${L2("not in your equipment list", "غير موجود بقائمة المعدات")}</span>` : `${esc(c.item)} — ${esc(nm(c))}`}</td><td class="num"><b>${numf(c.qty)}</b></td><td class="num">${res.area ? (c.qty / res.area).toFixed(3) : ""}</td>
+          <td class="num ${c.short ? "neg" : ""}">${c.missing ? "" : numf(c.in_yard)}${c.short ? `<div class="lines">${L2("short", "عجز")} ${numf(c.short)}</div>` : ""}</td><td class="num">${c.missing ? "" : money(c.unit_cost)}</td><td class="num">${c.missing ? "" : money(c.value)}</td><td class="muted" style="font-size:.8em">${esc(c.expr)}</td></tr>`).join("")}
+        <tr class="total"><td>${t("total")}</td><td class="num">${numf(res.pieces)}</td><td></td><td></td><td></td><td class="num">${money(res.value)}</td><td></td></tr></tbody></table></div>`;
+      price();
+    } catch (e) { $("#rcres").innerHTML = `<div class="banner err">${esc(e.message)}</div>`; } };
+  const price = () => { if (!res) return; const p = (+$("#rcpct").value || 0) / 100;
+    $("#rcprice").innerHTML = `<div class="tbl" style="margin-top:8px"><table><tbody><tr><td>${L2("Area", "المساحة")}</td><td class="num"><b>${numf(res.area)} m²</b></td></tr>
+      <tr><td>${L2("Equipment cost", "تكلفة المعدات")}</td><td class="num">${money(res.value)} <span class="muted">(${money(res.value_per_m2)} / m²)</span></td></tr>
+      <tr><td>${L2("Rent per m² / month at that return", "إيجار المتر شهرياً بهذا العائد")}</td><td class="num"><b>${money(res.value_per_m2 * p)}</b></td></tr>
+      <tr><td>${L2("Monthly rent for this scaffold", "الإيجار الشهري لهذه السقالة")}</td><td class="num"><b>${money(res.value * p)}</b></td></tr>
+      ${res.piece_rent ? `<tr><td>${L2("Same pieces at their per-piece rates", "نفس القطع بأسعار القطعة")}</td><td class="num">${money(res.piece_rent)} <span class="muted">(${money(res.piece_rent_per_m2)} / m²)</span></td></tr>` : ""}</tbody></table></div>`; };
+  Object.assign(S.H, {
+    rcmodel: el => { m = models.find(x => x.id === +el.value); values = {}; draw(); },
+    rcval: el => { values[el.dataset.k] = el.value; clearTimeout(tm); tm = setTimeout(run, 300); },
+    rcpctv: el => { values._pct = el.value; price(); },
+    rcsave: async () => { const sp = JSON.parse(JSON.stringify(m.spec)); [...sp.inputs, ...sp.params].forEach(p => { if (values[p.key] !== undefined && values[p.key] !== "") p.value = +values[p.key]; });
+      try { await api("PUT", "/api/rent-models/" + m.id, { name: m.name, name_ar: m.name_ar, category: m.category, spec: sp }); m.spec = sp; toast(t("saved")); } catch (e) { fail(e); } },
+    rccopy: async () => { try { const r = await api("POST", "/api/rent-models", { name: m.name + " (copy)", name_ar: (m.name_ar || "") + " (نسخة)", category: m.category, spec: m.spec }); location.hash = "#/rentcalc?model=" + r.id; } catch (e) { fail(e); } },
+    rcedit: () => rentModelEditor(m, async () => { models = (await api("GET", "/api/rent-models")).models; m = models.find(x => x.id === m.id) || models[0]; draw(); }),
+    rcoffer: () => { if (!res || !res.area) return; const comps = res.components.filter(c => !c.missing && c.qty > 0).map(c => ({ item_id: c.item_id, per_unit: c.qty / res.area }));
+      rentalForm(null, { lines: [{ kind: "sqm", model_id: m.id, description: `${nm(m)} — ${Object.values(res.values).slice(0, 2).map(numf).join(" × ")} m`, unit: "m²", qty: res.area,
+        rate: +(res.value_per_m2 * ((+$("#rcpct").value || 0) / 100)).toFixed(2) || "", components: comps, inputs: res.values }] }); } });
+  draw();
+};
+
+function rentModelEditor(m, after) {
+  const sp = JSON.parse(JSON.stringify(m.spec));
+  const sec = (key, cols) => `<h4 style="margin:10px 0 4px">${{ inputs: L2("Size inputs", "مدخلات المقاسات"), params: L2("Settings", "الإعدادات"), derived: L2("Worked-out values (formulas)", "القيم المحسوبة (معادلات)"), components: L2("Pieces (formulas)", "القطع (معادلات)") }[key]}</h4>
+    <div class="tbl"><table><thead><tr>${cols.map(c => `<th>${esc(c[1])}</th>`).join("")}<th></th></tr></thead><tbody>
+    ${sp[key].map((r, i) => `<tr>${cols.map(([k]) => `<td><input data-skip="1" value="${esc(r[k] ?? "")}" data-input="rme" data-s="${key}" data-i="${i}" data-k="${k}" ${k === "expr" ? 'style="min-width:260px;font-family:monospace"' : k === "value" ? 'class="num" style="width:80px"' : 'style="width:130px"'}></td>`).join("")}
+      <td><button type="button" class="btn sm danger" data-a="rmedel" data-s="${key}" data-i="${i}">✕</button></td></tr>`).join("")}</tbody></table></div>
+    <button type="button" class="btn sm" data-a="rmeadd" data-s="${key}">+ ${L2("Row", "سطر")}</button>`;
+  const html = () => `<p class="muted">${L2("Names are what formulas use (letters, digits, _). Formulas can use + − × ÷, brackets, comparisons, 'a if condition else b' and ceil, floor, round, min, max, sqrt. Each piece's formula gives its quantity; 'item' is the equipment code.", "الأسماء هي ما تستخدمه المعادلات (حروف إنجليزية وأرقام و _). يمكن استخدام + − × ÷ والأقواس والمقارنات و 'a if شرط else b' و ceil, floor, round, min, max, sqrt. معادلة كل قطعة تعطي كميتها؛ 'item' هو كود الصنف.")}</p>`
+    + form([{ k: "name", l: L2("Model name", "اسم النموذج"), v: m.name, req: 1 }, { k: "name_ar", l: L2("Arabic name", "الاسم بالعربية"), v: m.name_ar }])
+    + `<div id="rmeb">${body()}</div>`;
+  const body = () => sec("inputs", [["key", L2("Name", "الاسم")], ["label", L2("Label", "العنوان")], ["label_ar", "عربي"], ["unit", t("unit")], ["value", L2("Default", "الافتراضي")]])
+    + sec("params", [["key", L2("Name", "الاسم")], ["label", L2("Label", "العنوان")], ["label_ar", "عربي"], ["unit", t("unit")], ["value", L2("Default", "الافتراضي")]])
+    + sec("derived", [["key", L2("Name", "الاسم")], ["expr", L2("Formula", "المعادلة")], ["label", L2("Label", "العنوان")], ["label_ar", "عربي"]])
+    + sec("components", [["item", L2("Item code", "كود الصنف")], ["expr", L2("Quantity formula", "معادلة الكمية")], ["note", t("notes")]])
+    + `<label class="f" style="margin-top:10px">${L2("Area formula (m²)", "معادلة المساحة (م²)")}<input data-skip="1" value="${esc(sp.area)}" data-input="rmearea" style="font-family:monospace"></label>`;
+  drawer(`${L2("Calculator formulas", "معادلات الحاسبة")} — ${nm(m)}`, html(), async v => { await api("PUT", "/api/rent-models/" + m.id, { name: v.name, name_ar: v.name_ar, category: m.category, spec: sp }); toast(t("saved")); closeDrawer(true); await after(); return false; },
+    { wide: true, extraButtons: models_del(m), onOpen: f => {
+      const redraw = () => { $("#rmeb", f).innerHTML = body(); };
+      Object.assign(S.H, { rme: el => { const r = sp[el.dataset.s][+el.dataset.i]; r[el.dataset.k] = el.dataset.k === "value" ? +el.value : el.value; },
+        rmeadd: el => { const s = el.dataset.s; sp[s].push(s === "components" ? { item: "", expr: "0" } : s === "derived" ? { key: "", expr: "0", label: "" } : { key: "", label: "", value: 0 }); redraw(); },
+        rmedel: el => { sp[el.dataset.s].splice(+el.dataset.i, 1); redraw(); }, rmearea: el => { sp.area = el.value; },
+        rmdel: async () => { if (!confirm(t("confirm_delete"))) return; try { await api("DELETE", "/api/rent-models/" + m.id); closeDrawer(); location.hash = "#/rentcalc"; route(); } catch (e) { fail(e); } } }); } });
+}
+const models_del = m => can("rentals.calculator", "edit") ? `<button type="button" class="btn danger" data-a="rmdel">${t("delete")}</button>` : "";
 
 PAGES.assets = async (view, parts, q) => {
   const d = await api("GET", "/api/assets?" + qs(q));
