@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from . import assets, entries, equity, __version__
+from . import assets, custody, entries, equity, loans, __version__
 from . import accounting as acc
 from . import auth, branding, cloud, documents, einvoice, interchange, reports
 from .db import MODULES, SUBMODULES, SUBTYPES, to_major, to_minor
@@ -606,7 +606,8 @@ KIND_MODULE = {"Supplier Discount": "purchasing.payments", "Direct Cost": "purch
                "Share Transfer": "partners.ownership", "Partner Admission": "partners.ownership",
                "Partner Exit": "partners.ownership", "Asset Purchase": "assets.register", "Depreciation": "assets.depreciation",
                "Asset Disposal": "assets.register", "Goods Receipt": "stock.moves", "Material Issue": "stock.moves",
-               "Stock Transfer": "stock.moves", "Stock Adjustment": "stock.moves"}
+               "Stock Transfer": "stock.moves", "Stock Adjustment": "stock.moves",
+               **{k: "accounting.loans" for k in loans.ALL_KINDS}, **{k: "purchasing.custody" for k in custody.ALL_KINDS}}
 
 
 def _vouchers_report(ctx):
@@ -934,6 +935,123 @@ def partner_del(ctx, pid):
         raise acc.ValidationError("Partner has transactions and cannot be removed — untick “Still a partner” instead")
     ctx.db.x("DELETE FROM partners WHERE id=?", (int(pid),))
     return ok()
+
+
+# ================================================================== loans
+@route("GET", "/api/loans", "accounting.loans")
+def loans_list(ctx):
+    q = ctx.q
+    return ok(loans.register(ctx.db, q.get("q"), q.get("direction"), q.get("state")))
+
+
+@route("GET", "/api/loans/<lid>", "accounting.loans")
+def loan_one(ctx, lid):
+    return ok(loans.detail(ctx.db, lid))
+
+
+@route("GET", "/api/loans/<lid>/suggest", "accounting.loans")
+def loan_suggest(ctx, lid):
+    return ok(loans.suggest(ctx.db, loans.get(ctx.db, lid), ctx.q.get("date")))
+
+
+@route("POST", "/api/loans", "accounting.loans", "add")
+def loan_add(ctx):
+    lid = loans.save(ctx.db, ctx.body, user=ctx.user["username"])
+    ctx.log("loan.add", lid)
+    return ok({"id": lid})
+
+
+@route("PUT", "/api/loans/<lid>", "accounting.loans", "edit")
+def loan_edit(ctx, lid):
+    loans.save(ctx.db, {**ctx.body, "booking": "keep"}, lid, ctx.user["username"])
+    ctx.log("loan.edit", lid)
+    return ok()
+
+
+@route("DELETE", "/api/loans/<lid>", "accounting.loans", "edit")
+def loan_del(ctx, lid):
+    loans.delete(ctx.db, lid)
+    ctx.log("loan.delete", lid)
+    return ok()
+
+
+@route("POST", "/api/loans-preview/<action>", "accounting.loans", "add")
+def loan_preview(ctx, action):
+    if action == "schedule":
+        return ok(loans.preview_schedule(ctx.body))
+    pl = loans.plan(ctx.db, ctx.body.get("id"), action, ctx.body)
+    return ok({"kind": pl["kind"], "date": pl["date"], "memo": pl["memo"], "lines": _named_lines(ctx.db, pl["lines"]),
+               "notes": pl["notes"]})
+
+
+@route("POST", "/api/loans/<lid>/<action>", "accounting.loans", "add")
+def loan_action(ctx, lid, action):
+    if action in ("close", "reopen"):
+        ctx.require("accounting.loans", "edit")
+        loans.set_status(ctx.db, lid, action == "close", ctx.body.get("date"))
+        ctx.log(f"loan.{action}", lid)
+        return ok()
+    eid = loans.post(ctx.db, lid, action, ctx.body, ctx.user["username"])
+    ctx.log(f"loan.{action}", f"{lid} -> {eid}")
+    return ok({"id": eid})
+
+
+def _named_lines(db, lines):
+    names = {a["code"]: a for a in db.q("SELECT code, name, name_ar FROM accounts")}
+    return [{**ln, "name": names.get(ln["account"], {}).get("name", ""), "name_ar": names.get(ln["account"], {}).get("name_ar", "")}
+            for ln in lines]
+
+
+# ================================================================ custody
+@route("GET", "/api/custody", "purchasing.custody")
+def custody_list(ctx):
+    q = ctx.q
+    return ok(custody.register(ctx.db, q.get("q"), q.get("state"), q.get("holder")))
+
+
+@route("GET", "/api/custody/<cid>", "purchasing.custody")
+def custody_one(ctx, cid):
+    return ok(custody.statement(ctx.db, cid))
+
+
+@route("POST", "/api/custody", "purchasing.custody", "add")
+def custody_add(ctx):
+    cid = custody.save(ctx.db, ctx.body, user=ctx.user["username"])
+    ctx.log("custody.add", cid)
+    return ok({"id": cid})
+
+
+@route("PUT", "/api/custody/<cid>", "purchasing.custody", "edit")
+def custody_edit(ctx, cid):
+    custody.save(ctx.db, {**ctx.body, "booking": "keep"}, cid, ctx.user["username"])
+    ctx.log("custody.edit", cid)
+    return ok()
+
+
+@route("DELETE", "/api/custody/<cid>", "purchasing.custody", "edit")
+def custody_del(ctx, cid):
+    custody.delete(ctx.db, cid)
+    ctx.log("custody.delete", cid)
+    return ok()
+
+
+@route("POST", "/api/custody-preview/<action>", "purchasing.custody", "add")
+def custody_preview(ctx, action):
+    pl = custody.plan(ctx.db, ctx.body.get("id"), action, ctx.body)
+    return ok({"date": pl["date"], "notes": pl["notes"],
+               "entries": [{**e, "lines": _named_lines(ctx.db, e["lines"])} for e in pl["entries"]]})
+
+
+@route("POST", "/api/custody/<cid>/<action>", "purchasing.custody", "add")
+def custody_action(ctx, cid, action):
+    if action in ("close", "reopen"):
+        ctx.require("purchasing.custody", "edit")
+        custody.set_status(ctx.db, cid, action == "close", ctx.body.get("date"))
+        ctx.log(f"custody.{action}", cid)
+        return ok()
+    ids = custody.post(ctx.db, cid, action, ctx.body, ctx.user["username"])
+    ctx.log(f"custody.{action}", f"{cid} -> {ids}")
+    return ok({"ids": ids})
 
 
 # ============================================================ fixed assets
@@ -1486,7 +1604,7 @@ def offer_type_del(ctx, tid):
 
 # ============================================================ erase all data
 ERASE_TRANSACTIONS = ("stock_moves", "stock_levels", "extract_lines", "extracts", "ownership_changes", "journal_lines",
-                      "journal_entries", "offers")
+                      "journal_entries", "offers", "loans", "custodies")
 ERASE_ALL = ERASE_TRANSACTIONS + ("parties", "stock_items", "boq_lines", "boqs", "partner_shares", "partners", "rates",
                                   "fixed_assets", "business_units", "offer_types", "tax_codes", "assets")
 

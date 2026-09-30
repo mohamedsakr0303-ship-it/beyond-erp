@@ -25,7 +25,10 @@ ENTRY_KINDS = ["Direct Cost", "Operating Expense", "Payroll Accrual", "Payment V
                "Receipt Voucher", "Sales Invoice", "Capital Contribution", "Capital Withdrawal", "Owner Drawing", "Partner Loan", "Partner Loan Repayment",
                "Partner Loan Interest", "Share Transfer", "Partner Admission", "Partner Exit", "Profit Distribution",
                "Reserve Transfer", "Asset Purchase", "Depreciation", "Asset Disposal", "Journal Voucher",
-               "Goods Receipt", "Material Issue", "Stock Transfer", "Stock Adjustment", "Reversing Entry"]
+               "Goods Receipt", "Material Issue", "Stock Transfer", "Stock Adjustment", "Reversing Entry",
+               "Loan Received", "Loan Repayment", "Loan Given", "Loan Collection", "Loan Interest", "Loan Charges",
+               "Loan Forgiven", "Loan Written Off", "Custody Issued", "Custody Settlement", "Custody Return",
+               "Custody Deduction"]
 
 
 class ValidationError(Exception):

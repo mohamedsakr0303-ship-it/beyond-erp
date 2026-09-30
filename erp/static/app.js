@@ -251,7 +251,7 @@ S.GLOBAL_H = {
     async v => { await api("PUT", "/api/me/password", v); toast(t("saved")); return true; }),
   quicknew: el => newItem(el.dataset.doc),
   coswitch: () => companySwitcher(),
-  goback: () => { const h = parseHash().parts; const parent = { bu: "bus", invoice: "invoices", boq: "boqs", offer: "offers", offertypes: "offers", report: "dashboard" }[h[0]];
+  goback: () => { const h = parseHash().parts; const parent = { bu: "bus", invoice: "invoices", boq: "boqs", offer: "offers", offertypes: "offers", report: "dashboard", loan: "loans", cust: "custody" }[h[0]];
     if (S.navCount > 0) history.back(); else location.hash = "#/" + (parent || "dashboard"); },
   closeDrawer: () => closeDrawer(),
 };
@@ -539,7 +539,7 @@ function drawer(title, html, onSubmit, opts = {}) {
   if (!drawerEntry) { drawerEntry = location.hash; try { history.pushState({ berpDrawer: 1 }, ""); } catch { drawerEntry = null; } }
   const bg = document.createElement("div");
   bg.className = "drawer-bg";
-  bg.innerHTML = `<div class="drawer" role="dialog" aria-label="${esc(title)}"><div class="dhead"><button type="button" class="btn icon" data-a="closeDrawer" aria-label="${esc(t("close"))}">${BACK_ICON}</button><h3>${esc(title)}</h3></div><div id="derr"></div>
+  bg.innerHTML = `<div class="drawer${opts.wide ? " wide" : ""}" role="dialog" aria-label="${esc(title)}"><div class="dhead"><button type="button" class="btn icon" data-a="closeDrawer" aria-label="${esc(t("close"))}">${BACK_ICON}</button><h3>${esc(title)}</h3></div><div id="derr"></div>
     <form id="df">${html}<div class="foot">${opts.extraButtons || ""}<button class="btn" type="button" data-a="closeDrawer">${t(opts.readOnly ? "close" : "cancel")}</button>
     ${opts.readOnly ? "" : `<button class="btn pri" type="submit">${esc(opts.submitLabel || t("save"))}</button>`}</div></form></div>`;
   bg.addEventListener("mousedown", e => { if (e.target === bg) closeDrawer(); });
@@ -694,6 +694,7 @@ async function openVoucher(id) {
   const edit = can("accounting.journal", "edit") || (e.doc && can(DOC_MOD[e.doc], "edit"));
   const html = `<div class="row" style="margin-bottom:10px"><span class="chip">${esc(tl(e.kind))}</span><span class="chip">#${e.id}</span><span class="chip">${fd(e.date)}</span>${e.bu_code ? `<span class="chip">${esc(e.bu_code)}</span>` : ""}${e.created_by ? `<span class="chip">${t("created_by")} ${esc(e.created_by)}</span>` : ""}</div>
     <p><b>${esc(e.memo)}</b>${e.party ? ` — ${esc(e.party)}` : ""}${e.ref ? ` · ${esc(e.ref)}` : ""}</p>
+    ${e.meta && (e.meta.loan || e.meta.custody) ? `<p><a class="btn sm" href="#/${e.meta.loan ? "loan" : "cust"}/${encodeURIComponent(e.meta.loan || e.meta.custody)}" data-a="vgo">${e.meta.loan ? L2("Open the loan", "فتح القرض") : L2("Open the custody", "فتح العهدة")} ${esc(e.meta.loan || e.meta.custody)} →</a></p>` : ""}
     ${e.meta && e.meta.savings ? `<p class="muted">${t("savings")}: <b>${money(e.meta.savings)}</b>${e.meta.quoted ? ` ${L2("of", "من")} ${money(e.meta.quoted)}` : ""} — ${e.meta.negotiation === "keep" ? L2("company earnings", "أرباح للشركة") : L2("lowered the cost", "خفّض التكلفة")}${e.meta.deal_status ? ` · ${esc(tl(e.meta.deal_status))}` : ""}</p>` : ""}
     <div class="tbl"><table><thead><tr><th>${t("account")}</th><th class="num">${t("debit")}</th><th class="num">${t("credit")}</th></tr></thead><tbody>
     ${e.lines.map(l => `<tr><td>${esc(l.account)} ${esc(aname(l))}</td><td class="num">${l.debit ? money(l.debit) : ""}</td><td class="num">${l.credit ? money(l.credit) : ""}</td></tr>`).join("")}
@@ -717,6 +718,7 @@ async function openVoucher(id) {
   S.H.vdel = async () => { if (!confirm(t("confirm_delete"))) return; try { await api("DELETE", `/api/journal/${e.id}`); closeDrawer(); route(); } catch (x) { fail(x); } };
   S.H.vedit = () => journalForm(e);
   S.H.vform = () => openDoc(e.doc, null, e);
+  S.H.vgo = el => { const h = el.getAttribute("href"); closeDrawer(); location.hash = h; };
   S.H.vdup = () => e.doc ? openDoc(e.doc, null, null, { ...e.form, date: today() }) : journalForm({ ...e, date: today() }, true);
   drawer(`${tl(e.kind)} #${e.id}`, html, null, { readOnly: true, extraButtons: btns.join("") });
 }
@@ -810,6 +812,8 @@ function newItem(key) {
   if (kind === "eq") return id === "drawing" ? openDoc("partner_tx") : equityForm(id);
   if (kind === "asset") return id === "depr" ? deprForm() : assetForm();
   if (kind === "entry") return entryTypeForm(id);
+  if (kind === "loan") return id === "pay" ? pickThen("loans", lid => loanAction(lid, "pay")) : loanForm();
+  if (kind === "custody") return id === "settle" ? pickThen("custody", c => custodyAction(c, "settle")) : custodyForm();
 }
 async function openDoc(type, pre, edit, copyVals) {
   if (type === "invoice") { location.hash = "#/invoice/new"; return; }
@@ -2289,6 +2293,358 @@ PAGES.partners = async (view, parts, q) => {
 
 // ================================================================= fixed assets
 const assetAccounts = () => accts(["Asset"], ["fixed_asset", "intangible", "investment", "other_noncurrent_asset"]);
+// ================================================================== loans
+const LOAN_O = {
+  dir: () => [["borrowed", L2("The company borrowed — we owe it", "الشركة اقترضت — مبلغ علينا")], ["lent", L2("The company lent — it is owed to us", "الشركة أقرضت — مبلغ لنا")]],
+  itype: () => [["none", L2("Interest-free", "بدون فوائد")], ["declining", L2("Annual rate on the remaining balance (declining)", "نسبة سنوية على الرصيد المتبقي (متناقصة)")],
+    ["flat", L2("Flat annual rate on the full amount", "نسبة سنوية ثابتة على أصل القرض")], ["fixed", L2("A fixed total interest amount", "مبلغ فوائد إجمالي ثابت")]],
+  sched: () => [["equal", L2("Equal installments", "أقساط متساوية")], ["equal_principal", L2("Equal principal + interest on the balance", "أصل متساوٍ + فائدة على الرصيد")],
+    ["bullet", L2("Interest only — principal at the end", "فوائد فقط — الأصل في النهاية")], ["custom", L2("Custom installments (type them in)", "أقساط مخصصة (إدخال يدوي)")],
+    ["none", L2("Flexible — no fixed schedule", "مرن — بدون جدول سداد")]],
+  freq: () => [["1", L2("Monthly", "شهري")], ["2", L2("Every 2 months", "كل شهرين")], ["3", L2("Quarterly", "ربع سنوي")], ["4", L2("Every 4 months", "كل 4 أشهر")],
+    ["6", L2("Every 6 months", "نصف سنوي")], ["12", L2("Yearly", "سنوي")]],
+  state: s => ({ paid: ["ok", L2("Paid", "مسدد")], partial: ["warn", L2("Part paid", "مسدد جزئياً")], open: ["", L2("Upcoming", "قادم")], overdue: ["bad", L2("Overdue", "متأخر")] }[s] || ["", s]),
+};
+const moneyAccts = () => accts(null, ["cash"]);
+const loanWho = dir => dir === "borrowed" ? L2("Lender", "المُقرض") : L2("Borrower", "المقترض");
+const kpiBox = (l, v, cls = "", sub = "") => `<div class="kpi"><div class="l">${esc(l)}</div><div class="v ${cls}">${typeof v === "number" ? money(v) : v}</div>${sub ? `<div class="muted" style="font-size:.78em">${sub}</div>` : ""}</div>`;
+function previewBox(res) {
+  const ents = res.entries || [res];
+  return ents.map(e => `<div class="tbl" style="margin-top:6px"><table><thead><tr><th>${t("account")}</th><th class="num">${t("debit")}</th><th class="num">${t("credit")}</th></tr></thead><tbody>
+    ${(e.lines || []).map(l => `<tr><td>${esc(l.account)} ${esc(S.lang === "ar" && l.name_ar ? l.name_ar : l.name || "")}${l.party ? ` <span class="muted">· ${esc(l.party)}</span>` : ""}</td><td class="num">${l.debit ? money(l.debit) : ""}</td><td class="num">${l.credit ? money(l.credit) : ""}</td></tr>`).join("")}</tbody></table></div>`).join("")
+    + (res.notes || []).map(n => `<div class="muted" style="margin-top:4px">${esc(n)}</div>`).join("");
+}
+// live preview of what an action will post
+function wirePreview(f, url, body) {
+  let tm;
+  const run = async () => { const box = $("#lpv", f); if (!box) return;
+    try { box.innerHTML = previewBox(await api("POST", url, body())); } catch (e) { box.innerHTML = `<div class="muted">${esc(e.message)}</div>`; } };
+  f.addEventListener("input", () => { clearTimeout(tm); tm = setTimeout(run, 350); });
+  f.addEventListener("change", () => { clearTimeout(tm); tm = setTimeout(run, 150); });
+  run();
+}
+
+PAGES.loans = async (view, parts, q) => {
+  const d = await api("GET", "/api/loans?" + qs(q));
+  const add = can("accounting.loans", "add");
+  S.H.lnnew = () => loanForm();
+  const B = d.totals.borrowed, Lt = d.totals.lent;
+  view.innerHTML = `<div class="toolbar">${add ? `<button class="btn pri" data-a="lnnew">+ ${L2("New loan", "قرض جديد")}</button>` : ""}<span class="spacer"></span>${exportMenu("loans", q)}</div>
+    <div class="kpis">${kpiBox(L2("The company owes", "على الشركة"), B.outstanding, "", `${B.count} ${L2("loans", "قرض")}${B.accrued ? ` · ${L2("accrued interest", "فوائد مستحقة")} ${money(B.accrued)}` : ""}`)}
+      ${kpiBox(L2("Due now (we pay)", "مستحق الآن (سداد)"), B.due_now, B.overdue ? "neg" : "", B.overdue ? `${L2("overdue", "متأخر")} ${money(B.overdue)}` : "")}
+      ${kpiBox(L2("Owed to the company", "للشركة"), Lt.outstanding, "pos", `${Lt.count} ${L2("loans", "قرض")}${Lt.accrued ? ` · ${L2("interest receivable", "فوائد مستحقة التحصيل")} ${money(Lt.accrued)}` : ""}`)}
+      ${kpiBox(L2("Due now (we collect)", "مستحق الآن (تحصيل)"), Lt.due_now, Lt.overdue ? "neg" : "", Lt.overdue ? `${L2("overdue", "متأخر")} ${money(Lt.overdue)}` : "")}</div>` +
+    filterBar(q, ["q", ["select", "direction", L2("Type", "النوع"), [["borrowed", L2("Borrowed", "مأخوذة")], ["lent", L2("Given", "ممنوحة")]]],
+      ["select", "state", t("status"), [["active", L2("Active", "نشط")], ["overdue", L2("Overdue", "متأخر")], ["closed", L2("Closed", "مغلق")]]]]) +
+    `<div class="card">${d.rows.length ? `<div class="tbl stack"><table><thead><tr><th>${t("code")}</th><th>${L2("Lender / borrower", "الجهة")}</th><th>${L2("Type", "النوع")}</th><th>${L2("Start", "البداية")}</th><th>${L2("Interest", "الفائدة")}</th><th class="num">${t("amount")}</th><th class="num">${L2("Outstanding", "المتبقي")}</th><th>${L2("Next installment", "القسط القادم")}</th><th>${t("status")}</th></tr></thead><tbody>
+      ${d.rows.map(r => `<tr class="click ${r.status === "closed" ? "void" : ""}" data-href="#/loan/${r.id}"><td><b>${esc(r.code)}</b></td><td>${esc(r.party)}${r.purpose ? `<div class="lines">${esc(r.purpose)}</div>` : ""}</td>
+        <td><span class="chip ${r.direction === "borrowed" ? "" : "ok"}">${r.direction === "borrowed" ? L2("Borrowed", "مأخوذ") : L2("Given", "ممنوح")}</span></td><td>${fd(r.start_date)}</td>
+        <td>${r.interest_type === "none" ? L2("None", "بدون") : r.interest_type === "fixed" ? money(r.fixed_interest) : pct(r.rate) + (r.interest_type === "flat" ? " " + L2("flat", "ثابتة") : "")}</td>
+        <td class="num">${money(r.principal || r.opening_balance)}</td><td class="num"><b>${money(r.outstanding)}</b>${r.accrued ? `<div class="lines">+ ${money(r.accrued)} ${L2("interest", "فوائد")}</div>` : ""}</td>
+        <td>${r.next_due ? `${fd(r.next_due)} · ${money(r.next_amount)}` : "—"}</td>
+        <td>${r.status === "closed" ? `<span class="chip">${L2("Closed", "مغلق")}</span>` : r.overdue ? `<span class="chip bad">${L2("Overdue", "متأخر")} ${money(r.overdue)}</span>` : r.settled ? `<span class="chip ok">${L2("Settled — close it", "مسدد — أغلقه")}</span>` : `<span class="chip ok">${L2("Active", "نشط")}</span>`}</td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="empty">${L2("No loans yet. Add a bank loan the company took, or money the company lent to someone — with or without interest — and track every installment.", "لا توجد قروض بعد. أضف قرضاً أخذته الشركة من بنك أو مبلغاً أقرضته الشركة لأحد — بفائدة أو بدونها — وتابع كل قسط.")}</div>`}</div>`;
+};
+
+PAGES.loan = async (view, parts) => {
+  const d = await api("GET", "/api/loans/" + encodeURIComponent(parts[1]));
+  const L = d.loan, B = L.direction === "borrowed";
+  $("#ttl").textContent = `${L.code} — ${L.party}`;
+  const add = can("accounting.loans", "add"), ed = can("accounting.loans", "edit"), live = L.status === "active";
+  Object.assign(S.H, { lnpay: () => loanAction(d, "pay"), lnint: () => loanAction(d, "interest"), lnfee: () => loanAction(d, "fee"), lndraw: () => loanAction(d, "draw"),
+    lnoff: () => loanAction(d, "writeoff"), lnedit: () => loanForm(d),
+    lnclose: async () => { try { await api("POST", `/api/loans/${L.id}/close`, {}); toast(t("saved")); route(); } catch (e) { fail(e); } },
+    lnreopen: async () => { try { await api("POST", `/api/loans/${L.id}/reopen`, {}); route(); } catch (e) { fail(e); } },
+    lndel: () => confirmDelete(L.code, "/api/loans/" + L.id, async () => { location.hash = "#/loans"; }) });
+  const row = (l, v) => v === "" || v == null ? "" : `<tr><td class="muted">${esc(l)}</td><td>${v}</td></tr>`;
+  const acc = c => `${esc(c)} ${esc(aname(S.boot.accounts.find(x => x.code === c) || {}))}`;
+  const interest = L.interest_type === "none" ? L2("Interest-free", "بدون فوائد") : L.interest_type === "fixed" ? `${money(L.fixed_interest)} ${L2("in total", "إجمالي")}`
+    : `${pct(L.rate)} ${L2("a year", "سنوياً")} — ${L.interest_type === "flat" ? L2("flat on the full amount", "ثابتة على أصل القرض") : L2("on the remaining balance", "على الرصيد المتبقي")}`;
+  const sched = (LOAN_O.sched().find(x => x[0] === L.schedule_type) || [])[1];
+  const freq = (LOAN_O.freq().find(x => x[0] === String(L.frequency)) || [])[1];
+  view.innerHTML = `<div class="toolbar"><a class="btn" href="#/loans">← ${t("m_loans")}</a>
+      ${live && add ? `<button class="btn pri" data-a="lnpay">${B ? L2("Record a repayment", "تسجيل سداد") : L2("Record a collection", "تسجيل تحصيل")}</button>
+        <button class="btn" data-a="lnint">${L2("Book interest", "تسجيل فوائد")}</button><button class="btn" data-a="lndraw">${B ? L2("Receive more", "استلام دفعة إضافية") : L2("Lend more", "صرف دفعة إضافية")}</button>
+        <button class="btn" data-a="lnfee">${L2("Charges / fees", "مصاريف / رسوم")}</button><button class="btn" data-a="lnoff">${B ? L2("Lender forgave it", "إعفاء من المقرض") : L2("Write off", "إعدام القرض")}</button>` : ""}
+      <span class="spacer"></span>
+      ${ed ? `<button class="btn" data-a="lnedit">${L2("Edit terms", "تعديل الشروط")}</button>${live ? `<button class="btn" data-a="lnclose">${L2("Close loan", "إغلاق القرض")}</button>` : `<button class="btn" data-a="lnreopen">${L2("Reopen", "إعادة فتح")}</button>`}
+        ${!d.entries.length ? `<button class="btn danger" data-a="lndel">${t("delete")}</button>` : ""}` : ""}
+      ${exportMenu("loan_schedule", { code: L.code })}</div>
+    ${L.settled && live ? `<div class="banner info">${L2("Fully repaid — you can close this loan.", "تم السداد بالكامل — يمكنك إغلاق القرض.")}</div>` : ""}
+    <div class="kpis">${kpiBox(B ? L2("Still owed by the company", "المتبقي على الشركة") : L2("Still owed to the company", "المتبقي للشركة"), L.outstanding, B ? "" : "pos", `${L2("of", "من")} ${money(L.drawn)} · ${Math.round(L.progress * 100)}% ${L2("repaid", "مسدد")}`)}
+      ${kpiBox(L2("Accrued interest", "فوائد مستحقة"), L.accrued, "", L.interest_to_date ? `${L2("not booked yet", "لم تُسجل بعد")}: ${money(L.interest_to_date)}` : "")}
+      ${kpiBox(L2("Overdue", "متأخرات"), L.overdue, L.overdue ? "neg" : "")}
+      ${kpiBox(L2("Next installment", "القسط القادم"), L.next_due ? money(L.next_amount) : "—", "", L.next_due ? fd(L.next_due) : "")}
+      ${kpiBox(B ? L2("Interest paid", "فوائد مدفوعة") : L2("Interest collected", "فوائد محصلة"), L.interest_paid, "", `${L2("booked in total", "المسجل إجمالاً")}: ${money(L.interest_recognized)}`)}</div>
+    <div class="card"><h2>${L2("Terms", "الشروط")}</h2><div class="tbl"><table><tbody>
+      ${row(L2("Type", "النوع"), B ? L2("Borrowed by the company", "قرض على الشركة") : L2("Lent by the company", "قرض ممنوح من الشركة"))}
+      ${row(loanWho(L.direction), esc(L.party))}${row(L2("Purpose", "الغرض"), esc(L.purpose))}
+      ${row(t("amount"), money(L.principal || L.opening_balance))}${L.opening_balance ? row(L2("Balance when registered", "الرصيد عند التسجيل"), `${money(L.opening_balance)} · ${fd(L.opening_date)}`) : ""}
+      ${row(L2("Start", "البداية"), fd(L.start_date))}${row(L2("Interest", "الفائدة"), interest)}
+      ${row(L2("Repayment", "السداد"), `${esc(sched || "")}${L.schedule_type !== "none" && L.schedule_type !== "custom" ? ` · ${esc(freq || "")} · ${L.term_months} ${L2("months", "شهر")}` : ""}`)}
+      ${row(L2("Final due date", "تاريخ الاستحقاق النهائي"), L.maturity ? fd(L.maturity) : "")}
+      ${row(L2("Loan account", "حساب القرض"), acc(L.account))}${row(L2("Interest account", "حساب الفوائد"), acc(L.interest_account))}${row(L2("Accrued interest account", "حساب الفوائد المستحقة"), acc(L.accrued_account))}
+      ${L.bu_code ? row(t("bu"), esc(L.bu_code)) : ""}${row(t("notes"), esc(L.notes))}${L.status === "closed" ? row(L2("Closed on", "أُغلق في"), fd(L.closed_on)) : ""}</tbody></table></div></div>
+    <div class="card"><h2>${L2("Repayment schedule", "جدول السداد")}</h2>${d.schedule.length ? `<div class="tbl stack"><table><thead><tr><th>#</th><th>${L2("Due", "الاستحقاق")}</th><th class="num">${L2("Principal", "الأصل")}</th><th class="num">${L2("Interest", "الفائدة")}</th><th class="num">${L2("Installment", "القسط")}</th><th class="num">${L2("Balance after", "الرصيد بعده")}</th><th>${t("status")}</th></tr></thead><tbody>
+      ${d.schedule.map(r => { const [c, lbl] = LOAN_O.state(r.state); return `<tr class="${r.state === "paid" ? "void" : ""}"><td>${r.n}</td><td>${fd(r.due)}</td><td class="num">${money(r.principal)}</td><td class="num">${money(r.interest)}</td><td class="num"><b>${money(r.payment)}</b></td><td class="num">${money(r.balance)}</td>
+        <td><span class="chip ${c}">${esc(lbl)}</span>${r.state === "partial" || r.state === "overdue" ? `<div class="lines">${L2("left", "المتبقي")} ${money(r.left)}</div>` : ""}</td></tr>`; }).join("")}</tbody></table></div>`
+      : `<div class="empty">${L2("Flexible loan — no fixed installments. Record payments whenever they happen; interest is worked out on the balance day by day.", "قرض مرن — بدون أقساط ثابتة. سجّل الدفعات وقت حدوثها وتُحسب الفوائد على الرصيد يومياً.")}</div>`}</div>
+    <div class="card"><h2>${L2("Movements", "الحركات")}</h2>${voucherRows(d.entries)}</div>`;
+};
+
+async function loanForm(d) {
+  const L = d ? d.loan : null, ed = !!L, hasEntries = d && d.entries.length;
+  const accOpts = (dir, which) => which === "account" ? accts(dir === "borrowed" ? ["Liability"] : ["Asset"]) : which === "interest" ? accts(dir === "borrowed" ? ["Expense", "COGS"] : ["Revenue"]) : accts(dir === "borrowed" ? ["Liability"] : ["Asset"]);
+  const dflt = (dir, term) => dir === "borrowed" ? { account: accByRole(+term > 12 ? "long_term_debt" : "short_term_debt"), interest_account: accByRole("interest"), accrued_account: accByRole("accrued_interest") }
+    : { account: accByRole(+term > 12 ? "loans_receivable_lt" : "loans_receivable") || accByRole("loans_receivable"), interest_account: accByRole("interest_income"), accrued_account: accByRole("interest_receivable") };
+  const dir0 = L ? L.direction : "borrowed", d0 = dflt(dir0, L ? L.term_months : 12);
+  let rows = (d && d.custom_schedule || []).map(r => ({ due: r.due, principal: r.principal / 100, interest: r.interest / 100 }));
+  const names = [...new Set([...(S.boot.parties || []).map(p => p.name), ...(S.boot.partners || []).map(p => p.name)])];
+  const html = form([
+    { k: "direction", l: L2("Loan", "القرض"), type: "select", opts: LOAN_O.dir(), v: dir0, change: "lnsync", dis: hasEntries, span: "spanall" },
+    { k: "party", l: `${L2("Lender / borrower", "الجهة (المقرض / المقترض)")}`, v: L ? L.party : "", list: "lnparties", req: 1 },
+    { k: "purpose", l: L2("Purpose", "الغرض"), v: L ? L.purpose : "", ph: L2("e.g. equipment finance, employee advance", "مثال: تمويل معدات، سلفة موظف") },
+    { k: "principal", l: L2("Loan amount", "مبلغ القرض"), type: "number", v: L ? (L.principal || "") : "", req: !ed },
+    { k: "start_date", l: L2("Start date", "تاريخ البداية"), type: "date", v: L ? L.start_date : today(), req: 1 },
+    { k: "interest_type", l: L2("Interest", "الفائدة"), type: "select", opts: LOAN_O.itype(), v: L ? L.interest_type : "none", change: "lnsync" },
+    { k: "rate", l: L2("Interest rate % a year", "نسبة الفائدة % سنوياً"), type: "number", v: L ? (L.rate_pct || "") : "" },
+    { k: "fixed_interest", l: L2("Total interest amount", "إجمالي مبلغ الفوائد"), type: "number", v: L ? (L.fixed_interest || "") : "" },
+    { k: "schedule_type", l: L2("Repayment", "طريقة السداد"), type: "select", opts: LOAN_O.sched(), v: L ? L.schedule_type : "equal", change: "lnsync" },
+    { k: "term_months", l: L2("Term (months)", "المدة (بالأشهر)"), type: "number", v: L ? L.term_months : 12, change: "lnsync" },
+    { k: "frequency", l: L2("Installments every", "الأقساط كل"), type: "select", opts: LOAN_O.freq(), v: L ? String(L.frequency) : "1" },
+    { k: "first_due", l: L2("First installment on", "أول قسط في"), type: "date", v: L ? L.first_due : "", help: L2("Blank = one period after the start", "فارغ = بعد فترة من البداية") },
+    ...(ed ? (L.opening_balance ? [{ k: "opening_balance", l: L2("Balance when registered", "الرصيد عند التسجيل"), type: "number", v: L.opening_balance }, { k: "opening_date", l: L2("As of", "في تاريخ"), type: "date", v: L.opening_date }] : [])
+      : [{ k: "booking", l: L2("The money", "المبلغ"), type: "select", change: "lnsync", span: "spanall", opts: [["money", L2("Moved now — book it in cash / bank", "تم استلامه / صرفه الآن — يُسجل في الخزينة / البنك")],
+          ["opening", L2("Already in the books — just track the remaining balance", "مسجل مسبقاً في الدفاتر — متابعة الرصيد المتبقي فقط")], ["none", L2("Record the money later (Receive / Lend more)", "يُسجل المبلغ لاحقاً")]] },
+        { k: "paid_from", l: L2("Cash / bank account", "حساب الخزينة / البنك"), type: "select", opts: moneyAccts(), v: accByRole("bank") },
+        { k: "fees", l: L2("Fees deducted from the amount", "رسوم مخصومة من المبلغ"), type: "number" },
+        { k: "opening_balance", l: L2("Balance still outstanding", "الرصيد المتبقي"), type: "number" }, { k: "opening_date", l: L2("As of", "في تاريخ"), type: "date", v: today() }]),
+    { k: "bu_id", l: t("bu"), type: "select", opts: buOpts("—"), v: L ? L.bu_id || "" : "" },
+    { k: "code", l: t("code"), v: L ? L.code : "", ph: L2("automatic", "تلقائي") },
+    { k: "account", l: L2("Loan account", "حساب القرض"), type: "select", opts: accOpts(dir0, "account"), v: L ? L.account : d0.account },
+    { k: "interest_account", l: L2("Interest account", "حساب الفوائد"), type: "select", opts: accOpts(dir0, "interest"), v: L ? L.interest_account : d0.interest_account },
+    { k: "accrued_account", l: L2("Accrued interest account", "حساب الفوائد المستحقة"), type: "select", opts: accOpts(dir0, "accrued"), v: L ? L.accrued_account : d0.accrued_account },
+    { k: "notes", l: t("notes"), type: "textarea", v: L ? L.notes : "", span: "spanall" },
+    { html: `<div id="lncustom"></div><h4 style="margin:10px 0 0">${L2("Schedule preview", "معاينة جدول السداد")}</h4><div id="lnprev" class="muted">—</div>`, span: "spanall" }])
+    + datalist("lnparties", names);
+  const collect = f => { const v = readForm(f); if (v.schedule_type === "custom") v.schedule = rows.filter(r => r.due); return v; };
+  drawer(ed ? `${t("edit")} — ${L.code}` : L2("New loan", "قرض جديد"), html, async (v, f) => {
+    const body = collect(f);
+    if (ed) { await api("PUT", "/api/loans/" + L.id, body); toast(t("saved")); }
+    else { const r = await api("POST", "/api/loans", body); toast(t("saved")); closeDrawer(); location.hash = "#/loan/" + r.id; return false; }
+  }, { onOpen: f => {
+    let tm;
+    const show = (k, on) => { const el = $(`[name=${k}]`, f); if (el) { el.closest("label").style.display = on ? "" : "none"; el.dataset.skip = on ? "" : "1"; } };
+    const drawCustom = () => { const box = $("#lncustom", f); const on = $("[name=schedule_type]", f).value === "custom";
+      box.innerHTML = on ? `<h4 style="margin:10px 0 6px">${L2("Installments", "الأقساط")}</h4><div class="tbl"><table><thead><tr><th>${L2("Due", "الاستحقاق")}</th><th class="num">${L2("Principal", "الأصل")}</th><th class="num">${L2("Interest", "الفائدة")}</th><th></th></tr></thead><tbody>
+        ${rows.map((r, i) => `<tr><td><input type="date" data-skip="1" value="${esc(r.due || "")}" data-input="lncrow" data-i="${i}" data-k="due"></td><td><input class="num" type="number" step="any" data-skip="1" value="${r.principal ?? ""}" data-input="lncrow" data-i="${i}" data-k="principal"></td>
+          <td><input class="num" type="number" step="any" data-skip="1" value="${r.interest ?? ""}" data-input="lncrow" data-i="${i}" data-k="interest"></td><td><button type="button" class="btn sm danger" data-a="lncdel" data-i="${i}">✕</button></td></tr>`).join("")}</tbody></table></div>
+        <div class="row" style="margin-top:6px"><button type="button" class="btn sm" data-a="lncadd">+ ${L2("Installment", "قسط")}</button><button type="button" class="btn sm" data-a="lncfill">${L2("Fill from equal installments", "تعبئة من أقساط متساوية")}</button></div>` : ""; };
+    const preview = async () => { const box = $("#lnprev", f); try { const r = await api("POST", "/api/loans-preview/schedule", collect(f));
+      box.innerHTML = r.rows.length ? `<div class="tbl"><table><thead><tr><th>#</th><th>${L2("Due", "الاستحقاق")}</th><th class="num">${L2("Principal", "الأصل")}</th><th class="num">${L2("Interest", "الفائدة")}</th><th class="num">${L2("Installment", "القسط")}</th><th class="num">${L2("Balance", "الرصيد")}</th></tr></thead><tbody>
+        ${r.rows.map(x => `<tr><td>${x.n}</td><td>${fd(x.due)}</td><td class="num">${money(x.principal)}</td><td class="num">${money(x.interest)}</td><td class="num">${money(x.payment)}</td><td class="num">${money(x.balance)}</td></tr>`).join("")}
+        <tr class="total"><td colspan="2">${t("total")}</td><td class="num">${money(r.totals.principal)}</td><td class="num">${money(r.totals.interest)}</td><td class="num">${money(r.totals.payment)}</td><td></td></tr></tbody></table></div>`
+        : `<span class="muted">${$("[name=schedule_type]", f).value === "none" ? L2("Flexible — no installments.", "مرن — بدون أقساط.") : L2("Enter the amount and term to see the installments.", "أدخل المبلغ والمدة لعرض الأقساط.")}</span>`; } catch (e) { box.textContent = e.message; } };
+    S.H.lnsync = el => { const g = k => ($(`[name=${k}]`, f) || {}).value;
+      const it = g("interest_type"), st = g("schedule_type"), bk = g("booking");
+      show("rate", it === "declining" || it === "flat"); show("fixed_interest", it === "fixed");
+      show("frequency", st !== "none"); show("first_due", st !== "none");
+      if (!ed) { show("paid_from", bk === "money"); show("fees", bk === "money"); show("opening_balance", bk === "opening"); show("opening_date", bk === "opening"); }
+      if (el && (el.name === "direction" || el.name === "term_months")) { const dir = g("direction"), dd = dflt(dir, g("term_months"));
+        [["account", "account"], ["interest_account", "interest"], ["accrued_account", "accrued"]].forEach(([k, w]) => { const s = $(`[name=${k}]`, f);
+          if (el.name === "direction") s.innerHTML = accOpts(dir, w).map(([c, n]) => `<option value="${esc(c)}">${esc(n)}</option>`).join("");
+          if (!ed || el.name === "direction") s.value = dd[k] || s.value; }); }
+      if (!el || el.name === "schedule_type") drawCustom(); };
+    S.H.lncrow = el => { rows[+el.dataset.i][el.dataset.k] = el.value; clearTimeout(tm); tm = setTimeout(preview, 300); };
+    S.H.lncadd = () => { const last = rows[rows.length - 1]; rows.push({ due: last && last.due ? last.due : $("[name=start_date]", f).value, principal: "", interest: "" }); drawCustom(); };
+    S.H.lncdel = el => { rows.splice(+el.dataset.i, 1); drawCustom(); preview(); };
+    S.H.lncfill = async () => { const v = { ...readForm(f), schedule_type: "equal" }; const r = await api("POST", "/api/loans-preview/schedule", v);
+      rows = r.rows.map(x => ({ due: x.due, principal: x.principal, interest: x.interest })); drawCustom(); preview(); };
+    f.addEventListener("input", e => { if (!e.target.dataset.input || e.target.dataset.input !== "lncrow") { clearTimeout(tm); tm = setTimeout(preview, 350); } });
+    f.addEventListener("change", () => { clearTimeout(tm); tm = setTimeout(preview, 150); });
+    S.H.lnsync(); preview(); } });
+}
+
+async function loanAction(d, action) {
+  if (typeof d !== "object" || !d.loan) d = await api("GET", "/api/loans/" + d);
+  const L = d.loan, B = L.direction === "borrowed", sg = d.suggest;
+  const acc = (types) => accts(types);
+  const titles = { pay: B ? L2("Repayment", "سداد قسط / دفعة") : L2("Collection", "تحصيل قسط / دفعة"), interest: L2("Book interest", "تسجيل فوائد"), draw: B ? L2("Money received", "استلام مبلغ القرض") : L2("Money lent", "صرف مبلغ القرض"),
+    fee: L2("Charges / fees", "مصاريف / رسوم"), writeoff: B ? L2("Loan forgiven by the lender", "إعفاء من المقرض") : L2("Write off the loan", "إعدام القرض") };
+  const money_ = (lbl) => [{ k: "paid_from", l: lbl || (B ? L2("Paid from", "دُفع من") : L2("Received into", "استُلم في")), type: "select", opts: moneyAccts(), v: accByRole("bank") }];
+  const fields = {
+    pay: [{ k: "date", l: t("date"), type: "date", v: today(), change: "lnsug", req: 1 },
+      { html: `<div class="muted" id="lnsugtxt"></div>`, span: "spanall" },
+      { k: "principal", l: L2("Principal", "من أصل القرض"), type: "number", v: sg.principal || "", help: `${L2("Outstanding", "المتبقي")}: ${money(L.outstanding)}` },
+      { k: "interest", l: L2("Interest", "الفوائد"), type: "number", v: sg.interest || "", help: L.accrued ? `${L2("Accrued", "مستحقة")}: ${money(L.accrued)}` : "" },
+      { k: "fees", l: B ? L2("Late fee / charges", "غرامة تأخير / مصاريف") : L2("Late fee charged", "غرامة تأخير"), type: "number" }, ...money_(),
+      { k: "memo", l: t("memo"), span: "spanall" }],
+    interest: [{ k: "date", l: L2("Interest up to", "الفوائد حتى"), type: "date", v: today(), change: "lnsug", req: 1 },
+      { k: "amount", l: t("amount"), type: "number", v: sg.accrue || "", req: 1, help: L2("Suggested: interest earned so far that is not booked yet", "المقترح: الفوائد المستحقة حتى التاريخ ولم تُسجل بعد") },
+      { k: "add_to_loan", l: L2("Add it to the loan balance (capitalise) instead of accruing it", "إضافتها إلى رصيد القرض (رسملة) بدلاً من تسجيلها كمستحقة"), type: "checkbox", span: "spanall" },
+      { k: "memo", l: t("memo"), span: "spanall" }],
+    draw: [{ k: "date", l: t("date"), type: "date", v: today(), req: 1 }, { k: "amount", l: t("amount"), type: "number", req: 1 },
+      { k: "fees", l: L2("Fees deducted", "رسوم مخصومة"), type: "number" }, ...money_(B ? L2("Received into", "استُلم في") : L2("Paid from", "دُفع من")), { k: "memo", l: t("memo"), span: "spanall" }],
+    fee: [{ k: "date", l: t("date"), type: "date", v: today(), req: 1 }, { k: "amount", l: t("amount"), type: "number", req: 1 },
+      { k: "fee_account", l: t("account"), type: "select", opts: acc(B ? ["Expense"] : ["Revenue"]), v: B ? accByRole("bank_charges") : accByRole("other_income") },
+      { k: "add_to_loan", l: B ? L2("Added to what we owe (not paid now)", "تُضاف إلى المبلغ المستحق علينا (لم تُدفع الآن)") : L2("Added to what they owe (not collected now)", "تُضاف إلى المبلغ المستحق لنا (لم تُحصّل الآن)"), type: "checkbox", span: "spanall" },
+      ...money_(), { k: "memo", l: t("memo"), span: "spanall" }],
+    writeoff: [{ k: "date", l: t("date"), type: "date", v: today(), req: 1 }, { k: "amount", l: L2("Principal written off", "الأصل المعدوم"), type: "number", v: L.outstanding },
+      { k: "account", l: t("account"), type: "select", opts: acc(B ? ["Revenue"] : ["Expense"]), v: B ? accByRole("other_income") : accByRole("bad_debt") },
+      { k: "include_accrued", l: L2("Include the accrued interest", "تشمل الفوائد المستحقة"), type: "checkbox", v: true, span: "spanall" }, { k: "memo", l: t("memo"), span: "spanall" }],
+  }[action];
+  drawer(`${titles[action]} — ${L.code} · ${L.party}`, form(fields) + `<h4 style="margin:12px 0 0">${L2("Entry", "القيد")}</h4><div id="lpv" class="muted">—</div>`,
+    async v => { await api("POST", `/api/loans/${L.id}/${action}`, v); toast(t("posted")); },
+    { submitLabel: t("post"), onOpen: f => {
+      const txt = s => s.basis === "schedule" ? `${L2("Installment", "القسط")} ${s.installments.join(", ")} — ${money(s.total)}` : `${L2("Interest to date", "الفوائد حتى التاريخ")}: ${money(s.interest)}`;
+      if ($("#lnsugtxt", f)) $("#lnsugtxt", f).textContent = txt(sg);
+      S.H.lnsug = async el => { try { const s = await api("GET", `/api/loans/${L.id}/suggest?date=${el.value}`);
+        if (action === "pay") { $("[name=principal]", f).value = s.principal || ""; $("[name=interest]", f).value = s.interest || ""; $("#lnsugtxt", f).textContent = txt(s); }
+        else $("[name=amount]", f).value = s.accrue || ""; f.dispatchEvent(new Event("change")); } catch (e) { fail(e); } };
+      wirePreview(f, `/api/loans-preview/${action}`, () => ({ ...readForm(f), id: L.id })); } });
+}
+
+// ============================================================ cash custody
+const CU_KIND = () => [["temporary", L2("Temporary — for a task, settle by a date", "مؤقتة — لمهمة وتُسوى في موعد")], ["permanent", L2("Permanent float — topped up after each settlement", "مستديمة — تُعاد تغذيتها بعد كل تسوية")]];
+const custodyHolders = () => [...new Set([...(S.boot.parties || []).map(p => p.name), ...(S.cache.cuHolders || [])])];
+
+PAGES.custody = async (view, parts, q) => {
+  const d = await api("GET", "/api/custody?" + qs(q));
+  S.cache.cuHolders = d.holders;
+  const add = can("purchasing.custody", "add");
+  S.H.cunew = () => custodyForm();
+  const T = d.totals;
+  view.innerHTML = `<div class="toolbar">${add ? `<button class="btn pri" data-a="cunew">+ ${L2("Give custody", "صرف عهدة")}</button>` : ""}<span class="spacer"></span>${exportMenu("custody", q)}</div>
+    <div class="kpis">${kpiBox(L2("Cash held by employees", "نقدية لدى العاملين"), T.balance, "", `${T.open} ${L2("open", "مفتوحة")}`)}
+      ${kpiBox(L2("Overdue settlements", "تسويات متأخرة"), String(T.overdue), T.overdue ? "neg" : "")}
+      ${kpiBox(L2("Owed back to employees", "مستحق للعاملين"), T.owed_to_holders, T.owed_to_holders ? "neg" : "", L2("spent more than they were given", "صرفوا أكثر مما استلموا"))}</div>` +
+    filterBar(q, ["q", ["select", "state", t("status"), [["open", L2("Open", "مفتوحة")], ["overdue", L2("Overdue", "متأخرة")], ["closed", L2("Closed", "مغلقة")]]],
+      ["select", "holder", L2("Held by", "صاحب العهدة"), d.holders.map(h => [h, h])]]) +
+    `<div class="card">${d.rows.length ? `<div class="tbl stack"><table><thead><tr><th>${t("code")}</th><th>${L2("Held by", "صاحب العهدة")}</th><th>${L2("Type", "النوع")}</th><th>${L2("Given on", "تاريخ الصرف")}</th><th class="num">${L2("Given", "المصروف له")}</th><th class="num">${L2("Spent", "المصروفات")}</th><th class="num">${L2("Balance", "الرصيد")}</th><th>${t("status")}</th></tr></thead><tbody>
+      ${d.rows.map(r => `<tr class="click ${r.status === "closed" ? "void" : ""}" data-href="#/cust/${r.id}"><td><b>${esc(r.code)}</b></td><td>${esc(r.holder)}${r.purpose ? `<div class="lines">${esc(r.purpose)}</div>` : ""}</td>
+        <td>${r.kind === "permanent" ? L2("Permanent", "مستديمة") : L2("Temporary", "مؤقتة")}</td><td>${fd(r.issued_on)}${r.due_date ? `<div class="lines">${L2("settle by", "تُسوى قبل")} ${fd(r.due_date)}</div>` : ""}</td>
+        <td class="num">${money(r.issued)}</td><td class="num">${money(r.spent)}</td><td class="num"><b class="${r.balance < 0 ? "neg" : ""}">${money(r.balance)}</b></td>
+        <td>${r.status === "closed" ? `<span class="chip">${L2("Closed", "مغلقة")}</span>` : r.overdue ? `<span class="chip bad">${L2("Overdue", "متأخرة")}</span>` : r.balance < 0 ? `<span class="chip warn">${L2("Owed to holder", "مستحق له")}</span>` : !r.balance && r.issued ? `<span class="chip ok">${L2("Settled — close it", "مسواة — أغلقها")}</span>` : `<span class="chip ok">${L2("Open", "مفتوحة")}</span>`}</td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="empty">${L2("No custody yet. Give an employee cash to buy things for the company, then record their expense report (receipts) to settle it — the rest is returned, reimbursed or deducted.", "لا توجد عهد بعد. اصرف لموظف نقدية للشراء للشركة، ثم سجّل تقرير المصروفات (الفواتير) لتسويتها — والباقي يُرد أو يُعوّض أو يُخصم.")}</div>`}</div>
+    ${d.by_holder.length > 1 ? `<div class="card"><h2>${L2("By employee", "حسب الموظف")}</h2><div class="tbl"><table><tbody>${d.by_holder.map(h => `<tr><td>${esc(h.holder)}</td><td class="num">${money(h.balance)}</td></tr>`).join("")}</tbody></table></div></div>` : ""}`;
+};
+
+PAGES.cust = async (view, parts) => {
+  const d = await api("GET", "/api/custody/" + encodeURIComponent(parts[1]));
+  const C = d.custody, add = can("purchasing.custody", "add"), ed = can("purchasing.custody", "edit"), open = C.status === "open";
+  $("#ttl").textContent = `${C.code} — ${C.holder}`;
+  Object.assign(S.H, { cuset: () => custodyAction(C, "settle"), cuiss: () => custodyAction(C, "issue"), curet: () => custodyAction(C, "return"), cuded: () => custodyAction(C, "deduct"),
+    cuedit: () => custodyForm(C), cuclose: async () => { try { await api("POST", `/api/custody/${C.id}/close`, {}); toast(t("saved")); route(); } catch (e) { fail(e); } },
+    cureopen: async () => { try { await api("POST", `/api/custody/${C.id}/reopen`, {}); route(); } catch (e) { fail(e); } },
+    cudel: () => confirmDelete(C.code, "/api/custody/" + C.id, async () => { location.hash = "#/custody"; }) });
+  const bal = C.balance;
+  view.innerHTML = `<div class="toolbar"><a class="btn" href="#/custody">← ${t("m_custody")}</a>
+      ${open && add ? `<button class="btn pri" data-a="cuset">${L2("Expense report (settle)", "تسوية (تقرير مصروفات)")}</button>
+        <button class="btn" data-a="cuiss">${bal < 0 ? L2("Reimburse", "تعويض") : L2("Top up", "زيادة العهدة")}</button>
+        ${bal > 0 ? `<button class="btn" data-a="curet">${L2("Money returned", "رد نقدية")}</button><button class="btn" data-a="cuded">${L2("Deduct / write off", "خصم / إعدام")}</button>` : ""}` : ""}
+      <span class="spacer"></span>
+      ${ed ? `<button class="btn" data-a="cuedit">${t("edit")}</button>${open ? `<button class="btn" data-a="cuclose">${L2("Close custody", "إغلاق العهدة")}</button>` : `<button class="btn" data-a="cureopen">${L2("Reopen", "إعادة فتح")}</button>`}
+        ${d.rows.filter(r => r.id).length ? "" : `<button class="btn danger" data-a="cudel">${t("delete")}</button>`}` : ""}
+      ${exportMenu("custody_statement", { code: C.code })}</div>
+    ${C.overdue ? `<div class="banner err">${L2("Settlement is overdue — it was due", "التسوية متأخرة — كان موعدها")} ${fd(C.due_date)}.</div>` : ""}
+    ${bal < 0 && open ? `<div class="banner info">${L2("The company owes", "الشركة مدينة لـ")} ${esc(C.holder)} ${money(-bal)} — ${L2("they spent more than they were given. Use Reimburse.", "صرف أكثر مما استلم. استخدم «تعويض».")}</div>` : ""}
+    ${!bal && open && C.issued ? `<div class="banner info">${L2("Balance is zero — you can close this custody.", "الرصيد صفر — يمكنك إغلاق العهدة.")}</div>` : ""}
+    <div class="kpis">${kpiBox(L2("Balance with", "الرصيد لدى") + " " + C.holder, bal, bal < 0 ? "neg" : "", C.float_amount ? `${L2("limit", "الحد")} ${money(C.float_amount)}${C.to_replenish ? ` · ${L2("to top up", "للتغذية")} ${money(C.to_replenish)}` : ""}` : "")}
+      ${kpiBox(L2("Given", "المصروف له"), C.issued)}${kpiBox(L2("Spent (expense reports)", "المصروفات (تسويات)"), C.spent)}${kpiBox(L2("Returned / deducted", "المرتجع / المخصوم"), C.returned + C.deducted)}
+      ${kpiBox(L2("Days open", "أيام مفتوحة"), String(C.days_open), C.overdue ? "neg" : "", C.due_date ? `${L2("settle by", "تُسوى قبل")} ${fd(C.due_date)}` : "")}</div>
+    <div class="card"><h2>${L2("Statement", "كشف الحساب")}</h2><div class="tbl stack"><table><thead><tr><th>${t("date")}</th><th>${L2("Type", "النوع")}</th><th>${t("description")}</th><th class="num">${L2("Given", "صرف")}</th><th class="num">${L2("Spent / returned", "مصروف / مرتجع")}</th><th class="num">${L2("Balance", "الرصيد")}</th></tr></thead><tbody>
+      ${d.rows.map(r => `<tr class="${r.id ? "click" : ""}" ${r.id ? `data-a="openv" data-id="${r.id}"` : ""}><td>${fd(r.date)}</td><td><span class="chip">${esc(tl(r.kind))}</span></td><td>${esc(r.memo)}${r.lines && r.lines.length ? `<div class="lines">${r.lines.map(x => `${esc(x.description)}${x.supplier ? " · " + esc(x.supplier) : ""}${x.receipt ? " · #" + esc(x.receipt) : ""} — ${money(x.amount)}`).join("<br>")}</div>` : ""}</td>
+        <td class="num">${r.in ? money(r.in) : ""}</td><td class="num">${r.out ? money(r.out) : ""}</td><td class="num"><b>${money(r.balance)}</b></td></tr>`).join("") || `<tr><td colspan="6" class="muted">${t("nothing")}</td></tr>`}</tbody></table></div></div>
+    <div class="card"><h2>${L2("Details", "البيانات")}</h2><div class="tbl"><table><tbody>
+      <tr><td class="muted">${L2("Type", "النوع")}</td><td>${C.kind === "permanent" ? L2("Permanent float", "مستديمة") : L2("Temporary", "مؤقتة")}</td></tr>
+      ${C.purpose ? `<tr><td class="muted">${L2("Purpose", "الغرض")}</td><td>${esc(C.purpose)}</td></tr>` : ""}
+      <tr><td class="muted">${t("account")}</td><td>${esc(C.account)} ${esc(aname(S.boot.accounts.find(x => x.code === C.account) || {}))}</td></tr>
+      ${C.bu_code ? `<tr><td class="muted">${t("bu")}</td><td>${esc(C.bu_code)}</td></tr>` : ""}${C.notes ? `<tr><td class="muted">${t("notes")}</td><td>${esc(C.notes)}</td></tr>` : ""}</tbody></table></div></div>`;
+};
+
+async function custodyForm(C) {
+  const ed = !!C;
+  if (!S.cache.cuHolders) { try { S.cache.cuHolders = (await api("GET", "/api/custody")).holders; } catch { S.cache.cuHolders = []; } }
+  const custodyAccts = accts(["Asset"]).filter(([c]) => { const a = S.boot.accounts.find(x => x.code === c) || {}; return ["other_current_asset", "prepaid", "cash", "receivable"].includes(a.subtype); });
+  const html = form([
+    { k: "holder", l: L2("Employee holding it", "الموظف صاحب العهدة"), v: C ? C.holder : "", list: "cuholders", req: 1 },
+    { k: "kind", l: L2("Type", "النوع"), type: "select", opts: CU_KIND(), v: C ? C.kind : "temporary", change: "cusync" },
+    { k: "purpose", l: L2("Purpose", "الغرض"), v: C ? C.purpose : "", ph: L2("e.g. site purchases for Villa", "مثال: مشتريات موقع الفيلا"), span: "spanall" },
+    ...(ed ? [] : [{ k: "booking", l: L2("The money", "المبلغ"), type: "select", change: "cusync", span: "spanall", opts: [["money", L2("Handed over now — from cash / bank", "يُصرف الآن — من الخزينة / البنك")],
+      ["opening", L2("Already with the employee (in the books) — track it from here", "لدى الموظف بالفعل (مسجل بالدفاتر) — متابعته من الآن")], ["none", L2("Give it later", "يُصرف لاحقاً")]] },
+      { k: "amount", l: t("amount"), type: "number" }, { k: "paid_from", l: L2("Paid from", "دُفع من"), type: "select", opts: moneyAccts(), v: accByRole("cash") }]),
+    { k: "float_amount", l: L2("Limit / standing float", "الحد / قيمة العهدة المستديمة"), type: "number", v: C ? (C.float_amount || "") : "", help: L2("Optional. For a permanent float this is the amount it is topped back up to.", "اختياري. للعهدة المستديمة هو المبلغ الذي تُعاد تغذيتها إليه.") },
+    { k: "issued_on", l: L2("Given on", "تاريخ الصرف"), type: "date", v: C ? C.issued_on : today(), req: 1 },
+    { k: "due_date", l: L2("Settle by", "تُسوى قبل"), type: "date", v: C ? C.due_date : "" },
+    { k: "bu_id", l: t("bu"), type: "select", opts: buOpts("—"), v: C ? C.bu_id || "" : "", help: L2("Default for its expense reports", "الافتراضي لتقارير المصروفات") },
+    { k: "account", l: t("account"), type: "select", opts: custodyAccts, v: C ? C.account : accByRole("custody") },
+    { k: "code", l: t("code"), v: C ? C.code : "", ph: L2("automatic", "تلقائي") },
+    { k: "notes", l: t("notes"), type: "textarea", v: C ? C.notes : "", span: "spanall" }]) + datalist("cuholders", custodyHolders());
+  drawer(ed ? `${t("edit")} — ${C.code}` : L2("Give cash custody", "صرف عهدة نقدية"), html, async v => {
+    if (ed) { await api("PUT", "/api/custody/" + C.id, v); toast(t("saved")); }
+    else { const r = await api("POST", "/api/custody", v); toast(t("saved")); closeDrawer(); location.hash = "#/cust/" + r.id; return false; }
+  }, { onOpen: f => { S.H.cusync = () => { const g = k => ($(`[name=${k}]`, f) || {}).value; if (ed) return; const bk = g("booking");
+      const show = (k, on) => { const el = $(`[name=${k}]`, f); el.closest("label").style.display = on ? "" : "none"; el.dataset.skip = on ? "" : "1"; };
+      show("amount", bk !== "none"); show("paid_from", bk === "money"); }; S.H.cusync(); } });
+}
+
+async function custodyAction(C, action) {
+  if (typeof C !== "object") C = (await api("GET", "/api/custody/" + C)).custody;
+  const bal = C.balance;
+  const titles = { issue: bal < 0 ? L2("Reimburse", "تعويض") : L2("Top up custody", "زيادة العهدة"), settle: L2("Expense report — settle custody", "تقرير مصروفات — تسوية العهدة"),
+    return: L2("Money returned", "رد نقدية من العهدة"), deduct: L2("Deduct / write off the balance", "خصم / إعدام رصيد العهدة") };
+  const expAccts = accts(["Expense", "COGS", "Asset"]).filter(([c]) => { const a = S.boot.accounts.find(x => x.code === c) || {}; return a.type !== "Asset" || ["inventory", "prepaid", "fixed_asset", "other_current_asset"].includes(a.subtype); });
+  let rows = [{ date: today(), description: "", account: accByRole("other_overhead"), bu_id: C.bu_id || "", amount: "", vat_code: "", supplier: "", receipt: "" }];
+  const fields = {
+    issue: [{ k: "date", l: t("date"), type: "date", v: today(), req: 1 }, { k: "amount", l: t("amount"), type: "number", v: bal < 0 ? -bal : (C.to_replenish || ""), req: 1 },
+      { k: "paid_from", l: L2("Paid from", "دُفع من"), type: "select", opts: moneyAccts(), v: accByRole("cash") }, { k: "memo", l: t("memo"), span: "spanall" }],
+    return: [{ k: "date", l: t("date"), type: "date", v: today(), req: 1 }, { k: "amount", l: t("amount"), type: "number", v: Math.max(bal, 0) || "", req: 1 },
+      { k: "received_into", l: L2("Received into", "استُلم في"), type: "select", opts: moneyAccts(), v: accByRole("cash") }, { k: "memo", l: t("memo"), span: "spanall" }],
+    deduct: [{ k: "date", l: t("date"), type: "date", v: today(), req: 1 }, { k: "amount", l: t("amount"), type: "number", v: Math.max(bal, 0) || "", req: 1 },
+      { k: "account", l: L2("Deduct to", "يُخصم على"), type: "select", opts: [[accByRole("accrued_payroll"), L2("From the employee's salary (accrued payroll)", "من راتب الموظف (أجور مستحقة)")], ...accts(["Expense"])], v: accByRole("accrued_payroll"),
+        help: L2("Salary: reduces what the company owes them. An expense account: the company absorbs it.", "الراتب: يقلل المستحق له. حساب مصروف: تتحملها الشركة.") }, { k: "memo", l: t("memo"), span: "spanall" }],
+    settle: [{ k: "date", l: t("date"), type: "date", v: today(), req: 1 }, { k: "report_no", l: L2("Report no.", "رقم التقرير") }, { k: "memo", l: t("memo"), span: "spanall" },
+      { html: `<div id="culines"></div>`, span: "spanall" },
+      ...(C.kind === "permanent" ? [{ k: "replenish", l: L2("Top the float back up by the same amount", "إعادة تغذية العهدة بنفس المبلغ"), type: "checkbox", v: true, span: "spanall" },
+        { k: "paid_from", l: L2("Top up from", "التغذية من"), type: "select", opts: moneyAccts(), v: accByRole("cash") }] : [])],
+  }[action];
+  const collect = f => ({ ...readForm(f), id: C.id, lines: action === "settle" ? rows : undefined });
+  drawer(`${titles[action]} — ${C.code} · ${C.holder}`, form(fields) + `<h4 style="margin:12px 0 0">${L2("Entry", "القيد")}</h4><div id="lpv" class="muted">—</div>`,
+    async (v, f) => { await api("POST", `/api/custody/${C.id}/${action}`, collect(f)); toast(t("posted")); },
+    { submitLabel: t("post"), wide: action === "settle", onOpen: f => {
+      if (action === "settle") {
+        const draw = () => { const tot = rows.reduce((s, r) => s + (+r.amount || 0), 0);
+          $("#culines", f).innerHTML = `<div class="tbl"><table><thead><tr><th>${t("date")}</th><th style="min-width:160px">${t("description")}</th><th>${t("account")}</th><th>${t("bu")}</th><th class="num">${L2("Amount paid (incl. VAT)", "المبلغ المدفوع (شامل الضريبة)")}</th><th>${t("vat_code")}</th><th>${L2("Supplier", "المورد")}</th><th>${L2("Receipt no.", "رقم الإيصال")}</th><th></th></tr></thead><tbody>
+            ${rows.map((r, i) => `<tr><td><input type="date" data-skip="1" value="${esc(r.date)}" data-input="culn" data-i="${i}" data-k="date" style="width:140px"></td>
+              <td><input data-skip="1" value="${esc(r.description)}" data-input="culn" data-i="${i}" data-k="description" dir="auto" style="min-width:170px"></td>
+              <td><select data-skip="1" data-change="culn" data-i="${i}" data-k="account" style="min-width:200px">${expAccts.map(([c, n]) => `<option value="${esc(c)}" ${c === r.account ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></td>
+              <td><select data-skip="1" data-change="culn" data-i="${i}" data-k="bu_id" style="min-width:150px">${buOpts("—").map(([v, n]) => `<option value="${esc(v)}" ${String(v) === String(r.bu_id) ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></td>
+              <td><input class="num" type="number" step="any" data-skip="1" value="${esc(r.amount)}" data-input="culn" data-i="${i}" data-k="amount" style="width:110px"></td>
+              <td><select data-skip="1" data-change="culn" data-i="${i}" data-k="vat_code" style="min-width:120px">${taxOpts("vat").map(([v, n]) => `<option value="${esc(v)}" ${v === r.vat_code ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></td>
+              <td><input data-skip="1" value="${esc(r.supplier)}" data-input="culn" data-i="${i}" data-k="supplier" list="cusup" style="width:120px"></td>
+              <td><input data-skip="1" value="${esc(r.receipt)}" data-input="culn" data-i="${i}" data-k="receipt" style="width:90px"></td>
+              <td><button type="button" class="btn sm danger" data-a="culdel" data-i="${i}">✕</button></td></tr>`).join("")}</tbody></table></div>
+            ${datalist("cusup", (S.boot.parties || []).map(p => p.name))}
+            <div class="row" style="margin-top:6px"><button type="button" class="btn sm" data-a="culadd">+ ${L2("Expense", "مصروف")}</button><span class="spacer"></span>
+              <span id="cutot">${L2("Report total", "إجمالي التقرير")}: <b>${money(tot)}</b> · ${L2("custody balance", "رصيد العهدة")} ${money(bal)} → <b class="${bal - tot < 0 ? "neg" : ""}">${money(bal - tot)}</b></span></div>`; };
+        const tot = () => { const s = rows.reduce((a, r) => a + (+r.amount || 0), 0); const el = $("#cutot", f);
+          if (el) el.innerHTML = `${L2("Report total", "إجمالي التقرير")}: <b>${money(s)}</b> · ${L2("custody balance", "رصيد العهدة")} ${money(bal)} → <b class="${bal - s < 0 ? "neg" : ""}">${money(bal - s)}</b>`; };
+        S.H.culn = el => { rows[+el.dataset.i][el.dataset.k] = el.value; tot(); };
+        S.H.culadd = () => { const last = rows[rows.length - 1] || {}; rows.push({ date: last.date || today(), description: "", account: last.account || accByRole("other_overhead"), bu_id: last.bu_id ?? (C.bu_id || ""), amount: "", vat_code: "", supplier: "", receipt: "" }); draw(); };
+        S.H.culdel = el => { rows.splice(+el.dataset.i, 1); if (!rows.length) S.H.culadd(); else draw(); f.dispatchEvent(new Event("change")); };
+        draw();
+      }
+      wirePreview(f, `/api/custody-preview/${action}`, () => collect(f)); } });
+}
+async function pickThen(kind, fn) {
+  const isLoan = kind === "loans";
+  const d = await api("GET", isLoan ? "/api/loans?state=active" : "/api/custody?state=open");
+  if (!d.rows.length) { toast(isLoan ? L2("No active loans yet", "لا توجد قروض نشطة") : L2("No open custody yet", "لا توجد عهد مفتوحة")); return isLoan ? loanForm() : custodyForm(); }
+  drawer(isLoan ? L2("Which loan?", "أي قرض؟") : L2("Which custody?", "أي عهدة؟"), form([{ k: "pick", l: isLoan ? t("m_loans") : t("m_custody"), type: "select", span: "spanall",
+    opts: d.rows.map(r => [r.id, isLoan ? `${r.code} — ${r.party} · ${money(r.outstanding)}${r.next_due ? ` · ${L2("next", "القادم")} ${fd(r.next_due)}` : ""}` : `${r.code} — ${r.holder} · ${money(r.balance)}`]) }]),
+    async v => { const r = d.rows.find(x => String(x.id) === String(v.pick)); await fn(isLoan ? r.id : r); return false; }, { submitLabel: L2("Continue", "متابعة") });
+}
+
 PAGES.assets = async (view, parts, q) => {
   const d = await api("GET", "/api/assets?" + qs(q));
   const add = can("assets.register", "add"), dep = can("assets.depreciation", "add");

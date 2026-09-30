@@ -272,6 +272,54 @@ CREATE TABLE IF NOT EXISTS fixed_assets (
     notes TEXT DEFAULT ''
 );
 
+-- Loans the company takes or gives; money movements are journal entries with ref LN:<code>...
+CREATE TABLE IF NOT EXISTS loans (
+    id INTEGER PRIMARY KEY,
+    code TEXT NOT NULL UNIQUE,
+    direction TEXT NOT NULL CHECK (direction IN ('borrowed','lent')),
+    party TEXT NOT NULL,
+    purpose TEXT DEFAULT '',
+    account TEXT NOT NULL REFERENCES accounts(code) ON UPDATE CASCADE,          -- the loan (liability / receivable)
+    interest_account TEXT REFERENCES accounts(code) ON UPDATE CASCADE,        -- interest expense / income
+    accrued_account TEXT REFERENCES accounts(code) ON UPDATE CASCADE,         -- accrued interest payable / receivable
+    start_date TEXT NOT NULL,
+    principal INTEGER NOT NULL DEFAULT 0,       -- original amount (schedule base)
+    opening_balance INTEGER NOT NULL DEFAULT 0, -- balance already in the books when registered here
+    opening_date TEXT DEFAULT '',
+    rate REAL NOT NULL DEFAULT 0,               -- annual, 0.12 = 12 %
+    interest_type TEXT NOT NULL DEFAULT 'none', -- none | declining | flat | fixed
+    fixed_interest INTEGER NOT NULL DEFAULT 0,
+    term_months INTEGER NOT NULL DEFAULT 12,
+    frequency INTEGER NOT NULL DEFAULT 1,       -- months between installments
+    first_due TEXT DEFAULT '',
+    schedule_type TEXT NOT NULL DEFAULT 'equal',-- equal | equal_principal | bullet | custom | none
+    schedule TEXT DEFAULT '[]',                 -- custom installments [{due, principal, interest}] (minor units)
+    bu_id INTEGER REFERENCES business_units(id) ON DELETE SET NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    closed_on TEXT DEFAULT '',
+    notes TEXT DEFAULT '',
+    created_at TEXT DEFAULT ''
+);
+
+-- Cash custody (petty cash advances) held by employees; movements are journal entries with ref CU:<code>...
+CREATE TABLE IF NOT EXISTS custodies (
+    id INTEGER PRIMARY KEY,
+    code TEXT NOT NULL UNIQUE,
+    holder TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'temporary',     -- temporary (settle by a date) | permanent (standing float)
+    purpose TEXT DEFAULT '',
+    account TEXT NOT NULL REFERENCES accounts(code) ON UPDATE CASCADE,
+    float_amount INTEGER NOT NULL DEFAULT 0,    -- limit / standing float
+    issued_on TEXT DEFAULT '',
+    due_date TEXT DEFAULT '',
+    opening_balance INTEGER NOT NULL DEFAULT 0,
+    bu_id INTEGER REFERENCES business_units(id) ON DELETE SET NULL,
+    status TEXT NOT NULL DEFAULT 'open',
+    closed_on TEXT DEFAULT '',
+    notes TEXT DEFAULT '',
+    created_at TEXT DEFAULT ''
+);
+
 -- Taxes: VAT and withholding (WHT) codes with their Egyptian e-invoice (ETA) tax types
 CREATE TABLE IF NOT EXISTS tax_codes (
     code TEXT PRIMARY KEY,
@@ -373,12 +421,15 @@ DEFAULT_ACCOUNTS = [
     ("1010", "Cash on Hand", "Asset", "cash", "cash"),
     ("1020", "Bank Account", "Asset", "cash", "bank"),
     ("1030", "Petty Cash", "Asset", "cash", None),
+    ("1035", "Cash Custody with Employees", "Asset", "other_current_asset", "custody"),
     ("1100", "Accounts Receivable — Clients", "Asset", "receivable", "ar"),
     ("1120", "Notes Receivable (Cheques Under Collection)", "Asset", "receivable", "notes_receivable"),
     ("1150", "Retention Receivable", "Asset", "receivable", None),
     ("1160", "Employee Advances", "Asset", "other_current_asset", None),
     ("1170", "Due from Partners", "Asset", "other_current_asset", "partner_receivable"),
+    ("1175", "Loans Receivable (Short-term)", "Asset", "other_current_asset", "loans_receivable"),
     ("1180", "Unbilled Revenue (Work Done, Not Yet Invoiced)", "Asset", "other_current_asset", None),
+    ("1185", "Accrued Interest Receivable", "Asset", "other_current_asset", "interest_receivable"),
     ("1190", "Allowance for Doubtful Accounts", "Asset", "allowance_doubtful", "doubtful_allowance"),
     ("1200", "Materials Inventory", "Asset", "inventory", "inventory"),
     ("1300", "Prepaid Expenses", "Asset", "prepaid", None),
@@ -399,6 +450,7 @@ DEFAULT_ACCOUNTS = [
     ("1520", "Goodwill", "Asset", "intangible", None),
     ("1590", "Accumulated Amortization", "Asset", "accumulated_amortization", "accum_amortization"),
     ("1600", "Security Deposits", "Asset", "other_noncurrent_asset", None),
+    ("1610", "Loans Receivable (Long-term)", "Asset", "other_noncurrent_asset", "loans_receivable_lt"),
     ("1700", "Long-term Investments", "Asset", "investment", "investments"),
     # ---- Liabilities
     ("2010", "Accounts Payable — Suppliers", "Liability", "payable", "ap"),
@@ -459,7 +511,7 @@ DEFAULT_ACCOUNTS = [
     ("6050", "Office & Admin Salaries", "Expense", "employee", "admin_salaries"),
     ("6055", "Social Insurance & Benefits", "Expense", "employee", None),
     ("6060", "Professional Fees (Legal, Audit)", "Expense", "general_admin", None),
-    ("6065", "Bank Charges", "Expense", "general_admin", None),
+    ("6065", "Bank Charges", "Expense", "general_admin", "bank_charges"),
     ("6070", "Project Overhead (non-billable)", "Expense", "other_operating", "project_overhead"),
     ("6075", "Travel & Transport", "Expense", "general_admin", None),
     ("6078", "Fuel & Vehicle Running Costs", "Expense", "general_admin", None),
@@ -474,6 +526,7 @@ DEFAULT_ACCOUNTS = [
     ("7040", "Foreign Exchange Loss / (Gain)", "Expense", "other_nonoperating", None),
     ("7045", "Loss on Disposal of Fixed Assets", "Expense", "other_nonoperating", "disposal_loss"),
     ("7050", "Income Tax Expense", "Expense", "income_tax", "income_tax"),
+    ("7060", "Bad Debts & Loan Write-offs", "Expense", "other_nonoperating", "bad_debt"),
 ]
 
 SUBTYPES = {
@@ -488,7 +541,7 @@ SUBTYPES = {
     "Expense": ["employee", "general_admin", "marketing", "utilities", "other_operating",
                 "depreciation", "amortization", "interest", "other_nonoperating", "income_tax"],
 }
-ACCOUNT_NAMES_AR = {'1010': 'النقدية بالصندوق', '1020': 'الحساب البنكي', '1030': 'العهد النقدية', '1100': 'العملاء (المدينون)', '1150': 'محتجزات لدى العملاء (ضمان أعمال)', '1160': 'سلف العاملين', '1200': 'مخزون الخامات', '1300': 'مصروفات مدفوعة مقدماً', '1310': 'دفعات مقدمة للموردين', '1320': 'ضريبة القيمة المضافة (مدخلات)', '1330': 'ضريبة خصم وتحصيل لدى العملاء', '1400': 'أثاث ومعدات مكتبية', '1410': 'عدد ومعدات مواقع', '1420': 'سيارات', '1430': 'أجهزة حاسب ومعدات تقنية', '1490': 'مجمع الإهلاك', '1500': 'برامج وتراخيص', '1510': 'العلامة التجارية والموقع ومكتبة التصميمات', '1590': 'مجمع الاستهلاك', '1600': 'تأمينات لدى الغير', '2010': 'الموردون (الدائنون)', '2015': 'مقاولو الباطن', '2020': 'أجور مستحقة', '2030': 'مصروفات مستحقة', '2040': 'تأمينات اجتماعية مستحقة', '2100': 'دفعات مقدمة من العملاء (إيرادات مؤجلة)', '2110': 'محتجزات مقاولي الباطن', '2200': 'ضريبة القيمة المضافة (مخرجات)', '2210': 'ضريبة الخصم والتحصيل المستحقة (من الموردين)', '2220': 'ضريبة الدخل المستحقة', '2300': 'قروض قصيرة الأجل', '2310': 'بطاقات ائتمان مستحقة', '2400': 'قروض طويلة الأجل', '2500': 'قروض الشركاء', '3010': 'رأس مال الشركاء', '3100': 'الأرباح المحتجزة', '3200': 'مسحوبات الشركاء / توزيعات الأرباح', '4010': 'إيرادات المشروعات — التنفيذ', '4020': 'أتعاب التصميم', '4030': 'أتعاب الإشراف والإدارة', '4040': 'مبيعات أثاث وتوريدات', '4050': 'خصومات ومسموحات المبيعات', '4085': 'أرباح التفاوض', '4090': 'إيرادات أخرى', '4095': 'إيرادات فوائد', '5010': 'خامات', '5020': 'تكاليف مقاولي الباطن', '5030': 'عمالة مباشرة', '5040': 'تجهيز الموقع', '5050': 'إيجار معدات', '5060': 'نقل وتشوين', '5070': 'تصميم خارجي ورندرات', '5080': 'تسويات المخزون', '6010': 'الإيجار', '6020': 'برامج واشتراكات', '6030': 'دعاية وإعلان', '6040': 'كهرباء ومياه', '6045': 'هاتف وإنترنت', '6050': 'رواتب إدارية', '6055': 'تأمينات اجتماعية ومزايا', '6060': 'أتعاب مهنية (قانونية ومراجعة)', '6065': 'مصروفات بنكية', '6070': 'مصروفات المشروعات غير المحملة', '6075': 'انتقالات وسفر', '6080': 'أدوات مكتبية', '6085': 'تأمين', '6090': 'مصروفات تشغيلية أخرى', '7010': 'مصروف الإهلاك', '7020': 'مصروف الاستهلاك', '7030': 'مصروفات الفوائد', '7040': 'خسائر (أرباح) فروق العملة', '7050': 'مصروف ضريبة الدخل'}
+ACCOUNT_NAMES_AR = {'1010': 'النقدية بالصندوق', '1020': 'الحساب البنكي', '1030': 'العهد النقدية', '1035': 'عهد نقدية لدى العاملين', '1175': 'قروض ممنوحة للغير (قصيرة الأجل)', '1185': 'فوائد مستحقة التحصيل', '1610': 'قروض ممنوحة للغير (طويلة الأجل)', '7060': 'ديون معدومة وإعدام قروض', '1100': 'العملاء (المدينون)', '1150': 'محتجزات لدى العملاء (ضمان أعمال)', '1160': 'سلف العاملين', '1200': 'مخزون الخامات', '1300': 'مصروفات مدفوعة مقدماً', '1310': 'دفعات مقدمة للموردين', '1320': 'ضريبة القيمة المضافة (مدخلات)', '1330': 'ضريبة خصم وتحصيل لدى العملاء', '1400': 'أثاث ومعدات مكتبية', '1410': 'عدد ومعدات مواقع', '1420': 'سيارات', '1430': 'أجهزة حاسب ومعدات تقنية', '1490': 'مجمع الإهلاك', '1500': 'برامج وتراخيص', '1510': 'العلامة التجارية والموقع ومكتبة التصميمات', '1590': 'مجمع الاستهلاك', '1600': 'تأمينات لدى الغير', '2010': 'الموردون (الدائنون)', '2015': 'مقاولو الباطن', '2020': 'أجور مستحقة', '2030': 'مصروفات مستحقة', '2040': 'تأمينات اجتماعية مستحقة', '2100': 'دفعات مقدمة من العملاء (إيرادات مؤجلة)', '2110': 'محتجزات مقاولي الباطن', '2200': 'ضريبة القيمة المضافة (مخرجات)', '2210': 'ضريبة الخصم والتحصيل المستحقة (من الموردين)', '2220': 'ضريبة الدخل المستحقة', '2300': 'قروض قصيرة الأجل', '2310': 'بطاقات ائتمان مستحقة', '2400': 'قروض طويلة الأجل', '2500': 'قروض الشركاء', '3010': 'رأس مال الشركاء', '3100': 'الأرباح المحتجزة', '3200': 'مسحوبات الشركاء / توزيعات الأرباح', '4010': 'إيرادات المشروعات — التنفيذ', '4020': 'أتعاب التصميم', '4030': 'أتعاب الإشراف والإدارة', '4040': 'مبيعات أثاث وتوريدات', '4050': 'خصومات ومسموحات المبيعات', '4085': 'أرباح التفاوض', '4090': 'إيرادات أخرى', '4095': 'إيرادات فوائد', '5010': 'خامات', '5020': 'تكاليف مقاولي الباطن', '5030': 'عمالة مباشرة', '5040': 'تجهيز الموقع', '5050': 'إيجار معدات', '5060': 'نقل وتشوين', '5070': 'تصميم خارجي ورندرات', '5080': 'تسويات المخزون', '6010': 'الإيجار', '6020': 'برامج واشتراكات', '6030': 'دعاية وإعلان', '6040': 'كهرباء ومياه', '6045': 'هاتف وإنترنت', '6050': 'رواتب إدارية', '6055': 'تأمينات اجتماعية ومزايا', '6060': 'أتعاب مهنية (قانونية ومراجعة)', '6065': 'مصروفات بنكية', '6070': 'مصروفات المشروعات غير المحملة', '6075': 'انتقالات وسفر', '6080': 'أدوات مكتبية', '6085': 'تأمين', '6090': 'مصروفات تشغيلية أخرى', '7010': 'مصروف الإهلاك', '7020': 'مصروف الاستهلاك', '7030': 'مصروفات الفوائد', '7040': 'خسائر (أرباح) فروق العملة', '7050': 'مصروف ضريبة الدخل'}
 ACCOUNT_NAMES_AR.update({'1120': 'أوراق القبض (شيكات تحت التحصيل)', '1170': 'مستحق من الشركاء', '1180': 'إيرادات مستحقة غير مفوترة (أعمال منفذة)', '1190': 'مخصص الديون المشكوك في تحصيلها', '1340': 'غطاء خطابات الضمان', '1440': 'أراضي', '1450': 'مباني وتحسينات أماكن مستأجرة', '1460': 'مشروعات تحت التنفيذ', '1520': 'الشهرة', '1700': 'استثمارات طويلة الأجل', '2050': 'أوراق الدفع (شيكات صادرة)', '2060': 'فوائد مستحقة', '2120': 'توزيعات أرباح مستحقة للشركاء', '2130': 'مستحق للشركاء المنسحبين', '2510': 'مخصص مكافأة نهاية الخدمة', '3020': 'جاري الشركاء', '3030': 'علاوة إصدار / علاوة حصص', '3110': 'الاحتياطي القانوني', '3120': 'الاحتياطي العام', '4060': 'أرباح بيع أصول ثابتة', '4070': 'إيرادات إيجار', '4080': 'خصم مكتسب', '6015': 'صيانة وإصلاحات', '6078': 'وقود ومصروفات سيارات', '6088': 'ديون معدومة', '7045': 'خسائر بيع أصول ثابتة'})
 NEW_IN_V12 = {"1120", "1170", "1180", "1190", "1340", "1440", "1450", "1460", "1520", "1700", "2050", "2060", "2120",
               "2130", "2510", "3020", "3030", "3110", "3120", "4060", "4070", "4080", "6015", "6078", "6088", "7045"}
@@ -515,11 +568,11 @@ SUBMODULES = {
     "business_units": ["units", "allocation", "profitability"],
     "sales": ["offers", "receipts", "invoices", "receivables", "parties"],
     "estimating": ["boqs", "prices"],
-    "purchasing": ["costs", "expenses", "payments", "payables", "negotiations"],
+    "purchasing": ["costs", "expenses", "payments", "payables", "negotiations", "custody"],
     "stock": ["balances", "moves", "warehouses"],
     "payroll": [],
     "assets": ["register", "depreciation"],
-    "accounting": ["journal", "ledger", "coa"],
+    "accounting": ["journal", "ledger", "coa", "loans"],
     "partners": ["equity", "transactions", "ownership"],
     "reports": ["income_statement", "balance_sheet", "cash_flow", "trial_balance"],
     "tax": ["codes", "report", "einvoice"],
@@ -652,6 +705,20 @@ class Database:
                 not self.conn.execute("SELECT 1 FROM settings WHERE key='coa_v2'").fetchone():
             self._add_new_accounts()
         self.conn.execute("INSERT OR IGNORE INTO settings(key,value) VALUES ('coa_v2','1')")
+        # loans & cash custody accounts — books from before they existed (a used code moves to the next free one)
+        if self.conn.execute("SELECT COUNT(*) FROM accounts").fetchone()[0]:
+            for code, role in (("6065", "bank_charges"),):
+                if not self.conn.execute("SELECT 1 FROM accounts WHERE role=?", (role,)).fetchone():
+                    self.conn.execute("UPDATE accounts SET role=? WHERE code=? AND role IS NULL", (role, code))
+            for code, name, typ, sub, role in DEFAULT_ACCOUNTS:
+                if role not in ("custody", "loans_receivable", "interest_receivable", "loans_receivable_lt", "bad_debt") or \
+                        self.conn.execute("SELECT 1 FROM accounts WHERE role=?", (role,)).fetchone():
+                    continue
+                c = code
+                while self.conn.execute("SELECT 1 FROM accounts WHERE code=?", (c,)).fetchone():
+                    c = str(int(c) + 1)
+                self.conn.execute("INSERT INTO accounts(code,name,name_ar,type,subtype,normal,role) VALUES (?,?,?,?,?,?,?)",
+                                  (c, name, ACCOUNT_NAMES_AR.get(code, ""), typ, sub, normal_for(typ, sub), role))
         # negotiation earnings (what a supplier knocks off, kept by the company) — books from before it existed
         if self.conn.execute("SELECT COUNT(*) FROM accounts").fetchone()[0] and \
                 not self.conn.execute("SELECT 1 FROM accounts WHERE role='negotiation_income'").fetchone():

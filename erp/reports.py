@@ -497,6 +497,95 @@ def negotiations_table(db, date_from=None, date_to=None, bu_id=None, lang="en"):
             "columns": cols, "rows": rows, "lang": lang}
 
 
+def _mkcols(heads, lang):
+    return [{"label": h[1] if lang == "ar" else h[0], "align": h[2], "fmt": h[3] if len(h) > 3 else ("money" if h[2] == "right" else None)}
+            for h in heads]
+
+
+def loans_table(db, direction=None, state=None, lang="en"):
+    from . import loans
+    ar = lang == "ar"
+    reg = loans.register(db, direction=direction, state=state)
+    cols = _mkcols([("Code", "الكود", "left"), ("Lender / borrower", "الجهة", "left"), ("Start", "البداية", "left"),
+                  ("Rate %", "الفائدة %", "right", "num"), ("Amount", "المبلغ", "right"), ("Outstanding", "المتبقي", "right"),
+                  ("Accrued interest", "فوائد مستحقة", "right"), ("Overdue", "متأخرات", "right"), ("Next due", "القسط القادم", "left"),
+                  ("Maturity", "الاستحقاق النهائي", "left"), ("Status", "الحالة", "left")], lang)
+    rows = []
+    for d, title in (("borrowed", ("LOANS THE COMPANY OWES", "قروض على الشركة")), ("lent", ("LOANS GIVEN BY THE COMPANY", "قروض ممنوحة من الشركة"))):
+        rs = [r for r in reg["rows"] if r["direction"] == d]
+        if not rs:
+            continue
+        rows.append({"cells": [title[1] if ar else title[0]] + [""] * 10, "style": "section", "indent": 0})
+        for r in rs:
+            rows.append({"cells": [r["code"], r["party"], r["start_date"], r["rate_pct"] if r["interest_type"] in ("declining", "flat") else "",
+                                   r["principal"] or r["opening_balance"], r["outstanding"], r["accrued"], r["overdue"],
+                                   f"{r['next_due']} ({r['next_amount']:,.2f})" if r["next_due"] else "", r["maturity"],
+                                   ("مغلق" if ar else "Closed") if r["status"] == "closed" else ("نشط" if ar else "Active")],
+                         "style": "item", "indent": 1})
+        t = reg["totals"][d]
+        rows.append({"cells": [L("total", lang), "", "", "", "", t["outstanding"], t["accrued"], t["overdue"], "", "", ""],
+                     "style": "subtotal", "indent": 0})
+    return {"title": "سجل القروض" if ar else "Loans register", "subtitle": f"{L('as_of', lang)} {acc.today()} · {db.setting('currency')}",
+            "columns": cols, "rows": rows, "lang": lang}
+
+
+def loan_schedule_table(db, code, lang="en"):
+    from . import loans
+    ar = lang == "ar"
+    d = loans.detail(db, code)
+    ln = d["loan"]
+    cols = _mkcols([("No.", "رقم", "left"), ("Due", "تاريخ الاستحقاق", "left"), ("Principal", "أصل القرض", "right"),
+                  ("Interest", "الفائدة", "right"), ("Installment", "القسط", "right"), ("Balance after", "الرصيد بعده", "right"),
+                  ("Still due", "المتبقي منه", "right"), ("Status", "الحالة", "left")], lang)
+    st = {"paid": ("Paid", "مسدد"), "partial": ("Part paid", "مسدد جزئياً"), "open": ("Open", "قادم"), "overdue": ("Overdue", "متأخر")}
+    rows = [{"cells": [r["n"], r["due"], r["principal"], r["interest"], r["payment"], r["balance"], r["left"] or "",
+                       st[r["state"]][1 if ar else 0]], "style": "item", "indent": 0} for r in d["schedule"]]
+    rows.append({"cells": [L("total", lang), "", round(sum(r["principal"] for r in d["schedule"]), 2),
+                           round(sum(r["interest"] for r in d["schedule"]), 2), round(sum(r["payment"] for r in d["schedule"]), 2),
+                           "", round(sum(r["left"] for r in d["schedule"]), 2), ""], "style": "grand", "indent": 0})
+    who = ("المقرض" if ln["direction"] == "borrowed" else "المقترض") if ar else ("Lender" if ln["direction"] == "borrowed" else "Borrower")
+    return {"title": (f"جدول سداد القرض {ln['code']}" if ar else f"Loan schedule {ln['code']}"),
+            "subtitle": f"{who}: {ln['party']} · {ln['start_date']} · {db.setting('currency')}", "columns": cols, "rows": rows, "lang": lang}
+
+
+def custody_table(db, state=None, lang="en"):
+    from . import custody
+    ar = lang == "ar"
+    reg = custody.register(db, state=state)
+    cols = _mkcols([("Code", "الكود", "left"), ("Held by", "صاحب العهدة", "left"), ("Type", "النوع", "left"),
+                  ("Given on", "تاريخ الصرف", "left"), ("Settle by", "تسوية قبل", "left"), ("Given", "المصروف له", "right"),
+                  ("Spent (reports)", "المصروفات (تسويات)", "right"), ("Returned", "المرتجع", "right"),
+                  ("Deducted", "المخصوم", "right"), ("Balance", "الرصيد", "right"), ("Status", "الحالة", "left")], lang)
+    kinds = {"temporary": ("Temporary", "مؤقتة"), "permanent": ("Permanent float", "مستديمة")}
+    rows = [{"cells": [r["code"], r["holder"], kinds[r["kind"]][1 if ar else 0], r["issued_on"], r["due_date"], r["issued"], r["spent"],
+                       r["returned"], r["deducted"], r["balance"],
+                       (("مغلقة" if ar else "Closed") if r["status"] == "closed" else
+                        ("متأخرة" if ar else "Overdue") if r["overdue"] else ("مفتوحة" if ar else "Open"))],
+             "style": "item", "indent": 0} for r in reg["rows"]]
+    rows.append({"cells": [L("total", lang)] + [""] * 8 + [reg["totals"]["balance"], ""], "style": "grand", "indent": 0})
+    return {"title": "العهد النقدية" if ar else "Cash custody", "subtitle": f"{L('as_of', lang)} {acc.today()} · {db.setting('currency')}",
+            "columns": cols, "rows": rows, "lang": lang}
+
+
+def custody_statement_table(db, code, lang="en"):
+    from . import custody
+    ar = lang == "ar"
+    d = custody.statement(db, code)
+    c = d["custody"]
+    cols = _mkcols([("Date", "التاريخ", "left"), ("Type", "النوع", "left"), ("Description", "البيان", "left"),
+                  ("Given", "صرف", "right"), ("Spent / returned", "مصروف / مرتجع", "right"), ("Balance", "الرصيد", "right")], lang)
+    rows = []
+    for r in d["rows"]:
+        rows.append({"cells": [r["date"], r["kind"], r["memo"], r["in"] or "", r["out"] or "", r["balance"]], "style": "item", "indent": 0})
+        for x in r.get("lines") or []:
+            rows.append({"cells": ["", x.get("receipt", ""), f"{x.get('description', '')}" + (f" — {x['supplier']}" if x.get("supplier") else ""),
+                                   "", x.get("amount", 0), ""], "style": "note", "indent": 2})
+    rows.append({"cells": [L("total", lang), "", "", c["issued"], round(c["spent"] + c["returned"] + c["deducted"], 2), c["balance"]],
+                 "style": "grand", "indent": 0})
+    return {"title": (f"كشف حساب العهدة {c['code']} — {c['holder']}" if ar else f"Custody statement {c['code']} — {c['holder']}"),
+            "subtitle": f"{c['purpose']} · {db.setting('currency')}", "columns": cols, "rows": rows, "lang": lang}
+
+
 def tax_table(db, date_from=None, date_to=None, lang="en"):
     t = acc.tax_summary(db, date_from, date_to)
     ar = lang == "ar"
@@ -557,6 +646,14 @@ def build(db, name, p):
         return tax_table(db, p.get("date_from"), p.get("date_to"), lang)
     if name == "receivables":
         return receivables_table(db, p.get("date_from"), p.get("date_to"), lang)
+    if name == "loans":
+        return loans_table(db, p.get("direction"), p.get("state"), lang)
+    if name == "loan_schedule":
+        return loan_schedule_table(db, p.get("code") or p.get("id"), lang)
+    if name == "custody":
+        return custody_table(db, p.get("state"), lang)
+    if name == "custody_statement":
+        return custody_statement_table(db, p.get("code") or p.get("id"), lang)
     if name == "negotiations":
         return negotiations_table(db, p.get("date_from"), p.get("date_to"), bu, lang)
     if name == "fixed_assets":
@@ -569,7 +666,8 @@ REPORT_PERMS = {"income_statement": "reports.income_statement", "balance_sheet":
                 "general_ledger": "accounting.ledger", "bu_pnl": "business_units.profitability",
                 "payables": "purchasing.payables", "stock": "stock.balances", "receivables": "sales.receivables",
                 "tax": "tax.report", "fixed_assets": "assets.register",
-                "negotiations": "purchasing.negotiations"}
+                "negotiations": "purchasing.negotiations", "loans": "accounting.loans", "loan_schedule": "accounting.loans",
+                "custody": "purchasing.custody", "custody_statement": "purchasing.custody"}
 
 
 # ==================================================================== writers

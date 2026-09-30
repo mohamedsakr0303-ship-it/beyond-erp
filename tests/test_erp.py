@@ -369,7 +369,7 @@ class Workspace(unittest.TestCase):
     def dump(self, db):
         out = {t: db.q(f"SELECT * FROM {t} ORDER BY 1") for t in
                ("business_units", "journal_entries", "journal_lines", "users", "offers", "partners", "accounts",
-                "settings", "audit_log", "ownership_changes", "fixed_assets", "partner_shares")}
+                "settings", "audit_log", "ownership_changes", "fixed_assets", "partner_shares", "loans", "custodies")}
         for u in out["users"]:
             u.pop("pw_hash")          # passwords stay on the device where they were set
         out["audit_log"] = [r for r in out["audit_log"] if r["action"] not in ("login", "setup")]  # device-local
@@ -487,6 +487,19 @@ class Workspace(unittest.TestCase):
         self.assertEqual(st, 200, r)
         st, r = self.node_call(1, b, "POST", "/api/assets/depreciation", {"through": "2026-03"})
         self.assertEqual(st, 200, r)
+        # loans and cash custody too: made on one device, paid / settled on the other
+        st, r = self.node_call(0, a, "POST", "/api/loans", {"direction": "borrowed", "party": "CIB", "principal": 60000, "rate": 12,
+                                                            "interest_type": "declining", "term_months": 6, "start_date": "2026-01-01"})
+        self.assertEqual(st, 200, r)
+        self.nodes[1][0].cloud.pull()   # previews run on the local copy
+        self.assertEqual(self.node_call(1, b, "POST", "/api/loans-preview/pay", {"id": r["id"], "principal": 100})[0], 200)
+        st, r2 = self.node_call(1, b, "POST", f"/api/loans/{r['id']}/pay", {"date": "2026-02-01", "principal": 9752.9, "interest": 600})
+        self.assertEqual(st, 200, r2)
+        st, r = self.node_call(1, b, "POST", "/api/custody", {"holder": "Samir", "amount": 3000, "issued_on": "2026-02-01"})
+        self.assertEqual(st, 200, r)
+        st, r2 = self.node_call(0, a, "POST", f"/api/custody/{r['id']}/settle",
+                                {"date": "2026-02-05", "lines": [{"description": "Cement", "account": "5010", "amount": 1140, "vat_code": "VAT14"}]})
+        self.assertEqual(st, 200, r2)
         for srv, _, _ in self.nodes:
             srv.cloud.pull()
         self.assertEqual(self.dump(self.nodes[0][1]), self.dump(self.nodes[1][1]))
@@ -749,6 +762,142 @@ class Negotiations(unittest.TestCase):
         db.x("DELETE FROM accounts WHERE code='4085'")
         db._migrate()
         self.assertEqual(db.acct("negotiation_income"), "4085")
+
+
+class Loans(unittest.TestCase):
+    """Loans taken and given: schedules, interest, repayments, write-offs, balances from the books."""
+
+    def setUp(self):
+        from erp import loans
+        self.L = loans
+        self.db = Database(":memory:")
+        a.record_journal(self.db, {"date": "2026-01-01", "lines": [{"account": "1020", "debit": 1000000}, {"account": "3010", "credit": 1000000}]})
+
+    def test_schedules(self):
+        L = self.L
+        base = {"principal": 120000, "start_date": "2026-01-01", "term_months": 12}
+        eq = L.preview_schedule({**base, "interest_type": "declining", "rate": 12, "schedule_type": "equal"})
+        self.assertEqual(len(eq["rows"]), 12)
+        self.assertEqual(eq["rows"][0]["interest"], 1200)                        # 1 % of 120,000 in month 1
+        self.assertAlmostEqual(eq["totals"]["principal"], 120000, places=2)
+        self.assertEqual(eq["rows"][-1]["balance"], 0)
+        self.assertLess(abs(eq["rows"][0]["payment"] - eq["rows"][5]["payment"]), 0.02)   # equal installments
+        flat = L.preview_schedule({**base, "interest_type": "flat", "rate": 10, "schedule_type": "equal", "frequency": 3})
+        self.assertEqual([r["interest"] for r in flat["rows"]], [3000] * 4)     # 12,000 flat over 4 quarters
+        bullet = L.preview_schedule({**base, "interest_type": "declining", "rate": 12, "schedule_type": "bullet"})
+        self.assertEqual([r["principal"] for r in bullet["rows"][:-1]], [0] * 11)
+        self.assertEqual(bullet["rows"][-1]["principal"], 120000)
+        fixed = L.preview_schedule({**base, "interest_type": "fixed", "fixed_interest": 1000, "schedule_type": "equal_principal", "term_months": 3})
+        self.assertAlmostEqual(fixed["totals"]["interest"], 1000, places=2)
+        self.assertEqual(L.preview_schedule({**base, "schedule_type": "none"})["rows"], [])
+
+    def test_borrowed_loan_lifecycle(self):
+        L, db = self.L, self.db
+        lid = L.save(db, {"direction": "borrowed", "party": "CIB", "principal": 120000, "rate": 12, "interest_type": "declining",
+                          "term_months": 12, "start_date": "2026-01-01", "schedule_type": "equal"})
+        self.assertEqual(a.party_balance(db, "2300", "CIB"), 120000)              # money received, loan owed
+        d = L.detail(db, lid, today="2026-02-15")
+        self.assertEqual(d["loan"]["overdue"], d["schedule"][0]["payment"])       # installment 1 due 1 Feb, unpaid
+        s = d["suggest"]
+        self.assertEqual((s["principal"], s["interest"]), (d["schedule"][0]["principal"], 1200))
+        L.post(db, lid, "pay", {"date": "2026-02-01", "principal": s["principal"], "interest": s["interest"]})
+        d = L.detail(db, lid, today="2026-02-15")
+        self.assertEqual((d["schedule"][0]["state"], d["loan"]["overdue"]), ("paid", 0))
+        self.assertEqual(d["loan"]["interest_paid"], 1200)
+        # accrue at month end, then a payment clears the accrued interest first
+        L.post(db, lid, "interest", {"date": "2026-02-28", "amount": 1000})
+        self.assertEqual(L.detail(db, lid)["loan"]["accrued"], 1000)
+        L.post(db, lid, "pay", {"date": "2026-03-01", "principal": 9556.47, "interest": 1105.38})
+        self.assertEqual(L.detail(db, lid)["loan"]["accrued"], 0)
+        self.assertAlmostEqual(next(x for x in a.account_totals(db) if x["code"] == "7030")["net"] / 100, 1200 + 1105.38, places=2)
+        with self.assertRaises(a.ValidationError):                                # more principal than is owed
+            L.post(db, lid, "pay", {"date": "2026-03-02", "principal": 1e6})
+        with self.assertRaises(a.ValidationError):                                # cannot close with a balance
+            L.set_status(db, lid, True)
+        with self.assertRaises(a.ValidationError):                                # entries exist: void them first
+            L.delete(db, lid)
+        L.post(db, lid, "writeoff", {"date": "2026-04-01"})                       # the bank forgave the rest
+        L.set_status(db, lid, True)
+        self.assertEqual(L.get(db, lid)["status"], "closed")
+        self.assertEqual([c["check"] for c in a.audit(db) if not c["ok"]], [])
+
+    def test_lent_loan_and_opening_balance(self):
+        L, db = self.L, self.db
+        lid = L.save(db, {"direction": "lent", "party": "Ahmed", "principal": 24000, "interest_type": "none", "term_months": 6,
+                          "start_date": "2026-01-01", "schedule_type": "equal"})
+        self.assertEqual(-a.party_balance(db, db.acct("loans_receivable"), "Ahmed"), 24000)
+        L.post(db, lid, "pay", {"date": "2026-02-01", "principal": 4000})
+        self.assertEqual(L.detail(db, lid, today="2026-02-02")["loan"]["outstanding"], 20000)
+        # a loan already in the books: nothing is posted, earlier installments count as paid
+        old = L.save(db, {"direction": "borrowed", "party": "NBE", "principal": 60000, "term_months": 12, "interest_type": "none",
+                          "start_date": "2025-07-01", "schedule_type": "equal", "booking": "opening", "opening_balance": 30000,
+                          "opening_date": "2026-01-01"})
+        d = L.detail(db, old, today="2026-01-15")
+        self.assertEqual((d["loan"]["outstanding"], d["loan"]["overdue"], d["entries"]), (30000, 0, []))
+        self.assertEqual(sum(1 for r in d["schedule"] if r["state"] == "paid"), 6)
+        # flexible loan with daily interest: 36,500 at 10 % → 10 a day
+        flex = L.save(db, {"direction": "lent", "party": "Partner Co", "principal": 36500, "rate": 10, "interest_type": "declining",
+                           "schedule_type": "none", "term_months": 0, "start_date": "2026-03-01"})
+        self.assertEqual(L.suggest(db, L.get(db, flex), "2026-03-31")["interest"], 300)
+
+    def test_api_and_backup(self):
+        from erp import interchange
+        L, db = self.L, self.db
+        db.x("INSERT INTO business_units(code,name) VALUES ('P1','Villa')")
+        lid = L.save(db, {"direction": "borrowed", "party": "QNB", "principal": 50000, "rate": 8, "interest_type": "flat",
+                          "term_months": 10, "start_date": "2026-01-01", "bu_code": "P1"})
+        L.post(db, lid, "pay", {"date": "2026-02-01", "principal": 5000, "interest": 333.33})
+        db2 = Database(":memory:")
+        interchange.import_data(db2, interchange.read_json(interchange.to_json(db).encode()), mode="replace")
+        self.assertEqual(L.detail(db2, "LN-0001")["loan"]["outstanding"], 45000)
+        self.assertEqual(L.detail(db2, "LN-0001")["loan"]["bu_code"], "P1")
+        from erp import reports
+        for name, p in (("loans", {}), ("loan_schedule", {"code": "LN-0001"})):
+            tb = reports.build(db, name, p)
+            self.assertTrue(reports.to_html(tb).startswith("<!doctype html>"))
+
+
+class Custody(unittest.TestCase):
+    """Cash custody: issue, expense reports (split by business unit, with VAT), return, reimburse, deduct, close."""
+
+    def test_custody_lifecycle(self):
+        from erp import custody, interchange
+        db = Database(":memory:")
+        a.record_journal(db, {"date": "2026-01-01", "lines": [{"account": "1010", "debit": 50000}, {"account": "3010", "credit": 50000}]})
+        db.x("INSERT INTO business_units(code,name) VALUES ('P1','Villa'),('P2','Flat')")
+        acc_c = db.acct("custody")
+        cid = custody.save(db, {"holder": "Samir", "amount": 5000, "issued_on": "2026-02-01", "due_date": "2026-02-20", "bu_code": "P1"})
+        self.assertEqual(-a.party_balance(db, acc_c, "Samir"), 5000)
+        ids = custody.post(db, cid, "settle", {"date": "2026-02-10", "report_no": "R-1", "lines": [
+            {"description": "Cement", "account": "5010", "amount": 2280, "vat_code": "VAT14", "supplier": "Hardware"},
+            {"description": "Taxi", "account": "6075", "amount": 300, "bu_id": 2}]})
+        self.assertEqual(len(ids), 2)                                                  # one entry per business unit
+        e = a.get_entry(db, ids[0])
+        self.assertIn(("5010", 2000.0), [(ln["account"], ln["debit"]) for ln in e["lines"]])   # net of 14 % VAT
+        st = custody.status(db, custody.get(db, cid), today="2026-02-15")
+        self.assertEqual((st["balance"], st["spent"], st["overdue"]), (2420, 2580, False))
+        self.assertTrue(custody.status(db, custody.get(db, cid), today="2026-03-01")["overdue"])
+        with self.assertRaises(a.ValidationError):
+            custody.post(db, cid, "return", {"amount": 9999})
+        custody.post(db, cid, "return", {"date": "2026-02-11", "amount": 2000})
+        custody.post(db, cid, "deduct", {"date": "2026-02-12", "amount": 420})          # kept from salary
+        self.assertEqual(-a.party_balance(db, db.acct("accrued_payroll"), "Samir"), 420)
+        with self.assertRaises(a.ValidationError):
+            custody.delete(db, cid)
+        custody.set_status(db, cid, True)
+        # a standing float: overspending makes the company owe the holder; the report can top the float back up
+        f = custody.save(db, {"holder": "Office", "kind": "permanent", "float_amount": 1000, "issued_on": "2026-03-01"})
+        custody.post(db, f, "settle", {"date": "2026-03-05", "lines": [{"description": "Stationery", "account": "6080", "amount": 1200}],
+                                       "replenish": True})
+        st = custody.status(db, custody.get(db, f))
+        self.assertEqual((st["balance"], st["spent"]), (1000, 1200))
+        with self.assertRaises(a.ValidationError):
+            custody.set_status(db, f, True)
+        self.assertEqual([c["check"] for c in a.audit(db) if not c["ok"]], [])
+        db2 = Database(":memory:")
+        interchange.import_data(db2, interchange.read_json(interchange.to_json(db).encode()), mode="replace")
+        self.assertEqual(custody.status(db2, custody.get(db2, "CU-0002"))["balance"], 1000)
+        self.assertEqual(len(custody.statement(db2, "CU-0001")["rows"]), 5)
 
 
 if __name__ == "__main__":

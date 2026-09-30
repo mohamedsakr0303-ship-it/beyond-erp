@@ -177,10 +177,14 @@ MENU_ITEMS = [
     ("eq:exit", "Partner exit / buy-out", "خروج شريك", "partners.ownership"),
     ("asset:new", "New fixed asset", "أصل ثابت جديد", "assets.register"),
     ("asset:depr", "Run depreciation", "احتساب الإهلاك", "assets.depreciation"),
+    ("loan:new", "New loan (taken or given)", "قرض جديد (مأخوذ أو ممنوح)", "accounting.loans"),
+    ("loan:pay", "Loan payment / collection", "سداد / تحصيل قسط قرض", "accounting.loans"),
+    ("custody:new", "Give cash custody", "صرف عهدة نقدية", "purchasing.custody"),
+    ("custody:settle", "Custody expense report (settlement)", "تسوية عهدة (تقرير مصروفات)", "purchasing.custody"),
 ]
 DEFAULT_MENU = ["doc:direct_cost", "doc:expense", "doc:payment", "doc:receipt", "doc:invoice", "doc:payroll",
-                "doc:stock_move", "doc:journal", "eq:contribute", "eq:distribute", "asset:new", "asset:depr", "doc:bu",
-                "doc:offer"]
+                "doc:stock_move", "doc:journal", "eq:contribute", "eq:distribute", "asset:new", "asset:depr", "loan:new", "loan:pay",
+                "custody:new", "custody:settle", "doc:bu", "doc:offer"]
 
 
 def menu(db):
