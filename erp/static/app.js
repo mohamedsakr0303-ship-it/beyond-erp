@@ -251,7 +251,7 @@ S.GLOBAL_H = {
     async v => { await api("PUT", "/api/me/password", v); toast(t("saved")); return true; }),
   quicknew: el => newItem(el.dataset.doc),
   coswitch: () => companySwitcher(),
-  goback: () => { const h = parseHash().parts; const parent = { bu: "bus", invoice: "invoices", boq: "boqs", offer: "offers", offertypes: "offers", report: "dashboard", loan: "loans", cust: "custody", rental: "rentals" }[h[0]];
+  goback: () => { const h = parseHash().parts; const parent = { bu: "bus", invoice: "invoices", boq: "boqs", offer: "offers", offertypes: "offers", report: "dashboard", loan: "loans", cust: "custody", rental: "rentals", product: "products", sale: "sales" }[h[0]];
     if (S.navCount > 0) history.back(); else location.hash = "#/" + (parent || "dashboard"); },
   closeDrawer: () => closeDrawer(),
 };
@@ -263,9 +263,9 @@ function renderNav(active) {
     if (!vis.length) continue;
     html += `<div class="grp">${esc(t(g))}</div>`;
     for (const [k, r, , ic] of vis) {
-      const on = active === r || active.startsWith(r + "/") || (r === "bus" && active.startsWith("bu/")) ||
-        (r === "invoices" && active.startsWith("invoice/")) || (r === "boqs" && active.startsWith("boq/")) ||
-        (r === "offers" && (active.startsWith("offer/") || active.startsWith("offertype")));
+      const parent = { bu: "bus", invoice: "invoices", boq: "boqs", offer: "offers", offertypes: "offers", loan: "loans", cust: "custody",
+        rental: "rentals", product: "products", sale: "sales" }[active.split("/")[0]];
+      const on = active === r || active.startsWith(r + "/") || parent === r;
       if (on) { title = t(k); group = t(g); }
       html += `<a href="#/${r}" class="${on ? "on" : ""}"><span class="ic">${ic}</span>${esc(t(k))}</a>`;
     }
@@ -870,6 +870,8 @@ function newItem(key) {
   if (kind === "entry") return entryTypeForm(id);
   if (kind === "loan") return id === "pay" ? pickThen("loans", lid => loanAction(lid, "pay")) : loanForm();
   if (kind === "contact") return contactForm({}, cid => contactView(cid));
+  if (kind === "sale") return id === "collect" ? pickSale(s => collectForm(s)) : saleForm();
+  if (kind === "product") return productForm();
   if (kind === "custody") return id === "settle" ? pickThen("custody", c => custodyAction(c, "settle")) : custodyForm();
 }
 async function openDoc(type, pre, edit, copyVals) {
@@ -943,6 +945,8 @@ PAGES.dashboard = async (view, parts, q) => {
     `<div class="kpis">${k(t("cash"), money(d.cash), cur(), d.cash < 0 ? "neg" : "")}${k(t("receivable"), money(d.receivable))}${k(t("payable"), money(d.payable))}
       ${k(t("accrued"), money(d.accrued))}${k(t("advances"), money(d.advances))}${k(t("inventory"), money(d.inventory))}
       ${k(t("revenue"), money(d.revenue))}${k(t("ebitda"), money(d.ebitda), pct(d.margins.ebitda), d.ebitda < 0 ? "neg" : "")}${k(t("net_profit"), money(d.net_profit), pct(d.margins.net), d.net_profit < 0 ? "neg" : "pos")}</div>
+    ${d.installments_overdue ? `<div class="banner err">${L2("Overdue installments", "أقساط متأخرة")}: ${money(d.installments_overdue.amount)} (${d.installments_overdue.count} · ${d.installments_overdue.customers} ${L2("customers", "عميل")}) · <a href="#/installments?status=overdue">${L2("Follow up", "متابعة التحصيل")} →</a></div>` : ""}
+    ${d.cheques_due ? `<div class="banner warn">${d.cheques_due} ${L2("customer cheques are due — deposit them", "شيكات عملاء مستحقة — قم بإيداعها")} · <a href="#/installments">${L2("Open", "فتح")} →</a></div>` : ""}
     ${d.depreciation_due ? `<div class="banner warn">${L2("Depreciation not booked yet up to", "لم يُحتسب الإهلاك حتى")} ${esc(d.depreciation_due.through)}: ${money(d.depreciation_due.total)} (${d.depreciation_due.count}) · <a href="#/${d.depreciation_due.rental ? "rentfleet" : "assets"}">${L2("Run depreciation", "احتساب الإهلاك")} →</a></div>` : ""}
     <div class="banner ${cp.gap > 0 ? "err" : "ok"}">${t("cash_floor")}: ${money(cp.floor)} (${t("floor_note")}) · ${t("cash")} ${money(cp.cash)}${cp.gap > 0 ? ` · <b>−${money(cp.gap)}</b>` : " ✓"}</div>
     <div class="grid g2"><div class="card"><h2>${t("last12")}</h2><div class="legend"><span class="r">${t("rev")}</span><span class="c">${t("costs")}</span></div>
@@ -3408,6 +3412,481 @@ function disposeForm(a) {
       try { box.innerHTML = planHtml(await api("POST", "/api/assets-preview/dispose", { ...readForm(f), id: a.id })); }
       catch (e) { box.innerHTML = `<div class="banner err">${esc(e.message)}</div>`; } });
     f.addEventListener("input", prev); f.addEventListener("change", prev); prev(); } });
+}
+
+// ================================================================ product & unit sales
+const P_KINDS = () => [["item", L2("Item / goods", "صنف / بضاعة")], ["unit", L2("Unit (one of a kind: apartment, villa, car…)", "وحدة (شقة، فيلا، سيارة…)")], ["service", L2("Service", "خدمة")]];
+const P_ST = { available: ["Available", "متاح", "ok"], reserved: ["Reserved", "محجوز", "warn"], sold: ["Sold", "مباع", "bad"], delivered: ["Delivered", "تم التسليم", ""], hidden: ["Hidden", "مخفي", ""] };
+const pStatus = s => { const x = P_ST[s] || [s, s, ""]; return `<span class="chip ${x[2]}">${esc(L2(x[0], x[1]))}</span>`; };
+const S_ST = { draft: ["Draft", "مسودة", ""], confirmed: ["Confirmed", "مؤكد", "ok"], delivered: ["Delivered", "تم التسليم", "ok"], cancelled: ["Cancelled", "ملغي", "bad"] };
+const sStatus = s => { const x = S_ST[s] || [s, s, ""]; return `<span class="chip ${x[2]}">${esc(L2(x[0], x[1]))}</span>`; };
+const I_ST = { paid: ["Paid", "مسدد", "ok"], cheque: ["By cheque", "بشيك", "ok"], partial: ["Part paid", "جزئي", "warn"], overdue: ["Overdue", "متأخر", "bad"], due: ["Due", "مستحق", ""], cancelled: ["Cancelled", "ملغي", ""] };
+const iStatus = s => { const x = I_ST[s] || [s, s, ""]; return `<span class="chip ${x[2]}">${esc(L2(x[0], x[1]))}</span>`; };
+const C_ST = { pending: ["Under collection", "تحت التحصيل", "warn"], cleared: ["Cleared", "تم الصرف", "ok"], bounced: ["Bounced", "مرتد", "bad"] };
+const PLAN_T = () => [["full", L2("Paid in full", "كاش / دفعة واحدة")], ["deferred", L2("Deferred (one later payment)", "آجل (دفعة واحدة لاحقاً)")], ["installments", L2("Installments", "تقسيط")], ["custom", L2("Custom schedule", "جدول مخصص")]];
+const FREQS = () => [["monthly", L2("Monthly", "شهري")], ["quarterly", L2("Quarterly", "ربع سنوي")], ["semiannual", L2("Every 6 months", "نصف سنوي")], ["annual", L2("Yearly", "سنوي")]];
+const instLabel = r => { if (S.lang !== "ar") return r.label || r.kind;
+  if (r.kind === "installment" && /\d+\/\d+/.test(r.label || "")) return `قسط ${(r.label.match(/\d+\/\d+/) || [""])[0]}`;
+  if (r.kind === "down") return r.label === "Full payment" ? "دفعة كاملة" : "مقدم"; if (r.kind === "balance") return "دفعة";
+  return r.label && r.label !== "Extra payment" ? r.label : "دفعة إضافية"; };
+const pname = p => (S.lang === "ar" && p.name_ar ? p.name_ar : p.name);
+const SPEC_PRESETS = { unit: [["Area", "المساحة"], ["Floor", "الدور"], ["Bedrooms", "غرف النوم"], ["Bathrooms", "الحمامات"], ["View", "الإطلالة"], ["Finishing", "التشطيب"], ["Delivery", "الاستلام"]],
+  item: [["Brand", "الماركة"], ["Model", "الموديل"], ["Size", "المقاس"], ["Colour", "اللون"], ["Material", "الخامة"], ["Warranty", "الضمان"]], service: [["Duration", "المدة"], ["Includes", "يشمل"]] };
+
+// --- media helpers: uploaded files travel as data URLs; players for links
+const dataToBlobUrl = (dataUrl) => { const m = /^data:([^;]*);base64,(.*)$/s.exec(dataUrl || ""); if (!m) return dataUrl;
+  const bin = atob(m[2]), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+  return URL.createObjectURL(new Blob([u], { type: m[1] || "application/octet-stream" })); };
+let mvLoading = null;
+const loadModelViewer = () => mvLoading || (mvLoading = new Promise((res, rej) => { if (customElements.get("model-viewer")) return res();
+  const sc = document.createElement("script"); sc.src = "vendor/model-viewer-4.3.1.min.js"; sc.onload = () => res(); sc.onerror = () => { mvLoading = null; rej(new Error("3D viewer could not load")); }; document.head.appendChild(sc); }));
+function embedUrl(url) {
+  let m;
+  if ((m = /(?:youtube\.com\/(?:watch\?(?:.*&)?v=|shorts\/|embed\/)|youtu\.be\/)([\w-]{6,})/i.exec(url))) return { frame: `https://www.youtube-nocookie.com/embed/${m[1]}?rel=0` };
+  if ((m = /vimeo\.com\/(?:video\/)?(\d+)/i.exec(url))) return { frame: `https://player.vimeo.com/video/${m[1]}` };
+  if ((m = /drive\.google\.com\/file\/d\/([\w-]+)/i.exec(url))) return { frame: `https://drive.google.com/file/d/${m[1]}/preview` };
+  if ((m = /sketchfab\.com\/(?:3d-models\/[^/?#]*-|models\/)([0-9a-f]{32})/i.exec(url))) return { frame: `https://sketchfab.com/models/${m[1]}/embed?autostart=1` };
+  if (/\.(glb|gltf)(\?|#|$)/i.test(url)) return { model: url };
+  if (/\.(mp4|webm|ogg|mov)(\?|#|$)/i.test(url)) return { video: url };
+  if (/\.(jpe?g|png|webp|gif|avif)(\?|#|$)/i.test(url)) return { img: url };
+  return { frame: url };
+}
+async function mediaStage(box, m) {
+  box.innerHTML = `<div class="empty">${t("loading")}</div>`;
+  try {
+    let src = m.url, kind = m.kind;
+    if (m.uploaded) { const f = await api("GET", "/api/product-media/" + m.id); src = f.data; }
+    let e = m.uploaded ? null : embedUrl(src);
+    const isModel = kind === "model" && (m.uploaded || (e && e.model));
+    if (kind === "photo" && (m.uploaded || (e && e.img))) box.innerHTML = `<img src="${esc(src)}" alt="${esc(m.title || "")}">`;
+    else if (kind === "video" && m.uploaded) box.innerHTML = `<video src="${esc(dataToBlobUrl(src))}" controls playsinline preload="metadata"></video>`;
+    else if (isModel) {
+      await loadModelViewer();
+      const u = m.uploaded ? dataToBlobUrl(src) : e.model;
+      box.innerHTML = `<model-viewer src="${esc(u)}" camera-controls touch-action="pan-y" auto-rotate shadow-intensity="1" ar exposure="1" alt="${esc(m.title || "3D")}"></model-viewer>`;
+    } else if (e && e.video) box.innerHTML = `<video src="${esc(e.video)}" controls playsinline preload="metadata"></video>`;
+    else if (e && e.img) box.innerHTML = `<img src="${esc(e.img)}" alt="">`;
+    else if (e && e.frame) box.innerHTML = `<iframe src="${esc(e.frame)}" allow="autoplay; fullscreen; xr-spatial-tracking; accelerometer; gyroscope" allowfullscreen loading="lazy" referrerpolicy="strict-origin-when-cross-origin"></iframe>`;
+    else box.innerHTML = `<a class="btn" href="${esc(src)}" download>${esc(m.title || L2("Download", "تحميل"))}</a>`;
+  } catch (err) { box.innerHTML = `<div class="banner err">${esc(err.message)}</div>`; }
+}
+const MEDIA_ICON = { photo: "📷", video: "🎬", model: "🧊", tour: "🌐", file: "📄" };
+const mediaThumb = (m, on) => `<button type="button" class="mthumb${on ? " on" : ""}" data-a="pmsel" data-id="${m.id}" title="${esc(m.title || m.kind)}">${m.thumb || (m.kind === "photo" && !m.uploaded && m.url) ? `<img src="${esc(m.thumb || m.url)}" alt="">` : `<span>${MEDIA_ICON[m.kind] || "•"}</span>`}</button>`;
+// shrink photos before upload (they sync to every device): long side 1600 px + a 360 px thumbnail
+function shrinkImage(file, max, q) {
+  return new Promise((res, rej) => { const img = new Image(), u = URL.createObjectURL(file);
+    img.onload = () => { const r = Math.min(1, max / Math.max(img.width, img.height)), c = document.createElement("canvas");
+      c.width = Math.round(img.width * r); c.height = Math.round(img.height * r); c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(u); res(c.toDataURL("image/jpeg", q)); };
+    img.onerror = () => { URL.revokeObjectURL(u); rej(new Error(L2("Not an image this browser can read", "صيغة صورة غير مدعومة"))); }; img.src = u; });
+}
+const readDataUrl = file => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(r.error); r.readAsDataURL(file); });
+const MAX_UP = 8 * 1024 * 1024;
+
+// ------------------------------------------------------------------ showroom
+PAGES.products = async (view, parts, q) => {
+  const d = await api("GET", "/api/products?" + qs(q));
+  const add = can("shop.products", "add"), sell = can("shop.orders", "add");
+  S.cache.pcats = d.categories;
+  Object.assign(S.H, { pnewp: () => productForm(), pset: () => shopSettingsForm(), pcalc: () => planCalculator() });
+  const st = d.unit_status || {};
+  view.innerHTML = `<div class="toolbar">${add ? `<button class="btn pri" data-a="pnewp">+ ${L2("Product / unit", "منتج / وحدة")}</button>` : ""}
+      ${sell ? `<a class="btn" href="#/sales">${t("m_sales_orders")}</a>` : ""}<button class="btn" data-a="pcalc">${L2("Payment plan calculator", "حاسبة التقسيط")}</button>
+      ${can("shop.orders", "edit") ? `<button class="btn" data-a="pset">⚙ ${L2("Sales settings", "إعدادات المبيعات")}</button>` : ""}<span class="spacer"></span>${exportMenu("products", q)}</div>` +
+    filterBar(q, ["q", ["select", "kind", L2("Type", "النوع"), P_KINDS().map(([v, l]) => [v, l.split(" (")[0]])], ["select", "category", L2("Category", "التصنيف"), d.categories.map(c => [c, c])],
+      ["select", "status", t("status"), Object.keys(P_ST).map(k => [k, L2(P_ST[k][0], P_ST[k][1])])], "bu"]) +
+    (Object.keys(st).length ? `<div class="kpis">${["available", "reserved", "sold", "delivered"].map(k => kpiBox(L2(P_ST[k][0] + " units", "وحدات " + P_ST[k][1]), numf(st[k] || 0))).join("")}</div>` : "") +
+    (d.rows.length ? `<div class="pgrid">${d.rows.map(p => `<a class="card pcard" href="#/product/${p.id}">
+        <div class="pimg">${p.cover_thumb ? `<img src="${esc(p.cover_thumb)}" alt="" loading="lazy">` : `<span>${p.kind === "unit" ? "⌂" : p.kind === "service" ? "✦" : "▣"}</span>`}${p.kind === "unit" || p.status === "hidden" ? `<div class="pst">${pStatus(p.status)}</div>` : ""}</div>
+        <div class="pbody"><b>${esc(pname(p))}</b><div class="muted">${esc([p.code, p.category, p.bu_code].filter(Boolean).join(" · "))}</div>
+        <div class="row" style="justify-content:space-between;align-items:baseline;margin-top:6px"><span class="pprice">${money(p.price)}</span>
+        <span class="muted">${Object.entries(p.media_counts || {}).map(([k, n]) => `${MEDIA_ICON[k] || ""}${n}`).join(" ")}${p.in_stock != null ? ` · ${L2("stock", "مخزون")} ${numf(p.in_stock)}` : ""}</span></div></div></a>`).join("")}</div>`
+      : `<div class="card"><div class="empty">${L2("No products yet. Add what you sell — items, apartments / villas / shops, cars, machines or services — with photos, video clips and 3D models, then sell them for cash, on deferred payment or in installments.", "لا توجد منتجات بعد. أضف ما تبيعه — أصناف، شقق / فيلات / محلات، سيارات، معدات أو خدمات — مع الصور والفيديو والنماذج ثلاثية الأبعاد، ثم بعها كاش أو آجل أو بالتقسيط.")}</div></div>`);
+};
+
+PAGES.product = async (view, parts) => {
+  const p = await api("GET", "/api/products/" + encodeURIComponent(parts[1]));
+  const ed = can("shop.products", "edit"), add = can("shop.products", "add"), sell = can("shop.orders", "add");
+  const media = p.media;
+  let cur = media.find(m => m.id === p.cover) || media[0];
+  const sellable = p.kind !== "unit" || ["available", "reserved"].includes(p.status) && !p.sale;
+  view.innerHTML = `<div class="toolbar"><a class="btn" href="#/products">← ${t("m_products")}</a>
+      ${sell && sellable ? `<button class="btn pri" data-a="psell">${L2("Sell", "بيع")}</button>` : ""}${p.sale ? `<a class="btn" href="#/sale/${encodeURIComponent(p.sale)}">${L2("Sale", "البيع")} ${esc(p.sale)} →</a>` : ""}
+      <button class="btn" data-a="pplan">${L2("Payment plan", "خطة السداد")}</button>${ed ? `<button class="btn" data-a="pedit">${t("edit")}</button>` : ""}
+      ${add ? `<button class="btn" data-a="padd">+ ${L2("Photos / video / 3D", "صور / فيديو / 3D")}</button>` : ""}
+      <a class="btn" href="/api/products/${p.id}/doc?lang=${S.lang}" target="_blank" rel="noopener">⎙ ${L2("Brochure", "بروشور")}</a><span class="spacer"></span>
+      ${ed ? `<button class="btn danger" data-a="pdel">${t("delete")}</button>` : ""}</div>
+    <div class="pview"><div class="pmedia card">${media.length ? `<div class="stage" id="pstage"></div>
+        <div class="row" style="gap:6px;margin-top:6px"><div class="mstrip">${media.map(m => mediaThumb(m, cur && m.id === cur.id)).join("")}</div><span class="spacer"></span>
+        <button type="button" class="btn sm" data-a="pfull" title="${esc(L2("Full screen — show the client", "ملء الشاشة — اعرض على العميل"))}">⛶</button></div>
+        <div id="pmtools" class="row muted" style="gap:6px;margin-top:6px;font-size:.85em"></div>`
+      : `<div class="empty">${L2("No photos, clips or 3D models yet.", "لا توجد صور أو فيديو أو نماذج 3D بعد.")}${add ? ` <button class="btn sm" data-a="padd">+ ${L2("Add", "إضافة")}</button>` : ""}</div>`}</div>
+      <div class="pinfo card"><h2 style="margin-top:0">${esc(pname(p))}</h2><div class="row" style="gap:6px;flex-wrap:wrap">${pStatus(p.status)}<span class="chip">${esc((P_KINDS().find(k => k[0] === p.kind) || ["", p.kind])[1].split(" (")[0])}</span>${p.category ? `<span class="chip">${esc(p.category)}</span>` : ""}</div>
+        <div class="pprice big">${money(p.price)} <span class="muted">${esc(cur$())}</span></div>
+        <div class="tbl"><table><tbody>${[[t("code"), p.code], [L2("Project", "المشروع"), p.bu_code ? `${p.bu_code} — ${p.bu_name}` : ""], [t("unit"), p.unit],
+          ...(p.in_stock != null ? [[L2("In stock", "بالمخزن"), numf(p.in_stock)]] : []), ...p.specs].filter(r => r[1] !== "" && r[1] != null).map(([k, v]) => `<tr><th style="width:40%">${esc(k)}</th><td>${esc(v)}</td></tr>`).join("")}</tbody></table></div>
+        ${p.description ? `<p class="pre" style="white-space:pre-line">${esc(p.description)}</p>` : ""}<div id="pplanbox"></div></div></div>`;
+  const stage = $("#pstage", view), tools = $("#pmtools", view);
+  const show = m => { cur = m; $$(".mthumb", view).forEach(b => b.classList.toggle("on", +b.dataset.id === m.id)); mediaStage(stage, m);
+    if (tools) tools.innerHTML = `${MEDIA_ICON[m.kind] || ""} ${esc(m.title || "")}${m.url ? ` <a href="${esc(m.url)}" target="_blank" rel="noopener">${L2("open link", "فتح الرابط")} ↗</a>` : ""}<span class="spacer"></span>
+      ${ed ? `${m.kind === "photo" && m.id !== p.cover ? `<button class="btn sm" data-a="pmcover">${L2("Make cover", "صورة الغلاف")}</button>` : ""}<button class="btn sm" data-a="pmmove" data-d="up">◀</button><button class="btn sm" data-a="pmmove" data-d="down">▶</button>
+      <button class="btn sm" data-a="pmren">${L2("Rename", "تسمية")}</button><button class="btn sm danger" data-a="pmdel">${t("delete")}</button>` : ""}`; };
+  Object.assign(S.H, {
+    pmsel: el => show(media.find(m => m.id === +el.dataset.id)),
+    pfull: () => { const s = $("#pstage", view); (s.requestFullscreen || s.webkitRequestFullscreen || (() => {})).call(s); },
+    psell: () => saleForm(null, { lines: [{ product_id: p.id, qty: 1, price: p.price, unit: p.unit }], bu_id: p.bu_id || "" }),
+    pplan: () => planCalculator(p), pedit: () => productForm(p), padd: () => mediaForm(p),
+    pdel: () => confirmDelete(`${p.code} — ${p.name}`, "/api/products/" + p.id, async () => { location.hash = "#/products"; }),
+    pmcover: async () => { await api("PUT", "/api/product-media/" + cur.id, { cover: 1 }); toast(t("saved")); route(); },
+    pmmove: async el => { await api("PUT", "/api/product-media/" + cur.id, { move: el.dataset.d }); route(); },
+    pmren: async () => { const v = prompt(L2("Title", "العنوان"), cur.title || ""); if (v == null) return; await api("PUT", "/api/product-media/" + cur.id, { title: v }); route(); },
+    pmdel: async () => { if (!confirm(L2("Delete this file?", "حذف هذا الملف؟"))) return; await api("DELETE", "/api/product-media/" + cur.id); route(); } });
+  if (cur) show(cur);
+  const keys = e => { if (!view.isConnected) return document.removeEventListener("keydown", keys); if ($(".drawer-bg") || /INPUT|TEXTAREA|SELECT/.test((document.activeElement || {}).tagName || "")) return;
+    const i = media.indexOf(cur); if (e.key === "ArrowRight" || e.key === "ArrowLeft") { const n = (i + ((e.key === "ArrowRight") !== (document.dir === "rtl") ? 1 : -1) + media.length) % media.length; if (media[n]) show(media[n]); } };
+  document.addEventListener("keydown", keys);
+  if (p.price > 0) planBox($("#pplanbox", view), p);
+};
+const cur$ = () => (S.boot.settings && S.boot.settings.currency) || "";
+
+// a quick installment example on the product page (company defaults; full calculator a click away)
+async function planBox(box, p) {
+  try { const st = await api("GET", "/api/shop-settings"); if (!(st.n > 1)) return;
+    const r = await api("POST", "/api/sales-preview", { lines: [{ product_id: p.id, qty: 1 }], vat_code: p.vat_code, date: today(), plan: { type: "installments", down_pct: st.down_pct, n: st.n, frequency: st.frequency, rate: st.rate, round_to: st.round_to } });
+    const inst = r.schedule.find(x => x.kind === "installment"), down = r.schedule.filter(x => x.kind === "down").reduce((a, x) => a + x.amount, 0);
+    box.innerHTML = `<div class="banner info">${L2("Installments", "بالتقسيط")}: ${L2("down", "مقدم")} <b>${money(down)}</b> + ${st.n} × <b>${money(inst ? inst.amount : 0)}</b> ${(FREQS().find(f => f[0] === st.frequency) || ["", ""])[1]}${st.rate ? ` · ${L2("interest", "فائدة")} ${st.rate}%/${L2("yr", "سنة")}` : ""} · ${L2("total", "الإجمالي")} ${money(r.total)}</div>`;
+  } catch { /* no permission or no price */ }
+}
+
+function productForm(p) {
+  const isNew = !p; p = p || { kind: "unit", status: "available", specs: [] };
+  let specs = (p.specs || []).map(x => [...x]);
+  const specRows = () => specs.map((r, i) => `<tr><td><input data-skip="1" value="${esc(r[0])}" data-input="pspec" data-i="${i}" data-k="0" list="pspecl"></td><td><input data-skip="1" value="${esc(r[1])}" data-input="pspec" data-i="${i}" data-k="1"></td><td><button type="button" class="btn sm" data-a="pspecdel" data-i="${i}">✕</button></td></tr>`).join("");
+  const revAccts = [["", L2("Default — Sales of Goods & Units", "الافتراضي — مبيعات البضائع والوحدات")], ...accts(["Revenue"])];
+  const invAccts = [["", L2("— no cost booked —", "— بدون تكلفة —")], ...accts(["Asset"], ["inventory", "other_current_asset", "fixed_asset"])];
+  drawer(isNew ? L2("New product / unit", "منتج / وحدة جديدة") : `${t("edit")} — ${p.code}`, form([
+    { k: "kind", l: L2("Type", "النوع"), type: "select", opts: P_KINDS(), v: p.kind, change: "pkind", span: "spanall" },
+    { k: "name", l: t("name"), v: p.name, req: 1 }, { k: "name_ar", l: t("name") + " (العربية)", v: p.name_ar },
+    { k: "code", l: t("code"), v: p.code, ph: L2("automatic", "تلقائي") }, { k: "category", l: L2("Category", "التصنيف"), v: p.category, list: "pcatl", ph: L2("Apartments, Villas, Furniture…", "شقق، فيلات، أثاث…") },
+    { k: "price", l: L2("Price", "السعر"), type: "number", v: p.price, req: 1 }, { k: "unit", l: t("unit"), v: p.unit, list: "units", ph: "m², pcs, set" },
+    { k: "status", l: t("status"), type: "select", opts: Object.keys(P_ST).map(k => [k, L2(P_ST[k][0], P_ST[k][1])]), v: p.status },
+    { k: "bu_id", l: L2("Project / business unit", "المشروع / وحدة الأعمال"), type: "select", opts: buOpts("—"), v: p.bu_id || "" },
+    { k: "vat_code", l: t("vat_code"), type: "select", opts: taxOpts("vat"), v: p.vat_code },
+    { k: "revenue_account", l: L2("Revenue account", "حساب الإيراد"), type: "select", opts: revAccts, v: p.revenue_account || "" },
+    { k: "stock_item", l: L2("Sold from stock item", "يُصرف من صنف المخزون"), v: p.stock_item, list: "pstock", help: L2("Selling it issues the stock and books its cost", "البيع يصرف من المخزن ويسجل التكلفة") },
+    { k: "warehouse_id", l: t("warehouse"), type: "select", opts: [["", L2("any with stock", "أي مخزن به رصيد")], ...whOpts()], v: p.warehouse_id || "" },
+    { k: "cost", l: L2("Cost per unit", "تكلفة الوحدة"), type: "number", v: p.cost || "", help: L2("Booked as cost of sales when sold (units and goods not in the stock module)", "تُسجل كتكلفة مبيعات عند البيع (للوحدات والبضائع غير المسجلة بالمخزن)") },
+    { k: "inventory_account", l: L2("…taken out of", "…تُخصم من حساب"), type: "select", opts: invAccts, v: p.inventory_account || "" },
+    { html: `<h4 class="fsec">${L2("Specifications", "المواصفات")}</h4><div class="tbl"><table id="pspect"><tbody>${specRows()}</tbody></table></div>
+      <div class="row" style="gap:6px;margin-top:6px"><button type="button" class="btn sm" data-a="pspecadd">+ ${L2("Line", "سطر")}</button><button type="button" class="btn sm" data-a="pspecpre">${L2("Suggested fields", "حقول مقترحة")}</button></div>`, span: "spanall" },
+    { k: "description", l: L2("Description", "الوصف"), type: "textarea", v: p.description, span: "spanall" }])
+    + datalist("pcatl", S.cache.pcats || []) + datalist("pstock", S.boot.items.map(i => i.name)) + unitsList()
+    + datalist("pspecl", Object.values(SPEC_PRESETS).flat().map(x => L2(x[0], x[1]))),
+  async v => { v.specs = specs.filter(r => r[0]); const r = isNew ? await api("POST", "/api/products", v) : await api("PUT", "/api/products/" + p.id, v);
+    toast(t("saved")); if (isNew) { location.hash = "#/product/" + r.id; closeDrawer(); return false; } },
+  { wide: true, onOpen: f => {
+    const redraw = () => { $("#pspect tbody", f).innerHTML = specRows(); };
+    S.H.pspec = el => { specs[+el.dataset.i][+el.dataset.k] = el.value; };
+    S.H.pspecadd = () => { specs.push(["", ""]); redraw(); };
+    S.H.pspecdel = el => { specs.splice(+el.dataset.i, 1); redraw(); };
+    S.H.pspecpre = () => { const have = new Set(specs.map(r => r[0])); (SPEC_PRESETS[$("[name=kind]", f).value] || []).forEach(x => { const l = L2(x[0], x[1]); if (!have.has(l)) specs.push([l, ""]); }); redraw(); };
+    S.H.pkind = () => { const k = $("[name=kind]", f).value; showFields(f, k === "item" ? ["stock_item", "warehouse_id", "cost", "inventory_account", "unit"] : k === "unit" ? ["cost", "inventory_account", "status"] : ["unit"], ["stock_item", "warehouse_id", "cost", "inventory_account", "unit", "status"]);
+      if (isNew && !specs.length) S.H.pspecpre(); };
+    S.H.pkind(); } });
+}
+
+function mediaForm(p) {
+  drawer(L2("Add photos, clips & 3D models", "إضافة صور وفيديو ونماذج 3D") + " — " + p.code, form([
+    { k: "kind", l: L2("What", "النوع"), type: "select", span: "spanall", change: "pmk", opts: [["photo", L2("Photos (several at once)", "صور (أكثر من صورة)")], ["video", L2("Video clip", "فيديو")], ["model", L2("3D model", "نموذج ثلاثي الأبعاد")], ["tour", L2("360° / virtual tour (link)", "جولة افتراضية 360° (رابط)")], ["file", L2("Other file (PDF plan, brochure…)", "ملف آخر (مخطط PDF، بروشور…)")]] },
+    { k: "title", l: L2("Title (optional)", "العنوان (اختياري)"), span: "spanall" },
+    { html: `<label class="f" id="pmfile">${L2("Upload from this device", "رفع من الجهاز")}<input type="file" data-skip="1" id="pmin" multiple></label>`, span: "spanall" },
+    { k: "url", l: L2("…or paste a link", "…أو الصق رابطاً"), span: "spanall", ph: "https://" },
+    { html: `<div class="muted" id="pmhelp" style="font-size:.88em"></div><div id="pmprog"></div>`, span: "spanall" }]),
+  async v => { const files = [...$("#pmin").files]; const prog = $("#pmprog");
+    if (!files.length && !v.url) throw new Error(L2("Choose a file or paste a link", "اختر ملفاً أو الصق رابطاً"));
+    let n = 0;
+    for (const file of files) { prog.textContent = `${++n} / ${files.length} …`;
+      let body = { kind: v.kind, title: v.title || (files.length > 1 ? "" : file.name.replace(/\.[^.]+$/, "")) };
+      if (v.kind === "photo") { body.data = await shrinkImage(file, 1600, 0.82); body.thumb = await shrinkImage(file, 360, 0.7); }
+      else { if (file.size > MAX_UP) throw new Error(`${file.name}: ${(file.size / 1048576).toFixed(1)} MB — ${L2("the limit is 8 MB; upload it to YouTube / Sketchfab / Drive and paste the link", "الحد الأقصى 8 ميجابايت؛ ارفعه على يوتيوب / Sketchfab / درايف والصق الرابط")}`);
+        body.data = await readDataUrl(file); if (/\.glb$/i.test(file.name)) body.data = body.data.replace(/^data:[^;]*;/, "data:model/gltf-binary;"); if (/\.gltf$/i.test(file.name)) body.data = body.data.replace(/^data:[^;]*;/, "data:model/gltf+json;"); }
+      await api("POST", `/api/products/${p.id}/media`, body); }
+    if (v.url) await api("POST", `/api/products/${p.id}/media`, { kind: v.kind, title: v.title, url: v.url });
+    toast(t("saved")); },
+  { submitLabel: L2("Add", "إضافة"), onOpen: f => {
+    S.H.pmk = () => { const k = $("[name=kind]", f).value, inp = $("#pmin", f);
+      inp.accept = { photo: "image/*", video: "video/*", model: ".glb,.gltf,model/gltf-binary", tour: "", file: "" }[k]; $("#pmfile", f).style.display = k === "tour" ? "none" : "";
+      $("#pmhelp", f).innerHTML = { photo: L2("Photos are resized to 1600 px before upload so they stay light on every device.", "تُصغّر الصور إلى 1600 بكسل قبل الرفع لتبقى خفيفة على كل الأجهزة."),
+        video: L2("Short clips up to 8 MB can be uploaded. For longer videos paste a YouTube, Vimeo or Google Drive link — they play right here.", "يمكن رفع مقاطع قصيرة حتى 8 ميجابايت. للفيديو الأطول الصق رابط يوتيوب أو Vimeo أو جوجل درايف — ويُعرض هنا مباشرة."),
+        model: L2("3ds Max, Blender, SketchUp, Revit…: export the model as <b>glTF binary (.glb)</b> (3ds Max: File → Export → glTF, or the Babylon.js exporter) and upload it here (up to 8 MB) — it can be rotated, zoomed and viewed in AR on phones. Or upload it to <b>Sketchfab</b> (accepts .max/.fbx/.obj) and paste the link.", "3ds Max أو Blender أو SketchUp أو Revit…: صدّر النموذج بصيغة <b>glTF binary (.glb)</b> (في 3ds Max: File → Export → glTF أو إضافة Babylon.js) وارفعه هنا (حتى 8 ميجابايت) — يمكن تدويره وتكبيره وعرضه بالواقع المعزز على الموبايل. أو ارفعه على <b>Sketchfab</b> (يقبل max/fbx/obj) والصق الرابط."),
+        tour: L2("Paste a Matterport, Kuula, Google Street View or any 360° tour link.", "الصق رابط جولة Matterport أو Kuula أو Google Street View أو أي جولة 360°."),
+        file: L2("PDF floor plans, price lists, brochures (up to 8 MB).", "مخططات PDF وقوائم أسعار وبروشورات (حتى 8 ميجابايت).") }[k]; };
+    S.H.pmk(); } });
+}
+
+function shopSettingsForm() {
+  api("GET", "/api/shop-settings").then(st => drawer(L2("Sales settings", "إعدادات المبيعات"), form([
+    { html: `<p class="muted" style="margin:0">${L2("Defaults for new sales and the installment example shown on every product.", "القيم الافتراضية للمبيعات الجديدة ومثال التقسيط المعروض على كل منتج.")}</p>`, span: "spanall" },
+    { k: "down_pct", l: L2("Default down payment %", "المقدم الافتراضي %"), type: "number", v: st.down_pct }, { k: "n", l: L2("Default number of installments", "عدد الأقساط الافتراضي"), type: "number", v: st.n },
+    { k: "frequency", l: L2("Every", "كل"), type: "select", opts: FREQS(), v: st.frequency }, { k: "rate", l: L2("Installment interest % per year (flat)", "فائدة التقسيط % سنوياً (ثابتة)"), type: "number", v: st.rate },
+    { k: "round_to", l: L2("Round installments to", "تقريب القسط إلى"), type: "number", v: st.round_to, help: L2("e.g. 10 or 100 — the last installment takes the difference", "مثال 10 أو 100 — والقسط الأخير يأخذ الفرق") },
+    { k: "revenue_on", l: L2("Recognise the sale (revenue)", "تسجيل الإيراد"), type: "select", opts: [["sale", L2("When sold", "عند البيع")], ["delivery", L2("On delivery / handover (off-plan, made to order)", "عند التسليم (بيع على الخريطة / حسب الطلب)")]], v: st.revenue_on },
+    { k: "terms", l: L2("Contract terms (English)", "شروط العقد (إنجليزي)"), type: "textarea", v: st.terms, span: "spanall" },
+    { k: "terms_ar", l: L2("Contract terms (Arabic)", "شروط العقد (عربي)"), type: "textarea", v: st.terms_ar, span: "spanall" }]),
+  async v => { await api("PUT", "/api/shop-settings", v); toast(t("saved")); })).catch(fail);
+}
+
+// -------------------------------------------------------- schedule preview
+const schedTable = (rows, opts = {}) => `<div class="tbl"><table><thead><tr><th>#</th><th>${L2("Due", "الاستحقاق")}</th><th>${L2("Payment", "الدفعة")}</th><th class="num">${t("amount")}</th>${opts.status ? `<th class="num">${L2("Paid", "المسدد")}</th><th class="num">${L2("Left", "المتبقي")}</th><th>${t("status")}</th><th></th>` : ""}</tr></thead><tbody>
+  ${rows.map((r, i) => `<tr><td>${i + 1}</td><td>${fd(r.due)}</td><td>${esc(instLabel(r))}</td><td class="num">${money(r.amount)}</td>${opts.status ? `<td class="num">${money(r.paid + r.by_cheque)}</td><td class="num">${r.left ? money(r.left) : ""}</td><td>${iStatus(r.status)}${r.days_late ? ` <span class="muted">${r.days_late} ${L2("days", "يوم")}</span>` : ""}</td><td>${opts.pay && r.left > 0 ? `<button class="btn sm" data-a="spay" data-id="${r.id}">${L2("Pay", "سداد")}</button>` : ""}</td>` : ""}</tr>`).join("")}</tbody></table></div>`;
+const planFields = (pl, st) => [
+  { k: "plan_type", l: L2("Payment", "طريقة السداد"), type: "select", opts: PLAN_T(), v: pl.type || "full", change: "plt" },
+  { k: "plan_due", l: L2("Pay on", "تاريخ السداد"), type: "date", v: pl.due || "" },
+  { k: "plan_down_pct", l: L2("Down payment %", "المقدم %"), type: "number", v: pl.down_pct ?? st.down_pct },
+  { k: "plan_down", l: L2("…or down payment amount", "…أو مبلغ المقدم"), type: "number", v: pl.down ?? "" },
+  { k: "plan_n", l: L2("Number of installments", "عدد الأقساط"), type: "number", v: pl.n ?? st.n },
+  { k: "plan_frequency", l: L2("Every", "كل"), type: "select", opts: FREQS(), v: pl.frequency || st.frequency },
+  { k: "plan_first_due", l: L2("First installment", "أول قسط"), type: "date", v: pl.first_due || "" },
+  { k: "plan_rate", l: L2("Interest % per year (flat)", "الفائدة % سنوياً (ثابتة)"), type: "number", v: pl.rate ?? st.rate },
+  { k: "plan_round_to", l: L2("Round installments to", "تقريب القسط إلى"), type: "number", v: pl.round_to ?? st.round_to }];
+const PLAN_SHOW = { full: [], deferred: ["plan_due"], installments: ["plan_down_pct", "plan_down", "plan_n", "plan_frequency", "plan_first_due", "plan_rate", "plan_round_to"], custom: [] };
+const PLAN_ALL = ["plan_due", "plan_down_pct", "plan_down", "plan_n", "plan_frequency", "plan_first_due", "plan_rate", "plan_round_to"];
+function readPlan(f, extras, custom) {
+  const g = n => { const el = $(`[name=${n}]`, f); return el ? el.value : ""; };
+  const ty = g("plan_type");
+  const pl = { type: ty };
+  if (ty === "deferred") pl.due = g("plan_due");
+  if (ty === "installments") Object.assign(pl, { down_pct: g("plan_down_pct"), down: g("plan_down"), n: g("plan_n"), frequency: g("plan_frequency"), first_due: g("plan_first_due"), rate: g("plan_rate"), round_to: g("plan_round_to"), extras: extras.filter(x => x.amount || x.pct) });
+  if (ty === "custom") pl.rows = custom.filter(r => r.due && r.amount);
+  return pl;
+}
+const extrasHtml = ex => `<div class="tbl"><table><thead><tr><th>${L2("Extra payment", "دفعة إضافية")}</th><th>%</th><th>${L2("or amount", "أو مبلغ")}</th><th>${L2("Due", "الاستحقاق")}</th><th></th></tr></thead><tbody>
+  ${ex.map((x, i) => `<tr><td><input data-skip="1" value="${esc(x.label || "")}" data-input="plx" data-i="${i}" data-k="label" placeholder="${esc(L2("e.g. On delivery", "مثال: عند الاستلام"))}"></td><td><input data-skip="1" class="num" type="number" step="any" value="${x.pct ?? ""}" data-input="plx" data-i="${i}" data-k="pct" style="width:70px"></td>
+    <td><input data-skip="1" class="num" type="number" step="any" value="${x.amount ?? ""}" data-input="plx" data-i="${i}" data-k="amount" style="width:110px"></td><td><input data-skip="1" type="date" value="${esc(x.due || "")}" data-input="plx" data-i="${i}" data-k="due"></td><td><button type="button" class="btn sm" data-a="plxdel" data-i="${i}">✕</button></td></tr>`).join("")}</tbody></table></div>
+  <button type="button" class="btn sm" data-a="plxadd" style="margin-top:4px">+ ${L2("Extra payment (e.g. on delivery)", "دفعة إضافية (مثل الاستلام)")}</button>`;
+const customHtml = rows => `<div class="tbl"><table><thead><tr><th>${L2("Due", "الاستحقاق")}</th><th>${L2("Payment", "الدفعة")}</th><th>${t("amount")}</th><th></th></tr></thead><tbody>
+  ${rows.map((x, i) => `<tr><td><input data-skip="1" type="date" value="${esc(x.due || "")}" data-input="plc" data-i="${i}" data-k="due"></td><td><input data-skip="1" value="${esc(x.label || "")}" data-input="plc" data-i="${i}" data-k="label"></td>
+    <td><input data-skip="1" class="num" type="number" step="any" value="${x.amount ?? ""}" data-input="plc" data-i="${i}" data-k="amount" style="width:120px"></td><td><button type="button" class="btn sm" data-a="plcdel" data-i="${i}">✕</button></td></tr>`).join("")}</tbody></table></div>
+  <button type="button" class="btn sm" data-a="plcadd" style="margin-top:4px">+ ${L2("Payment", "دفعة")}</button>`;
+
+// wires a plan section inside a form; preview(body) is called whenever something changes
+function wirePlan(f, pl, preview) {
+  let extras = (pl.extras || []).map(x => ({ ...x })), custom = (pl.rows || []).map(x => ({ ...x }));
+  const redraw = () => { $("#plx", f).innerHTML = extrasHtml(extras); $("#plc", f).innerHTML = customHtml(custom); };
+  const sync = () => { const ty = $("[name=plan_type]", f).value; showFields(f, PLAN_SHOW[ty], PLAN_ALL);
+    $("#plx", f).style.display = ty === "installments" ? "" : "none"; $("#plc", f).style.display = ty === "custom" ? "" : "none"; $("#plcust", f).style.display = ty === "installments" || ty === "deferred" ? "" : "none"; };
+  Object.assign(S.H, {
+    plt: () => { sync(); preview(); },
+    plx: el => { extras[+el.dataset.i][el.dataset.k] = el.value; preview(); }, plxadd: () => { extras.push({ label: "", pct: "", amount: "", due: "" }); redraw(); },
+    plxdel: el => { extras.splice(+el.dataset.i, 1); redraw(); preview(); },
+    plc: el => { custom[+el.dataset.i][el.dataset.k] = el.value; preview(); }, plcadd: () => { custom.push({ due: "", label: "", amount: "" }); redraw(); },
+    plcdel: el => { custom.splice(+el.dataset.i, 1); redraw(); preview(); },
+    plcust: () => { const rows = (S.cache.lastSched || []); custom = rows.map(r => ({ due: r.due, label: instLabel(r), amount: r.amount, kind: r.kind })); $("[name=plan_type]", f).value = "custom"; redraw(); sync(); preview(); } });
+  redraw(); sync();
+  return () => readPlan(f, extras, custom);
+}
+const planSection = (pl, st) => [{ html: `<h4 class="fsec">${L2("Payment plan", "خطة السداد")}</h4>`, span: "spanall" }, ...planFields(pl, st),
+  { html: `<div id="plx"></div><div id="plc"></div><button type="button" class="btn sm" id="plcust" data-a="plcust" style="margin-top:6px">${L2("Edit the dates / amounts by hand", "تعديل التواريخ / المبالغ يدوياً")}</button>`, span: "spanall" },
+  { html: `<div id="plprev" style="margin-top:8px"></div>`, span: "spanall" }];
+const previewHtml = r => `<div class="kpis">${kpiBox(L2("Price", "الثمن"), money(r.price))}${r.markup ? kpiBox(L2("Installment interest", "فوائد التقسيط"), money(r.markup)) : ""}${kpiBox(L2("Total payable", "إجمالي المستحق"), money(r.total), "pos")}</div>${schedTable(r.schedule)}`;
+
+async function planCalculator(p) {
+  const st = await api("GET", "/api/shop-settings");
+  let getPlan;
+  drawer(L2("Payment plan calculator", "حاسبة التقسيط") + (p ? ` — ${p.code}` : ""), form([
+    { k: "price", l: L2("Price", "السعر"), type: "number", v: p ? p.price : "", req: 1 }, { k: "date", l: t("date"), type: "date", v: today() },
+    ...planSection({ type: "installments" }, st)]),
+  null, { wide: true, readOnly: true, extraButtons: p && can("shop.orders", "add") ? `<button type="button" class="btn pri" data-a="pcsell">${L2("Sell with this plan", "بيع بهذه الخطة")}</button>` : "",
+    onOpen: f => {
+      const prev = debounce(async () => { const v = readForm(f), box = $("#plprev", f); if (!(+v.price > 0)) { box.innerHTML = ""; return; }
+        try { const r = await api("POST", "/api/sales-preview", { date: v.date, lines: [{ description: "x", qty: 1, price: v.price }], plan: getPlan() }); S.cache.lastSched = r.schedule; box.innerHTML = previewHtml(r); }
+        catch (e) { box.innerHTML = `<div class="banner err">${esc(e.message)}</div>`; } }, 300);
+      getPlan = wirePlan(f, { type: "installments" }, prev);
+      f.addEventListener("input", prev); f.addEventListener("change", prev); prev();
+      S.H.pcsell = () => saleForm(null, { lines: [{ product_id: p.id, qty: 1, price: readForm(f).price, unit: p.unit }], bu_id: p.bu_id || "", plan: getPlan(), date: readForm(f).date }); } });
+}
+
+// ------------------------------------------------------------------ sales
+PAGES.sales = async (view, parts, q) => {
+  const d = await api("GET", "/api/sales?" + qs(q));
+  const add = can("shop.orders", "add");
+  Object.assign(S.H, { snew: () => saleForm(), pset: () => shopSettingsForm() });
+  const T = d.totals;
+  view.innerHTML = `<div class="toolbar">${add ? `<button class="btn pri" data-a="snew">+ ${L2("New sale", "بيع جديد")}</button>` : ""}<a class="btn" href="#/products">${t("m_products")}</a><a class="btn" href="#/installments">${t("m_installments")}</a>
+      ${can("shop.orders", "edit") ? `<button class="btn" data-a="pset">⚙ ${L2("Sales settings", "إعدادات المبيعات")}</button>` : ""}<span class="spacer"></span>${exportMenu("sales", q)}</div>` +
+    filterBar(q, ["q", "dates", ["select", "status", t("status"), Object.keys(S_ST).map(k => [k, L2(S_ST[k][0], S_ST[k][1])])]]) +
+    `<div class="kpis">${kpiBox(L2("Sales (open & delivered)", "المبيعات (المفتوحة والمسلمة)"), T.total, "", `${T.count}`)}${kpiBox(L2("Collected", "المحصل"), T.paid, "pos")}${kpiBox(L2("In cheques", "بشيكات"), T.in_cheques)}${kpiBox(L2("Still to collect", "المتبقي للتحصيل"), T.balance)}${kpiBox(L2("Overdue", "متأخرات"), T.overdue, T.overdue > 0 ? "neg" : "")}</div>
+    <div class="card">${d.rows.length ? `<div class="tbl stack"><table><thead><tr><th>${L2("Sale", "البيع")}</th><th>${t("date")}</th><th>${L2("Customer", "العميل")}</th><th>${t("status")}</th><th class="num">${L2("Total", "الإجمالي")}</th><th class="num">${L2("Paid", "المسدد")}</th><th class="num">${L2("Balance", "المتبقي")}</th><th class="num">${L2("Overdue", "متأخر")}</th><th>${L2("Next due", "القسط القادم")}</th></tr></thead><tbody>
+      ${d.rows.map(r => `<tr class="click ${r.status === "cancelled" ? "void" : ""}" data-a="sgo" data-id="${r.id}"><td><b>${esc(r.code)}</b></td><td>${fd(r.date)}</td><td>${esc(r.customer)}</td><td>${sStatus(r.status)}</td><td class="num">${money(r.total)}</td><td class="num">${money(r.paid)}</td><td class="num">${money(r.balance)}</td><td class="num ${r.overdue ? "neg" : ""}">${r.overdue ? money(r.overdue) : ""}</td><td>${r.next_due && r.status !== "cancelled" ? `${fd(r.next_due)} · ${money(r.next_amount)}` : ""}</td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="empty">${L2("No sales yet. Pick a product from the showroom and press Sell, or start a new sale here.", "لا توجد مبيعات بعد. اختر منتجاً من المعرض واضغط بيع، أو ابدأ بيعاً جديداً من هنا.")}</div>`}</div>`;
+  S.H.sgo = el => { location.hash = "#/sale/" + el.dataset.id; };
+};
+
+async function saleForm(s, pre = {}) {
+  const isNew = !s; s = s || {};
+  const [st, cat] = await Promise.all([api("GET", "/api/shop-settings"), api("GET", "/api/products")]);
+  const prods = cat.rows;
+  let lines = (s.lines || pre.lines || [{ qty: 1 }]).map(l => ({ product_id: l.product_id || "", description: l.description || "", qty: l.qty ?? 1, unit: l.unit || "", price: l.price ?? "", discount: l.discount || "" }));
+  const pl = s.plan || pre.plan || { type: "full" };
+  const popt = sel => `<option value="">— ${L2("free text", "بند حر")} —</option>` + prods.filter(p => p.kind !== "unit" || ["available", "reserved"].includes(p.status) && (!p.sale || p.sale === s.code) || String(p.id) === String(sel))
+    .map(p => `<option value="${p.id}" ${String(p.id) === String(sel) ? "selected" : ""}>${esc(p.code)} — ${esc(pname(p))} · ${money(p.price)}</option>`).join("");
+  const lineRows = () => lines.map((l, i) => `<tr><td><select data-skip="1" data-change="slp" data-i="${i}" style="max-width:220px">${popt(l.product_id)}</select><input data-skip="1" value="${esc(l.description)}" data-input="sl" data-i="${i}" data-k="description" placeholder="${esc(L2("description", "البيان"))}" style="margin-top:4px"></td>
+    <td><input data-skip="1" class="num" type="number" step="any" value="${l.qty}" data-input="sl" data-i="${i}" data-k="qty" style="width:70px"></td><td><input data-skip="1" value="${esc(l.unit)}" data-input="sl" data-i="${i}" data-k="unit" style="width:60px"></td>
+    <td><input data-skip="1" class="num" type="number" step="any" value="${l.price}" data-input="sl" data-i="${i}" data-k="price" style="width:110px"></td><td><input data-skip="1" class="num" type="number" step="any" value="${l.discount}" data-input="sl" data-i="${i}" data-k="discount" style="width:90px"></td>
+    <td><button type="button" class="btn sm" data-a="sldel" data-i="${i}">✕</button></td></tr>`).join("");
+  let getPlan;
+  const nc = [];
+  drawer(isNew ? L2("New sale", "بيع جديد") : `${t("edit")} — ${s.code}`, form([
+    { k: "customer", l: L2("Customer", "العميل"), v: s.customer || pre.customer, req: 1, list: "scust" }, { k: "date", l: t("date"), type: "date", v: s.date || pre.date || today(), req: 1 },
+    { k: "bu_id", l: L2("Project / business unit", "المشروع / وحدة الأعمال"), type: "select", opts: buOpts(), v: s.bu_id || pre.bu_id || "", req: 1 },
+    { k: "revenue_on", l: L2("Recognise the sale", "تسجيل الإيراد"), type: "select", opts: [["sale", L2("Now (when sold)", "الآن (عند البيع)")], ["delivery", L2("On delivery / handover", "عند التسليم")]], v: s.revenue_on || st.revenue_on },
+    { k: "delivery_due", l: L2("Expected delivery", "موعد التسليم المتوقع"), type: "date", v: s.delivery_due || "" }, { k: "salesperson", l: L2("Salesperson", "مندوب المبيعات"), v: s.salesperson || "" },
+    { html: `<h4 class="fsec">${L2("What is sold", "المبيعات")}</h4><div class="tbl"><table id="slt"><thead><tr><th>${L2("Product / description", "المنتج / البيان")}</th><th>${t("qty")}</th><th>${t("unit")}</th><th>${L2("Price", "السعر")}</th><th>${L2("Discount", "الخصم")}</th><th></th></tr></thead><tbody>${lineRows()}</tbody></table></div>
+      <button type="button" class="btn sm" data-a="sladd" style="margin-top:4px">+ ${L2("Line", "سطر")}</button>`, span: "spanall" },
+    { k: "vat_code", l: t("vat_code"), type: "select", opts: taxOpts("vat"), v: s.vat_code || "" }, { k: "wht_code", l: t("wht_code"), type: "select", opts: taxOpts("wht"), v: s.wht_code || "" },
+    ...planSection(pl, st),
+    { k: "notes", l: t("notes"), type: "textarea", v: s.notes || "", span: "spanall" }]) + partyList("scust"),
+  async v => { const body = { ...v, lines: lines.filter(l => l.product_id || l.description), plan: getPlan() };
+    const r = isNew ? await api("POST", "/api/sales", body) : await api("PUT", "/api/sales/" + s.id, body);
+    await saveNewContacts(nc); toast(t("saved")); location.hash = "#/sale/" + r.id; closeDrawer(); return false; },
+  { wide: true, submitLabel: L2("Save draft", "حفظ كمسودة"), onOpen: f => {
+    const prev = debounce(async () => { const v = readForm(f), box = $("#plprev", f);
+      try { const r = await api("POST", "/api/sales-preview", { date: v.date, vat_code: v.vat_code, wht_code: v.wht_code, lines: lines.filter(l => l.product_id || l.description).map(l => ({ ...l, description: l.description || "x" })), plan: getPlan() });
+        S.cache.lastSched = r.schedule; box.innerHTML = previewHtml(r); } catch (e) { box.innerHTML = `<div class="banner err">${esc(e.message)}</div>`; } }, 300);
+    const redraw = () => { $("#slt tbody", f).innerHTML = lineRows(); prev(); };
+    Object.assign(S.H, { sl: el => { lines[+el.dataset.i][el.dataset.k] = el.value; prev(); }, sladd: () => { lines.push({ product_id: "", description: "", qty: 1, unit: "", price: "", discount: "" }); redraw(); },
+      sldel: el => { lines.splice(+el.dataset.i, 1); if (!lines.length) lines.push({ qty: 1, description: "", price: "" }); redraw(); },
+      slp: el => { const p = prods.find(x => String(x.id) === el.value), l = lines[+el.dataset.i]; l.product_id = el.value;
+        if (p) { l.description = `${p.name} (${p.code})`; l.price = p.price; l.unit = p.unit; l.qty = 1; if (p.vat_code && !$("[name=vat_code]", f).value) $("[name=vat_code]", f).value = p.vat_code; if (p.bu_id && !$("[name=bu_id]", f).value) $("[name=bu_id]", f).value = p.bu_id; }
+        redraw(); } });
+    getPlan = wirePlan(f, pl, prev);
+    nc.push(offerContact(f, "customer", "customer"));
+    f.addEventListener("change", prev); prev(); } });
+}
+
+PAGES.sale = async (view, parts) => {
+  const s = await api("GET", "/api/sales/" + encodeURIComponent(parts[1]) + "?as_of=" + today());
+  const add = can("shop.orders", "add"), ed = can("shop.orders", "edit"), coll = add || can("shop.installments", "add");
+  const live = ["confirmed", "delivered"].includes(s.status);
+  const steps = [["draft", L2("Draft", "مسودة")], ["confirmed", L2("Confirmed", "مؤكد")], ["delivered", L2("Delivered", "تم التسليم")]];
+  const at = s.status === "cancelled" ? -1 : steps.findIndex(x => x[0] === s.status);
+  const wa = waNumber((s.contact || {}).whatsapp || (s.contact || {}).phone);
+  const remind = s.overdue > 0 || s.next_due ? encodeURIComponent(S.lang === "ar"
+    ? `السيد/ة ${s.customer}، نذكركم ${s.overdue > 0 ? `بمتأخرات بقيمة ${money(s.overdue)}` : `بالقسط المستحق ${fd(s.next_due)} بقيمة ${money(s.next_amount)}`} — ${s.code}. شكراً لكم.`
+    : `Dear ${s.customer}, a reminder ${s.overdue > 0 ? `of ${money(s.overdue)} overdue` : `of the installment of ${money(s.next_amount)} due ${fd(s.next_due)}`} on ${s.code}. Thank you.`) : "";
+  const doc = k => `/api/sales/${s.id}/doc?kind=${k}&lang=${S.lang}`;
+  view.innerHTML = `<div class="toolbar"><a class="btn" href="#/sales">← ${t("m_sales_orders")}</a>
+      ${s.status === "draft" && ed ? `<button class="btn" data-a="sedit">${t("edit")}</button>` : ""}${s.status === "draft" && add ? `<button class="btn pri" data-a="sconf">${L2("Confirm sale", "تأكيد البيع")}</button>` : ""}
+      ${live && coll && s.uncovered > 0 ? `<button class="btn pri" data-a="spay">${L2("Receive payment", "تحصيل دفعة")}</button><button class="btn" data-a="schq">${L2("Receive cheques", "استلام شيكات")}</button>` : ""}
+      ${s.status === "confirmed" && add ? `<button class="btn" data-a="sdel2">${L2("Deliver / hand over", "تسليم")}</button>` : ""}
+      <div class="dd"><button class="btn">⎙ ${t("documents")} ▾</button><div class="dd-menu"><a href="${doc("quote")}" target="_blank" rel="noopener">${L2("Quotation", "عرض سعر")}</a><a href="${doc("contract")}" target="_blank" rel="noopener">${L2("Sales contract", "عقد البيع")}</a><a href="${doc("statement")}" target="_blank" rel="noopener">${L2("Customer statement", "كشف حساب العميل")}</a></div></div>
+      ${wa && remind && live ? `<a class="btn" href="https://wa.me/${wa}?text=${remind}" target="_blank" rel="noopener">WhatsApp ${L2("reminder", "تذكير")}</a>` : ""}
+      <span class="spacer"></span>${live && ed && s.paid > 0 ? `<button class="btn" data-a="sref">${L2("Refund", "رد مبلغ")}</button>` : ""}
+      ${ed && s.status !== "cancelled" ? `<button class="btn danger" data-a="scan">${s.status === "draft" ? t("delete") : L2("Cancel sale", "إلغاء البيع")}</button>` : ""}</div>
+    <div class="row steps" style="gap:6px;flex-wrap:wrap;margin-bottom:10px">${s.status === "cancelled" ? sStatus("cancelled") : steps.map((x, i) => `<span class="chip ${i <= at ? "ok" : ""}">${i <= at ? "✓ " : ""}${esc(x[1])}</span>`).join("→")}
+      <span class="muted">${esc(s.code)} · ${fd(s.date)} · <b>${esc(s.customer)}</b>${s.bu_code ? ` · ${esc(s.bu_code)}` : ""}${s.revenue_on === "delivery" ? ` · ${L2("revenue on delivery", "الإيراد عند التسليم")}` : ""}${s.invoice ? ` · ${L2("invoice", "فاتورة")} <a href="#/invoice/${s.invoice.id}">${esc(s.invoice.number)}</a>` : ""}</span></div>
+    <div class="kpis">${kpiBox(L2("Total payable", "إجمالي المستحق"), s.total, "", s.markup ? `${L2("incl. interest", "شامل فوائد")} ${money(s.markup)}` : "")}${kpiBox(L2("Paid", "المسدد"), s.paid, "pos")}${kpiBox(L2("In cheques", "بشيكات"), s.in_cheques)}${kpiBox(L2("Balance", "المتبقي"), s.balance)}${kpiBox(L2("Overdue", "متأخرات"), s.overdue, s.overdue > 0 ? "neg" : "", s.overdue_count ? `${s.overdue_count}` : "")}</div>
+    <div class="card"><h2>${L2("Sold", "المبيعات")}</h2><div class="tbl"><table><thead><tr><th>${L2("Description", "البيان")}</th><th class="num">${t("qty")}</th><th class="num">${L2("Price", "السعر")}</th><th class="num">${L2("Discount", "الخصم")}</th><th class="num">${t("amount")}</th></tr></thead><tbody>
+      ${s.lines.map(l => `<tr><td>${l.product_id ? `<a href="#/product/${l.product_id}">${esc(l.description)}</a>` : esc(l.description)}</td><td class="num">${numf(l.qty)} ${esc(l.unit)}</td><td class="num">${money(l.price)}</td><td class="num">${l.discount ? money(l.discount) : ""}</td><td class="num">${money(l.amount)}</td></tr>`).join("")}
+      ${s.vat ? `<tr><td colspan="4">${t("vat_amt")}</td><td class="num">${money(s.vat)}</td></tr>` : ""}${s.wht ? `<tr><td colspan="4">${t("wht_amt")}</td><td class="num">(${money(s.wht)})</td></tr>` : ""}
+      ${s.markup ? `<tr><td colspan="4">${L2("Installment interest", "فوائد التقسيط")}</td><td class="num">${money(s.markup)}</td></tr>` : ""}<tr class="total"><td colspan="4">${L2("Total payable", "إجمالي المستحق")}</td><td class="num">${money(s.total)}</td></tr></tbody></table></div></div>
+    <div class="card"><h2>${L2("Payment schedule", "جدول السداد")}</h2>${schedTable(s.schedule, { status: 1, pay: live && coll })}</div>
+    ${s.cheques.length ? `<div class="card"><h2>${L2("Cheques", "الشيكات")}</h2><div class="tbl stack"><table><thead><tr><th>${L2("Cheque no.", "رقم الشيك")}</th><th>${L2("Bank", "البنك")}</th><th>${L2("Due", "الاستحقاق")}</th><th class="num">${t("amount")}</th><th>${t("status")}</th><th></th></tr></thead><tbody>
+      ${s.cheques.map(c => `<tr><td>${esc(c.number)}</td><td>${esc(c.bank)}</td><td>${fd(c.due)}</td><td class="num">${money(c.amount)}</td><td><span class="chip ${(C_ST[c.status] || [])[2] || ""}">${esc(L2(...(C_ST[c.status] || [c.status, c.status]).slice(0, 2)))}</span>${c.settled_on ? ` <span class="muted">${fd(c.settled_on)}</span>` : ""}</td>
+        <td>${c.status === "pending" && coll ? `<button class="btn sm" data-a="chclr" data-id="${c.id}">${L2("Cleared", "تم الصرف")}</button><button class="btn sm danger" data-a="chbnc" data-id="${c.id}">${L2("Bounced", "مرتد")}</button>` : ""}</td></tr>`).join("")}</tbody></table></div></div>` : ""}
+    ${s.entries.length ? `<div class="card"><h2>${L2("Vouchers", "القيود")}</h2><div class="tbl"><table><tbody>${s.entries.map(e => `<tr class="click" data-a="openv" data-id="${e.id}"><td>${fd(e.date)}</td><td>${esc(tl(e.kind))}</td><td>${esc(e.memo)}</td><td class="num">${e.amount ? money(e.amount) : ""}</td></tr>`).join("")}</tbody></table></div></div>` : ""}
+    ${s.notes ? `<div class="card"><h2>${t("notes")}</h2><p style="white-space:pre-line">${esc(s.notes)}</p></div>` : ""}`;
+  const act = (a, body) => api("POST", `/api/sales/${s.id}/${a}`, body);
+  Object.assign(S.H, {
+    sedit: () => saleForm(s), sconf: () => confirmSaleForm(s), spay: el => collectForm(s, el && el.dataset.id ? s.schedule.find(r => String(r.id) === el.dataset.id) : null),
+    schq: () => chequesForm(s), sref: () => refundForm(s),
+    sdel2: () => drawer(L2("Deliver / hand over", "تسليم") + " — " + s.code, form([{ k: "date", l: t("date"), type: "date", v: today(), req: 1 },
+      { html: `<p class="muted">${s.invoiced ? L2("The sale is already invoiced; this records the handover.", "تم إصدار الفاتورة بالفعل؛ هذا يسجل التسليم.") : L2("The sales invoice is issued now, the money received so far moves from advances to the invoice, and the cost of what was sold is booked.", "تصدر فاتورة البيع الآن، وتُنقل المبالغ المحصلة من الدفعات المقدمة إلى الفاتورة، وتُسجل تكلفة المبيعات.")}</p>`, span: "spanall" }]),
+      async v => { await act("deliver", v); toast(t("posted")); }, { submitLabel: L2("Deliver", "تسليم") }),
+    scan: async () => { if (s.status === "draft") return confirmDelete(s.code, "/api/sales/" + s.id, async () => { location.hash = "#/sales"; });
+      const reason = prompt(L2("Cancel this sale? Units go back to available and the invoice is reversed. Reason:", "إلغاء هذا البيع؟ ستعود الوحدات متاحة وتُعكس الفاتورة. السبب:"), ""); if (reason == null) return;
+      try { await act("cancel", { date: today(), reason }); toast(t("saved")); route(); } catch (e) { fail(e); } },
+    chclr: el => chequeAction(el.dataset.id, "clear"), chbnc: el => chequeAction(el.dataset.id, "bounce") });
+};
+
+function confirmSaleForm(s) {
+  const first = s.schedule[0];
+  drawer(L2("Confirm sale", "تأكيد البيع") + " — " + s.code, form([
+    { k: "date", l: t("date"), type: "date", v: s.date, req: 1 },
+    { html: `<p class="muted">${s.revenue_on === "sale" ? L2("The sales invoice is issued now (VAT and e-invoice as usual)", "تصدر فاتورة البيع الآن (الضريبة والفاتورة الإلكترونية كالمعتاد)") : L2("Payments are kept as client advances until delivery; the invoice is issued on delivery.", "تُسجل المدفوعات كدفعات مقدمة حتى التسليم، وتصدر الفاتورة عند التسليم.")}. ${L2("Units on the sale are marked sold.", "الوحدات تصبح مباعة.")}</p>`, span: "spanall" },
+    { k: "collect", l: L2("Received now (down payment)", "المحصل الآن (المقدم)"), type: "number", v: first && first.due <= today() ? first.amount : "" },
+    { k: "method", l: t("method"), type: "select", opts: methodOpts() }, { k: "ref", l: t("ref") }]),
+  async v => { await api("POST", `/api/sales/${s.id}/confirm`, v); toast(t("posted")); }, { submitLabel: L2("Confirm", "تأكيد") });
+}
+function collectForm(s, row) {
+  drawer(L2("Receive payment", "تحصيل دفعة") + " — " + s.code, form([
+    { k: "date", l: t("date"), type: "date", v: today(), req: 1 }, { k: "amount", l: t("amount"), type: "number", req: 1, v: row ? row.left : (s.schedule.find(r => r.left > 0) || {}).left || "" },
+    { k: "method", l: t("method"), type: "select", opts: methodOpts(), change: "cmeth" },
+    { k: "postdated", l: L2("Post-dated cheque (counts as paid only when it clears)", "شيك آجل (لا يُعتبر مسدداً إلا بعد صرفه)"), type: "checkbox", span: "spanall", change: "cmeth" },
+    { k: "cheque_no", l: L2("Cheque no.", "رقم الشيك") }, { k: "bank", l: L2("Bank", "البنك") }, { k: "cheque_due", l: L2("Cheque date", "تاريخ الشيك"), type: "date", v: row ? row.due : "" },
+    { k: "ref", l: t("ref") }, { k: "memo", l: t("memo") }]),
+  async v => { await api("POST", `/api/sales/${s.id}/collect`, v); toast(t("posted")); },
+  { submitLabel: L2("Receive", "تحصيل"), onOpen: f => { S.H.cmeth = () => { const chq = $("[name=method]", f).value === "Cheque"; showFields(f, chq ? ["postdated", ...($("[name=postdated]", f).checked ? ["cheque_no", "bank", "cheque_due"] : ["cheque_no"])] : [], ["postdated", "cheque_no", "bank", "cheque_due"]); }; S.H.cmeth(); } });
+}
+function chequesForm(s) {
+  const open = s.schedule.filter(r => r.left > 0);
+  let rows = open.map((r, i) => ({ due: r.due, amount: r.left, number: "", bank: "", on: true, label: instLabel(r) }));
+  const body = () => rows.map((r, i) => `<tr><td><input type="checkbox" data-skip="1" data-change="chq" data-i="${i}" data-k="on" ${r.on ? "checked" : ""}></td><td>${esc(r.label)}</td><td><input data-skip="1" type="date" value="${esc(r.due)}" data-input="chq" data-i="${i}" data-k="due"></td>
+    <td><input data-skip="1" class="num" type="number" step="any" value="${r.amount}" data-input="chq" data-i="${i}" data-k="amount" style="width:110px"></td><td><input data-skip="1" value="${esc(r.number)}" data-input="chq" data-i="${i}" data-k="number" style="width:100px"></td><td><input data-skip="1" value="${esc(r.bank)}" data-input="chq" data-i="${i}" data-k="bank" style="width:100px"></td></tr>`).join("");
+  drawer(L2("Receive post-dated cheques", "استلام شيكات آجلة") + " — " + s.code, form([
+    { k: "date", l: L2("Received on", "تاريخ الاستلام"), type: "date", v: today(), req: 1 }, { k: "bank", l: L2("Bank (all cheques)", "البنك (لكل الشيكات)") },
+    { k: "first_no", l: L2("First cheque number (numbers the rest)", "رقم أول شيك (يرقم الباقي)"), type: "number" },
+    { html: `<div class="tbl"><table id="chqt"><thead><tr><th></th><th>${L2("Payment", "الدفعة")}</th><th>${L2("Cheque date", "تاريخ الشيك")}</th><th>${t("amount")}</th><th>${L2("No.", "رقم")}</th><th>${L2("Bank", "البنك")}</th></tr></thead><tbody>${body()}</tbody></table></div>
+      <p class="muted">${L2("Each cheque sits in Notes Receivable until you mark it cleared (money in the bank) or bounced (back on the customer's balance).", "كل شيك يُسجل في أوراق القبض حتى تحدده كـ «تم الصرف» (دخل البنك) أو «مرتد» (يعود على رصيد العميل).")}</p>`, span: "spanall" }]),
+  async v => { const cheques = rows.filter(r => r.on && +r.amount > 0).map(r => ({ due: r.due, amount: r.amount, number: r.number, bank: r.bank || v.bank }));
+    if (!cheques.length) throw new Error(L2("Tick at least one cheque", "حدد شيكاً واحداً على الأقل"));
+    await api("POST", `/api/sales/${s.id}/collect`, { date: v.date, method: "Cheque", cheques }); toast(`${cheques.length} ${L2("cheques recorded", "شيك مسجل")}`); },
+  { wide: true, submitLabel: L2("Record cheques", "تسجيل الشيكات"), onOpen: f => {
+    S.H.chq = el => { rows[+el.dataset.i][el.dataset.k] = el.type === "checkbox" ? el.checked : el.value; };
+    $("[name=first_no]", f).addEventListener("input", e => { const n = parseInt(e.target.value, 10); let k = 0; rows.forEach(r => { if (r.on) r.number = isNaN(n) ? "" : String(n + k++); }); $("#chqt tbody", f).innerHTML = body(); });
+    $("[name=bank]", f).addEventListener("input", e => { rows.forEach(r => { r.bank = e.target.value; }); $("#chqt tbody", f).innerHTML = body(); }); } });
+}
+function chequeAction(id, action) {
+  drawer(action === "clear" ? L2("Cheque cleared", "تم صرف الشيك") : L2("Cheque bounced", "شيك مرتد"), form([{ k: "date", l: t("date"), type: "date", v: today(), req: 1 },
+    ...(action === "clear" ? [{ k: "received_into", l: L2("Into account", "إلى حساب"), type: "select", opts: accts(["Asset"], ["cash"]), v: accByRole("bank") }] : [
+      { html: `<p class="muted">${L2("The amount goes back onto the customer's balance and the installment shows as unpaid again.", "يعود المبلغ على رصيد العميل ويظهر القسط غير مسدد.")}</p>`, span: "spanall" }])]),
+  async v => { await api("POST", `/api/sale-cheques/${id}/${action}`, v); toast(t("posted")); }, { submitLabel: t("save") });
+}
+function refundForm(s) {
+  drawer(L2("Refund", "رد مبلغ") + " — " + s.code, form([{ k: "date", l: t("date"), type: "date", v: today(), req: 1 },
+    { k: "amount", l: L2("Paid back to the customer", "المبلغ المردود للعميل"), type: "number", v: s.paid },
+    { k: "keep", l: L2("Kept (cancellation charge — other income)", "المحتجز (غرامة إلغاء — إيرادات أخرى)"), type: "number", v: "" },
+    { k: "method", l: t("method"), type: "select", opts: methodOpts() }, { k: "memo", l: t("memo"), span: "spanall" },
+    { html: `<p class="muted">${L2("Paid so far", "المسدد حتى الآن")}: <b>${money(s.paid)}</b>. ${L2("To cancel, refund (or keep) everything paid, then press Cancel sale.", "للإلغاء: رد (أو احتجز) كل المسدد ثم اضغط إلغاء البيع.")}</p>`, span: "spanall" }]),
+  async v => { await api("POST", `/api/sales/${s.id}/refund`, v); toast(t("posted")); }, { submitLabel: L2("Refund", "رد") });
+}
+
+PAGES.installments = async (view, parts, q) => {
+  const lq = { status: "open", ...q };
+  const d = await api("GET", "/api/installments?" + qs(lq));
+  const coll = can("shop.installments", "add") || can("shop.orders", "add");
+  const T = d.totals;
+  const msg = r => encodeURIComponent(S.lang === "ar" ? `السيد/ة ${r.customer}، نذكركم بالقسط المستحق ${fd(r.due)} بقيمة ${money(r.left)} — ${r.code}. شكراً لكم.` : `Dear ${r.customer}, a reminder of the installment of ${money(r.left)} due ${fd(r.due)} on ${r.code}. Thank you.`);
+  view.innerHTML = `<div class="toolbar"><a class="btn" href="#/sales">${t("m_sales_orders")}</a><span class="spacer"></span>${exportMenu("installments", lq)}</div>` +
+    filterBar(lq, ["q", "dates", ["select", "status", t("status"), [["open", L2("Not paid yet", "غير مسدد")], ["overdue", L2("Overdue", "متأخر")], ["due", L2("Due", "مستحق")], ["partial", L2("Part paid", "جزئي")], ["cheque", L2("By cheque", "بشيك")], ["paid", L2("Paid", "مسدد")], ["all", t("all")]]]]) +
+    `<div class="kpis">${kpiBox(L2("Installments listed", "الأقساط المعروضة"), T.amount, "", `${d.rows.length}`)}${kpiBox(L2("Still owed", "المتبقي"), T.left)}${kpiBox(L2("Overdue", "متأخرات"), T.overdue, T.overdue > 0 ? "neg" : "")}${kpiBox(L2("Covered by cheques", "مغطى بشيكات"), T.by_cheque)}</div>
+    ${d.cheques_due.length ? `<div class="card"><h2>${L2("Cheques due — deposit them", "شيكات مستحقة — قم بإيداعها")}</h2><div class="tbl stack"><table><tbody>${d.cheques_due.map(c => `<tr><td>${fd(c.due)}</td><td><a href="#/sale/${c.sale_id}">${esc(c.code)}</a> · ${esc(c.customer)}</td><td>${esc(c.number)} ${esc(c.bank)}</td><td class="num">${money(c.amount)}</td>
+      <td>${coll ? `<button class="btn sm" data-a="chclr" data-id="${c.id}">${L2("Cleared", "تم الصرف")}</button><button class="btn sm danger" data-a="chbnc" data-id="${c.id}">${L2("Bounced", "مرتد")}</button>` : ""}</td></tr>`).join("")}</tbody></table></div></div>` : ""}
+    <div class="card">${d.rows.length ? `<div class="tbl stack"><table><thead><tr><th>${L2("Due", "الاستحقاق")}</th><th>${L2("Sale", "البيع")}</th><th>${L2("Customer", "العميل")}</th><th>${L2("Payment", "الدفعة")}</th><th class="num">${t("amount")}</th><th class="num">${L2("Left", "المتبقي")}</th><th>${t("status")}</th><th></th></tr></thead><tbody>
+      ${d.rows.filter(r => !q.q || (r.customer + r.code).toLowerCase().includes(q.q.toLowerCase())).map(r => { const wa = waNumber(r.whatsapp || r.phone);
+        return `<tr><td>${fd(r.due)}</td><td><a href="#/sale/${r.sale_id}">${esc(r.code)}</a></td><td>${esc(r.customer)}${r.phone ? `<div class="lines"><a href="tel:${esc(r.phone)}">${esc(r.phone)}</a></div>` : ""}</td><td>${esc(instLabel(r))}</td><td class="num">${money(r.amount)}</td><td class="num">${r.left ? money(r.left) : ""}</td><td>${iStatus(r.status)}${r.days_late ? ` <span class="muted">${r.days_late} ${L2("days", "يوم")}</span>` : ""}</td>
+        <td>${r.left > 0 && coll ? `<button class="btn sm" data-a="ipay" data-sid="${r.sale_id}" data-id="${r.id}">${L2("Collect", "تحصيل")}</button>` : ""}${r.left > 0 && wa ? `<a class="btn sm" href="https://wa.me/${wa}?text=${msg(r)}" target="_blank" rel="noopener">WhatsApp</a>` : ""}</td></tr>`; }).join("")}</tbody></table></div>`
+      : `<div class="empty">${L2("Nothing here.", "لا يوجد.")}</div>`}</div>`;
+  Object.assign(S.H, { ipay: async el => { const s = await api("GET", "/api/sales/" + el.dataset.sid); collectForm(s, s.schedule.find(r => String(r.id) === el.dataset.id)); },
+    chclr: el => chequeAction(el.dataset.id, "clear"), chbnc: el => chequeAction(el.dataset.id, "bounce") });
+};
+async function pickSale(fn) {
+  const d = await api("GET", "/api/sales?status=confirmed");
+  const d2 = await api("GET", "/api/sales?status=delivered");
+  const rows = [...d.rows, ...d2.rows].filter(r => r.uncovered > 0);
+  if (!rows.length) { toast(L2("No open sales with money to collect", "لا توجد مبيعات بها مبالغ للتحصيل")); return; }
+  drawer(L2("Which sale?", "أي بيع؟"), form([{ k: "pick", l: t("m_sales_orders"), type: "select", span: "spanall", opts: rows.map(r => [r.id, `${r.code} — ${r.customer} · ${money(r.balance)}${r.next_due ? ` · ${fd(r.next_due)}` : ""}`]) }]),
+    async v => { const s = await api("GET", "/api/sales/" + v.pick); fn(s); return false; }, { submitLabel: L2("Continue", "متابعة") });
 }
 
 // ================================================================= entry types

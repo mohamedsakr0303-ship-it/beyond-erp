@@ -620,6 +620,63 @@ def rentals_table(db, status=None, lang="en"):
             "columns": cols, "rows": rows, "lang": lang}
 
 
+SALE_ST = {"draft": ("Draft", "مسودة"), "confirmed": ("Confirmed", "مؤكد"), "delivered": ("Delivered", "تم التسليم"),
+           "cancelled": ("Cancelled", "ملغي")}
+INST_ST = {"paid": ("Paid", "مسدد"), "cheque": ("By cheque", "بشيك"), "partial": ("Part paid", "مسدد جزئياً"),
+           "overdue": ("Overdue", "متأخر"), "due": ("Due", "مستحق"), "cancelled": ("Cancelled", "ملغي")}
+
+
+def sales_table(db, p, lang="en"):
+    from . import sales
+    ar = lang == "ar"
+    d = sales.register(db, p.get("q"), p.get("status"), p.get("customer"), p.get("date_from"), p.get("date_to"))
+    cols = _mkcols([("Sale", "البيع", "left"), ("Date", "التاريخ", "left"), ("Customer", "العميل", "left"), ("Status", "الحالة", "left"),
+                    ("Price", "الثمن", "right"), ("Interest", "فوائد التقسيط", "right"), ("Total", "الإجمالي", "right"),
+                    ("Paid", "المسدد", "right"), ("In cheques", "بشيكات", "right"), ("Balance", "المتبقي", "right"),
+                    ("Overdue", "متأخرات", "right"), ("Next due", "القسط القادم", "left")], lang)
+    rows = [{"cells": [r["code"], r["date"], r["customer"], SALE_ST.get(r["status"], (r["status"],) * 2)[1 if ar else 0], r["price"], r["markup"],
+                       r["total"], r["paid"], r["in_cheques"], r["balance"], r["overdue"],
+                       f"{r['next_due']} ({r['next_amount']:,.2f})" if r["next_due"] and r["status"] != "cancelled" else ""],
+             "style": "item", "indent": 0} for r in d["rows"]]
+    t = d["totals"]
+    rows.append({"cells": [L("total", lang), "", "", "", "", "", t["total"], t["paid"], t["in_cheques"], t["balance"], t["overdue"], ""],
+                 "style": "grand", "indent": 0})
+    return {"title": "المبيعات" if ar else "Sales", "subtitle": f"{L('as_of', lang)} {acc.today()} · {db.setting('currency')}",
+            "columns": cols, "rows": rows, "lang": lang}
+
+
+def installments_table(db, p, lang="en"):
+    from . import sales
+    ar = lang == "ar"
+    d = sales.installments(db, p.get("as_of") or p.get("date_to_asof"), p.get("status") or "open", p.get("date_from"), p.get("date_to"),
+                           p.get("customer"))
+    cols = _mkcols([("Due", "الاستحقاق", "left"), ("Sale", "البيع", "left"), ("Customer", "العميل", "left"), ("Phone", "الهاتف", "left"),
+                    ("Payment", "الدفعة", "left"), ("Amount", "المبلغ", "right"), ("Paid", "المسدد", "right"),
+                    ("By cheque", "بشيك", "right"), ("Left", "المتبقي", "right"), ("Days late", "أيام التأخير", "right", "num"),
+                    ("Status", "الحالة", "left")], lang)
+    rows = [{"cells": [r["due"], r["code"], r["customer"], r["phone"] or r["whatsapp"], r["label"], r["amount"], r["paid"], r["by_cheque"],
+                       r["left"], r["days_late"] or "", INST_ST.get(r["status"], (r["status"],) * 2)[1 if ar else 0]],
+             "style": "item", "indent": 0} for r in d["rows"]]
+    t = d["totals"]
+    rows.append({"cells": [L("total", lang), "", "", "", "", t["amount"], t["paid"], t["by_cheque"], t["left"], "", ""], "style": "grand", "indent": 0})
+    return {"title": "الأقساط والتحصيل" if ar else "Installments & collections", "subtitle": f"{L('as_of', lang)} {d['as_of']} · {db.setting('currency')}",
+            "columns": cols, "rows": rows, "lang": lang}
+
+
+def products_table(db, p, lang="en"):
+    from . import sales
+    ar = lang == "ar"
+    d = sales.list_products(db, p.get("q"), p.get("kind"), p.get("category"), p.get("status"))
+    cols = _mkcols([("Code", "الكود", "left"), ("Name", "الاسم", "left"), ("Kind", "النوع", "left"), ("Category", "التصنيف", "left"),
+                    ("Price", "السعر", "right"), ("Status", "الحالة", "left"), ("In stock", "بالمخزن", "right", "num"),
+                    ("Details", "المواصفات", "left")], lang)
+    rows = [{"cells": [r["code"], (r["name_ar"] if ar and r["name_ar"] else r["name"]), r["kind"], r["category"], r["price"], r["status"],
+                       r["in_stock"] if r["in_stock"] is not None else "", " · ".join(f"{a}: {b}" for a, b in r["specs"][:6])],
+             "style": "item", "indent": 0} for r in d["rows"]]
+    return {"title": "المنتجات والوحدات" if ar else "Products & units", "subtitle": f"{L('as_of', lang)} {acc.today()} · {db.setting('currency')}",
+            "columns": cols, "rows": rows, "lang": lang}
+
+
 def tax_table(db, date_from=None, date_to=None, lang="en"):
     t = acc.tax_summary(db, date_from, date_to)
     ar = lang == "ar"
@@ -684,6 +741,12 @@ def build(db, name, p):
         return rent_fleet_table(db, lang)
     if name == "rentals":
         return rentals_table(db, p.get("status"), lang)
+    if name == "sales":
+        return sales_table(db, p, lang)
+    if name == "installments":
+        return installments_table(db, p, lang)
+    if name == "products":
+        return products_table(db, p, lang)
     if name == "loans":
         return loans_table(db, p.get("direction"), p.get("state"), lang)
     if name == "loan_schedule":
@@ -706,7 +769,8 @@ REPORT_PERMS = {"income_statement": "reports.income_statement", "balance_sheet":
                 "tax": "tax.report", "fixed_assets": "assets.register",
                 "negotiations": "purchasing.negotiations", "loans": "accounting.loans", "loan_schedule": "accounting.loans",
                 "custody": "purchasing.custody", "custody_statement": "purchasing.custody", "rent_fleet": "rentals.fleet",
-                "rentals": "rentals.contracts"}
+                "rentals": "rentals.contracts", "sales": "shop.orders", "installments": "shop.installments",
+                "products": "shop.products"}
 
 
 # ==================================================================== writers

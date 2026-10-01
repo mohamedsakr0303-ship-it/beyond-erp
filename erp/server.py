@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from . import assets, custody, entries, equity, loans, rental_docs, rentals, __version__
+from . import assets, custody, entries, equity, loans, rental_docs, rentals, sales, sales_docs, __version__
 from . import accounting as acc
 from . import auth, branding, cloud, documents, einvoice, interchange, reports
 from .db import MODULES, SUBMODULES, SUBTYPES, to_major, to_minor
@@ -610,7 +610,9 @@ KIND_MODULE = {"Supplier Discount": "purchasing.payments", "Direct Cost": "purch
                "Asset Disposal": "assets.register", "Goods Receipt": "stock.moves", "Material Issue": "stock.moves",
                "Stock Transfer": "stock.moves", "Stock Adjustment": "stock.moves",
                **{k: "accounting.loans" for k in loans.ALL_KINDS}, **{k: "purchasing.custody" for k in custody.ALL_KINDS},
-               **{k: "rentals.fleet" for k in rentals.KINDS}}
+               **{k: "rentals.fleet" for k in rentals.KINDS},
+               **{k: "shop.orders" for k in ("Installment Interest", "Advance Applied", "Cost of Sales", "Cheque Received",
+                                             "Cheque Cleared", "Cheque Bounced", "Sale Refund")}}
 
 
 def _vouchers_report(ctx):
@@ -941,6 +943,166 @@ def partner_del(ctx, pid):
 
 
 # ================================================================== loans
+# ============================================================ product & unit sales
+def _shop(ctx, *screens, level="view"):
+    if not any(ctx.can("shop." + x, level) for x in screens):
+        raise PermissionError()
+
+
+@route("GET", "/api/products")
+def products_list(ctx):
+    _shop(ctx, "products", "orders")
+    q = ctx.q
+    return ok(sales.list_products(ctx.db, q.get("q"), q.get("kind"), q.get("category"), q.get("status"), q.get("bu_id")))
+
+
+@route("GET", "/api/products/<pid>")
+def product_one(ctx, pid):
+    _shop(ctx, "products", "orders")
+    return ok(sales.product_row(ctx.db, sales.get_product(ctx.db, pid), media=True))
+
+
+@route("POST", "/api/products", "shop.products", "add")
+def product_add(ctx):
+    pid = sales.save_product(ctx.db, ctx.body)
+    ctx.log("product.add", pid)
+    return ok({"id": pid})
+
+
+@route("PUT", "/api/products/<pid>", "shop.products", "edit")
+def product_edit(ctx, pid):
+    return ok({"id": sales.save_product(ctx.db, ctx.body, pid)})
+
+
+@route("DELETE", "/api/products/<pid>", "shop.products", "edit")
+def product_del(ctx, pid):
+    sales.delete_product(ctx.db, pid)
+    ctx.log("product.delete", pid)
+    return ok()
+
+
+@route("POST", "/api/products/<pid>/media", "shop.products", "add")
+def product_media_add(ctx, pid):
+    return ok({"id": sales.add_media(ctx.db, pid, ctx.body)})
+
+
+@route("GET", "/api/product-media/<mid>")
+def product_media_get(ctx, mid):
+    _shop(ctx, "products", "orders")
+    return ok(sales.media_file(ctx.db, mid))
+
+
+@route("PUT", "/api/product-media/<mid>", "shop.products", "edit")
+def product_media_edit(ctx, mid):
+    sales.update_media(ctx.db, mid, ctx.body)
+    return ok()
+
+
+@route("DELETE", "/api/product-media/<mid>", "shop.products", "edit")
+def product_media_del(ctx, mid):
+    sales.delete_media(ctx.db, mid)
+    return ok()
+
+
+@route("GET", "/api/products/<pid>/doc")
+def product_doc(ctx, pid):
+    _shop(ctx, "products", "orders")
+    return Reply(sales_docs.product_html(ctx.db, pid, ctx.q.get("lang")).encode("utf-8"), ctype="text/html; charset=utf-8")
+
+
+@route("GET", "/api/shop-settings")
+def shop_settings(ctx):
+    _shop(ctx, "products", "orders", "installments")
+    return ok(sales.settings(ctx.db))
+
+
+@route("PUT", "/api/shop-settings")
+def shop_settings_save(ctx):
+    if not (ctx.can("shop.orders", "edit") or ctx.can("settings", "edit")):
+        raise PermissionError()
+    return ok(sales.save_settings(ctx.db, ctx.body))
+
+
+@route("POST", "/api/sales-preview")
+def sales_preview(ctx):
+    _shop(ctx, "products", "orders")
+    return ok(sales.preview(ctx.db, ctx.body))
+
+
+@route("GET", "/api/sales")
+def sales_list(ctx):
+    _shop(ctx, "orders", "installments")
+    q = ctx.q
+    return ok(sales.register(ctx.db, q.get("q"), q.get("status"), q.get("customer"), q.get("date_from"), q.get("date_to"), q.get("as_of")))
+
+
+@route("GET", "/api/sales/<sid>")
+def sale_one(ctx, sid):
+    _shop(ctx, "orders", "installments")
+    return ok(sales.detail(ctx.db, sid, ctx.q.get("as_of")))
+
+
+@route("POST", "/api/sales", "shop.orders", "add")
+def sale_add(ctx):
+    sid = sales.save(ctx.db, ctx.body)
+    ctx.log("sale.add", sid)
+    return ok({"id": sid})
+
+
+@route("PUT", "/api/sales/<sid>", "shop.orders", "edit")
+def sale_edit(ctx, sid):
+    return ok({"id": sales.save(ctx.db, ctx.body, sid)})
+
+
+@route("DELETE", "/api/sales/<sid>", "shop.orders", "edit")
+def sale_del(ctx, sid):
+    sales.delete(ctx.db, sid)
+    ctx.log("sale.delete", sid)
+    return ok()
+
+
+@route("POST", "/api/sales/<sid>/<action>")
+def sale_action(ctx, sid, action):
+    u = ctx.user["username"]
+    if action == "collect":
+        _shop(ctx, "orders", "installments", level="add")
+        r = sales.collect(ctx.db, sid, ctx.body, u)
+    elif action in ("confirm", "deliver"):
+        _shop(ctx, "orders", level="add")
+        r = (sales.confirm if action == "confirm" else sales.deliver)(ctx.db, sid, ctx.body, u)
+    elif action in ("refund", "cancel"):
+        _shop(ctx, "orders", level="edit")
+        r = (sales.refund if action == "refund" else sales.cancel)(ctx.db, sid, ctx.body, u)
+    else:
+        return ok({"error": "Unknown action"}, 404)
+    ctx.log(f"sale.{action}", sid)
+    return ok({"result": r})
+
+
+@route("POST", "/api/sale-cheques/<cid>/<action>")
+def sale_cheque(ctx, cid, action):
+    _shop(ctx, "orders", "installments", level="add")
+    eid = sales.cheque(ctx.db, cid, action, ctx.body, ctx.user["username"])
+    ctx.log(f"sale.cheque.{action}", cid)
+    return ok({"id": eid})
+
+
+@route("GET", "/api/sales/<sid>/doc")
+def sale_doc(ctx, sid):
+    _shop(ctx, "orders", "installments")
+    return Reply(sales_docs.sale_html(ctx.db, sid, ctx.q.get("kind") or "contract", ctx.q.get("lang")).encode("utf-8"),
+                 ctype="text/html; charset=utf-8")
+
+
+@route("GET", "/api/installments")
+def installments_list(ctx):
+    _shop(ctx, "installments", "orders")
+    q = ctx.q
+    r = sales.installments(ctx.db, q.get("as_of"), q.get("status") or "open", q.get("date_from"), q.get("date_to"), q.get("customer"))
+    r["cheques_due"] = [{**c, "amount": c["amount"] / 100} for c in sales.cheques_due(ctx.db, q.get("cheques_upto") or acc.today())]
+    return ok(r)
+
+
 @route("GET", "/api/loans", "accounting.loans")
 def loans_list(ctx):
     q = ctx.q
@@ -1609,6 +1771,9 @@ def eta_cancel(ctx, xid):
 def dashboard(ctx):
     q = ctx.q
     d = acc.dashboard(ctx.db, q.get("date_from"), q.get("date_to"), q.get("bu_id") or None)
+    if ctx.can("shop.installments") or ctx.can("shop.orders"):
+        d["installments_overdue"] = sales.overdue_summary(ctx.db)
+        d["cheques_due"] = len(sales.cheques_due(ctx.db))
     if ctx.can("assets.depreciation", "add"):
         d["depreciation_due"] = assets.due(ctx.db)
         if d["depreciation_due"] is None and ctx.can("rentals.fleet", "edit") and assets.policy(ctx.db)["remind"]:
@@ -1908,12 +2073,12 @@ def offer_type_del(ctx, tid):
 
 
 # ============================================================ erase all data
-ERASE_TRANSACTIONS = ("stock_moves", "stock_levels", "extract_lines", "extracts", "ownership_changes", "journal_lines",
+ERASE_TRANSACTIONS = ("sale_cheques", "sale_installments", "sale_lines", "sales_orders", "stock_moves", "stock_levels", "extract_lines", "extracts", "ownership_changes", "journal_lines",
                       "journal_entries", "offers", "loans", "custodies", "rent_moves", "rental_invoices", "rental_charges",
                       "rental_handovers", "rental_lines", "rentals", "rent_lots")
 ERASE_ALL = ERASE_TRANSACTIONS + ("parties", "stock_items", "boq_lines", "boqs", "partner_shares", "partners", "rates",
                                   "fixed_assets", "business_units", "offer_types", "tax_codes", "assets", "rent_kit_lines", "rent_kits",
-                                  "rent_items", "rent_models")
+                                  "rent_items", "rent_models", "product_media", "products")
 
 
 @route("POST", "/api/erase")
@@ -1931,6 +2096,7 @@ def erase_data(ctx):
     with db.tx():
         for t in (ERASE_ALL if scope == "all" else ERASE_TRANSACTIONS):
             db.conn.execute(f"DELETE FROM {t}")
+        db.conn.execute("UPDATE products SET status='available' WHERE status IN ('reserved','sold','delivered')")
         if scope == "all":
             db.conn.execute("DELETE FROM warehouses")
             db.conn.execute("DELETE FROM accounts")
@@ -2340,8 +2506,12 @@ class Handler(BaseHTTPRequestHandler):
             ctype += "; charset=utf-8"
         body = target.read_bytes()
         r = Reply(body, 200, ctype)
-        r.headers["Content-Security-Policy"] = ("default-src 'self'; style-src 'self' 'unsafe-inline'; "
-                                                "script-src 'self'; img-src 'self' data:; frame-ancestors 'self'")
+        # product media: photos / clips / 3D models are data, blob or https links; players (YouTube, Vimeo, Sketchfab,
+        # Drive, virtual tours) are https frames. Scripts stay same-origin only.
+        r.headers["Content-Security-Policy"] = ("default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval'; "
+                                                "img-src 'self' data: blob: https:; media-src 'self' data: blob: https:; "
+                                                "connect-src 'self' data: blob: https:; frame-src https:; worker-src 'self' blob:; "
+                                                "frame-ancestors 'self'")
         self.send(r)
 
     def dispatch(self, method):

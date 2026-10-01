@@ -370,7 +370,8 @@ class Workspace(unittest.TestCase):
         out = {t: db.q(f"SELECT * FROM {t} ORDER BY 1") for t in
                ("business_units", "journal_entries", "journal_lines", "users", "offers", "partners", "accounts",
                 "settings", "audit_log", "ownership_changes", "fixed_assets", "partner_shares", "loans", "custodies",
-                "rent_items", "rent_lots", "rentals", "rental_lines", "rental_handovers", "rent_moves", "rental_charges")}
+                "rent_items", "rent_lots", "rentals", "rental_lines", "rental_handovers", "rent_moves", "rental_charges",
+                "products", "product_media", "sales_orders", "sale_lines", "sale_installments", "sale_cheques", "extracts")}
         for u in out["users"]:
             u.pop("pw_hash")          # passwords stay on the device where they were set
         out["audit_log"] = [r for r in out["audit_log"] if r["action"] not in ("login", "setup")]  # device-local
@@ -518,6 +519,23 @@ class Workspace(unittest.TestCase):
         self.assertEqual(st, 200, r)
         st, r = self.node_call(1, b, "POST", f"/api/rental-handovers/{r['id']}/confirm", {})
         self.assertEqual(st, 200, r)
+        # a unit sold on installments on one device; cheques cleared and money collected on the other
+        st, r = self.node_call(0, a, "POST", "/api/products", {"name": "Flat 4", "kind": "unit", "price": 900000})
+        self.assertEqual(st, 200, r)
+        self.node_call(0, a, "POST", f"/api/products/{r['id']}/media", {"kind": "photo", "data": "data:image/png;base64,iVBORw0KGgo="})
+        bu = self.nodes[0][1].one("SELECT code FROM business_units LIMIT 1")["code"]
+        st, r = self.node_call(0, a, "POST", "/api/sales", {"customer": "Hany", "bu_code": bu, "date": "2026-03-01", "lines": [{"product_id": r["id"]}],
+                                                           "plan": {"type": "installments", "down_pct": 20, "n": 4, "rate": 12}})
+        self.assertEqual(st, 200, r)
+        sid = r["id"]
+        self.assertEqual(self.node_call(0, a, "POST", f"/api/sales/{sid}/confirm", {"collect": 180000, "method": "Cash"})[0], 200)
+        self.nodes[1][0].cloud.pull()
+        st, d = self.node_call(1, b, "GET", f"/api/sales/{sid}")
+        st, r = self.node_call(1, b, "POST", f"/api/sales/{sid}/collect", {"date": "2026-03-02", "method": "Cheque",
+                                                                       "cheques": [{"number": "9", "due": "2026-04-01", "amount": d["schedule"][1]["amount"]}]})
+        self.assertEqual(st, 200, r)
+        cid = self.nodes[1][1].one("SELECT id FROM sale_cheques")["id"]
+        self.assertEqual(self.node_call(1, b, "POST", f"/api/sale-cheques/{cid}/clear", {"date": "2026-04-02"})[0], 200)
         for srv, _, _ in self.nodes:
             srv.cloud.pull()
         self.assertEqual(self.dump(self.nodes[0][1]), self.dump(self.nodes[1][1]))
@@ -716,6 +734,92 @@ class DepreciationPolicy(unittest.TestCase):
             A.save_policy(db, {"method": "sum_of_digits"})
         self.assertTrue(A.preview_schedule(db, {"account": fa, "cost": 1000, "acquired": "2026-03-01"})["rows"])
         self.assertEqual([c["check"] for c in a.audit(db) if not c["ok"]], [])
+
+
+class ProductSales(unittest.TestCase):
+    """Catalog with media, sales on payment plans (installments with interest), cheques, delivery, refund and cancel."""
+
+    def setUp(self):
+        from erp import sales
+        self.S, self.db = sales, seeded()
+        self.unit = sales.save_product(self.db, {"name": "Apartment A-301", "kind": "unit", "price": 2400000, "bu_code": "PRJ-1",
+                                                 "specs": [["Area", "150 m²"]], "cost": 1500000, "inventory_account": "1210"})
+        self.item = sales.save_product(self.db, {"name": "Tiles box", "kind": "item", "price": 120, "stock_item": "Tiles", "unit": "box"})
+
+    def test_schedule(self):
+        rows, markup = self.S.build_schedule(240000000, {"type": "installments", "down_pct": 10, "n": 24, "rate": 10,
+                                                          "extras": [{"label": "On delivery", "pct": 10, "due": "2027-06-01"}]}, "2026-03-01")
+        self.assertEqual(markup, 38400000)                     # (2.4M − 240k − 240k) × 10% × 2 years
+        self.assertEqual(sum(r["amount"] for r in rows), 240000000 + markup)
+        self.assertEqual(rows[0]["kind"], "down")
+        self.assertEqual([r for r in rows if r["kind"] == "installment"][-1]["due"], "2028-03-01")
+        rows, _ = self.S.build_schedule(100000, {"type": "installments", "n": 3, "round_to": 10}, "2026-01-31")
+        self.assertEqual([r["amount"] for r in rows], [33000, 33000, 34000])
+        self.assertEqual([r["due"] for r in rows], ["2026-02-28", "2026-03-28", "2026-04-28"])  # month-end clamps
+        with self.assertRaises(a.ValidationError):
+            self.S.build_schedule(1000, {"type": "custom", "rows": [{"due": "2026-01-01", "amount": 5}]}, "2026-01-01")
+
+    def test_installment_sale_on_delivery(self):
+        S, db = self.S, self.db
+        sid = S.save(db, {"customer": "Mona", "bu_code": "PRJ-1", "date": "2026-03-01", "revenue_on": "delivery", "lines": [{"product_id": self.unit}],
+                          "plan": {"type": "installments", "down_pct": 10, "n": 24, "rate": 10, "first_due": "2026-04-01"}})
+        self.assertEqual(S.get_product(db, self.unit)["status"], "reserved")
+        with self.assertRaises(a.ValidationError):                          # the unit cannot be sold twice
+            S.save(db, {"customer": "X", "bu_code": "PRJ-1", "lines": [{"product_id": self.unit}]})
+        S.confirm(db, sid, {"collect": 240000, "method": "Bank Transfer"})
+        d = S.detail(db, sid, "2026-03-15")
+        self.assertEqual((d["status"], d["paid"], d["invoiced"]), ("confirmed", 240000, False))
+        self.assertEqual(a.party_balance(db, db.acct("client_advances"), "Mona"), 240000)
+        amt = d["schedule"][1]["amount"]
+        S.collect(db, sid, {"method": "Cheque", "date": "2026-03-02", "cheques": [{"number": "1", "due": "2026-04-01", "amount": amt},
+                                                                                {"number": "2", "due": "2026-05-01", "amount": amt}]})
+        c1, c2 = S.detail(db, sid)["cheques"]
+        self.assertEqual(S.detail(db, sid, "2026-04-15")["schedule"][1]["status"], "cheque")
+        S.cheque(db, c1["id"], "clear", {"date": "2026-04-02"})
+        S.cheque(db, c2["id"], "bounce", {"date": "2026-05-03"})
+        S.deliver(db, sid, {"date": "2026-07-01"})
+        d = S.detail(db, sid, "2026-07-01")
+        self.assertEqual((d["status"], d["paid"], d["invoiced"], d["overdue_count"]), ("delivered", 348000, True, 2))
+        self.assertAlmostEqual(d["interest_earned"], round(432000 * 348000 / 2832000, 2), places=2)
+        self.assertEqual(a.party_balance(db, db.acct("client_advances"), "Mona"), 0)
+        self.assertEqual(S.get_product(db, self.unit)["status"], "delivered")
+        tb = {r["code"]: r for r in a.trial_balance(db)["rows"]}
+        self.assertEqual(tb["5005"]["debit"], 1500000)              # cost of the unit
+        self.assertEqual([c["check"] for c in a.audit(db) if not c["ok"]], [])
+        self.assertEqual(S.installments(db, "2026-07-01", "overdue")["totals"]["left"], 216000)
+
+    def test_item_sale_refund_cancel_and_backup(self):
+        from erp import interchange, sales_docs
+        S, db = self.S, self.db
+        sid = S.save(db, {"customer": "Shop client", "bu_code": "PRJ-1", "date": "2026-03-05", "vat_code": "VAT14",
+                          "lines": [{"product_id": self.item, "qty": 10, "discount": 50}]})
+        self.assertEqual(S.detail(db, sid)["total"], 1311)                  # 10 × 115 + 14% VAT
+        S.confirm(db, sid, {"collect": 1311, "method": "Cash"})
+        stock = lambda: sum(r["qty"] for r in a.stock_report(db))  # noqa: E731
+        self.assertEqual(stock(), 80)
+        d = S.detail(db, sid)
+        self.assertEqual((d["balance"], d["invoice"]["status"]), (0, "posted"))
+        for k in ("quote", "contract", "statement"):
+            self.assertIn("SO-0001", sales_docs.sale_html(db, sid, k, "ar"))
+        mid = S.add_media(db, self.unit, {"kind": "photo", "data": "data:image/png;base64,iVBORw0KGgo="})
+        S.add_media(db, self.unit, {"kind": "model", "url": "https://example.com/flat.glb", "title": "3D"})
+        self.assertEqual(S.product_row(db, S.get_product(db, self.unit))["cover"], mid)
+        self.assertIn("<img", sales_docs.product_html(db, self.unit))
+        with self.assertRaises(a.ValidationError):
+            S.cancel(db, sid, {"date": "2026-03-06"})                          # money must be refunded first
+        S.refund(db, sid, {"amount": 1000, "keep": 311, "method": "Cash", "date": "2026-03-06"})
+        S.cancel(db, sid, {"date": "2026-03-06"})
+        self.assertEqual((S.get(db, sid)["status"], stock()), ("cancelled", 90))
+        tb = {r["code"]: r for r in a.trial_balance(db)["rows"]}
+        self.assertEqual(tb["4090"]["credit"], 311)                  # cancellation charge kept
+        self.assertEqual([c["check"] for c in a.audit(db) if not c["ok"]], [])
+        s2 = S.save(db, {"customer": "B", "bu_code": "PRJ-1", "lines": [{"product_id": self.unit}], "date": "2026-04-01"})
+        S.confirm(db, s2, {})
+        db2 = Database(":memory:")
+        interchange.import_data(db2, interchange.read_json(interchange.to_json(db).encode()), mode="replace")
+        self.assertEqual(S.detail(db2, "SO-0002")["balance"], 2400000)
+        self.assertEqual(S.get_product(db2, "P-0001")["status"], "sold")
+        self.assertEqual(len(S.media_list(db2, S.get_product(db2, "P-0001")["id"])), 2)
 
 
 class Contacts(unittest.TestCase):

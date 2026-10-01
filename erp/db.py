@@ -447,6 +447,97 @@ CREATE TABLE IF NOT EXISTS rental_invoices (
     period_to TEXT NOT NULL
 );
 
+-- Product & unit sales: a catalog (items, real-estate units, services) with photos / clips / 3D models, sales
+-- contracts with payment plans (cash, deferred, installments with interest), post-dated cheques. Money is journal
+-- entries with ref SO:<code>; the invoice is an ordinary sales invoice (extract) so VAT / e-invoicing work as usual.
+CREATE TABLE IF NOT EXISTS products (
+    id INTEGER PRIMARY KEY,
+    code TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    name_ar TEXT DEFAULT '',
+    kind TEXT NOT NULL DEFAULT 'item',          -- item (stock / quantity), unit (one of a kind: apartment, villa, car), service
+    category TEXT DEFAULT '',
+    unit TEXT DEFAULT '',
+    price INTEGER NOT NULL DEFAULT 0,           -- list price, minor units
+    cost INTEGER NOT NULL DEFAULT 0,            -- cost per unit for the cost of sales (when not taken from stock)
+    vat_code TEXT DEFAULT '',
+    revenue_account TEXT DEFAULT '',
+    inventory_account TEXT DEFAULT '',          -- where the cost sits until sold (units / goods not in the stock module)
+    bu_id INTEGER REFERENCES business_units(id) ON DELETE SET NULL,   -- project the unit belongs to
+    stock_item TEXT DEFAULT '',                 -- sold from the stock module (name of the stock item)
+    warehouse_id INTEGER REFERENCES warehouses(id) ON DELETE SET NULL,
+    specs TEXT DEFAULT '[]',                    -- [[label, value], ...] area, floor, rooms, colour, size...
+    description TEXT DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'available',   -- available, reserved, sold, delivered, hidden
+    cover_media INTEGER,
+    created_at TEXT DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS product_media (
+    id INTEGER PRIMARY KEY,
+    product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL DEFAULT 'photo',         -- photo, video, model (3D), tour (360 / virtual tour), file
+    title TEXT DEFAULT '',
+    url TEXT DEFAULT '',                        -- a link (YouTube, Vimeo, Sketchfab, Drive, .mp4, .glb ...)
+    mime TEXT DEFAULT '',
+    data TEXT DEFAULT '',                       -- an uploaded file, base64
+    thumb TEXT DEFAULT '',                      -- small preview (data URL) for lists
+    size INTEGER DEFAULT 0,
+    seq INTEGER DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS ix_pm_product ON product_media(product_id, seq);
+CREATE TABLE IF NOT EXISTS sales_orders (
+    id INTEGER PRIMARY KEY,
+    code TEXT NOT NULL UNIQUE,
+    date TEXT NOT NULL,
+    customer TEXT NOT NULL,
+    bu_id INTEGER REFERENCES business_units(id) ON DELETE SET NULL,
+    status TEXT NOT NULL DEFAULT 'draft',       -- draft, confirmed, delivered, cancelled
+    revenue_on TEXT NOT NULL DEFAULT 'sale',    -- sale: invoiced at once; delivery: payments are advances until handover
+    vat_code TEXT DEFAULT '',
+    wht_code TEXT DEFAULT '',
+    plan TEXT DEFAULT '{}',
+    price INTEGER NOT NULL DEFAULT 0,           -- what the customer owes for the goods (net + VAT − WHT)
+    markup INTEGER NOT NULL DEFAULT 0,          -- installment interest on top
+    delivery_due TEXT DEFAULT '',
+    delivered_on TEXT DEFAULT '',
+    extract_id INTEGER REFERENCES extracts(id) ON DELETE SET NULL,
+    salesperson TEXT DEFAULT '',
+    notes TEXT DEFAULT '',
+    created_at TEXT DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS sale_lines (
+    id INTEGER PRIMARY KEY,
+    sale_id INTEGER NOT NULL REFERENCES sales_orders(id) ON DELETE CASCADE,
+    seq INTEGER DEFAULT 0,
+    product_id INTEGER REFERENCES products(id) ON DELETE SET NULL,
+    description TEXT DEFAULT '',
+    unit TEXT DEFAULT '',
+    qty REAL NOT NULL DEFAULT 1,
+    price INTEGER NOT NULL DEFAULT 0,
+    discount INTEGER NOT NULL DEFAULT 0         -- on the whole line, minor units
+);
+CREATE TABLE IF NOT EXISTS sale_installments (
+    id INTEGER PRIMARY KEY,
+    sale_id INTEGER NOT NULL REFERENCES sales_orders(id) ON DELETE CASCADE,
+    seq INTEGER DEFAULT 0,
+    due TEXT NOT NULL,
+    amount INTEGER NOT NULL,
+    kind TEXT DEFAULT 'installment',            -- down, extra, installment, balance
+    label TEXT DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS sale_cheques (
+    id INTEGER PRIMARY KEY,
+    sale_id INTEGER NOT NULL REFERENCES sales_orders(id) ON DELETE CASCADE,
+    number TEXT DEFAULT '',
+    bank TEXT DEFAULT '',
+    due TEXT NOT NULL,
+    amount INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',     -- pending (in hand / under collection), cleared, bounced
+    entry_id INTEGER,
+    settled_entry INTEGER,
+    settled_on TEXT DEFAULT ''
+);
+
 -- Cash custody (petty cash advances) held by employees; movements are journal entries with ref CU:<code>...
 CREATE TABLE IF NOT EXISTS custodies (
     id INTEGER PRIMARY KEY,
@@ -585,6 +676,7 @@ DEFAULT_ACCOUNTS = [
     ("1185", "Accrued Interest Receivable", "Asset", "other_current_asset", "interest_receivable"),
     ("1190", "Allowance for Doubtful Accounts", "Asset", "allowance_doubtful", "doubtful_allowance"),
     ("1200", "Materials Inventory", "Asset", "inventory", "inventory"),
+    ("1210", "Goods & Units for Sale", "Asset", "inventory", "goods_inventory"),
     ("1300", "Prepaid Expenses", "Asset", "prepaid", None),
     ("1310", "Supplier Advances", "Asset", "prepaid", None),
     ("1320", "VAT Recoverable (Input)", "Asset", "other_current_asset", "vat_input"),
@@ -617,6 +709,7 @@ DEFAULT_ACCOUNTS = [
     ("2060", "Accrued Interest Payable", "Liability", "accrued", "accrued_interest"),
     ("2100", "Client Advances (Unearned Revenue)", "Liability", "deferred_revenue", "client_advances"),
     ("2105", "Security Deposits from Clients", "Liability", "other_current_liability", "rental_deposits"),
+    ("2106", "Deferred Installment Interest", "Liability", "other_current_liability", "installment_deferred"),
     ("2110", "Retention Payable", "Liability", "other_current_liability", None),
     ("2120", "Profit Distributions Payable to Partners", "Liability", "dividends_payable", "dividends_payable"),
     ("2130", "Due to Departing Partners", "Liability", "other_current_liability", "partner_payable"),
@@ -647,11 +740,14 @@ DEFAULT_ACCOUNTS = [
     ("4080", "Discounts Received", "Revenue", "other_income", None),
     ("4085", "Negotiation Earnings", "Revenue", "operating_revenue", "negotiation_income"),
     ("4045", "Equipment Rental Revenue", "Revenue", "operating_revenue", "rental_revenue"),
+    ("4025", "Sales of Goods & Units", "Revenue", "operating_revenue", "product_sales"),
+    ("4096", "Installment Interest Income", "Revenue", "other_income", "installment_income"),
     ("4046", "Installation, Dismantling & Transport Revenue", "Revenue", "operating_revenue", "rental_services"),
     ("4075", "Compensation for Lost / Damaged Equipment", "Revenue", "other_income", "rental_compensation"),
     ("4090", "Other Income", "Revenue", "other_income", "other_income"),
     ("4095", "Interest Income", "Revenue", "other_income", "interest_income"),
     # ---- Cost of sales
+    ("5005", "Cost of Goods & Units Sold", "COGS", "cogs", "cost_of_sales"),
     ("5010", "Materials", "COGS", "cogs", "materials"),
     ("5020", "Subcontractor Costs", "COGS", "cogs", None),
     ("5030", "Direct Labour (billable)", "COGS", "cogs", "direct_labour"),
@@ -702,6 +798,8 @@ SUBTYPES = {
                 "depreciation", "amortization", "interest", "other_nonoperating", "income_tax"],
 }
 ACCOUNT_NAMES_AR = {'1010': 'النقدية بالصندوق', '1020': 'الحساب البنكي', '1030': 'العهد النقدية', '1416': 'مجمع إهلاك معدات التأجير', '2105': 'تأمينات العملاء (ودائع ضمان)', '1415': 'معدات التأجير (سقالات، مصاعد، سقالات معلقة)', '4045': 'إيرادات تأجير المعدات', '4046': 'إيرادات التركيب والفك والنقل', '4075': 'تعويضات المعدات المفقودة / التالفة', '7046': 'خسائر معدات التأجير (فقد / تكهين)', '1035': 'عهد نقدية لدى العاملين', '1175': 'قروض ممنوحة للغير (قصيرة الأجل)', '1185': 'فوائد مستحقة التحصيل', '1610': 'قروض ممنوحة للغير (طويلة الأجل)', '7060': 'ديون معدومة وإعدام قروض', '1100': 'العملاء (المدينون)', '1150': 'محتجزات لدى العملاء (ضمان أعمال)', '1160': 'سلف العاملين', '1200': 'مخزون الخامات', '1300': 'مصروفات مدفوعة مقدماً', '1310': 'دفعات مقدمة للموردين', '1320': 'ضريبة القيمة المضافة (مدخلات)', '1330': 'ضريبة خصم وتحصيل لدى العملاء', '1400': 'أثاث ومعدات مكتبية', '1410': 'عدد ومعدات مواقع', '1420': 'سيارات', '1430': 'أجهزة حاسب ومعدات تقنية', '1490': 'مجمع الإهلاك', '1500': 'برامج وتراخيص', '1510': 'العلامة التجارية والموقع ومكتبة التصميمات', '1590': 'مجمع الاستهلاك', '1600': 'تأمينات لدى الغير', '2010': 'الموردون (الدائنون)', '2015': 'مقاولو الباطن', '2020': 'أجور مستحقة', '2030': 'مصروفات مستحقة', '2040': 'تأمينات اجتماعية مستحقة', '2100': 'دفعات مقدمة من العملاء (إيرادات مؤجلة)', '2110': 'محتجزات مقاولي الباطن', '2200': 'ضريبة القيمة المضافة (مخرجات)', '2210': 'ضريبة الخصم والتحصيل المستحقة (من الموردين)', '2220': 'ضريبة الدخل المستحقة', '2300': 'قروض قصيرة الأجل', '2310': 'بطاقات ائتمان مستحقة', '2400': 'قروض طويلة الأجل', '2500': 'قروض الشركاء', '3010': 'رأس مال الشركاء', '3100': 'الأرباح المحتجزة', '3200': 'مسحوبات الشركاء / توزيعات الأرباح', '4010': 'إيرادات المشروعات — التنفيذ', '4020': 'أتعاب التصميم', '4030': 'أتعاب الإشراف والإدارة', '4040': 'مبيعات أثاث وتوريدات', '4050': 'خصومات ومسموحات المبيعات', '4085': 'أرباح التفاوض', '4090': 'إيرادات أخرى', '4095': 'إيرادات فوائد', '5010': 'خامات', '5020': 'تكاليف مقاولي الباطن', '5030': 'عمالة مباشرة', '5040': 'تجهيز الموقع', '5050': 'إيجار معدات', '5060': 'نقل وتشوين', '5070': 'تصميم خارجي ورندرات', '5080': 'تسويات المخزون', '6010': 'الإيجار', '6020': 'برامج واشتراكات', '6030': 'دعاية وإعلان', '6040': 'كهرباء ومياه', '6045': 'هاتف وإنترنت', '6050': 'رواتب إدارية', '6055': 'تأمينات اجتماعية ومزايا', '6060': 'أتعاب مهنية (قانونية ومراجعة)', '6065': 'مصروفات بنكية', '6070': 'مصروفات المشروعات غير المحملة', '6075': 'انتقالات وسفر', '6080': 'أدوات مكتبية', '6085': 'تأمين', '6090': 'مصروفات تشغيلية أخرى', '7010': 'مصروف الإهلاك', '7020': 'مصروف الاستهلاك', '7030': 'مصروفات الفوائد', '7040': 'خسائر (أرباح) فروق العملة', '7050': 'مصروف ضريبة الدخل'}
+ACCOUNT_NAMES_AR.update({'4025': 'مبيعات البضائع والوحدات', '4096': 'إيرادات فوائد التقسيط', '2106': 'فوائد تقسيط مؤجلة',
+                         '5005': 'تكلفة البضاعة والوحدات المباعة', '1210': 'بضائع ووحدات بغرض البيع'})
 ACCOUNT_NAMES_AR.update({'1120': 'أوراق القبض (شيكات تحت التحصيل)', '1170': 'مستحق من الشركاء', '1180': 'إيرادات مستحقة غير مفوترة (أعمال منفذة)', '1190': 'مخصص الديون المشكوك في تحصيلها', '1340': 'غطاء خطابات الضمان', '1440': 'أراضي', '1450': 'مباني وتحسينات أماكن مستأجرة', '1460': 'مشروعات تحت التنفيذ', '1520': 'الشهرة', '1700': 'استثمارات طويلة الأجل', '2050': 'أوراق الدفع (شيكات صادرة)', '2060': 'فوائد مستحقة', '2120': 'توزيعات أرباح مستحقة للشركاء', '2130': 'مستحق للشركاء المنسحبين', '2510': 'مخصص مكافأة نهاية الخدمة', '3020': 'جاري الشركاء', '3030': 'علاوة إصدار / علاوة حصص', '3110': 'الاحتياطي القانوني', '3120': 'الاحتياطي العام', '4060': 'أرباح بيع أصول ثابتة', '4070': 'إيرادات إيجار', '4080': 'خصم مكتسب', '6015': 'صيانة وإصلاحات', '6078': 'وقود ومصروفات سيارات', '6088': 'ديون معدومة', '7045': 'خسائر بيع أصول ثابتة'})
 NEW_IN_V12 = {"1120", "1170", "1180", "1190", "1340", "1440", "1450", "1460", "1520", "1700", "2050", "2060", "2120",
               "2130", "2510", "3020", "3030", "3110", "3120", "4060", "4070", "4080", "6015", "6078", "6088", "7045"}
@@ -719,7 +817,7 @@ def normal_for(acc_type: str, subtype: str) -> str:
     return "Debit" if debit else "Credit"
 
 
-MODULES = ["dashboard", "business_units", "sales", "estimating", "purchasing", "stock", "rentals", "payroll", "assets",
+MODULES = ["dashboard", "business_units", "sales", "shop", "estimating", "purchasing", "stock", "rentals", "payroll", "assets",
            "accounting", "partners", "reports", "tax", "import_export", "settings", "users"]
 
 # Second-level permissions: each screen can have its own level, or inherit its section's.
@@ -729,6 +827,7 @@ SUBMODULES = {
     "sales": ["offers", "receipts", "invoices", "receivables", "parties"],
     "estimating": ["boqs", "prices"],
     "purchasing": ["costs", "expenses", "payments", "payables", "contacts", "negotiations", "custody"],
+    "shop": ["products", "orders", "installments"],
     "stock": ["balances", "moves", "warehouses"],
     "rentals": ["contracts", "fleet", "calculator"],
     "payroll": [],
@@ -882,7 +981,8 @@ class Database:
             for code, name, typ, sub, role in DEFAULT_ACCOUNTS:
                 if role not in ("custody", "loans_receivable", "interest_receivable", "loans_receivable_lt", "bad_debt", "rental_fleet",
                                 "rental_revenue", "rental_services", "rental_compensation", "rental_loss", "rental_accum",
-                                "rental_deposits") or \
+                                "rental_deposits", "product_sales", "installment_income", "installment_deferred",
+                                "cost_of_sales", "goods_inventory") or \
                         self.conn.execute("SELECT 1 FROM accounts WHERE role=?", (role,)).fetchone():
                     continue
                 c = code

@@ -29,7 +29,8 @@ ENTRY_KINDS = ["Direct Cost", "Operating Expense", "Payroll Accrual", "Payment V
                "Loan Received", "Loan Repayment", "Loan Given", "Loan Collection", "Loan Interest", "Loan Charges",
                "Loan Forgiven", "Loan Written Off", "Custody Issued", "Custody Settlement", "Custody Return",
                "Custody Deduction", "Rental Equipment Purchase", "Rental Equipment Loss", "Rental Equipment Depreciation",
-               "Rental Deposit"]
+               "Rental Deposit", "Installment Interest", "Advance Applied", "Cost of Sales", "Cheque Received",
+               "Cheque Cleared", "Cheque Bounced", "Sale Refund"]
 
 
 class ValidationError(Exception):

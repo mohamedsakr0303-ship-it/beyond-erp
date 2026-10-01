@@ -14,7 +14,10 @@ window.I18N = {
   m_boqs: ["Bills of Quantities", "المقايسات"], m_prices: ["Price List (Unit Rates)", "قائمة الأسعار (فئات البنود)"],
   m_costs: ["Direct Costs (Cost of Revenue)", "التكاليف المباشرة"], m_expenses: ["Operating Expenses", "المصروفات التشغيلية"],
   m_payments: ["Payment Vouchers", "سندات الصرف"], m_payables: ["Accounts Payable", "أرصدة الدائنين"], m_nego: ["Negotiation Earnings", "أرباح التفاوض"],
-  g_fin: ["Loans & custody", "القروض والعهد"], g_rent: ["Equipment rental", "تأجير المعدات"], mod_rentals: ["Equipment rental", "تأجير المعدات"],
+  g_fin: ["Loans & custody", "القروض والعهد"], g_rent: ["Equipment rental", "تأجير المعدات"], mod_rentals: ["Equipment rental", "تأجير المعدات"], g_shop: ["Sales & showroom", "المبيعات والمعرض"], mod_shop: ["Sales & showroom", "المبيعات والمعرض"],
+  m_products: ["Showroom (products & units)", "المعرض (المنتجات والوحدات)"], m_sales_orders: ["Sales & installments", "المبيعات والتقسيط"], m_installments: ["Collections follow-up", "متابعة التحصيل"],
+  "Installment Interest": ["Installment Interest", "فوائد تقسيط"], "Advance Applied": ["Advance Applied", "تسوية دفعات مقدمة"], "Cost of Sales": ["Cost of Sales", "تكلفة مبيعات"],
+  "Cheque Received": ["Cheque Received", "استلام شيك"], "Cheque Cleared": ["Cheque Cleared", "صرف شيك"], "Cheque Bounced": ["Cheque Bounced", "شيك مرتد"], "Sale Refund": ["Sale Refund", "رد مبلغ بيع"],
   m_rentals: ["Rental contracts", "عقود التأجير"], m_rentfleet: ["Equipment & stock", "المعدات والمخزون"], m_rentcalc: ["Scaffold calculator", "حاسبة السقالات"],
   "Rental Equipment Purchase": ["Rental Equipment Purchase", "شراء معدات تأجير"], "Rental Equipment Loss": ["Rental Equipment Loss", "خسائر معدات تأجير"], "Rental Equipment Depreciation": ["Rental Equipment Depreciation", "إهلاك معدات تأجير"], "Rental Deposit": ["Rental Deposit", "تأمين تأجير"], m_loans: ["Loans", "القروض"], m_contacts: ["Contacts directory", "دليل جهات الاتصال"], m_custody: ["Cash Custody (Petty Cash)", "العهد النقدية"],
   "Loan Received": ["Loan Received", "استلام قرض"], "Loan Repayment": ["Loan Repayment", "سداد قرض"], "Loan Given": ["Loan Given", "صرف قرض ممنوح"],
@@ -190,6 +193,7 @@ window.MENU = [
   ["g_home", [["m_dashboard", "dashboard", "dashboard", "◧"]]],
   ["g_bu", [["m_bus", "bus", "business_units.units", "▦"]]],
   ["g_sales", [["m_offers", "offers", "sales.offers", "✉"], ["m_receipts", "receipts", "sales.receipts", "↘"], ["m_invoices", "invoices", "sales.invoices", "▤"], ["m_receivables", "receivables", "sales.receivables", "⇲"]]],
+  ["g_shop", [["m_products", "products", "shop.products", "◫"], ["m_sales_orders", "sales", "shop.orders", "⛁"], ["m_installments", "installments", "shop.installments", "⏲"]]],
   ["g_est", [["m_boqs", "boqs", "estimating.boqs", "☰"], ["m_prices", "prices", "estimating.prices", "₤"]]],
   ["g_buy", [["m_costs", "costs", "purchasing.costs", "⚒"], ["m_expenses", "expenses", "purchasing.expenses", "◔"], ["m_payments", "payments", "purchasing.payments", "↗"], ["m_payables", "payables", "purchasing.payables", "⇱"], ["m_contacts", "contacts", "purchasing.contacts", "☏"], ["m_nego", "negotiations", "purchasing.negotiations", "⚖"]]],
   ["g_stock", [["m_stock", "stock", "stock.balances", "▣"], ["m_moves", "moves", "stock.moves", "⇄"], ["m_warehouses", "warehouses", "stock.warehouses", "⌂"]]],
@@ -207,7 +211,7 @@ window.MENU = [
 // labels for screen-level permissions (section.screen)
 window.SUBPERM = {
   "business_units.units": "m_bus", "business_units.allocation": "p_alloc", "business_units.profitability": "m_bup",
-  "sales.offers": "m_offers", "sales.receipts": "m_receipts", "sales.invoices": "m_invoices", "sales.receivables": "m_receivables", "sales.parties": "m_parties",
+  "sales.offers": "m_offers", "sales.receipts": "m_receipts", "sales.invoices": "m_invoices", "sales.receivables": "m_receivables", "sales.parties": "m_parties", "shop.products": "m_products", "shop.orders": "m_sales_orders", "shop.installments": "m_installments",
   "estimating.boqs": "m_boqs", "estimating.prices": "m_prices",
   "purchasing.costs": "m_costs", "purchasing.expenses": "m_expenses", "purchasing.payments": "m_payments", "purchasing.payables": "m_payables", "purchasing.contacts": "m_contacts", "purchasing.negotiations": "m_nego", "rentals.contracts": "m_rentals", "rentals.fleet": "m_rentfleet", "rentals.calculator": "m_rentcalc", "purchasing.custody": "m_custody", "accounting.loans": "m_loans",
   "stock.balances": "m_stock", "stock.moves": "m_moves", "stock.warehouses": "m_warehouses",
