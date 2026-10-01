@@ -222,9 +222,13 @@ def lot_depreciation(db):
 
 
 def plan_depreciation(db, through):
-    """Straight line per lot, month by month: (pieces still owned × cost × (1 − residual %)) ÷ useful life, catching up
-    any months not booked yet and never going below the residual value."""
+    """Per lot, month by month, by the company's depreciation policy (the rule set on the rental-fleet account, else the
+    company default): straight line spreads (pieces still owned × cost × (1 − residual %)) over the useful life;
+    declining balance front-loads it. Catches up any months not booked yet and never goes below the residual value."""
+    from . import assets
     through = _month(through, "depreciate up to")
+    rule = assets.account_rule(db, _role_or(db, "rental_fleet"))
+    method, factor = rule["method"], float(rule["factor"] or 2)
     rows = []
     items = {i["id"]: i for i in db.q("SELECT * FROM rent_items")}
     for lot in _lot_states(db):
@@ -235,14 +239,18 @@ def plan_depreciation(db, through):
         nxt = _add_months_m(lot["depr_through"], 1) if lot["depr_through"] else start
         if nxt > through:
             continue
-        months = (int(through[:4]) - int(nxt[:4])) * 12 + int(through[5:]) - int(nxt[5:]) + 1
-        base = lot["owned"] * lot["unit_cost"] * (1 - (it["residual_pct"] or 0))
-        remaining = int(round(base - lot["accum"]))
-        amount = min(int(round(base / it["life_months"] * months)), remaining)
+        end = _add_months_m(start, it["life_months"] - 1)
+        last = min(through, end) if end >= nxt else nxt  # past its life: book what is left in one go
+        months = (int(last[:4]) - int(nxt[:4])) * 12 + int(last[5:]) - int(nxt[5:]) + 1
+        left = max((int(end[:4]) - int(nxt[:4])) * 12 + int(end[5:]) - int(nxt[5:]) + 1, 1)
+        cost = int(round(lot["owned"] * lot["unit_cost"]))
+        salvage = int(round(cost * (it["residual_pct"] or 0)))
+        amount = sum(assets.month_amounts(cost, salvage, int(round(lot["accum"])), left, months, method, factor,
+                                          it["life_months"]))
         if amount <= 0:
             continue
         rows.append({"lot": lot["code"], "item_id": it["id"], "code": it["code"], "name": it["name"], "name_ar": it["name_ar"],
-                     "from": nxt, "to": through, "months": months, "amount": amount})
+                     "from": nxt, "to": last, "months": months, "amount": amount})
     by_item = {}
     for r in rows:
         g = by_item.setdefault(r["item_id"], {"code": r["code"], "name": r["name"], "name_ar": r["name_ar"], "lots": 0, "amount": 0})

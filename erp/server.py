@@ -1337,6 +1337,32 @@ def asset_del(ctx, aid):
     return ok()
 
 
+@route("GET", "/api/depreciation-policy")
+def depr_policy(ctx):
+    if not (ctx.can("assets.register") or ctx.can("settings") or ctx.can("rentals.fleet")):
+        raise PermissionError()
+    return ok({**assets.policy(ctx.db), "methods": list(assets.METHODS), "conventions": list(assets.CONVENTIONS)})
+
+
+@route("PUT", "/api/depreciation-policy")
+def depr_policy_save(ctx):
+    if not (ctx.can("settings", "edit") or ctx.can("assets.depreciation", "edit")):
+        raise PermissionError()
+    r = assets.save_policy(ctx.db, ctx.body)
+    ctx.log("depreciation.policy", json.dumps(r)[:300])
+    return ok(r)
+
+
+@route("GET", "/api/assets/<aid>/schedule", "assets.register")
+def asset_schedule(ctx, aid):
+    return ok(assets.schedule(ctx.db, assets.get(ctx.db, aid)))
+
+
+@route("POST", "/api/assets-preview/schedule", "assets.register")
+def asset_schedule_preview(ctx):
+    return ok(assets.preview_schedule(ctx.db, ctx.body))
+
+
 @route("POST", "/api/assets-preview/depreciation", "assets.depreciation", "add")
 def depr_preview(ctx):
     return ok(assets.plan_depreciation(ctx.db, ctx.body.get("through"), ctx.body.get("ids")))
@@ -1582,7 +1608,14 @@ def eta_cancel(ctx, xid):
 @route("GET", "/api/dashboard", "dashboard")
 def dashboard(ctx):
     q = ctx.q
-    return ok(acc.dashboard(ctx.db, q.get("date_from"), q.get("date_to"), q.get("bu_id") or None))
+    d = acc.dashboard(ctx.db, q.get("date_from"), q.get("date_to"), q.get("bu_id") or None)
+    if ctx.can("assets.depreciation", "add"):
+        d["depreciation_due"] = assets.due(ctx.db)
+        if d["depreciation_due"] is None and ctx.can("rentals.fleet", "edit") and assets.policy(ctx.db)["remind"]:
+            last = assets._add_months(acc.today()[:7], -1)
+            rp = rentals.plan_depreciation(ctx.db, last)
+            d["depreciation_due"] = {"through": last, "count": len(rp["rows"]), "total": rp["total"], "rental": True} if rp["rows"] else None
+    return ok(d)
 
 
 # ================================================================== reports

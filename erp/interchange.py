@@ -138,7 +138,20 @@ SHEETS = [
               C("depr_start", "Depreciate From (YYYY-MM)", "بداية الإهلاك", width=10),
               C("opening_depr", "Depreciation Before Registering", "إهلاك سابق", kind="money"),
               C("bu_code", "Business Unit", "وحدة الأعمال", kind="bu"), C("location", "Location", "الموقع", width=14),
-              C("serial", "Serial / Plate No.", "الرقم التسلسلي / اللوحة", width=14), C("notes", "Notes", "ملاحظات", width=20)]},
+              C("serial", "Serial / Plate No.", "الرقم التسلسلي / اللوحة", width=14), C("notes", "Notes", "ملاحظات", width=20),
+              C("depr_method", "Depreciation Method", "طريقة الإهلاك", width=12, choices=["", "straight_line", "declining"],
+                note="blank = the company's depreciation policy"),
+              C("depr_factor", "Declining Factor", "معامل التناقص", kind="num", width=8, note="2 = double declining"),
+              C("dep_monthly", "Monthly Depreciation (straight line)", "الإهلاك الشهري (قسط ثابت)", kind="calc", width=14,
+                note="Worked out here for reference — book it with a Journal Voucher (Depreciation) so the statements include it",
+                calc='=IF(OR({code}="",N({life_months})=0),0,ROUND((N({cost})-N({salvage}))/N({life_months}),2))'),
+              C("dep_to_date", "Depreciation to Report End", "الإهلاك حتى نهاية الفترة", kind="calc", width=14,
+                note="Straight line from the first month depreciated to ReportTo (Settings); never more than cost − residual",
+                calc='=IF({code}="","",IFERROR(MIN(N({cost})-N({salvage}),MAX(N({opening_depr}),{dep_monthly}*MAX(0,'
+                     '(YEAR(ReportTo)-YEAR(IF({depr_start}<>"",DATE(LEFT({depr_start},4),MID({depr_start},6,2),1),{acquired})))*12'
+                     '+MONTH(ReportTo)-MONTH(IF({depr_start}<>"",DATE(LEFT({depr_start},4),MID({depr_start},6,2),1),{acquired}))+1))),""))'),
+              C("dep_book_value", "Book Value at Report End", "القيمة الدفترية في نهاية الفترة", kind="calc", width=14,
+                calc='=IF({code}="","",IFERROR(N({cost})-N({dep_to_date}),""))')]},
     {"name": "Warehouses", "ar": "المخازن", "module": "stock", "title": "Warehouses / stores and their inventory account",
      "cols": [C("name", "Warehouse", "المخزن", width=22, required=True), C("location", "Location", "الموقع", width=20),
               C("account", "Inventory Account", "حساب المخزون", kind="acct", width=12)]},
@@ -288,12 +301,12 @@ SHEETS = [
               C("bu_code", "Business Unit", "وحدة الأعمال", kind="bu"), C("memo", "Description", "البيان", width=22),
               eff("cash_account", "bank"),
               C("equity__eff", "equity (effective)", "الحساب الفعلي", kind="calc", width=10,
-                calc='=IF({equity_account}<>"",{equity_account}&"",IF({type}="Capital Contribution",' + ROLE("capital") +
+                calc='=IF({equity_account}<>"",{equity_account}&"",IF(LEFT({type},7)="Capital",' + ROLE("capital") +
                      "," + ROLE("drawings") + "))"),
               C("dr_acct", "Debit Account", "الحساب المدين", kind="calc", width=10,
-                calc='=IF({type}="Capital Contribution",{cash_account__eff},{equity__eff})'),
+                calc='=IF(LEFT({type},7)="Capital",{cash_account__eff},{equity__eff})'),
               C("cr_acct", "Credit Account", "الحساب الدائن", kind="calc", width=10,
-                calc='=IF({type}="Capital Contribution",{equity__eff},{cash_account__eff})')],
+                calc='=IF(LEFT({type},7)="Capital",{equity__eff},{cash_account__eff})')],
      "legs": [("amount", "dr_acct", "D"), ("amount", "cr_acct", "C")]},
     {"name": "Stock Moves", "ar": "حركات المخزون", "module": "stock",
      "title": "Goods receipts, material issues to business units, transfers and count adjustments "
@@ -395,6 +408,7 @@ def export_data(db):
     for a in db.q("SELECT * FROM fixed_assets ORDER BY code"):
         out["Fixed Assets"].append({k: a[k] for k in ("code", "name", "account", "accum_account", "expense_account", "acquired",
                                                       "life_months", "depr_start", "location", "serial", "notes")}
+                                   | {"depr_method": a["method"] or "", "depr_factor": a["factor"] or ""}
                                    | {"cost": to_major(a["cost"]), "salvage": to_major(a["salvage"]) or "",
                                       "opening_depr": to_major(a["opening_depr"]) or "", "bu_code": code(a["bu_id"])})
     whs = {w["id"]: w for w in db.q("SELECT * FROM warehouses ORDER BY id")}

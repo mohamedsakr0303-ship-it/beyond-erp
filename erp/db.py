@@ -266,6 +266,8 @@ CREATE TABLE IF NOT EXISTS fixed_assets (
     life_months INTEGER NOT NULL DEFAULT 60,   -- 0 = not depreciated (land)
     depr_start TEXT DEFAULT '',                -- first month depreciated (YYYY-MM); default = month acquired
     opening_depr INTEGER NOT NULL DEFAULT 0,   -- depreciation already taken before it was registered here
+    method TEXT DEFAULT '',                    -- '' = company policy, straight_line, declining
+    factor REAL DEFAULT 0,                     -- declining balance: 2 = double declining; 0 = company policy
     bu_id INTEGER REFERENCES business_units(id) ON DELETE SET NULL,
     location TEXT DEFAULT '',
     serial TEXT DEFAULT '',
@@ -840,6 +842,7 @@ class Database:
         if "email" not in have:  # workspace users created before this column used their email as username
             self.conn.execute("UPDATE users SET email=lower(username) WHERE username LIKE '%_@_%.%'")
         self._add_cols("rates", [("eta_code", "TEXT DEFAULT ''")])
+        self._add_cols("fixed_assets", [("method", "TEXT DEFAULT ''"), ("factor", "REAL DEFAULT 0")])
         self._add_cols("parties", [(c, "TEXT DEFAULT ''") for c in ("category", "contact_person", "phone2", "whatsapp",
                                                                     "specialty", "vehicle", "bank_details")])
         self._add_cols("extracts", [("customer", "TEXT DEFAULT ''"), ("vat_code", "TEXT DEFAULT ''"),

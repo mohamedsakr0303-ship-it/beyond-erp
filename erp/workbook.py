@@ -100,7 +100,7 @@ def build_workbook(db, template=False):
 
     data = export_data(db)
     if template:
-        keep = {"Settings", "Chart of Accounts", "Warehouses"}
+        keep = {"Settings", "Chart of Accounts", "Warehouses", "Tax Codes"}
         data = {k: (v if k in keep else []) for k, v in data.items()}
     company = db.setting("company_name", "BEYOND DESIGN")
     currency = db.setting("currency", "EGP")
@@ -204,7 +204,8 @@ def build_workbook(db, template=False):
                     cell.font = F(size=9, color="111111")
                     cell.fill = fill(GREY)
                     if c["key"] in ("total", "unpaid", "amount", "value", "posted_amount", "paid_eff", "cr_amt",
-                                    "vat_amt", "wht_amt", "ar_amt", "gross", "net_credit"):
+                                    "vat_amt", "wht_amt", "ar_amt", "gross", "net_credit", "dep_monthly", "dep_to_date",
+                                    "dep_book_value"):
                         cell.number_format = MONEY
                     continue
                 v = row.get(c["key"], None)
@@ -731,9 +732,14 @@ def build_workbook(db, template=False):
                  for sh in POSTING_SHEETS if PARTY_COL.get(sh["name"]) in colmap[sh["name"]]]
         return "+".join(parts) or "0"
 
-    for k in range(len(parties) + 25):
+    if template:  # an empty book: list every name on the Parties sheet (suppliers, subcontractors, drivers…)
+        pay["A2"] = "Every name on the Parties sheet is listed here — add a supplier / contact there and its balance appears."
+    pr = FIRST_DATA_ROW
+    for k in range(len(parties) + 25 if not template else 200):
         r = 5 + k
-        if k < len(parties):
+        if template:
+            pay.cell(r, 1, f"=IF(Parties!A{pr + k}=\"\",\"\",Parties!A{pr + k})")
+        elif k < len(parties):
             pay.cell(r, 1, parties[k]).font = F(color=BLUE)
         pay.cell(r, 2, f'=IF(A{r}="",0,{party_sum(f"$A{r}", "_ap")})').number_format = MONEY
         pay.cell(r, 3, f'=IF(A{r}="",0,{party_sum(f"$A{r}", "_accr")})').number_format = MONEY

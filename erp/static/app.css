@@ -264,3 +264,4 @@ h4.fsec{margin:14px 0 4px;font-size:.85em;text-transform:uppercase;letter-spacin
 .newc{display:flex;gap:8px;align-items:center;flex-wrap:wrap;grid-column:1/-1;background:var(--bg);border:1px dashed var(--line);border-radius:8px;padding:6px 10px;font-size:.88em}
 .newc[hidden]{display:none}
 .newc select,.newc input:not([type=checkbox]){width:auto;min-width:120px;flex:1 1 120px}
+.banner.warn{background:rgba(180,83,9,.08);border-color:rgba(180,83,9,.35);color:var(--warn)}

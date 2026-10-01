@@ -943,6 +943,7 @@ PAGES.dashboard = async (view, parts, q) => {
     `<div class="kpis">${k(t("cash"), money(d.cash), cur(), d.cash < 0 ? "neg" : "")}${k(t("receivable"), money(d.receivable))}${k(t("payable"), money(d.payable))}
       ${k(t("accrued"), money(d.accrued))}${k(t("advances"), money(d.advances))}${k(t("inventory"), money(d.inventory))}
       ${k(t("revenue"), money(d.revenue))}${k(t("ebitda"), money(d.ebitda), pct(d.margins.ebitda), d.ebitda < 0 ? "neg" : "")}${k(t("net_profit"), money(d.net_profit), pct(d.margins.net), d.net_profit < 0 ? "neg" : "pos")}</div>
+    ${d.depreciation_due ? `<div class="banner warn">${L2("Depreciation not booked yet up to", "لم يُحتسب الإهلاك حتى")} ${esc(d.depreciation_due.through)}: ${money(d.depreciation_due.total)} (${d.depreciation_due.count}) · <a href="#/${d.depreciation_due.rental ? "rentfleet" : "assets"}">${L2("Run depreciation", "احتساب الإهلاك")} →</a></div>` : ""}
     <div class="banner ${cp.gap > 0 ? "err" : "ok"}">${t("cash_floor")}: ${money(cp.floor)} (${t("floor_note")}) · ${t("cash")} ${money(cp.cash)}${cp.gap > 0 ? ` · <b>−${money(cp.gap)}</b>` : " ✓"}</div>
     <div class="grid g2"><div class="card"><h2>${t("last12")}</h2><div class="legend"><span class="r">${t("rev")}</span><span class="c">${t("costs")}</span></div>
       <div class="bar">${d.series.map(s => `<div class="m"><div class="b"><i class="r" style="height:${(s.revenue / max * 100).toFixed(1)}%" title="${money(s.revenue)}"></i><i class="c" style="height:${(s.costs / max * 100).toFixed(1)}%" title="${money(s.costs)}"></i></div>${esc(s.month.slice(2))}</div>`).join("") || `<div class="empty">${t("nothing")}</div>`}</div></div>
@@ -3069,12 +3070,12 @@ PAGES.rentfleet = async (view, parts, q) => {
   const add = can("rentals.fleet", "add"), ed = can("rentals.fleet", "edit");
   S.cache.rentCat = null;
   Object.assign(S.H, { rdep2: () => rentDeprForm(), rinew: () => rentItemForm(), rknew: () => rentKitForm(null, d), rkopen: el => rentKitForm(d.kits.find(k => k.id === +el.dataset.id), d),
-    riopen: el => rentItemView(+el.dataset.id), rset: () => rentSettingsForm(d.settings),
+    riopen: el => rentItemView(+el.dataset.id), rset: () => rentSettingsForm(d.settings), fapol: () => deprPolicyForm(),
     rstart: async () => { try { const r = await api("POST", "/api/rent-starter", {}); toast(`${r.items} ${L2("items", "صنف")} · ${r.kits} ${L2("sets", "طقم")} · ${r.models} ${L2("calculator", "حاسبة")}`); route(); } catch (e) { fail(e); } } });
   const util = d.items.reduce((s, i) => s + i.on_rent * i.avg_cost, 0);
   view.innerHTML = `<div class="toolbar">${add ? `<button class="btn pri" data-a="rinew">+ ${L2("Equipment item", "صنف معدات")}</button><button class="btn" data-a="rknew">+ ${L2("Frame / set", "شباك / طقم")}</button>` : ""}
       ${add && !d.items.some(i => i.code === "SC-FRM2") ? `<button class="btn" data-a="rstart">${L2("Add scaffolding starter set", "إضافة المجموعة الأساسية للسقالات")}</button>` : ""}
-      ${ed ? `<button class="btn" data-a="rset">${L2("Terms & checklists", "الشروط وقوائم الفحص")}</button>` : ""}${add && d.items.length ? `<button class="btn" data-a="rdep2">${L2("Run depreciation", "احتساب الإهلاك")}</button>` : ""}<span class="spacer"></span>${exportMenu("rent_fleet", {})}</div>
+      ${ed ? `<button class="btn" data-a="rset">${L2("Terms & checklists", "الشروط وقوائم الفحص")}</button>` : ""}${add && d.items.length ? `<button class="btn" data-a="rdep2">${L2("Run depreciation", "احتساب الإهلاك")}</button>` : ""}${canPolicy() ? `<button class="btn" data-a="fapol">⚙ ${L2("Depreciation settings", "إعدادات الإهلاك")}</button>` : ""}<span class="spacer"></span>${exportMenu("rent_fleet", {})}</div>
     <div class="kpis">${kpiBox(L2("Equipment cost (FIFO)", "تكلفة المعدات (الوارد أولاً)"), d.totals.value)}${kpiBox(L2("Accumulated depreciation", "مجمع الإهلاك"), d.totals.accum)}${kpiBox(L2("Book value", "القيمة الدفترية"), d.totals.book_value, "pos")}${kpiBox(L2("Out on rent", "مؤجر حالياً"), d.totals.on_rent_value, "pos", d.totals.value ? pct(d.totals.on_rent_value / d.totals.value) + " " + L2("of the fleet", "من المعدات") : "")}</div>
     ${RENT_CAT().map(([c, label]) => { const rows = d.items.filter(i => i.category === c); return rows.length ? `<div class="card"><h2>${esc(label)}</h2><div class="tbl stack"><table><thead><tr><th>${t("code")}</th><th>${L2("Item", "الصنف")}</th><th class="num">${L2("In the yard", "بالمخزن")}</th><th class="num">${L2("On rent", "مؤجر")}</th><th class="num">${L2("Use", "التشغيل")}</th><th class="num">${L2("Avg cost (FIFO)", "متوسط التكلفة")}</th><th class="num">${L2("Book value", "القيمة الدفترية")}</th><th class="num">${L2("Rent / month", "الإيجار الشهري")}</th><th class="num">${L2("Loss price", "سعر الفقد")}</th></tr></thead><tbody>
       ${rows.map(i => `<tr class="click ${i.active ? "" : "void"}" data-a="riopen" data-id="${i.id}"><td><b>${esc(i.code)}</b></td><td>${esc(nm(i))}<div class="lines">${esc(i.unit)}</div></td><td class="num">${numf(i.in_yard)}</td><td class="num">${numf(i.on_rent)}</td><td class="num">${pct(i.utilisation)}</td>
@@ -3261,9 +3262,10 @@ PAGES.assets = async (view, parts, q) => {
   S.H.fanew = () => assetForm();
   S.H.fadep = () => deprForm();
   S.H.faopen = el => assetView(el.dataset.id);
+  S.H.fapol = () => deprPolicyForm();
   const k = (l, v) => `<div class="kpi"><div class="l">${esc(l)}</div><div class="v">${money(v)}</div></div>`;
   const stat = r => r.disposed ? `<span class="chip bad">${L2("disposed", "مستبعد")}</span>` : r.fully_depreciated ? `<span class="chip ok">${L2("fully depreciated", "مهلك بالكامل")}</span>` : !r.life_months ? `<span class="chip">${L2("not depreciated", "لا يُهلك")}</span>` : "";
-  view.innerHTML = `<div class="toolbar">${add ? `<button class="btn pri" data-a="fanew">+ ${L2("New asset", "أصل جديد")}</button>` : ""}${dep ? `<button class="btn" data-a="fadep">${L2("Run depreciation", "احتساب الإهلاك")}</button>` : ""}<span class="spacer"></span>${exportMenu("fixed_assets", q)}</div>` +
+  view.innerHTML = `<div class="toolbar">${add ? `<button class="btn pri" data-a="fanew">+ ${L2("New asset", "أصل جديد")}</button>` : ""}${dep ? `<button class="btn" data-a="fadep">${L2("Run depreciation", "احتساب الإهلاك")}</button>` : ""}${canPolicy() ? `<button class="btn" data-a="fapol">⚙ ${L2("Depreciation settings", "إعدادات الإهلاك")}</button>` : ""}<span class="spacer"></span>${exportMenu("fixed_assets", q)}</div>` +
     filterBar(q, ["q", ["select", "state", t("status"), [["active", L2("In use", "قيد الاستخدام")], ["disposed", L2("Disposed", "مستبعد")]]]]) +
     `<div class="kpis">${k(L2("Cost", "التكلفة"), d.totals.cost)}${k(L2("Accumulated depreciation", "مجمع الإهلاك"), d.totals.accumulated)}${k(L2("Book value", "القيمة الدفترية"), d.totals.book_value)}</div>` +
     `<div class="card">${d.rows.length ? `<div class="tbl stack"><table><thead><tr><th>${t("code")}</th><th>${L2("Asset", "الأصل")}</th><th>${t("account")}</th><th>${L2("Acquired", "تاريخ الشراء")}</th><th class="num">${L2("Cost", "التكلفة")}</th><th class="num">${L2("Accumulated", "المجمع")}</th><th class="num">${L2("Book value", "القيمة الدفترية")}</th><th class="num">${L2("Monthly", "شهرياً")}</th><th>${L2("Booked to", "محتسب حتى")}</th><th></th></tr></thead><tbody>
@@ -3281,7 +3283,8 @@ async function assetView(id) {
     ${row(L2("Account", "الحساب"), `${esc(a.account)} ${esc(aname(S.boot.accounts.find(x => x.code === a.account) || {}))}`)}
     ${row(L2("Acquired", "تاريخ الشراء"), fd(a.acquired))}${row(L2("Cost", "التكلفة"), money(a.cost))}${row(L2("Residual value", "القيمة التخريدية"), money(a.salvage))}
     ${row(L2("Useful life", "العمر الإنتاجي"), a.life_months ? `${a.life_months} ${L2("months", "شهر")} (${+(a.life_months / 12).toFixed(2)} ${L2("years", "سنة")}) · ${L2("to", "حتى")} ${esc(a.end_month || "")}` : L2("Not depreciated", "لا يُهلك"))}
-    ${row(L2("Monthly depreciation", "الإهلاك الشهري"), money(a.monthly))}${row(L2("Accumulated", "المجمع"), money(a.accumulated))}${row(L2("Book value", "القيمة الدفترية"), `<b>${money(a.book_value)}</b>`)}
+    ${row(L2("Method", "الطريقة"), esc(deprMethodLabel(a.method, a.factor)) + (a.own_method ? "" : ` <span class="muted">(${esc(L2("company policy", "سياسة الشركة"))})</span>`))}
+    ${row(L2("Next month's depreciation", "إهلاك الشهر القادم"), money(a.monthly))}${row(L2("Accumulated", "المجمع"), money(a.accumulated))}${row(L2("Book value", "القيمة الدفترية"), `<b>${money(a.book_value)}</b>`)}
     ${row(L2("Booked to", "محتسب حتى"), esc(a.booked_through || "—"))}${a.bu_code ? row(t("bu"), esc(a.bu_code)) : ""}${a.location ? row(L2("Location", "الموقع"), esc(a.location)) : ""}${a.serial ? row(L2("Serial / plate", "الرقم / اللوحة"), esc(a.serial)) : ""}${a.notes ? row(t("notes"), esc(a.notes)) : ""}
     ${a.purchase_entry ? row(L2("Purchase", "الشراء"), `<a href="#" data-a="openv" data-id="${a.purchase_entry}">#${a.purchase_entry}</a>`) : ""}
     ${a.disposal_entry ? row(L2("Disposal", "الاستبعاد"), `<a href="#" data-a="openv" data-id="${a.disposal_entry}">#${a.disposal_entry}</a>`) : ""}</tbody></table></div>
@@ -3291,7 +3294,8 @@ async function assetView(id) {
   if (edit) btns.push(`<button type="button" class="btn" data-a="faedit">${t("edit")}</button>`);
   if (edit && !a.disposed) btns.push(`<button type="button" class="btn" data-a="fadisp">${L2("Sell / write off", "بيع / استبعاد")}</button>`);
   if (edit && !a.purchase_entry && !a.depreciation.length && !a.disposal_entry) btns.push(`<button type="button" class="btn danger" data-a="fadel">${t("delete")}</button>`);
-  drawer(`${a.code} — ${a.name}`, html, null, { readOnly: true, extraButtons: btns.join("") });
+  drawer(`${a.code} — ${a.name}`, html + (a.life_months ? `<h4>${L2("Depreciation schedule", "جدول الإهلاك")}</h4><div id="fasch" class="muted">${t("loading")}</div>` : ""), null, { readOnly: true, wide: true, extraButtons: btns.join(""),
+    onOpen: async f => { const box = $("#fasch", f); if (!box) return; try { box.innerHTML = schedHtml(await api("GET", `/api/assets/${a.id}/schedule`)); } catch (e) { box.textContent = e.message; } } });
   S.H.faedit = () => assetForm(a);
   S.H.fadisp = () => disposeForm(a);
   S.H.fadel = () => confirmDelete(a.name, "/api/assets/" + a.id);
@@ -3310,6 +3314,8 @@ function assetForm(a) {
     { k: "life_months", l: L2("Useful life (months)", "العمر الإنتاجي (بالأشهر)"), type: "number", v: a.life_months ?? 60, input: "falife", help: L2("60 = 5 years · 0 = never depreciated (land)", "60 = 5 سنوات · 0 = لا يُهلك (أراضي)") },
     { k: "depr_start", l: L2("Depreciate from (month)", "بداية الإهلاك (شهر)"), type: "month", v: a.depr_start || "" },
     { k: "opening_depr", l: L2("Depreciation already taken before (if any)", "إهلاك سابق قبل التسجيل (إن وجد)"), type: "number", v: a.opening_depr || "" },
+    { k: "depr_method", l: L2("Depreciation method", "طريقة الإهلاك"), type: "select", opts: [["", L2("Company policy", "حسب سياسة الشركة")], ["straight_line", L2("Straight line", "القسط الثابت")], ["declining", L2("Declining balance", "القسط المتناقص")]], v: a.own_method || "", change: "fameth" },
+    { k: "depr_factor", l: L2("Declining factor", "معامل التناقص"), type: "number", v: a.own_factor || "", ph: "2 = " + L2("double declining", "متناقص مضاعف") },
     { k: "bu_id", l: t("bu"), type: "select", opts: buOpts("—"), v: a.bu_id || "" },
     { k: "location", l: L2("Location / holder", "الموقع / العهدة"), v: a.location }, { k: "serial", l: L2("Serial / plate no.", "الرقم التسلسلي / اللوحة"), v: a.serial },
     { k: "notes", l: t("notes"), type: "textarea", v: a.notes, span: "spanall" }];
@@ -3320,12 +3326,20 @@ function assetForm(a) {
     { k: "method", l: t("method"), type: "select", opts: methodOpts() },
     { k: "vat_code", l: t("vat_code"), type: "select", opts: taxOpts("vat") }, { k: "wht_code", l: t("wht_code"), type: "select", opts: taxOpts("wht") },
     { k: "partner", l: t("partner"), type: "select", opts: activePartners().map(p => [p.id, p.name]) });
-  drawer((isNew ? L2("New asset", "أصل جديد") : t("edit")) + (a.code ? " — " + a.code : ""), form(fields) + partyList("faparties") + `<div id="falife" class="muted"></div>`,
+  drawer((isNew ? L2("New asset", "أصل جديد") : t("edit")) + (a.code ? " — " + a.code : ""), form(fields) + partyList("faparties") + `<div id="falife" class="muted"></div><h4>${L2("Depreciation schedule", "جدول الإهلاك")}</h4><div id="fasch" class="muted"></div>`,
     async v => { if (!v.depr_start) delete v.depr_start; if (isNew) await api("POST", "/api/assets", v); else await api("PUT", "/api/assets/" + a.id, v); toast(t("saved")); },
-    { onOpen: f => {
+    { onOpen: async f => {
       S.H.falife = () => { const m = +$("[name=life_months]", f).value || 0, c = +$("[name=cost]", f).value || 0, s = +$("[name=salvage]", f).value || 0;
         $("#falife", f).textContent = m ? `${+(m / 12).toFixed(2)} ${L2("years", "سنة")} · ${L2("monthly depreciation", "الإهلاك الشهري")} ${money((c - s) / m)}` : L2("Not depreciated", "لا يُهلك"); };
       f.addEventListener("input", S.H.falife); S.H.falife();
+      const sch = debounce(async () => { const box = $("#fasch", f), v = readForm(f); if (!v.cost) { box.textContent = L2("Enter the cost to see the schedule.", "أدخل التكلفة لعرض الجدول."); return; }
+        try { box.innerHTML = schedHtml(isNew ? await api("POST", "/api/assets-preview/schedule", v) : await api("POST", "/api/assets-preview/schedule", { ...v, id: a.id, depr_start: v.depr_start || a.depr_start })); } catch (e) { box.textContent = e.message; } });
+      f.addEventListener("input", sch); f.addEventListener("change", sch); sch();
+      S.H.fameth = () => { const m = $("[name=depr_method]", f).value; showFields(f, m === "straight_line" ? [] : ["depr_factor"], ["depr_factor"]); }; S.H.fameth();
+      const pol = await deprPolicy(), fill = () => { if (!isNew) return; const r = { ...pol, ...(pol.by_account[$("[name=account]", f).value] || {}) };
+        $("[name=life_months]", f).value = r.life_months; $("[name=salvage]", f).placeholder = r.residual_pct ? `${r.residual_pct}% ${L2("of cost", "من التكلفة")}` : "0";
+        $("[name=depr_start]", f).placeholder = pol.convention === "next_month" ? L2("month after purchase", "الشهر التالي للشراء") : L2("month of purchase", "شهر الشراء"); S.H.falife(); sch(); };
+      $("[name=account]", f).addEventListener("change", fill); fill();
       if (isNew) { S.H.fapay = () => { const p = $("[name=pay]", f).value;
         showFields(f, { none: [], cash: ["method", "vat_code", "wht_code", "vendor"], payable: ["vendor", "paid", "method", "vat_code", "wht_code"], partner: ["partner"] }[p], ["vendor", "paid", "method", "vat_code", "wht_code", "partner"]); };
         S.H.fapay(); }
@@ -3333,6 +3347,36 @@ function assetForm(a) {
     } });
 }
 
+const canPolicy = () => can("settings", "edit") || can("assets.depreciation", "edit");
+const deprPolicy = async () => { try { return await api("GET", "/api/depreciation-policy"); } catch { return { method: "straight_line", factor: 2, convention: "same_month", life_months: 60, residual_pct: 0, by_account: {} }; } };
+const deprMethodLabel = (m, f) => m === "declining" ? `${L2("Declining balance", "القسط المتناقص")} ×${+f || 2}` : L2("Straight line", "القسط الثابت");
+const schedHtml = d => d.rows.length ? `<div class="muted" style="margin-bottom:4px">${esc(deprMethodLabel(d.method, d.factor))}${d.start ? ` · ${L2("from", "من")} ${esc(d.start)} ${L2("to", "إلى")} ${esc(d.end_month || "")}` : ""}</div><div class="tbl"><table><thead><tr><th>${L2("Year", "السنة")}</th><th class="num">${L2("Depreciation", "الإهلاك")}</th><th class="num">${L2("Accumulated", "المجمع")}</th><th class="num">${L2("Book value", "القيمة الدفترية")}</th><th></th></tr></thead><tbody>
+  ${d.rows.map(r => `<tr><td>${esc(r.year)}</td><td class="num">${money(r.depreciation)}</td><td class="num">${money(r.accumulated)}</td><td class="num"><b>${money(r.book_value)}</b></td><td>${r.booked && r.planned ? `<span class="chip">${L2("part booked", "محتسب جزئياً")}</span>` : r.booked ? `<span class="chip ok">${L2("booked", "محتسب")}</span>` : `<span class="chip">${L2("planned", "مخطط")}</span>`}</td></tr>`).join("")}</tbody></table></div>` : `<div class="muted">${L2("Nothing to depreciate.", "لا يوجد إهلاك.")}</div>`;
+async function deprPolicyForm() {
+  const p = await deprPolicy();
+  const rentAcc = accByRole("rental_fleet");
+  const deprAccts = accts(["Asset"], ["fixed_asset", "intangible"]);
+  const rows = [...deprAccts, ...(rentAcc && !deprAccts.some(([c]) => c === rentAcc) ? [[rentAcc, `${rentAcc} — ${aname(S.boot.accounts.find(a => a.code === rentAcc) || {})}`]] : [])];
+  const mopts = sel => [["", "—"], ["straight_line", L2("Straight line", "القسط الثابت")], ["declining", L2("Declining balance", "القسط المتناقص")]].map(([v, l]) => `<option value="${v}" ${v === (sel || "") ? "selected" : ""}>${esc(l)}</option>`).join("");
+  drawer(L2("Depreciation settings", "إعدادات الإهلاك"), form([
+    { html: `<p class="muted" style="margin:0">${L2("These are the company's rules. New assets take them (you can still change any asset), and every depreciation run follows them. Changing a rule never touches depreciation already booked — the rest of the life is re-spread from the next run.", "هذه قواعد الشركة. الأصول الجديدة تأخذها (ويمكنك تعديل أي أصل)، وكل احتساب للإهلاك يتبعها. تغيير القاعدة لا يمس الإهلاك المسجل — ويُعاد توزيع الباقي من الاحتساب التالي.")}</p>`, span: "spanall" },
+    { k: "method", l: L2("Default method", "الطريقة الافتراضية"), type: "select", opts: [["straight_line", L2("Straight line — the same every month", "القسط الثابت — نفس المبلغ كل شهر")], ["declining", L2("Declining balance — more in the early years", "القسط المتناقص — أكثر في السنوات الأولى")]], v: p.method, change: "dpm" },
+    { k: "factor", l: L2("Declining factor", "معامل التناقص"), type: "number", v: p.factor, help: L2("2 = double declining (common) · 1.5 = 150% · switches to straight line when that is higher, so the asset still ends at its residual value", "2 = متناقص مضاعف (الأشهر) · 1.5 = 150% · يتحول للقسط الثابت عندما يكون أعلى، فينتهي الأصل عند قيمته التخريدية") },
+    { k: "convention", l: L2("First month depreciated", "أول شهر يُهلك"), type: "select", opts: [["same_month", L2("The month it was bought (full month)", "شهر الشراء (شهر كامل)")], ["next_month", L2("The month after it was bought", "الشهر التالي للشراء")]], v: p.convention },
+    { k: "life_months", l: L2("Default useful life (months)", "العمر الإنتاجي الافتراضي (شهور)"), type: "number", v: p.life_months, help: L2("60 = 5 years", "60 = 5 سنوات") },
+    { k: "residual_pct", l: L2("Default residual value (% of cost)", "القيمة التخريدية الافتراضية (% من التكلفة)"), type: "number", v: p.residual_pct },
+    { k: "remind", l: L2("Remind me on the dashboard when last month's depreciation is not booked", "ذكّرني في لوحة التحكم إذا لم يُحتسب إهلاك الشهر الماضي"), type: "checkbox", v: p.remind, span: "spanall" },
+    { html: `<h4 class="fsec">${L2("Per asset account (blank = default above)", "حسب حساب الأصل (فارغ = الافتراضي أعلاه)")}</h4>
+      <div class="tbl"><table id="dpacc"><thead><tr><th>${t("account")}</th><th>${L2("Life (months)", "العمر (شهور)")}</th><th>${L2("Residual %", "التخريدية %")}</th><th>${L2("Method", "الطريقة")}</th></tr></thead><tbody>
+      ${rows.map(([c, l]) => { const r = p.by_account[c] || {}; return `<tr data-code="${esc(c)}"><td>${esc(l)}${c === rentAcc ? `<div class="lines">${L2("rental equipment: life & residual are set per item; the method applies", "معدات التأجير: العمر والتخريدية لكل صنف؛ وتُطبق الطريقة")}</div>` : ""}</td>
+        <td><input data-skip="1" class="num" type="number" step="1" data-k="life_months" value="${r.life_months ?? ""}" style="width:90px" ${c === rentAcc ? "disabled" : ""}></td>
+        <td><input data-skip="1" class="num" type="number" step="any" data-k="residual_pct" value="${r.residual_pct ?? ""}" style="width:80px" ${c === rentAcc ? "disabled" : ""}></td>
+        <td><select data-skip="1" data-k="method">${mopts(r.method)}</select></td></tr>`; }).join("")}</tbody></table></div>`, span: "spanall" }]),
+  async (v, f) => { v.by_account = {};
+    $$("#dpacc tbody tr", f).forEach(tr => { const r = {}; $$("[data-k]", tr).forEach(el => { if (el.value !== "") r[el.dataset.k] = el.value; }); if (Object.keys(r).length) v.by_account[tr.dataset.code] = r; });
+    await api("PUT", "/api/depreciation-policy", v); toast(t("saved")); },
+  { wide: true, onOpen: f => { S.H.dpm = () => showFields(f, $("[name=method]", f).value === "declining" ? ["factor"] : [], ["factor"]); S.H.dpm(); } });
+}
 function deprForm() {
   const month = today().slice(0, 7);
   drawer(L2("Run depreciation", "احتساب الإهلاك"), form([

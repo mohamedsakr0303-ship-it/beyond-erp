@@ -676,6 +676,48 @@ class EntryTypes(unittest.TestCase):
         self.assertEqual([x["key"] for x in m if x["show"]], ["entry:pay_rent", "doc:journal"])
 
 
+class DepreciationPolicy(unittest.TestCase):
+    """Company depreciation rules: method, first month, defaults per asset account; changes apply from now on."""
+
+    def test_policy(self):
+        from erp import assets as A
+        db = seeded()
+        fa = db.acct("fixed_asset")
+        A.save_policy(db, {"convention": "next_month", "by_account": {fa: {"life_months": 36, "residual_pct": 10}}})
+        aid = A.save(db, {"name": "Laptop", "account": fa, "acquired": "2026-01-15", "cost": 36000})
+        x = A.get(db, aid)
+        self.assertEqual((x["life_months"], x["salvage"], x["depr_start"]), (36, 360000, "2026-02"))
+        self.assertEqual(A._row(db, x)["monthly"], 900)                         # (36000 − 3600) ÷ 36
+        # declining: front-loaded, still ends exactly at the residual value
+        did = A.save(db, {"name": "Crane", "account": fa, "acquired": "2026-01-01", "cost": 120000, "salvage": 0,
+                          "life_months": 60, "depr_start": "2026-01", "depr_method": "declining", "depr_factor": 2})
+        sch = A.schedule(db, A.get(db, did))
+        self.assertGreater(sch["rows"][0]["depreciation"], sch["rows"][-1]["depreciation"])
+        self.assertEqual(sch["rows"][-1]["book_value"], 0)
+        self.assertEqual(sch["rows"][-1]["year"], "2030")                        # 60 months from 2026-01 → 2030-12
+        self.assertEqual(round(sum(r["depreciation"] for r in sch["rows"]), 2), 120000)
+        A.run_depreciation(db, "2026-06", [did])
+        st = A._row(db, A.get(db, did))
+        self.assertEqual(st["booked_through"], "2026-06")
+        # straight line: shortening the life re-spreads only what is left
+        A.run_depreciation(db, "2026-06", [aid])                               # 2026-02..06 = 5 × 900
+        A.save(db, {**A._row(db, A.get(db, aid)), "life_months": 18, "depr_method": "", "depr_factor": ""}, aid)
+        r = A._row(db, A.get(db, aid))
+        self.assertEqual((r["accumulated"], r["months_left"]), (4500, 13))
+        self.assertEqual(r["monthly"], round((32400 - 4500) / 13, 2))
+        last = A.schedule(db, A.get(db, aid))["rows"][-1]
+        self.assertEqual(last["book_value"], 3600)
+        # company default method flips the assets that follow the policy, not the ones with their own
+        A.save_policy(db, {"method": "declining", "factor": 1.5, "convention": "next_month",
+                           "by_account": {fa: {"life_months": 36, "residual_pct": 10}}})
+        self.assertEqual(A._row(db, A.get(db, aid))["method"], "declining")
+        self.assertEqual(A._row(db, A.get(db, did))["factor"], 2)
+        with self.assertRaises(a.ValidationError):
+            A.save_policy(db, {"method": "sum_of_digits"})
+        self.assertTrue(A.preview_schedule(db, {"account": fa, "cost": 1000, "acquired": "2026-03-01"})["rows"])
+        self.assertEqual([c["check"] for c in a.audit(db) if not c["ok"]], [])
+
+
 class Contacts(unittest.TestCase):
     """Suppliers, subcontractors and drivers saved with their contact details; what the books say about each."""
 
