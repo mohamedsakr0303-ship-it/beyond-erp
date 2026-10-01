@@ -246,3 +246,21 @@ tr.pending td{background:rgba(37,99,235,.06)}
   .tbl.stack td:has(.lines){flex-wrap:wrap}
   .tbl.stack td:has(.lines)>.lines{flex-basis:100%}
 }
+/* contacts directory */
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 10px}
+.chips .chip{font-size:.85em;padding:4px 12px;text-decoration:none;border:1px solid var(--line)}
+.chips .chip.on{background:var(--brand);color:var(--brand-ink);border-color:var(--brand)}
+.cgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;margin-bottom:14px}
+.cgrid .ccard{margin:0;cursor:pointer;min-width:0}
+.cgrid .ccard b{overflow-wrap:anywhere}
+.ccard .muted{font-size:.85em;overflow-wrap:anywhere}
+h4.fsec{margin:14px 0 4px;font-size:.85em;text-transform:uppercase;letter-spacing:.5px;color:var(--muted)}
+.combo{position:fixed;z-index:1000;background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.18);overflow-y:auto;overscroll-behavior:contain}
+.combo .citem{padding:7px 10px;cursor:pointer;display:flex;flex-direction:column;border-bottom:1px solid var(--line)}
+.combo .citem span{font-size:.78em;color:var(--muted)}
+.combo .citem.hist b{font-weight:500}
+.combo .citem:hover,.combo .citem.on{background:var(--bg)}
+.combo .cnew{padding:7px 10px;font-size:.82em;color:var(--muted);border-bottom:1px solid var(--line);cursor:pointer}
+.newc{display:flex;gap:8px;align-items:center;flex-wrap:wrap;grid-column:1/-1;background:var(--bg);border:1px dashed var(--line);border-radius:8px;padding:6px 10px;font-size:.88em}
+.newc[hidden]{display:none}
+.newc select,.newc input:not([type=checkbox]){width:auto;min-width:120px;flex:1 1 120px}

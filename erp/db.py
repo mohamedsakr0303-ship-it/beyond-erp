@@ -494,7 +494,14 @@ CREATE TABLE IF NOT EXISTS parties (
     phone TEXT DEFAULT '',
     default_vat TEXT DEFAULT '',
     default_wht TEXT DEFAULT '',
-    notes TEXT DEFAULT ''
+    notes TEXT DEFAULT '',
+    category TEXT DEFAULT '',
+    contact_person TEXT DEFAULT '',
+    phone2 TEXT DEFAULT '',
+    whatsapp TEXT DEFAULT '',
+    specialty TEXT DEFAULT '',
+    vehicle TEXT DEFAULT '',
+    bank_details TEXT DEFAULT ''
 );
 
 -- This device's link to a shared workspace (Supabase). Never replicated, exported or erased.
@@ -719,7 +726,7 @@ SUBMODULES = {
     "business_units": ["units", "allocation", "profitability"],
     "sales": ["offers", "receipts", "invoices", "receivables", "parties"],
     "estimating": ["boqs", "prices"],
-    "purchasing": ["costs", "expenses", "payments", "payables", "negotiations", "custody"],
+    "purchasing": ["costs", "expenses", "payments", "payables", "contacts", "negotiations", "custody"],
     "stock": ["balances", "moves", "warehouses"],
     "rentals": ["contracts", "fleet", "calculator"],
     "payroll": [],
@@ -833,6 +840,8 @@ class Database:
         if "email" not in have:  # workspace users created before this column used their email as username
             self.conn.execute("UPDATE users SET email=lower(username) WHERE username LIKE '%_@_%.%'")
         self._add_cols("rates", [("eta_code", "TEXT DEFAULT ''")])
+        self._add_cols("parties", [(c, "TEXT DEFAULT ''") for c in ("category", "contact_person", "phone2", "whatsapp",
+                                                                    "specialty", "vehicle", "bank_details")])
         self._add_cols("extracts", [("customer", "TEXT DEFAULT ''"), ("vat_code", "TEXT DEFAULT ''"),
                                     ("wht_code", "TEXT DEFAULT ''"), ("eta_uuid", "TEXT DEFAULT ''"),
                                     ("eta_status", "TEXT DEFAULT ''"), ("eta_submission", "TEXT DEFAULT ''"),

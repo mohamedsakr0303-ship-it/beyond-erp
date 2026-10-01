@@ -588,6 +588,62 @@ function form(fields, cols = 2) {
   }).join("") + `</div>`;
 }
 const datalist = (id, values) => `<datalist id="${id}">${[...new Set(values)].map(v => `<option value="${esc(v)}">`).join("")}</datalist>`;
+// ---------------------------------------------------------- contacts directory helpers
+const CONTACT_CATS = { supplier: ["Supplier", "مورد"], subcontractor: ["Subcontractor", "مقاول باطن"], driver: ["Driver", "سائق"],
+  transport: ["Transport company", "شركة نقل"], technician: ["Technician", "فني"], consultant: ["Consultant", "استشاري"],
+  customer: ["Customer", "عميل"], employee: ["Employee", "موظف"], other: ["Other", "أخرى"] };
+const catLabel = c => c ? (CONTACT_CATS[c] ? L2(...CONTACT_CATS[c]) : c.charAt(0).toUpperCase() + c.slice(1)) : "";
+const contactSub = p => [catLabel(p.category) || (p.type && p.type !== "other" ? tl(p.type) : ""), p.specialty, p.phone || p.whatsapp].filter(Boolean).join(" · ");
+// a name list for an input: saved contacts first (with their category and phone), then other names seen in the books
+const partyList = (id, extra = []) => { const dir = S.boot.parties || [], known = new Set(dir.map(p => p.name));
+  return `<datalist id="${id}" data-combo="1">${dir.map(p => `<option value="${esc(p.name)}" label="${esc(contactSub(p))}">`).join("")}${[...new Set(extra)].filter(n => n && !known.has(n)).map(n => `<option value="${esc(n)}" data-hist="1">`).join("")}</datalist>`; };
+const waNumber = n => { let d = String(n || "").replace(/[^\d+]/g, "").replace(/^\+/, "").replace(/^00/, ""); if (/^0\d{10}$/.test(d)) d = "20" + d.slice(1); return d; };
+// Searchable drop-down for name inputs whose <datalist> is marked data-combo. Typing a new name is always allowed.
+const combo = { inp: null, box: null, items: [], i: -1 };
+function comboClose() { if (combo.box) combo.box.remove(); combo.box = null; combo.inp = null; combo.i = -1; }
+function comboPlace() { if (!combo.box || !combo.inp) return; const r = combo.inp.getBoundingClientRect(), below = innerHeight - r.bottom;
+  const up = below < 220 && r.top > below; Object.assign(combo.box.style, { left: Math.max(4, r.left) + "px", width: Math.min(innerWidth - 8, Math.max(r.width, 240)) + "px",
+    top: up ? "" : r.bottom + 2 + "px", bottom: up ? innerHeight - r.top + 2 + "px" : "", maxHeight: Math.min(320, (up ? r.top : below) - 12) + "px" }); }
+function comboRender() { const inp = combo.inp; if (!inp) return; const all = combo.all, qv = inp.value.trim().toLowerCase(), words = qv.split(/\s+/).filter(Boolean);
+  combo.items = all.filter(o => words.every(w => (o.v + " " + o.sub).toLowerCase().includes(w))).slice(0, 80); combo.i = -1;
+  const exact = all.some(o => o.v.toLowerCase() === qv);
+  if (!combo.items.length && !qv) { comboClose(); return; }
+  if (!combo.box) { combo.box = document.createElement("div"); combo.box.className = "combo"; combo.box.addEventListener("mousedown", e => e.preventDefault());
+    combo.box.addEventListener("click", e => { const it = e.target.closest("[data-ci]"); if (it) comboPick(+it.dataset.ci); else if (e.target.closest(".cnew")) comboClose(); }); document.body.appendChild(combo.box); }
+  combo.box.innerHTML = (qv && !exact ? `<div class="cnew">＋ ${esc(L2(`“${inp.value.trim()}” — new name (allowed)`, `«${inp.value.trim()}» — اسم جديد (مسموح)`))}</div>` : "") +
+    combo.items.map((o, i) => `<div class="citem${o.hist ? " hist" : ""}" data-ci="${i}"><b>${esc(o.v)}</b>${o.sub ? `<span>${esc(o.sub)}</span>` : o.hist ? `<span>${esc(L2("used before · not in contacts", "مستخدم سابقاً · غير محفوظ"))}</span>` : ""}</div>`).join("");
+  comboPlace(); }
+function comboPick(i) { const o = combo.items[i], inp = combo.inp; if (!o || !inp) return; inp.value = o.v; comboClose(); combo.quiet = true;
+  try { inp.dispatchEvent(new Event("input", { bubbles: true })); inp.dispatchEvent(new Event("change", { bubbles: true })); } finally { combo.quiet = false; } }
+document.addEventListener("focusin", e => { const inp = e.target; if (!(inp instanceof HTMLInputElement)) return;
+  const id = inp.getAttribute("list") || inp.dataset.combo; if (!id) return;
+  const scope = inp.closest(".drawer, form, #view, main") || document;
+  const dl = scope.querySelector(`datalist[id="${id}"]`) || document.getElementById(id); if (!dl || !dl.hasAttribute("data-combo")) return;
+  inp.dataset.combo = id; inp.removeAttribute("list"); inp.setAttribute("autocomplete", "off");
+  combo.all = [...dl.options].map(o => ({ v: o.value, sub: o.label && o.label !== o.value ? o.label : "", hist: !!o.dataset.hist }));
+  if (combo.inp !== inp) comboClose(); combo.inp = inp; comboRender(); });
+document.addEventListener("focusout", e => { if (e.target === combo.inp) setTimeout(() => { if (document.activeElement !== combo.inp) comboClose(); }, 120); });
+document.addEventListener("input", e => { if (combo.quiet) return; if (e.target === combo.inp) comboRender(); else if (e.target.dataset && e.target.dataset.combo && document.activeElement === e.target) e.target.dispatchEvent(new FocusEvent("focusin", { bubbles: true })); });
+document.addEventListener("keydown", e => { if (!combo.box || e.target !== combo.inp) return; const n = combo.items.length;
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); if (!n) return; combo.i = (combo.i + (e.key === "ArrowDown" ? 1 : n - 1)) % n;
+    $$(".citem", combo.box).forEach((x, i) => x.classList.toggle("on", i === combo.i)); const on = $(".citem.on", combo.box); if (on) on.scrollIntoView({ block: "nearest" }); }
+  else if (e.key === "Enter" && combo.i >= 0) { e.preventDefault(); comboPick(combo.i); }
+  else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); comboClose(); } }, true);
+window.addEventListener("scroll", () => comboPlace(), true); window.addEventListener("resize", () => comboPlace());
+// under a name field: offer to save a typed new name as a contact (ticked → saved after the document posts)
+function offerContact(f, field, cat) { const el = $(`[name=${field}]`, f); if (!el || !(can("purchasing.contacts", "add") || can("sales.parties", "add"))) return () => null;
+  const box = document.createElement("div"); box.className = "newc"; box.hidden = true;
+  box.innerHTML = `<label class="f chk" style="margin:0"><input type="checkbox" data-skip="1" class="nc-on">${esc(L2("Save this new name to contacts as", "احفظ هذا الاسم الجديد في جهات الاتصال كـ"))}</label>
+    <select data-skip="1" class="nc-cat">${Object.keys(CONTACT_CATS).map(c => `<option value="${c}" ${c === cat ? "selected" : ""}>${esc(catLabel(c))}</option>`).join("")}</select>
+    <input data-skip="1" class="nc-phone" placeholder="${esc(L2("Phone (optional)", "الهاتف (اختياري)"))}" inputmode="tel" dir="ltr">`;
+  el.closest("label").after(box);
+  const sync = () => { const v = el.value.trim().toLowerCase(); box.hidden = !v || (S.boot.parties || []).some(p => p.name.toLowerCase() === v); };
+  el.addEventListener("input", () => { if (!el.value.trim() || document.activeElement === el) box.hidden = true; }); el.addEventListener("change", sync); sync();
+  $(".nc-phone", box).addEventListener("input", () => { $(".nc-on", box).checked = true; });
+  return () => box.hidden || !$(".nc-on", box).checked ? null : { name: el.value.trim(), category: $(".nc-cat", box).value, phone: $(".nc-phone", box).value.trim() }; }
+async function saveNewContacts(getters) { let n = 0;
+  for (const g of getters) { const c = g && g(); if (!c) continue; try { await api("POST", "/api/parties-master", c); n++; } catch (e) { toast(e.message); } }
+  if (n) { await refreshBoot(); toast(L2("Saved to contacts", "حُفظ في جهات الاتصال")); } }
 
 // ------------------------------------------------------------ option lists
 const aname = a => (S.lang === "ar" && a.name_ar ? a.name_ar : a.name);
@@ -813,6 +869,7 @@ function newItem(key) {
   if (kind === "asset") return id === "depr" ? deprForm() : assetForm();
   if (kind === "entry") return entryTypeForm(id);
   if (kind === "loan") return id === "pay" ? pickThen("loans", lid => loanAction(lid, "pay")) : loanForm();
+  if (kind === "contact") return contactForm({}, cid => contactView(cid));
   if (kind === "custody") return id === "settle" ? pickThen("custody", c => custodyAction(c, "settle")) : custodyForm();
 }
 async function openDoc(type, pre, edit, copyVals) {
@@ -825,9 +882,12 @@ async function openDoc(type, pre, edit, copyVals) {
   try { names = (await api("GET", "/api/parties?kind=all")).names; } catch { /* no permission */ }
   const items = S.boot.items.map(i => i.name);
   const vals = (edit && edit.form) || copyVals;
-  drawer(t(d.title) + " — " + (edit ? `${t("edit")} #${edit.id}` : t("new")), form(d.fields(pre)) + unitsList() + datalist("parties", names) + datalist("items", items),
-    async v => { if (edit) { await api("PUT", `/api/docs/${type}/${edit.id}`, v); toast(t("saved")); } else { await api("POST", "/api/docs/" + type, v); toast(t("posted")); } },
-    { onOpen: f => { if (d.open) d.open(f, !!edit); if (vals) fillForm(f, vals); if (d.calc) { S.H.calc = () => d.calc(f); d.calc(f); } } });
+  const nc = [];
+  drawer(t(d.title) + " — " + (edit ? `${t("edit")} #${edit.id}` : t("new")), form(d.fields(pre)) + unitsList() + partyList("parties", names) + datalist("items", items),
+    async v => { if (edit) { await api("PUT", `/api/docs/${type}/${edit.id}`, v); toast(t("saved")); } else { await api("POST", "/api/docs/" + type, v); toast(t("posted")); }
+      await saveNewContacts(nc); },
+    { onOpen: f => { if (d.open) d.open(f, !!edit); if (vals) fillForm(f, vals); if (d.calc) { S.H.calc = () => d.calc(f); d.calc(f); }
+      [["vendor", "supplier"], ["party", type === "receipt" ? "customer" : "supplier"], ["worker", "employee"]].forEach(([k, c]) => { if ($(`[name=${k}]`, f) && $(`[name=${k}]`, f).getAttribute("list") === "parties") nc.push(offerContact(f, k, c)); }); } });
 }
 function fillForm(f, vals) {
   Object.entries(vals).forEach(([k, v]) => { const el = $(`[name="${k}"]`, f); if (!el || v == null) return;
@@ -842,7 +902,7 @@ function journalLinesEditor(lines) {
       <td><input data-skip="1" class="jd num" type="number" step="any" value="${l.debit || ""}" data-input="jbal"></td><td><input data-skip="1" class="jc num" type="number" step="any" value="${l.credit || ""}" data-input="jbal"></td>
       <td><input data-skip="1" class="jp" value="${esc(l.party || "")}" list="jparties" style="min-width:90px"></td>
       <td><button type="button" class="btn sm danger" data-a="jrm">✕</button></td></tr>`).join("")}</tbody></table></div>
-    ${datalist("jparties", [...(S.boot.partners || []).map(p => p.name), ...(S.boot.parties || []).map(p => p.name)])}
+    ${partyList("jparties", (S.boot.partners || []).map(p => p.name))}
     <div class="row" style="margin-top:8px"><button type="button" class="btn sm" data-a="jadd">${t("add_line")}</button><span class="spacer"></span><span id="jbal"></span></div>`;
 }
 function journalForm(e, copy) {
@@ -1511,31 +1571,97 @@ PAGES.data = async (view) => {
 };
 
 // ------------------------------------------------------ parties & taxes
+// one form for every party: customers (tax & e-invoice details) and contacts (suppliers, subcontractors, drivers…)
+function contactForm(p = {}, after) {
+  const canDel = p.id && (can("sales.parties", "edit") || can("purchasing.contacts", "edit"));
+  const sec = h => ({ html: `<h4 class="fsec">${esc(h)}</h4>`, span: "spanall" });
+  drawer(p.id ? `${p.name}` : L2("New contact", "جهة اتصال جديدة"), form([
+    { k: "name", l: t("name"), v: p.name, req: 1 },
+    { k: "category", l: L2("Category", "التصنيف"), v: p.category || (p.id ? "" : "supplier"), list: "ccats", ph: L2("supplier, subcontractor, driver…", "مورد، مقاول باطن، سائق…") },
+    { k: "contact_person", l: L2("Contact person", "الشخص المسؤول"), v: p.contact_person }, { k: "specialty", l: L2("Trade / specialty", "النشاط / التخصص"), v: p.specialty, ph: L2("e.g. steel, plumbing, aluminium", "مثال: حديد، سباكة، ألوميتال") },
+    { k: "phone", l: t("phone"), v: p.phone }, { k: "phone2", l: L2("Other phone", "هاتف آخر"), v: p.phone2 },
+    { k: "whatsapp", l: "WhatsApp", v: p.whatsapp, ph: L2("blank = same as phone", "فارغ = نفس الهاتف") }, { k: "email", l: t("email"), v: p.email, type: "email" },
+    { k: "vehicle", l: L2("Vehicle / plate (drivers)", "المركبة / رقم اللوحة (للسائقين)"), v: p.vehicle },
+    { k: "type", l: L2("In the books as", "يُعامل محاسبياً كـ"), type: "select", opts: [["", L2("Auto (from category)", "تلقائي (حسب التصنيف)")], ["customer", t("customer")], ["supplier", t("supplier")], ["both", `${t("customer")} + ${t("supplier")}`], ["employee", t("worker")], ["other", "—"]], v: p.id ? p.type : "" },
+    { k: "bank_details", l: L2("Bank details (for transfers)", "بيانات البنك (للتحويل)"), type: "textarea", v: p.bank_details, span: "spanall", ph: L2("Bank, account name, account no. / IBAN, InstaPay…", "البنك، اسم الحساب، رقم الحساب / IBAN، إنستاباي…") },
+    sec(L2("Address", "العنوان")),
+    { k: "governate", l: t("governate"), v: p.governate }, { k: "region", l: t("region"), v: p.region },
+    { k: "street", l: t("street"), v: p.street }, { k: "building", l: t("building"), v: p.building },
+    sec(L2("Tax & e-invoice", "الضرائب والفاتورة الإلكترونية")),
+    { k: "receiver_type", l: t("receiver_type"), type: "select", opts: ["B", "P", "F"].map(x => [x, t("rt_" + x)]), v: p.receiver_type || "B" },
+    { k: "tax_id", l: t("tax_id"), v: p.tax_id, ph: "123456789" }, { k: "national_id", l: t("national_id"), v: p.national_id },
+    { k: "country", l: t("country"), v: p.country || "EG" }, { k: "postal_code", l: t("postal"), v: p.postal_code },
+    { k: "default_vat", l: t("default_vat"), type: "select", opts: taxOpts("vat"), v: p.default_vat }, { k: "default_wht", l: t("default_wht"), type: "select", opts: taxOpts("wht"), v: p.default_wht },
+    { k: "notes", l: t("notes"), type: "textarea", v: p.notes, span: "spanall" }]) + datalist("ccats", [...Object.keys(CONTACT_CATS), ...(S.cache.ccats || [])].map(catLabel)),
+  async v => { const lab = Object.fromEntries(Object.keys(CONTACT_CATS).flatMap(c => [[CONTACT_CATS[c][0].toLowerCase(), c], [CONTACT_CATS[c][1], c]]));
+    v.category = lab[(v.category || "").trim().toLowerCase()] || lab[(v.category || "").trim()] || v.category;
+    const r = p.id ? await api("PUT", "/api/parties-master/" + p.id, v) : await api("POST", "/api/parties-master", v);
+    await refreshBoot(); toast(t("saved")); if (after) { await after(r.id); return false; } },
+  { extraButtons: canDel ? `<button type="button" class="btn danger" data-a="pmdel">${t("delete")}</button>` : "",
+    onOpen: f => { const c = $("[name=category]", f); if (c.value) c.value = catLabel(c.value); } });
+  S.H.pmdel = () => confirmDelete(p.name, "/api/parties-master/" + p.id, refreshBoot);
+}
 PAGES.parties = async (view, parts, q) => {
   const lq = { ...q, limit: q.limit || 100 };
   const d = await api("GET", "/api/parties-master?" + qs(lq));
   const ed = can("sales.parties", "edit") || can("sales.invoices", "edit") || can("purchasing", "edit");
   const add = ed || can("sales.parties", "add") || can("sales.invoices", "add") || can("purchasing", "add");
-  const edit = p => drawer(t("m_parties"), form([{ k: "name", l: t("name"), v: p.name, req: 1 },
-    { k: "type", l: t("type"), type: "select", opts: [["customer", t("customer")], ["supplier", t("supplier")], ["both", `${t("customer")} + ${t("supplier")}`], ["employee", t("worker")], ["other", "—"]], v: p.type },
-    { k: "receiver_type", l: t("receiver_type"), type: "select", opts: ["B", "P", "F"].map(x => [x, t("rt_" + x)]), v: p.receiver_type || "B" },
-    { k: "tax_id", l: t("tax_id"), v: p.tax_id, ph: "123456789" }, { k: "national_id", l: t("national_id"), v: p.national_id },
-    { k: "country", l: t("country"), v: p.country || "EG" }, { k: "governate", l: t("governate"), v: p.governate }, { k: "region", l: t("region"), v: p.region },
-    { k: "street", l: t("street"), v: p.street }, { k: "building", l: t("building"), v: p.building }, { k: "postal_code", l: t("postal"), v: p.postal_code },
-    { k: "email", l: t("email"), v: p.email, type: "email" }, { k: "phone", l: t("phone"), v: p.phone },
-    { k: "default_vat", l: t("default_vat"), type: "select", opts: taxOpts("vat"), v: p.default_vat }, { k: "default_wht", l: t("default_wht"), type: "select", opts: taxOpts("wht"), v: p.default_wht },
-    { k: "notes", l: t("notes"), type: "textarea", v: p.notes, span: "spanall" }]),
-  async v => { if (p.id) await api("PUT", "/api/parties-master/" + p.id, v); else await api("POST", "/api/parties-master", v); await refreshBoot(); toast(t("saved")); },
-  { extraButtons: p.id && can("sales.parties", "edit") ? `<button type="button" class="btn danger" data-a="pmdel">${t("delete")}</button>` : "" });
-  S.H.pmdel = () => {};
-  S.H.pnew = () => edit({});
-  S.H.pedit = el => { const p = d.rows.find(x => String(x.id) === el.dataset.id); edit(p);
-    S.H.pmdel = () => confirmDelete(p.name, "/api/parties-master/" + p.id, refreshBoot); };
-  view.innerHTML = `<div class="toolbar">${add ? `<button class="btn pri" data-a="pnew">+ ${t("new")}</button>` : ""}</div>` +
+  S.cache.ccats = d.categories;
+  S.H.pnew = () => contactForm({ category: "customer", type: "customer" });
+  S.H.pedit = el => contactForm(d.rows.find(x => String(x.id) === el.dataset.id));
+  view.innerHTML = `<div class="toolbar">${add ? `<button class="btn pri" data-a="pnew">+ ${t("new")}</button>` : ""}<span class="spacer"></span>${can("purchasing.contacts") ? `<a class="btn" href="#/contacts">☏ ${L2("Contacts directory", "دليل جهات الاتصال")}</a>` : ""}</div>` +
     filterBar(q, ["q", ["select", "type", t("type"), [["customer", t("customer")], ["supplier", t("supplier")]]]]) +
-    `<div class="card">${d.rows.length ? `<div class="tbl"><table><thead><tr><th>${t("name")}</th><th>${t("type")}</th><th>${t("tax_id")}</th><th>${t("governate")}</th><th>${t("phone")}</th><th>${t("default_vat")}</th><th>${t("default_wht")}</th></tr></thead><tbody>
-      ${d.rows.map(p => `<tr class="click" data-a="${ed ? "pedit" : ""}" data-id="${p.id}"><td><b>${esc(p.name)}</b></td><td>${esc(p.type)}</td><td>${esc(p.tax_id || p.national_id)}</td><td>${esc(p.governate)}</td><td>${esc(p.phone)}</td><td>${esc(p.default_vat)}</td><td>${esc(p.default_wht)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${t("nothing")}</div>`}${pager(d.total, lq)}</div>`;
+    `<div class="card">${d.rows.length ? `<div class="tbl"><table><thead><tr><th>${t("name")}</th><th>${t("type")}</th><th>${L2("Category", "التصنيف")}</th><th>${t("tax_id")}</th><th>${t("governate")}</th><th>${t("phone")}</th><th>${t("default_vat")}</th><th>${t("default_wht")}</th></tr></thead><tbody>
+      ${d.rows.map(p => `<tr class="click" data-a="${ed ? "pedit" : ""}" data-id="${p.id}"><td><b>${esc(p.name)}</b></td><td>${esc(p.type)}</td><td>${esc(catLabel(p.category))}</td><td>${esc(p.tax_id || p.national_id)}</td><td>${esc(p.governate)}</td><td>${esc(p.phone)}</td><td>${esc(p.default_vat)}</td><td>${esc(p.default_wht)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${t("nothing")}</div>`}${pager(d.total, lq)}</div>`;
 };
+// ------------------------------------------------------ contacts directory
+const contactLinks = p => { const wa = waNumber(p.whatsapp || p.phone);
+  return `${p.phone ? `<a class="btn sm" href="tel:${esc(p.phone.replace(/\s/g, ""))}" title="${esc(p.phone)}">📞 ${esc(p.phone)}</a>` : ""}${wa ? `<a class="btn sm" href="https://wa.me/${wa}" target="_blank" rel="noopener">WhatsApp</a>` : ""}${p.email ? `<a class="btn sm" href="mailto:${esc(p.email)}">✉ ${esc(L2("Email", "بريد"))}</a>` : ""}`; };
+PAGES.contacts = async (view, parts, q) => {
+  const lq = { ...q, limit: q.limit || 200 };
+  const d = await api("GET", "/api/parties-master?" + qs(lq));
+  const all = q.category ? null : d;
+  S.cache.ccats = d.categories;
+  const add = can("purchasing.contacts", "add") || can("sales.parties", "add");
+  S.H.cnew = () => contactForm({}, id => contactView(id));
+  S.H.copen = el => contactView(el.dataset.id);
+  const cats = [...new Set([...Object.keys(CONTACT_CATS).filter(c => c !== "customer" && c !== "employee" && c !== "other"), ...d.categories])];
+  const chip = (c, l) => `<a class="chip${(q.category || "") === c ? " on" : ""}" href="#/contacts${c ? "?category=" + encodeURIComponent(c) : ""}">${esc(l)}</a>`;
+  view.innerHTML = `<div class="toolbar">${add ? `<button class="btn pri" data-a="cnew">+ ${L2("New contact", "جهة اتصال جديدة")}</button>` : ""}<span class="spacer"></span><a class="btn" href="#/payables">${t("m_payables")}</a></div>
+    <div class="chips">${chip("", L2("All", "الكل"))}${cats.map(c => chip(c, catLabel(c))).join("")}</div>` +
+    filterBar(q, ["q"]) +
+    (d.rows.length ? `<div class="cgrid">${d.rows.map(p => `<div class="card ccard click" data-a="copen" data-id="${p.id}">
+        <div class="row" style="gap:6px;align-items:baseline"><b>${esc(p.name)}</b>${p.category || p.type !== "other" ? `<span class="chip">${esc(p.category ? catLabel(p.category) : tl(p.type))}</span>` : ""}</div>
+        <div class="muted">${esc([p.contact_person, p.specialty, p.vehicle, p.governate].filter(Boolean).join(" · ")) || "&nbsp;"}</div>
+        <div class="row clinks" style="gap:6px;flex-wrap:wrap;margin-top:8px">${contactLinks(p) || `<span class="muted">${esc(L2("No phone saved", "لا يوجد هاتف"))}</span>`}</div></div>`).join("")}</div>${pager(d.total, lq)}`
+      : `<div class="card"><div class="empty">${q.q || q.category ? t("nothing") : L2("No contacts yet. Save your suppliers, subcontractors, drivers and technicians here with their phones and bank details — they then appear in the supplier / payee drop-downs when you record an expense or a payment. You can still type a new name there at any time.", "لا توجد جهات اتصال بعد. احفظ هنا الموردين ومقاولي الباطن والسائقين والفنيين بأرقامهم وبيانات البنك — وستظهر في قائمة المورد / المستفيد عند تسجيل مصروف أو سند صرف. ويمكنك دائماً كتابة اسم جديد هناك.")}</div></div>`);
+  // links inside a card must not open the card
+  $$(".clinks a", view).forEach(a => a.addEventListener("click", e => e.stopPropagation()));
+};
+async function contactView(id) {
+  const d = await api("GET", "/api/contacts/" + id), p = d.contact;
+  const owe = d.balances.reduce((a, b) => a + b.we_owe, 0), owed = d.balances.reduce((a, b) => a + b.owes_us, 0);
+  const ap = d.balances.filter(b => b.we_owe > 0).sort((a, b) => b.we_owe - a.we_owe)[0];
+  const ed = can("purchasing.contacts", "edit") || can("sales.parties", "edit");
+  const row = (l, v, ltr) => v ? `<tr><th style="width:38%">${esc(l)}</th><td ${ltr ? 'dir="ltr"' : ""} style="white-space:pre-wrap">${esc(v)}</td></tr>` : "";
+  const btns = [ed ? `<button type="button" class="btn" data-a="cvedit">${t("edit")}</button>` : "",
+    can("purchasing.expenses", "add") ? `<button type="button" class="btn" data-a="cvexp">+ ${t("m_expenses")}</button>` : "",
+    can("purchasing.costs", "add") ? `<button type="button" class="btn" data-a="cvcost">+ ${t("m_costs")}</button>` : "",
+    can("purchasing.payments", "add") ? `<button type="button" class="btn pri" data-a="cvpay">${L2("Pay", "صرف دفعة")}</button>` : ""].join("");
+  drawer(p.name, `<div class="row" style="gap:6px;flex-wrap:wrap;margin-bottom:10px">${p.category ? `<span class="chip">${esc(catLabel(p.category))}</span>` : ""}${contactLinks(p)}
+      ${p.bank_details ? `<button type="button" class="btn sm" data-a="cvbank">⧉ ${esc(L2("Copy bank details", "نسخ بيانات البنك"))}</button>` : ""}</div>
+    <div class="kpis">${kpiBox(L2("We owe them", "مستحق لهم"), money(owe), owe > 0 ? "neg" : "")}${kpiBox(L2("They owe us", "مستحق لنا عليهم"), money(owed))}${kpiBox(L2("Bought from them", "مشتريات منهم"), money(d.spent))}${d.earned ? kpiBox(L2("Sold to them", "مبيعات لهم"), money(d.earned)) : ""}${kpiBox(L2("Vouchers", "القيود"), numf(d.vouchers))}</div>
+    <div class="tbl"><table><tbody>${row(L2("Contact person", "الشخص المسؤول"), p.contact_person)}${row(L2("Trade / specialty", "النشاط / التخصص"), p.specialty)}${row(t("phone"), [p.phone, p.phone2].filter(Boolean).join(" / "), 1)}${row("WhatsApp", p.whatsapp, 1)}${row(t("email"), p.email, 1)}
+      ${row(L2("Vehicle / plate", "المركبة / اللوحة"), p.vehicle)}${row(L2("Address", "العنوان"), [p.street, p.building, p.region, p.governate].filter(Boolean).join("، "))}${row(L2("Bank details", "بيانات البنك"), p.bank_details)}${row(t("tax_id"), p.tax_id || p.national_id, 1)}${row(t("notes"), p.notes)}</tbody></table></div>
+    ${d.balances.length ? `<h4 class="fsec">${esc(L2("Open balances", "الأرصدة المفتوحة"))}</h4><div class="tbl"><table><thead><tr><th>${t("account")}</th><th class="num">${L2("We owe", "لهم")}</th><th class="num">${L2("Owes us", "لنا عليهم")}</th></tr></thead><tbody>${d.balances.map(b => `<tr><td>${esc(b.account)} — ${esc(aname(b))}</td><td class="num">${b.we_owe ? money(b.we_owe) : ""}</td><td class="num">${b.owes_us ? money(b.owes_us) : ""}</td></tr>`).join("")}</tbody></table></div>` : ""}
+    <h4 class="fsec">${esc(L2("Latest vouchers", "أحدث القيود"))}${d.first ? ` <span class="muted" style="font-weight:400">· ${fd(d.first)} → ${fd(d.last)}</span>` : ""}</h4>
+    ${d.recent.length ? `<div class="tbl"><table><tbody>${d.recent.map(e => `<tr class="click" data-a="openv" data-id="${e.id}"><td>${fd(e.date)}</td><td>${esc(tl(e.kind))}</td><td>${esc(e.memo)}</td><td class="num">${money(e.amount)}</td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="empty">${esc(L2("Nothing recorded with this name yet.", "لا توجد قيود بهذا الاسم بعد."))}</div>`}`,
+  null, { readOnly: true, wide: true, extraButtons: btns });
+  Object.assign(S.H, { cvedit: () => contactForm(p, cid => contactView(cid)), cvexp: () => openDoc("expense", null, null, { vendor: p.name }), cvcost: () => openDoc("direct_cost", null, null, { vendor: p.name }),
+    cvpay: () => openDoc("payment", { party: p.name, amount: ap ? ap.we_owe : "", against: ap ? ap.account : "" }),
+    cvbank: async () => { try { await navigator.clipboard.writeText(`${p.name}\n${p.bank_details}`); toast(L2("Copied", "تم النسخ")); } catch { toast(p.bank_details); } } });
+}
 PAGES.taxcodes = async (view) => {
   const rows = await api("GET", "/api/tax-codes");
   const ed = can("tax.codes", "edit");
@@ -2426,7 +2552,7 @@ async function loanForm(d) {
     { k: "accrued_account", l: L2("Accrued interest account", "حساب الفوائد المستحقة"), type: "select", opts: accOpts(dir0, "accrued"), v: L ? L.accrued_account : d0.accrued_account },
     { k: "notes", l: t("notes"), type: "textarea", v: L ? L.notes : "", span: "spanall" },
     { html: `<div id="lncustom"></div><h4 style="margin:10px 0 0">${L2("Schedule preview", "معاينة جدول السداد")}</h4><div id="lnprev" class="muted">—</div>`, span: "spanall" }])
-    + datalist("lnparties", names);
+    + partyList("lnparties", names);
   const collect = f => { const v = readForm(f); if (v.schedule_type === "custom") v.schedule = rows.filter(r => r.due); return v; };
   drawer(ed ? `${t("edit")} — ${L.code}` : L2("New loan", "قرض جديد"), html, async (v, f) => {
     const body = collect(f);
@@ -2624,7 +2750,7 @@ async function custodyAction(C, action) {
               <td><input data-skip="1" value="${esc(r.supplier)}" data-input="culn" data-i="${i}" data-k="supplier" list="cusup" style="width:120px"></td>
               <td><input data-skip="1" value="${esc(r.receipt)}" data-input="culn" data-i="${i}" data-k="receipt" style="width:90px"></td>
               <td><button type="button" class="btn sm danger" data-a="culdel" data-i="${i}">✕</button></td></tr>`).join("")}</tbody></table></div>
-            ${datalist("cusup", (S.boot.parties || []).map(p => p.name))}
+            ${partyList("cusup")}
             <div class="row" style="margin-top:6px"><button type="button" class="btn sm" data-a="culadd">+ ${L2("Expense", "مصروف")}</button><span class="spacer"></span>
               <span id="cutot">${L2("Report total", "إجمالي التقرير")}: <b>${money(tot)}</b> · ${L2("custody balance", "رصيد العهدة")} ${money(bal)} → <b class="${bal - tot < 0 ? "neg" : ""}">${money(bal - tot)}</b></span></div>`; };
         const tot = () => { const s = rows.reduce((a, r) => a + (+r.amount || 0), 0); const el = $("#cutot", f);
@@ -3009,7 +3135,7 @@ function rentLotForm(it) {
     { k: "paid_from", l: L2("Paid from", "دُفع من"), type: "select", opts: moneyAccts(), v: accByRole("bank") }, { k: "vat_code", l: t("vat_code"), type: "select", opts: taxOpts("vat") },
     { k: "opening_accum", l: L2("Depreciation already taken (total for this lot)", "الإهلاك المحتسب سابقاً (إجمالي الدفعة)"), type: "number" },
     { k: "depr_start", l: L2("Depreciation starts (month)", "بداية الإهلاك (شهر)"), type: "month", help: L2("Blank = the month of the date above", "فارغ = شهر التاريخ أعلاه") },
-    { k: "notes", l: t("notes"), span: "spanall" }]) + datalist("parties", (S.boot.parties || []).map(p => p.name)),
+    { k: "notes", l: t("notes"), span: "spanall" }]) + partyList("parties"),
     async v => { await api("POST", `/api/rent-items/${it.id}/lots`, v); toast(t("saved")); route(); rentItemView(it.id); return false; },
     { onOpen: f => { S.H.rlsrc = () => { const buy = $("[name=source]", f).value === "purchase"; ["supplier", "paid", "paid_from", "vat_code"].forEach(k => { const el = $(`[name=${k}]`, f); el.closest("label").style.display = buy ? "" : "none"; el.dataset.skip = buy ? "" : "1"; });
       ["opening_accum"].forEach(k => { const el = $(`[name=${k}]`, f); el.closest("label").style.display = buy ? "none" : ""; el.dataset.skip = buy ? "1" : ""; }); }; S.H.rlsrc(); } });
@@ -3194,7 +3320,7 @@ function assetForm(a) {
     { k: "method", l: t("method"), type: "select", opts: methodOpts() },
     { k: "vat_code", l: t("vat_code"), type: "select", opts: taxOpts("vat") }, { k: "wht_code", l: t("wht_code"), type: "select", opts: taxOpts("wht") },
     { k: "partner", l: t("partner"), type: "select", opts: activePartners().map(p => [p.id, p.name]) });
-  drawer((isNew ? L2("New asset", "أصل جديد") : t("edit")) + (a.code ? " — " + a.code : ""), form(fields) + datalist("faparties", (S.boot.parties || []).map(p => p.name)) + `<div id="falife" class="muted"></div>`,
+  drawer((isNew ? L2("New asset", "أصل جديد") : t("edit")) + (a.code ? " — " + a.code : ""), form(fields) + partyList("faparties") + `<div id="falife" class="muted"></div>`,
     async v => { if (!v.depr_start) delete v.depr_start; if (isNew) await api("POST", "/api/assets", v); else await api("PUT", "/api/assets/" + a.id, v); toast(t("saved")); },
     { onOpen: f => {
       S.H.falife = () => { const m = +$("[name=life_months]", f).value || 0, c = +$("[name=cost]", f).value || 0, s = +$("[name=salvage]", f).value || 0;
@@ -3231,7 +3357,7 @@ function disposeForm(a) {
     { k: "on_credit", l: L2("Not paid yet (the buyer owes it)", "لم يُسدد بعد (مستحق على المشتري)"), type: "checkbox" },
     { k: "buyer", l: L2("Buyer", "المشتري"), list: "faparties" },
     { k: "depreciate_first", l: L2("Book depreciation up to this month first", "احتساب الإهلاك حتى هذا الشهر أولاً"), type: "checkbox", v: true },
-    { k: "memo", l: t("memo"), span: "spanall" }]) + datalist("faparties", (S.boot.parties || []).map(p => p.name)) + `<div id="dsplan" style="margin-top:12px"></div>`,
+    { k: "memo", l: t("memo"), span: "spanall" }]) + partyList("faparties") + `<div id="dsplan" style="margin-top:12px"></div>`,
   async v => { await api("POST", `/api/assets/${a.id}/dispose`, v); toast(t("posted")); },
   { submitLabel: L2("Book it", "تسجيل"), onOpen: f => {
     const prev = debounce(async () => { const box = $("#dsplan", f);
@@ -3251,7 +3377,7 @@ function entryTypeForm(id) {
   if (e.party !== "none") fields.push({ k: "party", l: t("party"), list: "etparties", req: e.party === "required" });
   if (e.bu !== "none") fields.push({ k: "bu_id", l: t("bu"), type: "select", opts: buOpts(e.bu === "required" ? "" : "—"), req: e.bu === "required" });
   fields.push({ k: "ref", l: t("ref") }, { k: "memo", l: t("memo"), v: (S.lang === "ar" && e.name_ar) || e.name, span: "spanall" });
-  drawer((S.lang === "ar" && e.name_ar) || e.name, form(fields) + datalist("etparties", [...(S.boot.partners || []).map(p => p.name), ...(S.boot.parties || []).map(p => p.name)]),
+  drawer((S.lang === "ar" && e.name_ar) || e.name, form(fields) + partyList("etparties", (S.boot.partners || []).map(p => p.name)),
     async v => { await api("POST", "/api/entry/" + e.id, v); toast(t("posted")); });
 }
 

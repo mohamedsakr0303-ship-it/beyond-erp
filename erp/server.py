@@ -113,7 +113,9 @@ def bootstrap(ctx):
         "partners": db.q("SELECT * FROM partners ORDER BY id"),
         "items": db.q("SELECT * FROM stock_items ORDER BY name"),
         "tax_codes": db.q("SELECT * FROM tax_codes ORDER BY kind, code"),
-        "parties": db.q("SELECT id, name, type, default_vat, default_wht FROM parties ORDER BY name"),
+        "parties": db.q("SELECT id, name, type, category, phone, whatsapp, contact_person, specialty, default_vat, "
+                         "default_wht FROM parties ORDER BY name"),
+        "contact_categories": list(acc.CONTACT_CATEGORIES),
         "offer_types": [{"id": t["id"], "name": t["name"]} for t in db.q("SELECT id, name FROM offer_types ORDER BY id")],
         "enums": {"billing_bases": acc.BILLING_BASES, "methods": acc.PAYMENT_METHODS,
                   "payroll_types": list(acc.PAYROLL_TYPES), "stock_types": acc.STOCK_MOVE_TYPES,
@@ -1405,37 +1407,60 @@ def equity_undo(ctx, cid):
 # ====================================================== parties & taxes
 @route("GET", "/api/parties-master")
 def parties_master(ctx):
-    if not (ctx.can("sales.parties") or ctx.can("sales.invoices") or ctx.can("purchasing") or ctx.can("tax")):
+    if not (ctx.can("sales.parties") or ctx.can("sales.invoices") or ctx.can("purchasing") or ctx.can("tax")
+            or ctx.can("purchasing.contacts")):
         raise PermissionError()
     w, p = ["1=1"], []
     if ctx.q.get("type"):
         w.append("(type=? OR type='both')")
         p.append(ctx.q["type"])
+    if ctx.q.get("category"):
+        w.append("category=?")
+        p.append(ctx.q["category"].lower())
+    if ctx.q.get("contacts"):  # the directory leaves out customers (they live under Sales)
+        w.append("NOT (type='customer' AND category IN ('','customer'))")
     if ctx.q.get("q"):
-        w.append("(name LIKE ? OR tax_id LIKE ? OR phone LIKE ?)")
-        p += [f"%{ctx.q['q']}%"] * 3
+        cols = ("name", "tax_id", "phone", "phone2", "whatsapp", "email", "contact_person", "specialty", "vehicle",
+                "category", "governate", "notes")
+        w.append("(" + " OR ".join(f"{c} LIKE ?" for c in cols) + ")")
+        p += [f"%{ctx.q['q']}%"] * len(cols)
     limit, offset = page(ctx.q)
     rows = ctx.db.q(f"SELECT * FROM parties WHERE {' AND '.join(w)} ORDER BY name LIMIT ? OFFSET ?", p + [limit, offset])
     total = ctx.db.one(f"SELECT COUNT(*) n FROM parties WHERE {' AND '.join(w)}", p)["n"]
-    return ok({"rows": rows, "total": total})
+    cats = [r["category"] for r in ctx.db.q("SELECT DISTINCT category FROM parties WHERE category<>'' ORDER BY 1")]
+    return ok({"rows": rows, "total": total, "categories": cats})
+
+
+@route("GET", "/api/contacts/<pid>")
+def contact_view(ctx, pid):
+    if not (ctx.can("purchasing.contacts") or ctx.can("sales.parties")):
+        raise PermissionError()
+    p = ctx.db.one("SELECT * FROM parties WHERE id=?", (int(pid),))
+    if not p:
+        raise acc.ValidationError("Contact not found")
+    return ok({"contact": p, **acc.contact_summary(ctx.db, p["name"])})
 
 
 @route("POST", "/api/parties-master")
 def party_add(ctx):
-    if not (ctx.can("sales.parties", "add") or ctx.can("sales.invoices", "add") or ctx.can("purchasing", "add")):
+    if not (ctx.can("sales.parties", "add") or ctx.can("sales.invoices", "add") or ctx.can("purchasing", "add")
+            or ctx.can("purchasing.contacts", "add")):
         raise PermissionError()
     return ok({"id": acc.save_party(ctx.db, ctx.body)})
 
 
 @route("PUT", "/api/parties-master/<pid>")
 def party_edit(ctx, pid):
-    if not (ctx.can("sales.parties", "edit") or ctx.can("sales.invoices", "edit") or ctx.can("purchasing", "edit")):
+    if not (ctx.can("sales.parties", "edit") or ctx.can("sales.invoices", "edit") or ctx.can("purchasing", "edit")
+            or ctx.can("purchasing.contacts", "edit")):
         raise PermissionError()
     return ok({"id": acc.save_party(ctx.db, ctx.body, int(pid))})
 
 
-@route("DELETE", "/api/parties-master/<pid>", "sales.parties", "edit")
+@route("DELETE", "/api/parties-master/<pid>")
 def party_del(ctx, pid):
+    if not (ctx.can("sales.parties", "edit") or ctx.can("purchasing.contacts", "edit")):
+        raise PermissionError()
     p = ctx.db.one("SELECT name FROM parties WHERE id=?", (int(pid),))
     if not p:
         raise acc.ValidationError("Not found")

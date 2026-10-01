@@ -676,6 +676,31 @@ class EntryTypes(unittest.TestCase):
         self.assertEqual([x["key"] for x in m if x["show"]], ["entry:pay_rent", "doc:journal"])
 
 
+class Contacts(unittest.TestCase):
+    """Suppliers, subcontractors and drivers saved with their contact details; what the books say about each."""
+
+    def test_directory_and_summary(self):
+        db = seeded()
+        pid = a.save_party(db, {"name": "Osama Driver", "category": "Driver", "phone": "01001234567",
+                                "vehicle": "ABC 123", "bank_details": "CIB 1000"})
+        p = db.one("SELECT * FROM parties WHERE id=?", (pid,))
+        self.assertEqual((p["category"], p["type"], p["vehicle"]), ("driver", "supplier", "ABC 123"))
+        cid = a.save_party(db, {"name": "Client Co", "category": "customer"})
+        self.assertEqual(db.one("SELECT type FROM parties WHERE id=?", (cid,))["type"], "customer")
+        nid = a.save_party(db, {"name": "Plain"})                     # old callers: no category → customer as before
+        self.assertEqual(db.one("SELECT type FROM parties WHERE id=?", (nid,))["type"], "customer")
+        a.save_party(db, {"name": "Eng. Fathy", "category": "Subcontractor", "type": "both"})
+        self.assertEqual(db.one("SELECT type, category FROM parties WHERE name='Eng. Fathy'"), {"type": "both", "category": "subcontractor"})
+        a.record_expense(db, {"description": "Trip", "amount": 800, "vendor": "Osama Driver", "paid": 300, "date": "2026-03-01"})
+        a.record_payment(db, {"party": "Osama Driver", "amount": 200, "date": "2026-03-05"})
+        s = a.contact_summary(db, "Osama Driver")
+        self.assertEqual(s["spent"], 800)
+        self.assertEqual(sum(b["we_owe"] for b in s["balances"]), 300)
+        self.assertEqual((s["vouchers"], len(s["recent"])), (2, 2))
+        a.save_party(db, {**p, "name": "Osama the Driver", "type": ""}, pid)  # a rename keeps the history
+        self.assertEqual(a.contact_summary(db, "Osama the Driver")["vouchers"], 2)
+
+
 class SupplierDiscount(unittest.TestCase):
     """A deal settled for less than what is still owed: the rest is closed as a discount, not left in payables."""
 
@@ -1109,7 +1134,7 @@ class Rentals(unittest.TestCase):
         R.action(db, rid, "po", {"po_number": "PO-1"})
         R.action(db, rid, "sign", {"signed_us": "A", "signed_client": "B"})
         t = R.handover_template(db, rid, "delivery")
-        t.update(signed=1, decision="safe", checklist=[dict(c, ok="yes") for c in t["checklist"]])
+        t.update(signed=1, decision="safe", date="2026-09-01", checklist=[dict(c, ok="yes") for c in t["checklist"]])
         t["data"]["items"][0]["qty"] = 999
         with self.assertRaises(a.ValidationError):                       # more than the yard holds
             R.confirm_handover(db, R.save_handover(db, rid, t))

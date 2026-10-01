@@ -1200,6 +1200,39 @@ def party_balance(db, account, party):
     return to_major(r["n"])
 
 
+_OPEN_ITEM_SUBTYPES = ("receivable", "payable", "accrued", "prepaid", "deferred_revenue", "short_term_debt",
+                       "long_term_debt", "other_current_liability", "other_noncurrent_liability", "other_current_asset",
+                       "other_noncurrent_asset")
+
+
+def contact_summary(db, name, limit=30):
+    """What the books say about one contact: open balances per account, totals and the latest vouchers."""
+    rows = db.q(f"""SELECT l.account, a.name, a.name_ar, a.type, a.subtype, a.role, SUM(l.debit) dr, SUM(l.credit) cr
+                    FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id JOIN accounts a ON a.code=l.account
+                    WHERE {LIVE} AND {PARTY}=? GROUP BY l.account ORDER BY l.account""", (name,))
+    balances, spent, earned = [], 0, 0
+    for r in rows:
+        if r["type"] in ("COGS", "Expense") or r["subtype"] in ("fixed_asset", "inventory"):
+            spent += r["dr"] - r["cr"]
+        elif r["type"] == "Revenue":
+            earned += r["cr"] - r["dr"]
+        elif r["subtype"] in _OPEN_ITEM_SUBTYPES and r["role"] not in ("vat_input", "wht_receivable") and r["dr"] != r["cr"]:
+            bal = r["dr"] - r["cr"]
+            liab = r["type"] == "Liability"
+            balances.append({"account": r["account"], "name": r["name"], "name_ar": r["name_ar"], "type": r["type"],
+                             "we_owe": to_major(-bal) if liab else 0, "owes_us": 0 if liab else to_major(bal)})
+    recent = db.q(f"""SELECT DISTINCT e.id, e.date, e.kind, e.memo, e.ref FROM journal_entries e
+                      JOIN journal_lines l ON l.entry_id=e.id WHERE {LIVE} AND {PARTY}=?
+                      ORDER BY e.date DESC, e.id DESC LIMIT ?""", (name, int(limit)))
+    for r in recent:
+        t = db.one("SELECT SUM(debit) n FROM journal_lines WHERE entry_id=?", (r["id"],))
+        r["amount"] = to_major(t["n"] or 0)
+    n = db.one(f"""SELECT COUNT(DISTINCT e.id) n, MIN(e.date) first, MAX(e.date) last FROM journal_entries e
+                   JOIN journal_lines l ON l.entry_id=e.id WHERE {LIVE} AND {PARTY}=?""", (name,))
+    return {"balances": balances, "spent": to_major(spent), "earned": to_major(earned), "vouchers": n["n"],
+            "first": n["first"], "last": n["last"], "recent": recent}
+
+
 def party_balances(db, subtypes=("payable",), accounts=None, date_to=None):
     """Open balances per party on liability accounts (suppliers, workers)."""
     if accounts:
@@ -1506,14 +1539,24 @@ def audit(db):
 
 # ================================================================== tax module
 PARTY_FIELDS = ("name", "type", "receiver_type", "tax_id", "national_id", "country", "governate", "region", "street",
-                "building", "postal_code", "email", "phone", "default_vat", "default_wht", "notes")
+                "building", "postal_code", "email", "phone", "default_vat", "default_wht", "notes",
+                "category", "contact_person", "phone2", "whatsapp", "specialty", "vehicle", "bank_details")
+# suggested directory categories; any other word typed by the user is kept as-is
+CONTACT_CATEGORIES = ("supplier", "subcontractor", "driver", "transport", "technician", "consultant", "customer",
+                      "employee", "other")
+# accounting type implied by a category when the user did not pick one
+_CATEGORY_TYPE = {"customer": "customer", "employee": "employee", "driver": "supplier", "supplier": "supplier",
+                  "subcontractor": "supplier", "transport": "supplier", "technician": "supplier",
+                  "consultant": "supplier"}
 
 
 def save_party(db, d, party_id=None):
-    v = {k: text(d.get(k), maxlen=2000 if k == "notes" else 300) for k in PARTY_FIELDS}
+    v = {k: text(d.get(k), maxlen=2000 if k in ("notes", "bank_details") else 300) for k in PARTY_FIELDS}
     if not v["name"]:
         raise ValidationError("name is required")
-    v["type"] = v["type"] if v["type"] in ("customer", "supplier", "both", "employee", "other") else "customer"
+    v["category"] = v["category"].strip().lower()[:40]
+    if v["type"] not in ("customer", "supplier", "both", "employee", "other"):
+        v["type"] = _CATEGORY_TYPE.get(v["category"], "other" if v["category"] else "customer")
     v["receiver_type"] = v["receiver_type"] if v["receiver_type"] in ("B", "P", "F") else "B"
     v["country"] = (v["country"] or "EG").upper()[:2]
     if v["tax_id"] and v["receiver_type"] == "B" and v["country"] == "EG" and not re.fullmatch(r"\d{9}", v["tax_id"]):
