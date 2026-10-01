@@ -183,6 +183,8 @@ MENU_ITEMS = [
     ("sale:new", "New sale (cash / installments)", "بيع جديد (كاش / تقسيط)", "shop.orders"),
     ("sale:collect", "Collect an installment", "تحصيل قسط", "shop.installments"),
     ("product:new", "New product / unit", "منتج / وحدة جديدة", "shop.products"),
+    ("recurring:new", "New recurring entry (rent, salaries, subscriptions…)", "قيد متكرر جديد (إيجار، رواتب، اشتراكات…)", "accounting.recurring"),
+    ("bank:import", "Import a bank statement", "استيراد كشف حساب بنك", "accounting.bankrec"),
     ("contact:new", "New contact (supplier, subcontractor, driver…)", "جهة اتصال جديدة (مورد، مقاول، سائق…)", "purchasing.contacts"),
     ("custody:settle", "Custody expense report (settlement)", "تسوية عهدة (تقرير مصروفات)", "purchasing.custody"),
 ]

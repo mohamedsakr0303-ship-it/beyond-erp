@@ -284,3 +284,12 @@ h4.fsec{margin:14px 0 4px;font-size:.85em;text-transform:uppercase;letter-spacin
 .mstrip{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;min-width:0;flex:1}
 .mthumb{flex:0 0 auto;width:64px;height:48px;border:2px solid var(--line);border-radius:6px;padding:0;overflow:hidden;background:var(--bg);cursor:pointer;font-size:1.4em}
 .mthumb.on{border-color:var(--brand)}.mthumb img{width:100%;height:100%;object-fit:cover}
+/* bank reconciliation */
+.recon{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;align-items:start}
+@media (max-width:900px){.recon{grid-template-columns:minmax(0,1fr)}}
+.recon .tbl{max-height:70vh;overflow:auto}
+.recon tr.bl.sel td{background:rgba(37,99,235,.10)}
+.recon tr.bk.hit td{background:rgba(21,128,61,.10)}
+.recon tr.bl.matched td,.recon tr.bl.ignored td{opacity:.75}
+.recon td .lines a{font-size:.95em}
+#brbar{position:sticky;top:0;z-index:2;margin-bottom:8px}

@@ -14,7 +14,7 @@ import io
 import json
 
 from . import accounting as acc
-from . import custody, loans, rentals, sales
+from . import bankrec, custody, loans, recurring, rentals, sales
 from .db import SUBTYPES, to_major, to_minor
 
 FORMAT = "beyond-erp"
@@ -711,7 +711,46 @@ def export_extras(db):
             "offers": db.q("SELECT o.*, u.code AS bu_code FROM offers o LEFT JOIN business_units u ON u.id=o.bu_id ORDER BY o.id"),
             "ownership_changes": _ownership_export(db), "loans": loans.export_rows(db),
             "custodies": custody.export_rows(db), "rentals": rentals.export_rows(db),
-            "sales": sales.export_rows(db)}
+            "sales": sales.export_rows(db), "bank": bankrec.export_rows(db), "recurring": recurring.export_rows(db),
+            "entry_meta": _entry_meta_export(db)}
+
+
+def _entry_fp(e):
+    return [e["date"], e["kind"], e["memo"] or "", e["party"] or "", int(e["total"] or 0)]
+
+
+def _entry_meta_export(db):
+    """What a voucher knows beyond its lines (bank matches, the sale / recurring entry it belongs to, its form, its
+    reference). The sheets re-create vouchers with new numbers, so these are matched back by date, type, memo,
+    party and amount."""
+    out = []
+    for e in db.q("SELECT e.id, e.date, e.kind, e.memo, e.party, e.ref, e.meta, (SELECT SUM(debit) FROM journal_lines WHERE entry_id=e.id) total "
+                  "FROM journal_entries e WHERE e.status='posted' ORDER BY e.id"):
+        m = json.loads(e["meta"] or "{}")
+        if m or e["ref"]:
+            out.append({"fp": _entry_fp(e), "ref": e["ref"] or "", "meta": m})
+    return out
+
+
+def _entry_meta_import(db, rows):
+    pool = {}
+    for e in db.q("SELECT e.id, e.date, e.kind, e.memo, e.party, e.ref, e.meta, (SELECT SUM(debit) FROM journal_lines WHERE entry_id=e.id) total "
+                  "FROM journal_entries e WHERE e.status='posted' ORDER BY e.id"):
+        pool.setdefault(json.dumps(_entry_fp(e)), []).append(e)
+    n = 0
+    for r in rows or []:
+        if not isinstance(r, dict) or not isinstance(r.get("fp"), list):
+            continue
+        q = pool.get(json.dumps(r["fp"]))
+        if not q:
+            continue
+        e = q.pop(0)
+        cur = json.loads(e["meta"] or "{}")
+        meta = {**(r.get("meta") or {}), **{k: v for k, v in cur.items() if v not in (None, "", {}, [])}}
+        db.conn.execute("UPDATE journal_entries SET meta=?, ref=? WHERE id=?",
+                        (json.dumps(meta, ensure_ascii=False), r.get("ref") or e["ref"] or "", e["id"]))
+        n += 1
+    return n
 
 
 def _ownership_export(db):
@@ -733,6 +772,8 @@ def _ownership_export(db):
 
 def _imp_extras(db, ex, mode, counts):
     from . import branding
+    if ex.get("entry_meta"):
+        _entry_meta_import(db, ex["entry_meta"])
     if mode == "replace":
         for t in ("offers", "offer_types", "loans", "custodies"):
             db.conn.execute(f"DELETE FROM {t}")
@@ -744,6 +785,10 @@ def _imp_extras(db, ex, mode, counts):
         rentals.import_rows(db, ex["rentals"], counts)
     if isinstance(ex.get("sales"), dict) and (mode == "replace" or not db.one("SELECT 1 FROM products")):
         sales.import_rows(db, ex["sales"], counts)
+    if isinstance(ex.get("bank"), dict) and (mode == "replace" or not db.one("SELECT 1 FROM bank_statements")):
+        bankrec.import_rows(db, ex["bank"], counts)
+    if isinstance(ex.get("recurring"), dict) and (mode == "replace" or not db.one("SELECT 1 FROM recurring")):
+        recurring.import_rows(db, ex["recurring"], counts)
     for a in ex.get("assets") or []:
         if isinstance(a, dict) and a.get("key") in branding.ASSET_KEYS and a.get("data"):
             db.conn.execute("INSERT OR REPLACE INTO assets(key,mime,w,h,data) VALUES (?,?,?,?,?)",
@@ -802,7 +847,7 @@ def to_csv(db, sheet_name, template=False):
     return ("﻿" + buf.getvalue()).encode("utf-8")
 
 
-WIPE_ORDER = ("sale_cheques", "sale_installments", "sale_lines", "sales_orders", "product_media", "products", "rent_moves", "rental_invoices", "rental_charges", "rental_handovers", "rental_lines", "rentals", "rent_lots",
+WIPE_ORDER = ("bank_lines", "bank_statements", "bank_rules", "recurring_runs", "recurring", "sale_cheques", "sale_installments", "sale_lines", "sales_orders", "product_media", "products", "rent_moves", "rental_invoices", "rental_charges", "rental_handovers", "rental_lines", "rentals", "rent_lots",
               "rent_kit_lines", "rent_kits", "rent_models", "rent_items", "loans", "custodies", "parties", "ownership_changes", "fixed_assets", "stock_moves", "stock_levels", "stock_items", "extract_lines", "extracts", "boq_lines", "boqs",
               "journal_lines", "journal_entries", "partner_shares", "partners", "rates", "business_units")
 

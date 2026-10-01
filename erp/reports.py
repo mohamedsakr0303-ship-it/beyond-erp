@@ -677,6 +677,34 @@ def products_table(db, p, lang="en"):
             "columns": cols, "rows": rows, "lang": lang}
 
 
+def bankrec_table(db, sid, lang="en"):
+    """The classic reconciliation statement: bank balance ↔ book balance, with the items in between."""
+    from . import bankrec
+    ar = lang == "ar"
+    d = bankrec.detail(db, sid)
+    st, sm = d["statement"], d["summary"]
+    cols = _mkcols([("Item", "البند", "left"), ("Date", "التاريخ", "left"), ("Voucher / reference", "القيد / المرجع", "left"),
+                    ("Amount", "المبلغ", "right")], lang)
+    R = lambda en, a_, v="", style="item", date="", ref="": {"cells": [a_ if ar else en, date, ref, v], "style": style, "indent": 1 if style == "item" else 0}  # noqa: E731
+    rows = [R("Balance per bank statement", "الرصيد حسب كشف البنك", st["closing"], "subtotal", st["date_to"])]
+    rows.append(R("Add: deposits in transit (in the books, not yet in the bank)", "يضاف: إيداعات بالطريق (بالدفاتر ولم تظهر بالبنك)", sm["deposits_in_transit"], "section"))
+    rows += [R(i["memo"] or i["kind"], i["memo"] or i["kind"], i["amount"], date=i["date"], ref=f"#{i['id']} {i['party']}".strip()) for i in sm["outstanding_in"]]
+    rows.append(R("Less: outstanding payments / cheques (in the books, not yet in the bank)", "يخصم: مدفوعات / شيكات معلقة (بالدفاتر ولم تُصرف)", -sm["outstanding_payments"], "section"))
+    rows += [R(i["memo"] or i["kind"], i["memo"] or i["kind"], i["amount"], date=i["date"], ref=f"#{i['id']} {i['party']}".strip()) for i in sm["outstanding_out"]]
+    rows.append(R("Adjusted bank balance", "الرصيد المعدل حسب البنك", sm["adjusted_bank"], "grand"))
+    rows.append(R("Balance per books", "الرصيد حسب الدفاتر", sm["book"], "subtotal", st["date_to"]))
+    rows.append(R("Bank items not yet in the books (charges, interest…)", "حركات بالبنك لم تُسجل بالدفاتر (عمولات، فوائد…)", sm["unrecorded"], "section"))
+    rows += [R(ln["description"], ln["description"], ln["amount"], date=ln["date"], ref=ln["ref"]) for ln in d["lines"] if ln["status"] == "open"]
+    if sm["late_booked"]:
+        rows.append(R("In the bank by the end date, booked after it", "بالبنك قبل نهاية الفترة وسُجلت بعدها", sm["late_booked"], "section"))
+    rows.append(R("Adjusted book balance", "الرصيد المعدل حسب الدفاتر", sm["adjusted_book"], "grand"))
+    rows.append(R("Difference", "الفرق", sm["difference"], "grand"))
+    acct = d["account"]
+    title = ("مذكرة تسوية البنك" if ar else "Bank reconciliation") + f" — {acct['code']} {(acct.get('name_ar') if ar and acct.get('name_ar') else acct['name'])}"
+    status = ("مسوّاة" if ar else "Reconciled") if st["status"] == "reconciled" else ("مفتوحة" if ar else "Open")
+    return {"title": title, "subtitle": f"{st['date_from']} → {st['date_to']} · {status} · {db.setting('currency')}", "columns": cols, "rows": rows, "lang": lang}
+
+
 def tax_table(db, date_from=None, date_to=None, lang="en"):
     t = acc.tax_summary(db, date_from, date_to)
     ar = lang == "ar"
@@ -743,6 +771,8 @@ def build(db, name, p):
         return rentals_table(db, p.get("status"), lang)
     if name == "sales":
         return sales_table(db, p, lang)
+    if name == "bank_reconciliation":
+        return bankrec_table(db, p.get("id"), lang)
     if name == "installments":
         return installments_table(db, p, lang)
     if name == "products":
@@ -770,7 +800,7 @@ REPORT_PERMS = {"income_statement": "reports.income_statement", "balance_sheet":
                 "negotiations": "purchasing.negotiations", "loans": "accounting.loans", "loan_schedule": "accounting.loans",
                 "custody": "purchasing.custody", "custody_statement": "purchasing.custody", "rent_fleet": "rentals.fleet",
                 "rentals": "rentals.contracts", "sales": "shop.orders", "installments": "shop.installments",
-                "products": "shop.products"}
+                "products": "shop.products", "bank_reconciliation": "accounting.bankrec"}
 
 
 # ==================================================================== writers

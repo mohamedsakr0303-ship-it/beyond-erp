@@ -538,6 +538,72 @@ CREATE TABLE IF NOT EXISTS sale_cheques (
     settled_on TEXT DEFAULT ''
 );
 
+-- Bank reconciliation: the bank's statements and lines; a line's matching vouchers carry meta {"bank": {account: line id}}.
+CREATE TABLE IF NOT EXISTS bank_statements (
+    id INTEGER PRIMARY KEY,
+    account TEXT NOT NULL,
+    name TEXT DEFAULT '',
+    date_from TEXT NOT NULL,
+    date_to TEXT NOT NULL,
+    opening INTEGER NOT NULL DEFAULT 0,
+    closing INTEGER NOT NULL DEFAULT 0,
+    book_from TEXT DEFAULT '',                 -- vouchers before this are taken as already cleared
+    status TEXT NOT NULL DEFAULT 'open',       -- open, reconciled
+    reconciled_on TEXT DEFAULT '',
+    reconciled_by TEXT DEFAULT '',
+    notes TEXT DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS bank_lines (
+    id INTEGER PRIMARY KEY,
+    statement_id INTEGER NOT NULL REFERENCES bank_statements(id) ON DELETE CASCADE,
+    seq INTEGER DEFAULT 0,
+    date TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    ref TEXT DEFAULT '',
+    amount INTEGER NOT NULL,                   -- + money in, − money out (minor units)
+    balance INTEGER,
+    status TEXT NOT NULL DEFAULT 'open',       -- open, matched, ignored
+    ticked INTEGER NOT NULL DEFAULT 0          -- made by ticking a voucher (paper statement), not imported
+);
+CREATE INDEX IF NOT EXISTS ix_bl_stmt ON bank_lines(statement_id, date);
+CREATE TABLE IF NOT EXISTS bank_rules (
+    id INTEGER PRIMARY KEY,
+    pattern TEXT NOT NULL,
+    direction TEXT DEFAULT 'any',
+    account TEXT NOT NULL,
+    party TEXT DEFAULT '',
+    memo TEXT DEFAULT '',
+    vat_code TEXT DEFAULT '',
+    bu_id INTEGER REFERENCES business_units(id) ON DELETE SET NULL,
+    active INTEGER NOT NULL DEFAULT 1
+);
+
+-- Recurring entries: a voucher template and a schedule; each due date is recorded once (posted or skipped).
+CREATE TABLE IF NOT EXISTS recurring (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    doc_type TEXT NOT NULL,
+    payload TEXT DEFAULT '{}',
+    unit TEXT NOT NULL DEFAULT 'month',
+    every INTEGER NOT NULL DEFAULT 1,
+    start TEXT NOT NULL,
+    end_date TEXT DEFAULT '',
+    max_count INTEGER DEFAULT 0,
+    month_end INTEGER DEFAULT 0,
+    mode TEXT NOT NULL DEFAULT 'review',       -- auto, review
+    active INTEGER NOT NULL DEFAULT 1,
+    last_error TEXT DEFAULT '',
+    notes TEXT DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS recurring_runs (
+    id INTEGER PRIMARY KEY,
+    template_id INTEGER NOT NULL REFERENCES recurring(id) ON DELETE CASCADE,
+    due TEXT NOT NULL,
+    skipped INTEGER NOT NULL DEFAULT 0,
+    entries INTEGER DEFAULT 0,
+    UNIQUE(template_id, due)
+);
+
 -- Cash custody (petty cash advances) held by employees; movements are journal entries with ref CU:<code>...
 CREATE TABLE IF NOT EXISTS custodies (
     id INTEGER PRIMARY KEY,
@@ -832,7 +898,7 @@ SUBMODULES = {
     "rentals": ["contracts", "fleet", "calculator"],
     "payroll": [],
     "assets": ["register", "depreciation"],
-    "accounting": ["journal", "ledger", "coa", "loans"],
+    "accounting": ["journal", "ledger", "coa", "loans", "bankrec", "recurring"],
     "partners": ["equity", "transactions", "ownership"],
     "reports": ["income_statement", "balance_sheet", "cash_flow", "trial_balance"],
     "tax": ["codes", "report", "einvoice"],

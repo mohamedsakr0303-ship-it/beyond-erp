@@ -251,7 +251,7 @@ S.GLOBAL_H = {
     async v => { await api("PUT", "/api/me/password", v); toast(t("saved")); return true; }),
   quicknew: el => newItem(el.dataset.doc),
   coswitch: () => companySwitcher(),
-  goback: () => { const h = parseHash().parts; const parent = { bu: "bus", invoice: "invoices", boq: "boqs", offer: "offers", offertypes: "offers", report: "dashboard", loan: "loans", cust: "custody", rental: "rentals", product: "products", sale: "sales" }[h[0]];
+  goback: () => { const h = parseHash().parts; const parent = { bu: "bus", invoice: "invoices", boq: "boqs", offer: "offers", offertypes: "offers", report: "dashboard", loan: "loans", cust: "custody", rental: "rentals", product: "products", sale: "sales", bankstmt: "bankrec" }[h[0]];
     if (S.navCount > 0) history.back(); else location.hash = "#/" + (parent || "dashboard"); },
   closeDrawer: () => closeDrawer(),
 };
@@ -264,7 +264,7 @@ function renderNav(active) {
     html += `<div class="grp">${esc(t(g))}</div>`;
     for (const [k, r, , ic] of vis) {
       const parent = { bu: "bus", invoice: "invoices", boq: "boqs", offer: "offers", offertypes: "offers", loan: "loans", cust: "custody",
-        rental: "rentals", product: "products", sale: "sales" }[active.split("/")[0]];
+        rental: "rentals", product: "products", sale: "sales", bankstmt: "bankrec" }[active.split("/")[0]];
       const on = active === r || active.startsWith(r + "/") || parent === r;
       if (on) { title = t(k); group = t(g); }
       html += `<a href="#/${r}" class="${on ? "on" : ""}"><span class="ic">${ic}</span>${esc(t(k))}</a>`;
@@ -768,6 +768,10 @@ async function openVoucher(id) {
   const DUP_MOD = e.doc ? DOC_MOD[e.doc] : "accounting.journal";
   if (e.doc ? can(DUP_MOD, "add") : (can("accounting.journal", "add") && !["Goods Receipt", "Material Issue", "Stock Transfer", "Stock Adjustment", "Sales Invoice"].includes(e.kind)))
     btns.push(`<button class="btn" type="button" data-a="vdup">${t("duplicate")}</button>`);
+  const rcOk = can("accounting.recurring", "add") && (e.doc ? !["supplier_discount"].includes(e.doc) : e.kind === "Journal Voucher");
+  if (rcOk && live) btns.push(`<button class="btn" type="button" data-a="vrc">↻ ${L2("Make recurring", "اجعله متكرراً")}</button>`);
+  S.H.vrc = () => recurringForm(null, e.doc ? { doc_type: e.doc, payload: { ...e.form }, name: e.memo, start: e.date }
+    : { doc_type: "journal", name: e.memo, start: e.date, payload: { memo: e.memo, party: e.party, bu_id: e.bu_id || "", lines: e.lines.map(l => ({ account: l.account, debit: l.debit || "", credit: l.credit || "" })) } });
   if (edit && e.status === "void") btns.push(`<button class="btn danger" type="button" data-a="vdel" data-id="${e.id}">${t("delete")}</button>`);
   S.H.vvoid = async () => { const r = prompt(t("void_reason")); if (r === null) return; try { await api("POST", `/api/journal/${e.id}/void`, { reason: r }); closeDrawer(); toast(t("saved")); route(); } catch (x) { fail(x); } };
   S.H.vrev = async () => { try { await api("POST", `/api/journal/${e.id}/reverse`, {}); closeDrawer(); toast(t("posted")); route(); } catch (x) { fail(x); } };
@@ -872,6 +876,8 @@ function newItem(key) {
   if (kind === "contact") return contactForm({}, cid => contactView(cid));
   if (kind === "sale") return id === "collect" ? pickSale(s => collectForm(s)) : saleForm();
   if (kind === "product") return productForm();
+  if (kind === "recurring") return recurringForm();
+  if (kind === "bank") return bankImportForm();
   if (kind === "custody") return id === "settle" ? pickThen("custody", c => custodyAction(c, "settle")) : custodyForm();
 }
 async function openDoc(type, pre, edit, copyVals) {
@@ -945,6 +951,7 @@ PAGES.dashboard = async (view, parts, q) => {
     `<div class="kpis">${k(t("cash"), money(d.cash), cur(), d.cash < 0 ? "neg" : "")}${k(t("receivable"), money(d.receivable))}${k(t("payable"), money(d.payable))}
       ${k(t("accrued"), money(d.accrued))}${k(t("advances"), money(d.advances))}${k(t("inventory"), money(d.inventory))}
       ${k(t("revenue"), money(d.revenue))}${k(t("ebitda"), money(d.ebitda), pct(d.margins.ebitda), d.ebitda < 0 ? "neg" : "")}${k(t("net_profit"), money(d.net_profit), pct(d.margins.net), d.net_profit < 0 ? "neg" : "pos")}</div>
+    ${d.recurring_due ? `<div class="banner ${d.recurring_due.errors ? "err" : "info"}">${L2("Recurring entries due", "قيود متكررة مستحقة")}: ${d.recurring_due.review ? `${d.recurring_due.review} ${L2("to review", "للمراجعة")}` : ""}${d.recurring_due.auto ? ` ${d.recurring_due.auto} ${L2("automatic", "تلقائية")}` : ""}${d.recurring_due.errors ? ` · ⚠ ${d.recurring_due.errors} ${L2("failed", "فشلت")}` : ""} · <a href="#/recurring">${L2("Open", "فتح")} →</a></div>` : ""}
     ${d.installments_overdue ? `<div class="banner err">${L2("Overdue installments", "أقساط متأخرة")}: ${money(d.installments_overdue.amount)} (${d.installments_overdue.count} · ${d.installments_overdue.customers} ${L2("customers", "عميل")}) · <a href="#/installments?status=overdue">${L2("Follow up", "متابعة التحصيل")} →</a></div>` : ""}
     ${d.cheques_due ? `<div class="banner warn">${d.cheques_due} ${L2("customer cheques are due — deposit them", "شيكات عملاء مستحقة — قم بإيداعها")} · <a href="#/installments">${L2("Open", "فتح")} →</a></div>` : ""}
     ${d.depreciation_due ? `<div class="banner warn">${L2("Depreciation not booked yet up to", "لم يُحتسب الإهلاك حتى")} ${esc(d.depreciation_due.through)}: ${money(d.depreciation_due.total)} (${d.depreciation_due.count}) · <a href="#/${d.depreciation_due.rental ? "rentfleet" : "assets"}">${L2("Run depreciation", "احتساب الإهلاك")} →</a></div>` : ""}
@@ -2180,6 +2187,7 @@ async function boot() {
   renderShell();
   route();
   fixCompanyName();
+  setTimeout(runRecurringOnOpen, 1500);
   if (STATIC && window.BeyondCloud) window.BeyondCloud.onStatus(syncDot);
   else if (S.boot.cloud && S.boot.cloud.joined) {
     const poll = () => api("GET", "/api/cloud-status").then(syncDot).catch(() => {});
@@ -3887,6 +3895,284 @@ async function pickSale(fn) {
   if (!rows.length) { toast(L2("No open sales with money to collect", "لا توجد مبيعات بها مبالغ للتحصيل")); return; }
   drawer(L2("Which sale?", "أي بيع؟"), form([{ k: "pick", l: t("m_sales_orders"), type: "select", span: "spanall", opts: rows.map(r => [r.id, `${r.code} — ${r.customer} · ${money(r.balance)}${r.next_due ? ` · ${fd(r.next_due)}` : ""}`]) }]),
     async v => { const s = await api("GET", "/api/sales/" + v.pick); fn(s); return false; }, { submitLabel: L2("Continue", "متابعة") });
+}
+
+// ================================================================ bank reconciliation
+const bankAccts = () => accts(["Asset"], ["cash"]);
+const BL_ST = { open: ["Open", "مفتوح", "warn"], matched: ["Matched", "مطابق", "ok"], ignored: ["Ignored", "متجاهل", ""] };
+const blStatus = s => { const x = BL_ST[s] || [s, s, ""]; return `<span class="chip ${x[2]}">${esc(L2(x[0], x[1]))}</span>`; };
+PAGES.bankrec = async (view) => {
+  const d = await api("GET", "/api/bank");
+  const add = can("accounting.bankrec", "add");
+  Object.assign(S.H, { brimp: el => bankImportForm(el && el.dataset.acc), brpaper: el => bankPaperForm(el && el.dataset.acc, d), brrules: () => bankRulesForm(d.rules),
+    brgo: el => { location.hash = "#/bankstmt/" + el.dataset.id; } });
+  view.innerHTML = `<div class="toolbar">${add ? `<button class="btn pri" data-a="brimp">⇪ ${L2("Import bank statement", "استيراد كشف حساب البنك")}</button><button class="btn" data-a="brpaper">${L2("Reconcile from a paper statement", "تسوية من كشف ورقي")}</button>` : ""}
+      <button class="btn" data-a="brrules">${L2("Bank rules", "قواعد البنك")} (${d.rules.length})</button></div>
+    <div class="cgrid">${d.accounts.map(a => `<div class="card"><b>${esc(a.code)} — ${esc(aname(a))}</b>
+      <div class="kpis" style="margin:8px 0 6px">${kpiBox(L2("Book balance", "الرصيد الدفتري"), a.book)}</div>
+      <div class="muted">${a.reconciled_to ? `${L2("Reconciled to", "تمت التسوية حتى")} <b>${fd(a.reconciled_to)}</b>` : L2("Never reconciled", "لم تتم تسوية بعد")}${a.open ? ` · ${a.open} ${L2("open", "مفتوحة")}` : ""}</div>
+      ${add ? `<div class="row" style="gap:6px;margin-top:8px"><button class="btn sm" data-a="brimp" data-acc="${esc(a.code)}">⇪ ${L2("Import", "استيراد")}</button><button class="btn sm" data-a="brpaper" data-acc="${esc(a.code)}">${L2("Paper statement", "كشف ورقي")}</button></div>` : ""}</div>`).join("")}</div>
+    <div class="card"><h2>${L2("Statements", "الكشوف")}</h2>${d.statements.length ? `<div class="tbl stack"><table><thead><tr><th>${t("account")}</th><th>${L2("Period", "الفترة")}</th><th>${L2("Name", "الاسم")}</th><th class="num">${L2("Opening", "الافتتاحي")}</th><th class="num">${L2("Closing", "الختامي")}</th><th class="num">${L2("Lines", "الحركات")}</th><th>${t("status")}</th></tr></thead><tbody>
+      ${d.statements.map(s => `<tr class="click" data-a="brgo" data-id="${s.id}"><td>${esc(s.account)}</td><td>${fd(s.date_from)} → ${fd(s.date_to)}</td><td>${esc(s.name)}</td><td class="num">${money(s.opening)}</td><td class="num">${money(s.closing)}</td><td class="num">${s.n}${s.open_lines ? ` <span class="chip warn">${s.open_lines} ${L2("open", "مفتوح")}</span>` : ""}</td>
+        <td>${s.status === "reconciled" ? `<span class="chip ok">✓ ${L2("Reconciled", "تمت التسوية")} ${fd(s.reconciled_on)}</span>` : `<span class="chip">${L2("In progress", "جارية")}</span>`}</td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="empty">${L2("Download your statement from the bank's website (CSV or Excel) and import it — the app matches each bank line to your vouchers, books the bank charges and interest, and shows what is still in transit. No file? Use a paper statement and tick the vouchers the bank shows.", "حمّل كشف الحساب من موقع البنك (CSV أو Excel) واستورده — سيطابق البرنامج كل حركة بنكية مع قيودك، ويسجل العمولات والفوائد، ويعرض ما زال معلقاً. لا يوجد ملف؟ استخدم الكشف الورقي وحدد القيود الظاهرة به.")}</div>`}</div>`;
+};
+
+function bankImportForm(account) {
+  let parsed = null;
+  drawer(L2("Import bank statement", "استيراد كشف حساب البنك"), form([
+    { k: "account", l: L2("Bank / cash account", "حساب البنك / النقدية"), type: "select", opts: bankAccts(), v: account || accByRole("bank"), req: 1 },
+    { k: "date_order", l: L2("Dates are written", "صيغة التاريخ"), type: "select", opts: [["", L2("Detect", "تلقائي")], ["dmy", "31/12/2026"], ["mdy", "12/31/2026"]] },
+    { html: `<label class="f">${L2("Statement file (CSV or Excel)", "ملف الكشف (CSV أو Excel)")}<input type="file" id="brfile" data-skip="1" accept=".csv,.txt,.xlsx,.xlsm,text/csv"></label>`, span: "spanall" },
+    { k: "paste", l: L2("…or paste the lines (copied from Excel / the bank's page, with the heading row)", "…أو الصق الحركات (منسوخة من Excel أو صفحة البنك مع صف العناوين)"), type: "textarea", span: "spanall" },
+    { html: `<div id="brprev"></div>`, span: "spanall" }]),
+  async v => { if (!parsed) { await read(); return false; }
+    const r = await api("POST", "/api/bank-statements", { account: v.account, name: v.name, date_from: v.date_from, date_to: v.date_to, opening: v.opening, closing: v.closing, book_from: v.book_from, lines: parsed.rows });
+    try { const m = await api("POST", `/api/bank-statements/${r.id}/automatch`, {}); toast(`${m.matched} ${L2("lines matched automatically", "حركة طوبقت تلقائياً")}`); } catch (e) { fail(e); }
+    location.hash = "#/bankstmt/" + r.id; closeDrawer(); return false; },
+  { wide: true, submitLabel: L2("Read the file", "قراءة الملف"), onOpen: f => {
+    const read = async () => { const box = $("#brprev", f), file = $("#brfile", f).files[0], v = readForm(f);
+      try { const body = file ? { data: await readDataUrl(file), filename: file.name } : { text: v.paste };
+        if (!file && !(v.paste || "").trim()) throw new Error(L2("Choose the file or paste the lines", "اختر الملف أو الصق الحركات"));
+        parsed = await api("POST", "/api/bank-preview/parse", { ...body, date_order: v.date_order });
+        const p = parsed;
+        box.innerHTML = `<div class="banner ok">${p.rows.length} ${L2("lines read", "حركة")}${p.skipped ? ` · ${p.skipped} ${L2("rows skipped (no date / amount)", "صف تم تجاهله (بدون تاريخ / مبلغ)")}` : ""} · ${L2("in", "وارد")} ${money(p.total_in)} · ${L2("out", "منصرف")} ${money(p.total_out)}</div>` +
+          form([{ k: "name", l: L2("Statement name", "اسم الكشف"), v: `${v.account} ${p.date_from.slice(0, 7)}` }, { k: "date_from", l: t("from"), type: "date", v: p.date_from }, { k: "date_to", l: t("to"), type: "date", v: p.date_to },
+            { k: "opening", l: L2("Opening balance (per bank)", "الرصيد الافتتاحي (حسب البنك)"), type: "number", v: p.opening ?? "" }, { k: "closing", l: L2("Closing balance (per bank)", "الرصيد الختامي (حسب البنك)"), type: "number", v: p.closing ?? "" },
+            { k: "book_from", l: L2("Look at vouchers from", "مراجعة القيود من"), type: "date", v: p.date_from, help: L2("First reconciliation: older vouchers are treated as already cleared", "أول تسوية: القيود الأقدم تعتبر مسواة") }], 3) +
+          `<div class="tbl" style="max-height:300px;overflow:auto"><table><thead><tr><th>${t("date")}</th><th>${L2("Description", "البيان")}</th><th>${t("ref")}</th><th class="num">${t("amount")}</th><th class="num">${L2("Balance", "الرصيد")}</th></tr></thead><tbody>
+          ${p.rows.slice(0, 200).map(r => `<tr><td>${fd(r.date)}</td><td>${esc(r.description)}</td><td>${esc(r.ref)}</td><td class="num ${r.amount < 0 ? "neg" : "pos"}">${money(r.amount)}</td><td class="num">${r.balance != null ? money(r.balance) : ""}</td></tr>`).join("")}</tbody></table></div>`;
+        $("button[type=submit]", f).textContent = L2("Import & match", "استيراد ومطابقة");
+      } catch (e) { parsed = null; box.innerHTML = `<div class="banner err">${esc(e.message)}</div>`; } };
+    S.H.brread = read; $("#brfile", f).addEventListener("change", read); } });
+  async function read() { return S.H.brread(); }
+}
+function bankPaperForm(account, d) {
+  const acc0 = account || accByRole("bank");
+  const prev = (d.statements || []).filter(s => s.account === acc0).sort((a, b) => b.date_to.localeCompare(a.date_to))[0];
+  drawer(L2("Reconcile from a paper statement", "تسوية من كشف ورقي"), form([
+    { k: "account", l: L2("Bank / cash account", "حساب البنك / النقدية"), type: "select", opts: bankAccts(), v: acc0, req: 1 },
+    { k: "date_from", l: t("from"), type: "date", v: prev ? addDays(prev.date_to, 1) : today().slice(0, 8) + "01", req: 1 }, { k: "date_to", l: t("to"), type: "date", v: today(), req: 1 },
+    { k: "opening", l: L2("Opening balance (per bank)", "الرصيد الافتتاحي (حسب البنك)"), type: "number", v: prev ? prev.closing : "" },
+    { k: "closing", l: L2("Closing balance (per bank)", "الرصيد الختامي (حسب البنك)"), type: "number", req: 1 },
+    { html: `<p class="muted">${L2("Next you tick each voucher that appears on the statement and add the bank's own lines (charges, interest).", "بعد ذلك حدد كل قيد ظاهر في الكشف وأضف حركات البنك الخاصة (عمولات، فوائد).")}</p>`, span: "spanall" }]),
+  async v => { const r = await api("POST", "/api/bank-statements", { ...v, name: `${v.account} ${v.date_to.slice(0, 7)}` }); location.hash = "#/bankstmt/" + r.id; closeDrawer(); return false; });
+}
+const addDays = (d, n) => { const x = new Date(d + "T00:00:00Z"); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
+
+PAGES.bankstmt = async (view, parts) => {
+  const d = await api("GET", "/api/bank-statements/" + parts[1]);
+  const st = d.statement, sm = d.summary, locked = st.status === "reconciled";
+  const add = can("accounting.bankrec", "add") && !locked, ed = can("accounting.bankrec", "edit");
+  const paper = !d.lines.some(l => !l.ticked);
+  let sel = null; const picked = new Set();
+  const act = (a, b = {}) => api("POST", `/api/bank-statements/${st.id}/${a}`, b);
+  const run = async (a, b, msg) => { try { const r = await act(a, b); if (msg) toast(msg(r)); route(); } catch (e) { fail(e); } };
+  const ok0 = Math.abs(sm.difference) < 0.005;
+  const bookRow = (b) => `<tr class="bk" data-id="${b.id}" data-amt="${b.amount}"><td>${add ? `<input type="checkbox" data-change="brpick" data-id="${b.id}" ${picked.has(b.id) ? "checked" : ""}>` : ""}</td><td>${fd(b.date)}</td>
+    <td><a href="#" data-a="openv" data-id="${b.id}">#${b.id}</a> ${esc(tl(b.kind))}<div class="lines">${esc([b.party, b.memo].filter(Boolean).join(" · "))}</div></td><td class="num ${b.amount < 0 ? "neg" : "pos"}">${money(b.amount)}</td></tr>`;
+  view.innerHTML = `<div class="toolbar"><a class="btn" href="#/bankrec">← ${t("m_bankrec")}</a>
+      ${add && !paper ? `<button class="btn pri" data-a="brauto">${L2("Auto-match", "مطابقة تلقائية")}</button><button class="btn" data-a="brrule">${L2("Apply bank rules", "تطبيق قواعد البنك")}</button>` : ""}
+      ${add ? `<button class="btn" data-a="brline">+ ${L2("Bank line", "حركة بنكية")}</button>` : ""}
+      <a class="btn" href="/api/reports/bank_reconciliation?id=${st.id}&format=pdf&lang=${S.lang}" target="_blank" rel="noopener">⎙ ${L2("Reconciliation statement", "مذكرة التسوية")}</a>
+      <span class="spacer"></span>${!locked && can("accounting.bankrec", "add") ? `<button class="btn ${ok0 && !sm.open_lines ? "pri" : ""}" data-a="brdone" ${ok0 && !sm.open_lines ? "" : "disabled"}>✓ ${L2("Mark reconciled", "اعتماد التسوية")}</button>` : ""}
+      ${locked && ed ? `<button class="btn" data-a="brreopen">${L2("Reopen", "إعادة فتح")}</button>` : ""}${!locked && ed ? `<button class="btn" data-a="bredit">${t("edit")}</button><button class="btn danger" data-a="brdel">${t("delete")}</button>` : ""}</div>
+    <div class="muted" style="margin-bottom:8px">${esc(d.account.code)} — ${esc(aname(d.account))} · ${fd(st.date_from)} → ${fd(st.date_to)} · ${esc(st.name)} ${locked ? `<span class="chip ok">✓ ${L2("Reconciled", "تمت التسوية")} ${fd(st.reconciled_on)}</span>` : ""}</div>
+    ${sm.warnings.map(w => `<div class="banner warn">${esc(w)}</div>`).join("")}
+    <div class="kpis">${kpiBox(L2("Bank closing balance", "رصيد البنك الختامي"), sm.closing)}${kpiBox(L2("+ Deposits in transit", "+ إيداعات بالطريق"), sm.deposits_in_transit)}${kpiBox(L2("− Outstanding payments", "− مدفوعات معلقة"), sm.outstanding_payments)}
+      ${kpiBox(L2("Book balance", "الرصيد الدفتري"), sm.book)}${kpiBox(L2("Bank items not in books", "حركات لم تُسجل"), sm.unrecorded)}${kpiBox(L2("Difference", "الفرق"), sm.difference, ok0 ? "pos" : "neg", ok0 ? "✓" : "")}</div>
+    <div class="recon">
+      <div class="card"><h2>${L2("Bank statement", "كشف البنك")} <span class="muted" style="font-weight:400">(${d.lines.length})</span></h2>
+        <div class="row" style="gap:6px;margin-bottom:6px"><label class="chk"><input type="checkbox" id="bronly" ${S.cache.bronly !== false ? "checked" : ""}> ${L2("Open lines only", "المفتوحة فقط")}</label></div>
+        <div class="tbl"><table id="brlines"><tbody>${d.lines.map(l => `<tr class="bl ${l.status}" data-id="${l.id}" data-amt="${l.amount}"><td>${fd(l.date)}</td>
+          <td>${esc(l.description)}${l.ref ? ` <span class="muted">${esc(l.ref)}</span>` : ""}${l.entries.length ? `<div class="lines">↔ ${l.entries.map(e => `<a href="#" data-a="openv" data-id="${e.id}">#${e.id}</a> ${esc(e.memo || tl(e.kind))}`).join(" · ")}</div>` : ""}${l.rule ? `<div class="lines">⚙ ${L2("rule", "قاعدة")}: ${esc(l.rule.pattern)} → ${esc(l.rule.account)}</div>` : ""}</td>
+          <td class="num ${l.amount < 0 ? "neg" : "pos"}">${money(l.amount)}</td><td>${blStatus(l.status)}${add ? (l.status === "open" ? `<div class="row" style="gap:4px;margin-top:4px"><button class="btn sm" data-a="brsel" data-id="${l.id}">${L2("Match", "مطابقة")}</button><button class="btn sm" data-a="brbook" data-id="${l.id}">${L2("Book it", "تسجيل")}</button><button class="btn sm" data-a="brign" data-id="${l.id}">${L2("Ignore", "تجاهل")}</button></div>`
+            : `<div style="margin-top:4px"><button class="btn sm" data-a="brun" data-id="${l.id}">${l.status === "ignored" ? L2("Restore", "استرجاع") : L2("Unmatch", "إلغاء المطابقة")}</button></div>`) : ""}</td></tr>`).join("") || `<tr><td class="empty">${paper ? L2("Tick the vouchers on the right that appear on the statement; add the bank's own lines with + Bank line.", "حدد القيود الظاهرة في الكشف من اليمين؛ وأضف حركات البنك الخاصة بزر + حركة بنكية.") : ""}</td></tr>`}</tbody></table></div></div>
+      <div class="card"><h2>${L2("Vouchers not yet cleared", "قيود لم تُسوَّ بعد")} <span class="muted" style="font-weight:400">(${d.book.length})</span></h2>
+        <div id="brbar" class="banner info" style="display:none"></div>
+        <div class="tbl"><table id="brbook"><tbody>${d.book.map(bookRow).join("") || `<tr><td class="empty">${L2("All vouchers are matched.", "كل القيود مطابقة.")}</td></tr>`}</tbody></table></div>
+        ${paper && add && d.book.length ? `<button class="btn" data-a="brtick" style="margin-top:8px">✓ ${L2("Tick selected as cleared", "تحديد المختار كمسوّى")}</button>` : ""}</div></div>`;
+  const only = () => { const on = $("#bronly", view).checked; S.cache.bronly = on; $$("#brlines tr.bl", view).forEach(tr => { tr.style.display = on && !tr.classList.contains("open") && !paper ? "none" : ""; }); };
+  $("#bronly", view).addEventListener("change", only); only();
+  const bar = () => { const box = $("#brbar", view); const tot = [...picked].reduce((a, id) => a + (+($(`tr.bk[data-id="${id}"]`, view) || { dataset: { amt: 0 } }).dataset.amt), 0);
+    if (!sel && !picked.size) { box.style.display = "none"; return; }
+    const ln = sel && d.lines.find(l => l.id === sel);
+    box.style.display = ""; box.innerHTML = `${ln ? `${L2("Bank line", "حركة البنك")}: <b>${money(ln.amount)}</b> · ` : ""}${L2("Selected vouchers", "القيود المختارة")}: <b>${money(tot)}</b> (${picked.size})
+      ${ln && picked.size ? (Math.abs(tot - ln.amount) < 0.005 ? ` <button class="btn sm pri" data-a="brmatch">${L2("Match", "مطابقة")}</button>` : ` <span class="neg">${L2("difference", "فرق")} ${money(ln.amount - tot)}</span>`) : ""} <button class="btn sm" data-a="brclear">✕</button>`; };
+  const highlight = () => { $$("tr.bl", view).forEach(tr => tr.classList.toggle("sel", +tr.dataset.id === sel));
+    const ln = sel && d.lines.find(l => l.id === sel);
+    const rows = $$("#brbook tr.bk", view);
+    rows.forEach(tr => tr.classList.toggle("hit", !!ln && Math.abs(+tr.dataset.amt - ln.amount) < 0.005));
+    if (ln) { const tb = $("#brbook tbody", view); rows.sort((a, b) => (Math.abs(+a.dataset.amt - ln.amount) < 0.005 ? 0 : 1) - (Math.abs(+b.dataset.amt - ln.amount) < 0.005 ? 0 : 1)).forEach(tr => tb.appendChild(tr)); }
+    bar(); };
+  Object.assign(S.H, {
+    brsel: el => { sel = +el.dataset.id; picked.clear(); $$("#brbook input[type=checkbox]", view).forEach(c => { c.checked = false; }); highlight();
+      const hit = $("#brbook tr.hit input", view); if (hit && $$("#brbook tr.hit", view).length === 1) { hit.checked = true; picked.add(+hit.dataset.id); bar(); }
+      const card = $("#brbook", view); if (card && matchMedia("(max-width:900px)").matches) card.scrollIntoView({ behavior: "smooth", block: "start" }); },
+    brpick: el => { const id = +el.dataset.id; if (el.checked) picked.add(id); else picked.delete(id); bar(); },
+    brclear: () => { sel = null; picked.clear(); $$("#brbook input[type=checkbox]", view).forEach(c => { c.checked = false; }); highlight(); },
+    brmatch: () => run("match", { line_id: sel, entries: [...picked] }, () => L2("Matched", "تمت المطابقة")),
+    brun: el => { const l = d.lines.find(x => x.id === +el.dataset.id); run(l.status === "ignored" ? "ignore" : "unmatch", { line_id: l.id, on: false }); },
+    brign: el => run("ignore", { line_id: +el.dataset.id, on: true }),
+    brbook: el => bankEntryForm(st, d.lines.find(x => x.id === +el.dataset.id)),
+    brauto: () => run("automatch", {}, r => `${r.matched} ${L2("lines matched", "حركة طوبقت")}`),
+    brrule: () => run("rules", {}, r => `${r.created} ${L2("vouchers booked from rules", "قيد سُجل من القواعد")}`),
+    brtick: () => run("tick", { entries: [...picked], on: true }, () => L2("Ticked", "تم التحديد")),
+    brline: () => bankLineForm(st),
+    brdone: () => run("reconcile", { date: today() }, () => L2("Reconciled", "تمت التسوية")),
+    brreopen: () => run("reopen", {}),
+    bredit: () => drawer(t("edit"), form([{ k: "name", l: L2("Name", "الاسم"), v: st.name }, { k: "date_from", l: t("from"), type: "date", v: st.date_from }, { k: "date_to", l: t("to"), type: "date", v: st.date_to },
+      { k: "opening", l: L2("Opening balance", "الرصيد الافتتاحي"), type: "number", v: st.opening }, { k: "closing", l: L2("Closing balance", "الرصيد الختامي"), type: "number", v: st.closing },
+      { k: "book_from", l: L2("Look at vouchers from", "مراجعة القيود من"), type: "date", v: st.book_from }]), async v => { await api("PUT", "/api/bank-statements/" + st.id, v); toast(t("saved")); }),
+    brdel: () => confirmDelete(st.name, "/api/bank-statements/" + st.id, async () => { location.hash = "#/bankrec"; }) });
+};
+function bankEntryForm(st, ln) {
+  const out = ln.amount < 0;
+  const words = (ln.description || "").replace(/[0-9/.\-:]+/g, " ").trim().split(/\s+/).slice(0, 3).join(" ");
+  drawer(L2("Book this bank line", "تسجيل هذه الحركة") + ` — ${money(ln.amount)}`, form([
+    { html: `<p class="muted" style="margin:0">${fd(ln.date)} · ${esc(ln.description)} ${esc(ln.ref || "")}</p>`, span: "spanall" },
+    { k: "account", l: out ? L2("Paid for (debit)", "مدفوع مقابل (مدين)") : L2("Received for (credit)", "مقبوض مقابل (دائن)"), type: "select", span: "spanall",
+      opts: S.boot.accounts.filter(a => a.active && a.code !== st.account).map(a => [a.code, `${a.code} — ${aname(a)}`]), v: (ln.rule && ln.rule.account) || accByRole(out ? "bank_charges" : "interest_income") },
+    { k: "party", l: t("party"), list: "brparty" }, { k: "bu_id", l: t("bu"), type: "select", opts: buOpts("—") },
+    ...(out ? [{ k: "vat_code", l: L2("VAT included (bank fees)", "شامل ضريبة (عمولات)"), type: "select", opts: taxOpts("vat") }] : []),
+    { k: "memo", l: t("memo"), v: ln.description, span: "spanall" },
+    { k: "remember", l: L2("Always book lines containing this text the same way (bank rule)", "سجّل دائماً الحركات التي تحتوي هذا النص بنفس الطريقة (قاعدة)"), type: "checkbox", change: "brrem", span: "spanall" },
+    { k: "pattern", l: L2("Text to look for", "النص المطلوب"), v: words }]) + partyList("brparty"),
+  async v => { await api("POST", `/api/bank-statements/${st.id}/create`, { ...v, line_id: ln.id }); toast(t("posted")); },
+  { submitLabel: L2("Book & match", "تسجيل ومطابقة"), onOpen: f => { S.H.brrem = () => showFields(f, $("[name=remember]", f).checked ? ["pattern"] : [], ["pattern"]); S.H.brrem(); } });
+}
+function bankLineForm(st) {
+  drawer(L2("Add a bank line", "إضافة حركة بنكية"), form([{ k: "date", l: t("date"), type: "date", v: st.date_to, req: 1 }, { k: "description", l: L2("Description", "البيان"), req: 1 },
+    { k: "ref", l: t("ref") }, { k: "amount", l: L2("Amount (+ in / − out)", "المبلغ (+ وارد / − منصرف)"), type: "number", req: 1, step: "any" }]),
+  async v => { await api("POST", `/api/bank-statements/${st.id}/lines`, { lines: [v] }); toast(t("saved")); });
+}
+function bankRulesForm(rules) {
+  const edit = r => drawer(r.id ? t("edit") : L2("New bank rule", "قاعدة جديدة"), form([
+    { k: "pattern", l: L2("When the bank's description contains", "عندما يحتوي بيان البنك على"), v: r.pattern, req: 1, span: "spanall" },
+    { k: "direction", l: L2("For", "لـ"), type: "select", opts: [["any", L2("money in or out", "وارد أو منصرف")], ["out", L2("money out", "منصرف")], ["in", L2("money in", "وارد")]], v: r.direction || "out" },
+    { k: "account", l: L2("Book it to", "سجّل على"), type: "select", opts: S.boot.accounts.filter(a => a.active).map(a => [a.code, `${a.code} — ${aname(a)}`]), v: r.account || accByRole("bank_charges") },
+    { k: "party", l: t("party"), v: r.party, list: "brparty" }, { k: "vat_code", l: t("vat_code"), type: "select", opts: taxOpts("vat"), v: r.vat_code },
+    { k: "memo", l: t("memo"), v: r.memo }, { k: "active", l: t("active"), type: "checkbox", v: r.active !== 0 }]) + partyList("brparty"),
+  async v => { if (r.id) await api("PUT", "/api/bank-rules/" + r.id, v); else await api("POST", "/api/bank-rules", v); toast(t("saved")); },
+  { extraButtons: r.id && can("accounting.bankrec", "edit") ? `<button type="button" class="btn danger" data-a="brrdel">${t("delete")}</button>` : "" });
+  S.H.brrnew = () => { edit({}); S.H.brrdel = () => {}; };
+  S.H.brredit = el => { const r = rules.find(x => x.id === +el.dataset.id); edit(r); S.H.brrdel = () => confirmDelete(r.pattern, "/api/bank-rules/" + r.id); };
+  drawer(L2("Bank rules", "قواعد البنك"), `<p class="muted">${L2("Lines the bank repeats every month (fees, SMS charges, interest, standing orders) are booked in one click with a rule.", "الحركات المتكررة كل شهر (عمولات، رسائل SMS، فوائد، أوامر مستديمة) تُسجل بضغطة واحدة بقاعدة.")}</p>
+    <div class="tbl"><table><tbody>${rules.map(r => `<tr class="click" data-a="brredit" data-id="${r.id}"><td>“${esc(r.pattern)}”</td><td>${esc(r.direction)}</td><td>→ ${esc(r.account)} ${esc(aname(S.boot.accounts.find(a => a.code === r.account) || {}))}</td><td>${r.active ? "" : `<span class="chip">${L2("off", "متوقفة")}</span>`}</td></tr>`).join("") || `<tr><td class="empty">${t("nothing")}</td></tr>`}</tbody></table></div>`,
+  null, { readOnly: true, extraButtons: can("accounting.bankrec", "add") ? `<button type="button" class="btn pri" data-a="brrnew">+ ${L2("Rule", "قاعدة")}</button>` : "" });
+}
+
+// ================================================================ recurring entries
+const RC_TYPES = () => [["expense", t("m_expenses")], ["direct_cost", t("m_costs")], ["payroll", t("m_payroll")], ["payment", t("m_payments")], ["receipt", t("m_receipts")],
+  ["partner_tx", L2("Partner drawing / capital", "مسحوبات / رأس مال شريك")], ["journal", L2("Journal voucher", "قيد يومية")], ["depreciation", L2("Depreciation run (fixed assets)", "احتساب الإهلاك (الأصول الثابتة)")]];
+const RC_UNITS = () => [["day", L2("day(s)", "يوم")], ["week", L2("week(s)", "أسبوع")], ["month", L2("month(s)", "شهر")], ["year", L2("year(s)", "سنة")]];
+const rcType = k => (RC_TYPES().find(x => x[0] === k) || [k, k])[1];
+const RC_UNIT_TXT = { day: [["day", "days"], ["يوم", "أيام"]], week: [["week", "weeks"], ["أسبوع", "أسابيع"]], month: [["month", "months"], ["شهر", "أشهر"]], year: [["year", "years"], ["سنة", "سنوات"]] };
+const rcSched = r => { const u = RC_UNIT_TXT[r.unit] || [[r.unit, r.unit], [r.unit, r.unit]], pl = r.every > 1 ? 1 : 0;
+  return `${L2("every", "كل")} ${r.every > 1 ? r.every + " " : ""}${S.lang === "ar" ? u[1][pl] : u[0][pl]}${r.month_end ? ` · ${L2("month end", "آخر الشهر")}` : ""}`; };
+const fillMonth = (v, due) => typeof v === "string" ? v.replace(/\{month\}/g, due.slice(0, 7)).replace(/\{year\}/g, due.slice(0, 4)).replace(/\{date\}/g, due) : v;
+
+PAGES.recurring = async (view) => {
+  const d = await api("GET", "/api/recurring");
+  const add = can("accounting.recurring", "add");
+  const autoDue = d.due.filter(x => x.mode === "auto" && !x.last_error);
+  Object.assign(S.H, { rcnew: () => recurringForm(), rcopen: el => recurringView(+el.dataset.id),
+    rcrun: async () => { try { const r = await api("POST", "/api/recurring-run", { through: today() }); toast(`${r.posted} ${L2("posted", "قيد")}${r.errors.length ? ` · ${r.errors.length} ${L2("failed", "فشل")}` : ""}`); route(); } catch (e) { fail(e); } },
+    rcpost: el => { const x = d.due[+el.dataset.i]; recurringPostForm(d.rows.find(r => r.id === x.id), x.due); },
+    rcskip: async el => { const x = d.due[+el.dataset.i]; if (!confirm(L2(`Skip ${x.name} due ${x.due}?`, `تخطي ${x.name} المستحق ${x.due}؟`))) return; try { await api("POST", `/api/recurring/${x.id}/skip`, { due: x.due }); route(); } catch (e) { fail(e); } } });
+  view.innerHTML = `<div class="toolbar">${add ? `<button class="btn pri" data-a="rcnew">+ ${L2("Recurring entry", "قيد متكرر")}</button>` : ""}${add && autoDue.length ? `<button class="btn" data-a="rcrun">▶ ${L2("Post automatic ones now", "ترحيل التلقائية الآن")} (${autoDue.length})</button>` : ""}</div>
+    <div class="card"><h2>${L2("Due now", "المستحق الآن")} <span class="muted" style="font-weight:400">(${d.due.length})</span></h2>${d.due.length ? `<div class="tbl stack"><table><thead><tr><th>${L2("Due", "الاستحقاق")}</th><th>${L2("Entry", "القيد")}</th><th>${L2("Type", "النوع")}</th><th class="num">${t("amount")}</th><th>${L2("Mode", "الطريقة")}</th><th></th></tr></thead><tbody>
+      ${d.due.map((x, i) => `<tr><td>${fd(x.due)}</td><td><b>${esc(fillMonth(x.name, x.due))}</b>${x.last_error ? `<div class="neg" style="font-size:.85em">⚠ ${esc(x.last_error)}</div>` : ""}</td><td>${esc(rcType(x.doc_type))}</td><td class="num">${x.amount ? money(x.amount) : "—"}</td>
+        <td>${x.mode === "auto" ? `<span class="chip ok">${L2("automatic", "تلقائي")}</span>` : `<span class="chip warn">${L2("review", "مراجعة")}</span>`}</td>
+        <td>${add ? `<button class="btn sm pri" data-a="rcpost" data-i="${i}">${L2("Review & post", "مراجعة وترحيل")}</button><button class="btn sm" data-a="rcskip" data-i="${i}">${L2("Skip", "تخطي")}</button>` : ""}</td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="empty">${L2("Nothing due.", "لا يوجد مستحق.")}</div>`}</div>
+    <div class="card"><h2>${L2("Recurring entries", "القيود المتكررة")}</h2>${d.rows.length ? `<div class="tbl stack"><table><thead><tr><th>${L2("Name", "الاسم")}</th><th>${L2("Type", "النوع")}</th><th class="num">${t("amount")}</th><th>${L2("Schedule", "التكرار")}</th><th>${L2("Next", "التالي")}</th><th>${L2("Mode", "الطريقة")}</th><th class="num">${L2("Posted", "مرحّل")}</th></tr></thead><tbody>
+      ${d.rows.map(r => `<tr class="click ${r.active ? "" : "void"}" data-a="rcopen" data-id="${r.id}"><td><b>${esc(r.name)}</b></td><td>${esc(rcType(r.doc_type))}</td><td class="num">${r.amount ? money(r.amount) : "—"}</td><td>${esc(rcSched(r))}</td><td>${r.next_due ? fd(r.next_due) : "—"}</td>
+        <td>${r.mode === "auto" ? L2("automatic", "تلقائي") : L2("review", "مراجعة")}</td><td class="num">${r.posted}</td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="empty">${L2("Rent, salaries, subscriptions, insurance, loan installments, monthly depreciation… set them once and they post themselves on their dates (or wait for you to check the amount). Tip: open any voucher and press “Make recurring”.", "الإيجار، الرواتب، الاشتراكات، التأمين، أقساط القروض، الإهلاك الشهري… أدخلها مرة واحدة وتُرحّل تلقائياً في مواعيدها (أو تنتظر مراجعتك للمبلغ). نصيحة: افتح أي قيد واضغط «اجعله متكرراً».")}</div>`}</div>`;
+};
+
+function rcDocFields(type, payload) {
+  if (type === "depreciation") return `<p class="muted">${L2("Books the month's depreciation for every fixed asset, by your depreciation settings.", "يسجل إهلاك الشهر لكل الأصول الثابتة حسب إعدادات الإهلاك.")}</p>`;
+  if (type === "journal") {
+    const lines = (payload.lines && payload.lines.length ? payload.lines : [{}, {}]);
+    const opts = S.boot.accounts.filter(a => a.active).map(a => [a.code, `${a.code} — ${aname(a)}`]);
+    return form([{ k: "memo", l: t("memo"), v: payload.memo || "", ph: L2("e.g. Accrued rent {month}", "مثال: إيجار مستحق {month}"), span: "spanall" }, { k: "bu_id", l: t("bu"), type: "select", opts: buOpts("—"), v: payload.bu_id || "" }, { k: "party", l: t("party"), v: payload.party || "", list: "rcparty" }]) +
+      `<div class="tbl"><table id="rcjl"><thead><tr><th>${t("account")}</th><th>${t("debit")}</th><th>${t("credit")}</th></tr></thead><tbody>${lines.map(l => `<tr><td><select data-skip="1" class="rja"><option value="">—</option>${opts.map(([c, n]) => `<option value="${c}" ${c === l.account ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></td>
+        <td><input data-skip="1" class="rjd num" type="number" step="any" value="${l.debit || ""}"></td><td><input data-skip="1" class="rjc num" type="number" step="any" value="${l.credit || ""}"></td></tr>`).join("")}</tbody></table></div>
+      <button type="button" class="btn sm" data-a="rcjadd" style="margin-top:4px">+ ${L2("Line", "سطر")}</button>`;
+  }
+  const d = DOCS[type];
+  return form(d.fields(payload).filter(x => x.k !== "date").map(x => x.k && payload[x.k] != null ? { ...x, v: payload[x.k] } : x)) + unitsList() + partyList("parties") + datalist("items", S.boot.items.map(i => i.name));
+}
+function rcReadPayload(f, type) {
+  if (type === "depreciation") return {};
+  if (type === "journal") {
+    const v = readForm($("#rcdoc", f) || f);
+    const lines = $$("#rcjl tbody tr", f).map(tr => ({ account: $(".rja", tr).value, debit: $(".rjd", tr).value, credit: $(".rjc", tr).value })).filter(l => l.account && (+l.debit || +l.credit));
+    return { memo: v.memo, bu_id: v.bu_id, party: v.party, lines };
+  }
+  const v = readForm($("#rcdoc", f));
+  delete v.date; return v;
+}
+function rcWireDoc(f, type) {
+  const box = $("#rcdoc", f);
+  if (type === "journal") { S.H.rcjadd = () => { const tb = $("#rcjl tbody", f), tr = tb.lastElementChild.cloneNode(true); $$("input", tr).forEach(i => { i.value = ""; }); tb.appendChild(tr); }; return; }
+  const d = DOCS[type]; if (!d) return;
+  if (d.open) try { d.open(box, false); } catch { /* optional helpers */ }
+  if (d.calc) { S.H.calc = () => d.calc(box); d.calc(box); }
+}
+function recurringForm(r, pre = {}) {
+  const isNew = !r; r = r || {};
+  let type = r.doc_type || pre.doc_type || "expense", payload = r.payload || pre.payload || {};
+  drawer(isNew ? L2("New recurring entry", "قيد متكرر جديد") : `${t("edit")} — ${r.name}`, form([
+    { k: "rc_name", l: L2("Name", "الاسم"), v: r.name || pre.name || "", req: 1, ph: L2("e.g. Office rent", "مثال: إيجار المكتب") },
+    { k: "rc_doc_type", l: L2("Posts a", "يرحّل"), type: "select", opts: RC_TYPES(), v: type, change: "rctype" },
+    { k: "rc_every", l: L2("Every", "كل"), type: "number", v: r.every || 1 }, { k: "rc_unit", l: L2("Unit", "الوحدة"), type: "select", opts: RC_UNITS(), v: r.unit || "month" },
+    { k: "rc_start", l: L2("First date", "أول تاريخ"), type: "date", v: r.start || pre.start || today(), req: 1 },
+    { k: "rc_month_end", l: L2("Always the last day of the month", "دائماً آخر يوم في الشهر"), type: "checkbox", v: !!r.month_end },
+    { k: "rc_end_date", l: L2("Until (optional)", "حتى (اختياري)"), type: "date", v: r.end_date || "" }, { k: "rc_max_count", l: L2("…or number of times", "…أو عدد المرات"), type: "number", v: r.max_count || "" },
+    { k: "rc_mode", l: L2("When due", "عند الاستحقاق"), type: "select", opts: [["auto", L2("Post it automatically", "رحّله تلقائياً")], ["review", L2("Let me check the amount first", "انتظر مراجعتي للمبلغ")]], v: r.mode || "auto" },
+    { k: "rc_active", l: t("active"), type: "checkbox", v: r.active !== 0 },
+    { html: `<h4 class="fsec">${L2("The voucher", "القيد")} <span class="muted" style="font-weight:400;text-transform:none">— ${L2("text may use {month}, {year}, {date}", "يمكن استخدام {month} و{year} و{date} في النص")}</span></h4><div id="rcdoc">${rcDocFields(type, payload)}</div>`, span: "spanall" }]) + partyList("rcparty"),
+  async v => { const body = { name: v.rc_name, doc_type: type, every: v.rc_every, unit: v.rc_unit, start: v.rc_start, month_end: v.rc_month_end, end_date: v.rc_end_date, max_count: v.rc_max_count,
+      mode: v.rc_mode, active: v.rc_active, payload: rcReadPayload($("#df"), type) };
+    if (isNew) await api("POST", "/api/recurring", body); else await api("PUT", "/api/recurring/" + r.id, body); toast(t("saved")); },
+  { wide: true, onOpen: f => {
+    $("#rcdoc", f).querySelectorAll("[name]").forEach(el => { el.dataset.rcdoc = "1"; });
+    S.H.rctype = () => { type = $("[name=rc_doc_type]", f).value; payload = {}; $("#rcdoc", f).innerHTML = rcDocFields(type, payload); rcWireDoc(f, type); };
+    rcWireDoc(f, type); } });
+}
+// the drawer's own fields (rc_*) and the voucher's share one form — keep the voucher's out of the template's
+async function recurringView(id) {
+  const r = await api("GET", "/api/recurring/" + id);
+  const ed = can("accounting.recurring", "edit");
+  drawer(r.name, `<div class="kpis">${kpiBox(L2("Next", "التالي"), r.next_due ? fd(r.next_due) : "—")}${kpiBox(L2("Schedule", "التكرار"), esc(rcSched(r)))}${kpiBox(L2("Mode", "الطريقة"), r.mode === "auto" ? L2("automatic", "تلقائي") : L2("review", "مراجعة"))}</div>
+    ${r.last_error ? `<div class="banner err">⚠ ${esc(r.last_error)} — ${L2("fix the entry and save it to resume", "صحّح القيد واحفظه للاستئناف")}</div>` : ""}
+    <h4 class="fsec">${L2("History", "السجل")}</h4><div class="tbl"><table><tbody>${r.history.map(h => `<tr><td>${fd(h.due)}</td><td>${h.skipped ? `<span class="chip">${L2("skipped", "تم التخطي")}</span>` : h.vouchers.map(v => `<a href="#" data-a="openv" data-id="${v.id}">#${v.id}</a> ${esc(v.memo)}`).join("<br>") || `<span class="muted">${L2("nothing to book", "لا يوجد ما يُسجل")}</span>`}</td></tr>`).join("") || `<tr><td class="empty">${L2("Not posted yet.", "لم يُرحّل بعد.")}</td></tr>`}</tbody></table></div>`,
+  null, { readOnly: true, extraButtons: (ed ? `<button type="button" class="btn danger" data-a="rcdel">${t("delete")}</button><button type="button" class="btn pri" data-a="rcedit">${t("edit")}</button>` : "") });
+  S.H.rcedit = () => recurringForm(r);
+  S.H.rcdel = () => confirmDelete(r.name, "/api/recurring/" + r.id);
+}
+function recurringPostForm(r, due) {
+  const payload = Object.fromEntries(Object.entries(r.payload || {}).map(([k, v]) => [k, Array.isArray(v) ? v : fillMonth(v, due)]));
+  drawer(`${fillMonth(r.name, due)} — ${fd(due)}`, `<p class="muted">${L2("Check or change the amounts for this date only; the template stays as it is.", "راجع أو عدّل المبالغ لهذا التاريخ فقط؛ ويبقى القالب كما هو.")}</p><div id="rcdoc">${rcDocFields(r.doc_type, payload)}</div>`,
+  async () => { await api("POST", `/api/recurring/${r.id}/post`, { due, overrides: rcReadPayload($("#df"), r.doc_type) }); toast(t("posted")); },
+  { wide: true, submitLabel: L2("Post", "ترحيل"), onOpen: f => rcWireDoc(f, r.doc_type) });
+}
+// open: post automatic recurring entries that fell due (once per day per device)
+async function runRecurringOnOpen() {
+  if (!can("accounting.recurring", "add")) return;
+  const key = "berp.rcrun", day = today();
+  try { if (localStorage.getItem(key) === day) return; } catch { /* private mode */ }
+  try { const d = await api("GET", "/api/recurring");
+    if (d.due.some(x => x.mode === "auto" && !x.last_error)) {
+      const r = await api("POST", "/api/recurring-run", { through: day });
+      if (r.posted) toast(`${r.posted} ${L2("recurring entries posted", "قيد متكرر تم ترحيله")}`);
+      if (r.errors.length) toast(`${r.errors.length} ${L2("recurring entries could not post — see Recurring entries", "قيد متكرر لم يُرحّل — راجع القيود المتكررة")}`, true);
+    }
+    try { localStorage.setItem(key, day); } catch { /* ignore */ }
+  } catch { /* no permission / offline */ }
 }
 
 // ================================================================= entry types

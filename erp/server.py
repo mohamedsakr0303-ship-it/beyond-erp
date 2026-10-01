@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from . import assets, custody, entries, equity, loans, rental_docs, rentals, sales, sales_docs, __version__
+from . import assets, bankrec, custody, entries, equity, loans, recurring, rental_docs, rentals, sales, sales_docs, __version__
 from . import accounting as acc
 from . import auth, branding, cloud, documents, einvoice, interchange, reports
 from .db import MODULES, SUBMODULES, SUBTYPES, to_major, to_minor
@@ -611,6 +611,7 @@ KIND_MODULE = {"Supplier Discount": "purchasing.payments", "Direct Cost": "purch
                "Stock Transfer": "stock.moves", "Stock Adjustment": "stock.moves",
                **{k: "accounting.loans" for k in loans.ALL_KINDS}, **{k: "purchasing.custody" for k in custody.ALL_KINDS},
                **{k: "rentals.fleet" for k in rentals.KINDS},
+               "Bank Entry": "accounting.bankrec",
                **{k: "shop.orders" for k in ("Installment Interest", "Advance Applied", "Cost of Sales", "Cheque Received",
                                              "Cheque Cleared", "Cheque Bounced", "Sale Refund")}}
 
@@ -943,6 +944,151 @@ def partner_del(ctx, pid):
 
 
 # ================================================================== loans
+# ============================================================ bank reconciliation
+@route("GET", "/api/bank", "accounting.bankrec")
+def bank_overview(ctx):
+    return ok({**bankrec.overview(ctx.db), "rules": ctx.db.q("SELECT * FROM bank_rules ORDER BY pattern")})
+
+
+@route("POST", "/api/bank-preview/parse", "accounting.bankrec", "add")
+def bank_parse(ctx):
+    b = ctx.body
+    return ok(bankrec.parse(b.get("data") or b.get("text") or "", b.get("filename") or "", b.get("date_order") or None, b.get("mapping")))
+
+
+@route("POST", "/api/bank-statements", "accounting.bankrec", "add")
+def bank_stmt_add(ctx):
+    sid = bankrec.save(ctx.db, ctx.body)
+    ctx.log("bank.statement", sid)
+    return ok({"id": sid})
+
+
+@route("GET", "/api/bank-statements/<sid>", "accounting.bankrec")
+def bank_stmt_one(ctx, sid):
+    return ok(bankrec.detail(ctx.db, sid))
+
+
+@route("PUT", "/api/bank-statements/<sid>", "accounting.bankrec", "edit")
+def bank_stmt_edit(ctx, sid):
+    return ok({"id": bankrec.save(ctx.db, ctx.body, sid)})
+
+
+@route("DELETE", "/api/bank-statements/<sid>", "accounting.bankrec", "edit")
+def bank_stmt_del(ctx, sid):
+    bankrec.delete(ctx.db, sid)
+    ctx.log("bank.statement.delete", sid)
+    return ok()
+
+
+@route("POST", "/api/bank-statements/<sid>/<action>", "accounting.bankrec", "add")
+def bank_stmt_action(ctx, sid, action):
+    b, db, u = ctx.body, ctx.db, ctx.user["username"]
+    if action == "automatch":
+        r = {"matched": bankrec.auto_match(db, sid)}
+    elif action == "match":
+        r = {"id": bankrec.match(db, sid, b.get("line_id"), b.get("entries"))}
+    elif action == "unmatch":
+        bankrec.unmatch(db, sid, b.get("line_id"))
+        r = {}
+    elif action == "ignore":
+        bankrec.ignore(db, sid, b.get("line_id"), b.get("on", True) not in (False, 0, "0"))
+        r = {}
+    elif action == "create":
+        r = {"id": bankrec.create_entry(db, sid, b.get("line_id"), b, u)}
+    elif action == "rules":
+        r = {"created": bankrec.apply_rules(db, sid, u)}
+    elif action == "tick":
+        bankrec.tick(db, sid, b.get("entries"), b.get("on", True) not in (False, 0, "0"))
+        r = {}
+    elif action == "lines":
+        bankrec.save(db, {"lines": b.get("lines")}, sid)
+        r = {}
+    elif action == "delete-line":
+        ctx.require("accounting.bankrec", "edit")
+        bankrec.delete_line(db, sid, b.get("line_id"))
+        r = {}
+    elif action == "reconcile":
+        bankrec.reconcile(db, sid, b, u)
+        r = {}
+    elif action == "reopen":
+        ctx.require("accounting.bankrec", "edit")
+        bankrec.reopen(db, sid)
+        r = {}
+    else:
+        return ok({"error": "Unknown action"}, 404)
+    ctx.log(f"bank.{action}", sid)
+    return ok(r)
+
+
+@route("POST", "/api/bank-rules", "accounting.bankrec", "add")
+def bank_rule_add(ctx):
+    return ok({"id": bankrec.save_rule(ctx.db, ctx.body)})
+
+
+@route("PUT", "/api/bank-rules/<rid>", "accounting.bankrec", "edit")
+def bank_rule_edit(ctx, rid):
+    return ok({"id": bankrec.save_rule(ctx.db, ctx.body, rid)})
+
+
+@route("DELETE", "/api/bank-rules/<rid>", "accounting.bankrec", "edit")
+def bank_rule_del(ctx, rid):
+    ctx.db.x("DELETE FROM bank_rules WHERE id=?", (int(rid),))
+    return ok()
+
+
+# ============================================================ recurring entries
+@route("GET", "/api/recurring", "accounting.recurring")
+def recurring_list(ctx):
+    return ok({"rows": recurring.listing(ctx.db),
+               "due": recurring.due_list(ctx.db, ctx.q.get("through") or acc.today(), lambda m: ctx.can(m, "add"))})
+
+
+@route("GET", "/api/recurring/<rid>", "accounting.recurring")
+def recurring_one(ctx, rid):
+    t = recurring.get(ctx.db, rid)
+    return ok({**t, "payload": recurring._j(t["payload"], {}), "history": recurring.history(ctx.db, rid),
+               "next_due": recurring.next_due(ctx.db, t)})
+
+
+@route("POST", "/api/recurring", "accounting.recurring", "add")
+def recurring_add(ctx):
+    ctx.require(recurring.module_of(ctx.body.get("doc_type") or ""), "add")
+    rid = recurring.save(ctx.db, ctx.body)
+    ctx.log("recurring.add", rid)
+    return ok({"id": rid})
+
+
+@route("PUT", "/api/recurring/<rid>", "accounting.recurring", "edit")
+def recurring_edit(ctx, rid):
+    return ok({"id": recurring.save(ctx.db, ctx.body, rid)})
+
+
+@route("DELETE", "/api/recurring/<rid>", "accounting.recurring", "edit")
+def recurring_del(ctx, rid):
+    recurring.delete(ctx.db, rid)
+    return ok()
+
+
+@route("POST", "/api/recurring-run", "accounting.recurring", "add")
+def recurring_run(ctx):
+    r = recurring.run(ctx.db, ctx.body.get("through") or acc.today(), ctx.user["username"], lambda m: ctx.can(m, "add"))
+    if r["posted"] or r["errors"]:
+        ctx.log("recurring.run", f"{r['posted']} posted, {len(r['errors'])} errors")
+    return ok(r)
+
+
+@route("POST", "/api/recurring/<rid>/<action>", "accounting.recurring", "add")
+def recurring_action(ctx, rid, action):
+    t = recurring.get(ctx.db, rid)
+    ctx.require(recurring.module_of(t["doc_type"]), "add")
+    if action == "post":
+        return ok({"entries": recurring.post(ctx.db, rid, ctx.body.get("due"), ctx.body.get("overrides"), ctx.user["username"])})
+    if action == "skip":
+        recurring.skip(ctx.db, rid, ctx.body.get("due"))
+        return ok()
+    return ok({"error": "Unknown action"}, 404)
+
+
 # ============================================================ product & unit sales
 def _shop(ctx, *screens, level="view"):
     if not any(ctx.can("shop." + x, level) for x in screens):
@@ -1771,6 +1917,10 @@ def eta_cancel(ctx, xid):
 def dashboard(ctx):
     q = ctx.q
     d = acc.dashboard(ctx.db, q.get("date_from"), q.get("date_to"), q.get("bu_id") or None)
+    if ctx.can("accounting.recurring"):
+        due = recurring.due_list(ctx.db, acc.today(), lambda m: ctx.can(m, "add"))
+        d["recurring_due"] = {"review": sum(1 for x in due if x["mode"] == "review"), "auto": sum(1 for x in due if x["mode"] == "auto"),
+                              "errors": sum(1 for x in due if x["last_error"])} if due else None
     if ctx.can("shop.installments") or ctx.can("shop.orders"):
         d["installments_overdue"] = sales.overdue_summary(ctx.db)
         d["cheques_due"] = len(sales.cheques_due(ctx.db))
@@ -2073,12 +2223,12 @@ def offer_type_del(ctx, tid):
 
 
 # ============================================================ erase all data
-ERASE_TRANSACTIONS = ("sale_cheques", "sale_installments", "sale_lines", "sales_orders", "stock_moves", "stock_levels", "extract_lines", "extracts", "ownership_changes", "journal_lines",
+ERASE_TRANSACTIONS = ("bank_lines", "bank_statements", "recurring_runs", "sale_cheques", "sale_installments", "sale_lines", "sales_orders", "stock_moves", "stock_levels", "extract_lines", "extracts", "ownership_changes", "journal_lines",
                       "journal_entries", "offers", "loans", "custodies", "rent_moves", "rental_invoices", "rental_charges",
                       "rental_handovers", "rental_lines", "rentals", "rent_lots")
 ERASE_ALL = ERASE_TRANSACTIONS + ("parties", "stock_items", "boq_lines", "boqs", "partner_shares", "partners", "rates",
                                   "fixed_assets", "business_units", "offer_types", "tax_codes", "assets", "rent_kit_lines", "rent_kits",
-                                  "rent_items", "rent_models", "product_media", "products")
+                                  "rent_items", "rent_models", "product_media", "products", "bank_rules", "recurring")
 
 
 @route("POST", "/api/erase")

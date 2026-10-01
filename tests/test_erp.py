@@ -4,6 +4,7 @@ import json
 import sys
 import tempfile
 import threading
+import datetime
 import unittest
 import urllib.error
 import urllib.request
@@ -371,7 +372,8 @@ class Workspace(unittest.TestCase):
                ("business_units", "journal_entries", "journal_lines", "users", "offers", "partners", "accounts",
                 "settings", "audit_log", "ownership_changes", "fixed_assets", "partner_shares", "loans", "custodies",
                 "rent_items", "rent_lots", "rentals", "rental_lines", "rental_handovers", "rent_moves", "rental_charges",
-                "products", "product_media", "sales_orders", "sale_lines", "sale_installments", "sale_cheques", "extracts")}
+                "products", "product_media", "sales_orders", "sale_lines", "sale_installments", "sale_cheques", "extracts",
+                "bank_statements", "bank_lines", "bank_rules", "recurring", "recurring_runs")}
         for u in out["users"]:
             u.pop("pw_hash")          # passwords stay on the device where they were set
         out["audit_log"] = [r for r in out["audit_log"] if r["action"] not in ("login", "setup")]  # device-local
@@ -536,6 +538,18 @@ class Workspace(unittest.TestCase):
         self.assertEqual(st, 200, r)
         cid = self.nodes[1][1].one("SELECT id FROM sale_cheques")["id"]
         self.assertEqual(self.node_call(1, b, "POST", f"/api/sale-cheques/{cid}/clear", {"date": "2026-04-02"})[0], 200)
+        # recurring entries posted on one device are never posted again by the other; a statement matched across both
+        st, r = self.node_call(0, a, "POST", "/api/recurring", {"name": "Rent", "doc_type": "expense", "start": "2026-01-31", "month_end": 1,
+                                                              "mode": "auto", "payload": {"description": "Rent {month}", "amount": 100, "account": "6010"}})
+        self.assertEqual(st, 200, r)
+        self.assertEqual(self.node_call(0, a, "POST", "/api/recurring-run", {"through": "2026-03-31"})[1]["posted"], 3)
+        self.nodes[1][0].cloud.pull()
+        self.assertEqual(self.node_call(1, b, "POST", "/api/recurring-run", {"through": "2026-03-31"})[1]["posted"], 0)
+        bank = self.nodes[1][1].acct("bank")
+        st, r = self.node_call(1, b, "POST", "/api/bank-statements", {"account": bank, "date_from": "2026-01-01", "date_to": "2026-03-31",
+                                                                    "lines": [{"date": "2026-01-31", "description": "Rent", "amount": -100}]})
+        self.assertEqual(st, 200, r)
+        self.assertEqual(self.node_call(1, b, "POST", f"/api/bank-statements/{r['id']}/automatch", {})[1]["matched"], 1)
         for srv, _, _ in self.nodes:
             srv.cloud.pull()
         self.assertEqual(self.dump(self.nodes[0][1]), self.dump(self.nodes[1][1]))
@@ -787,6 +801,12 @@ class ProductSales(unittest.TestCase):
         self.assertEqual(tb["5005"]["debit"], 1500000)              # cost of the unit
         self.assertEqual([c["check"] for c in a.audit(db) if not c["ok"]], [])
         self.assertEqual(S.installments(db, "2026-07-01", "overdue")["totals"]["left"], 216000)
+        from erp import interchange
+        db2 = Database(":memory:")
+        interchange.import_data(db2, interchange.read_json(interchange.to_json(db).encode()), mode="replace")
+        d2 = S.detail(db2, sid, "2026-07-01")                              # payments, cheques and interest survive a restore
+        self.assertEqual((d2["paid"], d2["interest_earned"], d2["overdue_count"], len(d2["entries"])),
+                         (d["paid"], d["interest_earned"], 2, len(d["entries"])))
 
     def test_item_sale_refund_cancel_and_backup(self):
         from erp import interchange, sales_docs
@@ -818,8 +838,120 @@ class ProductSales(unittest.TestCase):
         db2 = Database(":memory:")
         interchange.import_data(db2, interchange.read_json(interchange.to_json(db).encode()), mode="replace")
         self.assertEqual(S.detail(db2, "SO-0002")["balance"], 2400000)
+        self.assertEqual(S.detail(db2, "SO-0001")["paid"], S.detail(db, "SO-0001")["paid"])
         self.assertEqual(S.get_product(db2, "P-0001")["status"], "sold")
         self.assertEqual(len(S.media_list(db2, S.get_product(db2, "P-0001")["id"])), 2)
+
+
+class BankReconciliation(unittest.TestCase):
+    """Import a statement, match it to the vouchers, book what the bank did on its own, reconcile and lock."""
+
+    def test_parse_formats(self):
+        from erp import bankrec as B
+        ar = "كشف حساب\nالتاريخ,البيان,مدين,دائن,الرصيد\n٠٥/٠٣/٢٠٢٦,إيداع نقدي,,\"1,500.00\",\"11,500.00\"\n06/03/2026,رسوم,25,,11475\n"
+        p = B.parse(ar)
+        self.assertEqual([(r["date"], r["amount"]) for r in p["rows"]], [("2026-03-05", 1500), ("2026-03-06", -25)])
+        self.assertEqual((p["opening"], p["closing"]), (10000, 11475))
+        us = "Date\tDescription\tAmount\n03/25/2026\tPOS\t(12.50)\n03/01/2026\tSalary\t5000\n"
+        p = B.parse(us)                                   # month/day detected; newest-first files are flipped
+        self.assertEqual([(r["date"], r["amount"]) for r in p["rows"]], [("2026-03-01", 5000), ("2026-03-25", -12.5)])
+        self.assertEqual(B.parse_amount("1.234,50"), 1234.5)
+        self.assertEqual(B.parse_amount("250.00 DR"), -250)
+        if HAVE_XL:
+            import base64
+            import io
+            import openpyxl
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.append(["Value Date", "Narrative", "Withdrawals", "Deposits", "Balance"])
+            ws.append([datetime.date(2026, 4, 1), "Fee", 10, None, 990])
+            buf = io.BytesIO()
+            wb.save(buf)
+            p = B.parse("data:application/octet-stream;base64," + base64.b64encode(buf.getvalue()).decode(), "s.xlsx")
+            self.assertEqual((p["rows"][0]["date"], p["rows"][0]["amount"], p["opening"]), ("2026-04-01", -10, 1000))
+        with self.assertRaises(a.ValidationError):
+            B.parse("nothing,here\n1,2\n")
+
+    def test_reconcile(self):
+        from erp import bankrec as B, interchange
+        db = seeded()
+        bank = db.acct("bank")
+        rows = [{"date": "2026-01-02", "description": "Transfer partner A", "amount": 100000},
+                {"date": "2026-02-01", "description": "Office rent", "amount": -5000},
+                {"date": "2026-02-03", "description": "CHQ Sup", "amount": -3000},
+                {"date": "2026-02-06", "description": "Salary Ali", "amount": -1000},
+                {"date": "2026-02-11", "description": "Deposit", "amount": 20000},
+                {"date": "2026-02-28", "description": "BANK CHARGES FEB", "amount": -50},
+                {"date": "2026-02-28", "description": "Credit interest", "amount": 12}]
+        sid = B.save(db, {"account": bank, "date_from": "2026-01-01", "date_to": "2026-02-28", "opening": 0, "closing": 110962, "lines": rows})
+        self.assertEqual(B.auto_match(db, sid), 5)
+        sm = B.detail(db, sid)["summary"]
+        self.assertEqual((sm["outstanding_payments"], sm["unrecorded"], sm["difference"]), (5000, -38, 0))  # tiles not cleared yet
+        with self.assertRaises(a.ValidationError):
+            B.reconcile(db, sid)                                           # two bank lines still open
+        open_ = [ln for ln in B.detail(db, sid)["lines"] if ln["status"] == "open"]
+        B.create_entry(db, sid, open_[0]["id"], {"account": db.acct("bank_charges"), "remember": 1, "pattern": "bank charges"})
+        B.create_entry(db, sid, open_[1]["id"], {"account": db.acct("interest_income")})
+        with self.assertRaises(a.ValidationError):                         # the amounts must agree
+            B.match(db, sid, open_[0]["id"], [1])
+        B.reconcile(db, sid, {"date": "2026-03-01"})
+        with self.assertRaises(a.ValidationError):
+            B.unmatch(db, sid, open_[0]["id"])
+        sid2 = B.save(db, {"account": bank, "date_from": "2026-03-01", "date_to": "2026-03-31", "opening": 110962, "closing": 102912,
+                           "lines": [{"date": "2026-02-28", "description": "Tiles", "amount": -5000},
+                                     {"date": "2026-03-03", "description": "Payment Sup", "amount": -1000},
+                                     {"date": "2026-03-31", "description": "Bank charges MAR", "amount": -50},
+                                     {"date": "2026-03-31", "description": "Drawing B", "amount": -2000}]})
+        self.assertEqual((B.auto_match(db, sid2), B.apply_rules(db, sid2)), (3, 1))
+        self.assertEqual(B.detail(db, sid2)["summary"]["difference"], 0)
+        B.reconcile(db, sid2, {"date": "2026-04-01"})
+        self.assertEqual([c["check"] for c in a.audit(db) if not c["ok"]], [])
+        # paper statement: tick vouchers
+        d3 = B.save(db, {"account": db.acct("cash"), "date_from": "2026-01-01", "date_to": "2026-03-31", "opening": 0, "closing": 0})
+        self.assertEqual(B.detail(db, d3)["lines"], [])
+        db2 = Database(":memory:")
+        interchange.import_data(db2, interchange.read_json(interchange.to_json(db).encode()), mode="replace")
+        self.assertEqual(B.get(db2, sid2)["status"], "reconciled")
+        self.assertEqual(B.detail(db2, sid2)["summary"]["difference"], 0)
+        self.assertEqual(B.detail(db2, sid)["summary"]["open_lines"], 0)
+
+
+class Recurring(unittest.TestCase):
+    """Templates post on schedule exactly once; review entries take a changed amount or are skipped."""
+
+    def test_recurring(self):
+        from erp import recurring as R, interchange
+        db = seeded()
+        t = R.save(db, {"name": "Rent", "doc_type": "expense", "start": "2026-01-31", "month_end": 1, "mode": "auto",
+                        "payload": {"description": "Office rent {month}", "amount": 5000, "account": "6010"}})
+        self.assertEqual(R.occurrences(R.get(db, t), "2026-05-15"), ["2026-01-31", "2026-02-28", "2026-03-31", "2026-04-30"])
+        self.assertEqual(R.run(db, "2026-04-30")["posted"], 4)
+        self.assertEqual(R.run(db, "2026-04-30")["posted"], 0)              # never twice
+        self.assertEqual([h["vouchers"][0]["memo"] for h in R.history(db, t)][0], "Office rent 2026-04")
+        e = R.history(db, t)[0]["vouchers"][0]["id"]
+        self.assertEqual(a.get_entry(db, e)["meta"]["form"]["description"], "Office rent 2026-04")   # editable in its form
+        el = R.save(db, {"name": "Electricity", "doc_type": "expense", "start": "2026-02-10", "mode": "review",
+                         "payload": {"description": "Electricity {month}", "amount": 0, "account": "6040"}})
+        self.assertEqual(R.run(db, "2026-03-31")["posted"], 0)              # review ones wait
+        R.post(db, el, "2026-02-10", {"amount": 812.5})
+        R.skip(db, el, "2026-03-10")
+        with self.assertRaises(a.ValidationError):
+            R.post(db, el, "2026-03-10")
+        with self.assertRaises(a.ValidationError):
+            R.post(db, el, "2026-03-11")                                     # not one of its dates
+        q = R.save(db, {"name": "Accrual", "doc_type": "journal", "start": "2026-01-31", "unit": "month", "every": 3, "month_end": 1,
+                        "max_count": 2, "mode": "auto", "payload": {"memo": "Accrual {month}", "lines": [{"account": "6090", "debit": 100}, {"account": "2030", "credit": 100}]}})
+        bad = R.save(db, {"name": "Broken", "doc_type": "payment", "start": "2026-01-01", "mode": "auto", "payload": {"party": "Nobody", "amount": 999999}})
+        r = R.run(db, "2026-12-31")
+        self.assertEqual((r["posted"], len(r["errors"])), (8 + 2, 1))      # rent May–Dec + 2 accruals; the bad payment stops
+        self.assertTrue(R.get(db, bad)["last_error"])
+        self.assertEqual(R.run(db, "2026-12-31")["posted"], 0)
+        self.assertEqual(len(R.history(db, q)), 2)
+        self.assertEqual([c["check"] for c in a.audit(db) if not c["ok"]], [])
+        db2 = Database(":memory:")
+        interchange.import_data(db2, interchange.read_json(interchange.to_json(db).encode()), mode="replace")
+        self.assertEqual(R.run(db2, "2026-12-31")["posted"], 0)
+        self.assertEqual(len(R.history(db2, t)), 12)
 
 
 class Contacts(unittest.TestCase):
