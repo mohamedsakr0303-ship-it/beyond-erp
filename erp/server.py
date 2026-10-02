@@ -1991,6 +1991,73 @@ def export_csv(ctx):
                     re.sub(r"\W+", "_", sheet) + ("_template" if tpl else "") + ".csv", "text/csv; charset=utf-8")
 
 
+# ------------------------------------------------- per-screen templates & imports
+def _sheet_can(ctx, name, level="add"):
+    from . import importkit
+    importkit.sheet(name)
+    perm = importkit.SHEET_PERM.get(name)
+    if not (ctx.can("import_export.import", "edit") or (perm and ctx.can(perm, level))):
+        raise PermissionError()
+
+
+@route("GET", "/api/import-sheets")
+def import_sheets(ctx):
+    from . import importkit
+    return ok([{**importkit.describe(n), "perm": importkit.SHEET_PERM.get(n, "")} for n in importkit.importable()])
+
+
+@route("GET", "/api/templates/sheet")
+def template_sheet(ctx):
+    from . import importkit
+    name = ctx.q.get("sheet") or ""
+    _sheet_can(ctx, name, "view")
+    fname = re.sub(r"\W+", "_", name).strip("_") + "_template"
+    if (ctx.q.get("format") or "xlsx") == "csv":
+        return download(importkit.template_csv(name), fname + ".csv", "text/csv; charset=utf-8")
+    return download(importkit.template_xlsx(ctx.db, name, ctx.q.get("lang") or "en"), fname + ".xlsx", XLSX)
+
+
+@route("POST", "/api/import-preview/analyze")
+def import_analyze(ctx):
+    from . import importkit
+    name = ctx.q.get("sheet") or ""
+    _sheet_can(ctx, name)
+    return ok(importkit.analyze(ctx.db, name, ctx.raw, ctx.q.get("filename") or "", ctx.q.get("table") or None,
+                                ctx.q.get("header_row") if ctx.q.get("header_row") not in (None, "") else None))
+
+
+def _sheet_import(ctx, dry):
+    from . import importkit
+    name = ctx.q.get("sheet") or ""
+    _sheet_can(ctx, name)
+    mapping = json.loads(ctx.q.get("mapping") or "null")
+    rows, nums = importkit.read(ctx.db, name, ctx.raw, ctx.q.get("filename") or "", mapping, ctx.q.get("table") or None,
+                          ctx.q.get("header_row") if ctx.q.get("header_row") not in (None, "") else None)
+    try:
+        res = interchange.import_data(ctx.db, {name: rows}, mode="append", dry_run=dry, user=ctx.user["username"])
+    except interchange.ImportErrors as e:
+        from .interchange import FIRST_DATA_ROW
+        errs = []
+        for x in e.errors:      # row numbers as they are in the user's own file
+            i = x.get("row", 0) - FIRST_DATA_ROW
+            errs.append({**x, "row": nums[i] if 0 <= i < len(nums) else x.get("row"), "values": rows[i] if 0 <= i < len(rows) else {}})
+        return ok({"ok": False, "error": str(e), "errors": errs, "rows": len(rows)}, 400)
+    res["rows"] = len(rows)
+    if not dry:
+        ctx.log("import.sheet", f"{name}: {json.dumps(res['counts'])}")
+    return ok(res)
+
+
+@route("POST", "/api/import-preview/check")
+def import_check(ctx):
+    return _sheet_import(ctx, True)
+
+
+@route("POST", "/api/import-sheet")
+def import_sheet(ctx):
+    return _sheet_import(ctx, False)
+
+
 @route("POST", "/api/import", "import_export.import", "edit")
 def do_import(ctx):
     fmt = ctx.q.get("format") or "xlsx"

@@ -158,6 +158,19 @@ SHEETS = [
     {"name": "Stock Items", "ar": "الأصناف", "module": "stock", "title": "Item master",
      "cols": [C("name", "Item", "الصنف", width=30, required=True), C("unit", "Unit", "الوحدة", width=9),
               C("sku", "SKU", "كود الصنف", width=10), C("reorder_level", "Reorder Level", "حد إعادة الطلب", kind="num", width=10)]},
+    {"name": "Products", "ar": "المنتجات والوحدات", "module": "shop",
+     "title": "Showroom catalog — items, units (apartments, villas, cars…) and services; photos are added in the app",
+     "cols": [C("code", "Code", "الكود", width=10, note="blank = automatic; an existing code is updated"),
+              C("name", "Name", "الاسم", width=28, required=True), C("name_ar", "Arabic Name", "الاسم بالعربية", width=24),
+              C("kind", "Type", "النوع", width=9, choices=["item", "unit", "service"]),
+              C("category", "Category", "التصنيف", width=14), C("unit", "Unit", "الوحدة", width=8),
+              C("price", "Price", "السعر", kind="money", required=True), C("cost", "Cost per Unit", "تكلفة الوحدة", kind="money"),
+              C("vat_code", "VAT Code", "كود الضريبة", kind="tax", width=9),
+              C("status", "Status", "الحالة", width=10, choices=["available", "reserved", "sold", "delivered", "hidden"]),
+              C("bu_code", "Project / Business Unit", "المشروع", kind="bu"),
+              C("stock_item", "Stock Item (sold from stock)", "صنف المخزون", width=18),
+              C("specs", "Specifications", "المواصفات", width=30, note="Label: value; Label: value — e.g. Area: 150 m²; Floor: 3"),
+              C("description", "Description", "الوصف", width=30)]},
     {"name": "Price List", "ar": "قائمة الأسعار", "module": "estimating",
      "title": "Unit-rate price list (historical cost × (1 + markup) = client price)",
      "cols": [C("category", "Category", "الباب", width=24, required=True), C("item_no", "Item No.", "رقم البند", width=8),
@@ -417,6 +430,12 @@ def export_data(db):
     items = {i["id"]: i for i in db.q("SELECT * FROM stock_items ORDER BY name")}
     for i in items.values():
         out["Stock Items"].append({"name": i["name"], "unit": i["unit"], "sku": i["sku"], "reorder_level": i["reorder_level"]})
+    bus_ = {b["id"]: b["code"] for b in db.q("SELECT id, code FROM business_units")}
+    for p in db.q("SELECT * FROM products ORDER BY code"):
+        out["Products"].append({k: p[k] for k in ("code", "name", "name_ar", "kind", "category", "unit", "vat_code", "status",
+                                                  "stock_item", "description")}
+                               | {"price": to_major(p["price"]), "cost": to_major(p["cost"]) or "", "bu_code": bus_.get(p["bu_id"], ""),
+                                  "specs": "; ".join(f"{a}: {b}" for a, b in json.loads(p["specs"] or "[]"))})
     for r in db.q("SELECT * FROM rates ORDER BY category, id"):
         out["Price List"].append({"category": r["category"], "item_no": r["item_no"], "sub": r["sub"],
                                   "description": r["description"], "unit": r["unit"], "cost": to_major(r["cost"]),
@@ -658,10 +677,11 @@ def read_xlsx(path):
             continue
         rows = list(ws.iter_rows(values_only=True))
         # header row: first row within the top 10 whose cells match at least 2 known columns
-        hi = next((i for i, r in enumerate(rows[:10])
-                   if sum(1 for k in header_map(sheet, r).values() if k) >= min(2, len(sheet["cols"]))), None)
-        if hi is None:
+        scores = [(sum(1 for k in header_map(sheet, r).values() if k), -i) for i, r in enumerate(rows[:10])]
+        best = max(scores, default=(0, 0))
+        if best[0] < min(2, len(sheet["cols"])):
             continue
+        hi = -best[1]
         data[ws.title] = rows_from_table(sheet, rows[hi], rows[hi + 1:])
     wb.close()
     return data
@@ -783,7 +803,7 @@ def _imp_extras(db, ex, mode, counts):
         counts["Cash custody"] = custody.import_rows(db, ex["custodies"])
     if isinstance(ex.get("rentals"), dict) and (mode == "replace" or not db.one("SELECT 1 FROM rentals")):
         rentals.import_rows(db, ex["rentals"], counts)
-    if isinstance(ex.get("sales"), dict) and (mode == "replace" or not db.one("SELECT 1 FROM products")):
+    if isinstance(ex.get("sales"), dict) and (mode == "replace" or not db.one("SELECT 1 FROM sales_orders")):
         sales.import_rows(db, ex["sales"], counts)
     if isinstance(ex.get("bank"), dict) and (mode == "replace" or not db.one("SELECT 1 FROM bank_statements")):
         bankrec.import_rows(db, ex["bank"], counts)
@@ -901,6 +921,7 @@ def import_data(db, data, mode="append", dry_run=False, user=""):
             run("Warehouses", lambda r: _imp_wh(db, r))
             run("Stock Items", lambda r: _imp_item(db, r))
             run("Price List", lambda r: _imp_rate(db, r))
+            run("Products", lambda r: _imp_product(db, r))
             _imp_boqs(db, data.get("BOQ Lines") or [], errors, counts)
             run("Direct Costs", lambda r: acc.record_project_cost(db, r, user))
             run("Operating Expenses", lambda r: acc.record_expense(db, r, user))
@@ -1011,6 +1032,14 @@ def _imp_asset(db, r):
     from . import assets
     old = db.one("SELECT id FROM fixed_assets WHERE code=?", (acc.text(r.get("code")),))
     assets.save(db, {**r, "pay": "none"}, old["id"] if old else None)
+
+
+def _imp_product(db, r):
+    p = db.one("SELECT id, status FROM products WHERE code=?", (acc.text(r.get("code")),)) if r.get("code") else None
+    specs = [[a.strip(), b.strip()] for a, _, b in (x.partition(":") for x in str(r.get("specs") or "").split(";")) if a.strip()]
+    d = {**r, "specs": specs, "kind": (str(r.get("kind") or "").lower() or "item")}
+    d["status"] = str(r.get("status") or "").lower() or (p["status"] if p else "available")
+    sales.save_product(db, d, p["id"] if p else None)
 
 
 def _imp_wh(db, r):

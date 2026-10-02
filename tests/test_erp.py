@@ -895,6 +895,47 @@ class LegacyJournalWorkbook(unittest.TestCase):
         self.assertEqual([c["check"] for c in a.audit(db) if not c["ok"]], [])
 
 
+class ImportKit(unittest.TestCase):
+    """Per-screen templates, and importing a user's own layout with column matching."""
+
+    def test_own_layout_and_templates(self):
+        from erp import importkit, interchange
+        db = seeded()
+        own = ("مصروفات الشهر\n\nالتاريخ,البيان,المبلغ,المورد,حساب,ملاحظة\n01/10/2026,Internet,٩٠٠,WE,6020,x\n"
+               "05/10/2026,Electricity,\"1,250.50\",Elec Co,6040,\n06/10/2026,Bad,abc,,6040,\n").encode()
+        an = importkit.analyze(db, "Operating Expenses", own, "mine.csv")
+        self.assertEqual((an["header_row"], an["rows"], an["missing"]), (2, 3, []))
+        self.assertEqual(an["mapping"], {"0": "date", "1": "description", "2": "amount", "3": "vendor", "4": "account"})
+        rows, nums = importkit.read(db, "Operating Expenses", own, "mine.csv")
+        self.assertEqual((rows[0]["amount"], rows[1]["amount"], nums), ("900", "1250.50", [4, 5, 6]))
+        with self.assertRaises(interchange.ImportErrors) as e:
+            interchange.import_data(db, {"Operating Expenses": rows}, dry_run=True)
+        self.assertEqual(len(e.exception.errors), 1)
+        interchange.import_data(db, {"Operating Expenses": rows[:2]})
+        self.assertEqual(db.one("SELECT COUNT(*) n FROM journal_entries WHERE memo LIKE 'Electricity%'")["n"], 1)
+        with self.assertRaises(a.ValidationError):
+            importkit.read(db, "Operating Expenses", own, "mine.csv", {"0": "date"})     # required columns not matched
+        for name in importkit.importable():                                          # every layout has a template
+            self.assertTrue(importkit.template_csv(name))
+        if HAVE_XL:
+            import io
+            import openpyxl
+            wb = openpyxl.load_workbook(io.BytesIO(importkit.template_xlsx(db, "Products", "ar")))
+            self.assertIn("How to fill", wb.sheetnames + ["How to fill"])
+            ws = wb.worksheets[0]
+            ws.cell(5, 2, "Villa 9")
+            ws.cell(5, 7, 5000000)
+            ws.cell(5, 13, "Area: 300 m²; Floor: 2")
+            buf = io.BytesIO()
+            wb.save(buf)
+            self.assertTrue(importkit.analyze(db, "Products", buf.getvalue(), "t.xlsx")["exact"])
+            r, _ = importkit.read(db, "Products", buf.getvalue(), "t.xlsx")
+            interchange.import_data(db, {"Products": r})
+            from erp import sales
+            p = sales.product_row(db, sales.get_product(db, "P-0001"))
+            self.assertEqual((p["name"], p["price"], p["specs"]), ("Villa 9", 5000000, [["Area", "300 m²"], ["Floor", "2"]]))
+
+
 class BankReconciliation(unittest.TestCase):
     """Import a statement, match it to the vouchers, book what the bank did on its own, reconcile and lock."""
 

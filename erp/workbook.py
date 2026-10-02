@@ -47,6 +47,8 @@ EXAMPLES = {
     "Partner Shares": {"partner": "Partner name", "bu_code": "PRJ-2026-004", "share": "25%"},
     "Warehouses": {"name": "Site Store — Villa 12", "location": "New Cairo", "account": "1200"},
     "Stock Items": {"name": "Ceramic tiles 60×60", "unit": "m2", "sku": "CT-6060", "reorder_level": 50},
+    "Products": {"code": "P-0001", "name": "Apartment A-301", "kind": "unit", "category": "Apartments", "unit": "unit",
+                 "price": 2400000, "status": "available", "specs": "Area: 150 m²; Floor: 3; Bedrooms: 3"},
     "Price List": {"category": "أعمال البياض", "item_no": "3.1", "description": "بياض حوائط", "unit": "م٢",
                    "cost": 219.23, "markup": "30%", "price": ""},
     "BOQ Lines": {"title": "Interior works", "bu_code": "PRJ-2026-004", "rev": "Rev 01", "date": "2026-10-01",
@@ -841,7 +843,7 @@ def build_workbook(db, template=False):
     # ---------------------------------------------------------- cover index
     r = index_row
     order = ["Settings", "Chart of Accounts", "Tax Codes", "Business Units", "Parties", "Partners", "Partner Shares",
-             "Fixed Assets", "Warehouses",
+             "Fixed Assets", "Warehouses", "Products",
              "Stock Items", "Price List", "BOQ Lines", "Direct Costs", "Operating Expenses", "Payroll",
              "Receipt Vouchers", "Sales Invoices", "Invoice Lines", "Payment Vouchers", "Partner Transactions",
              "Stock Moves", "Journal Vouchers", "Trial Balance", "Income Statement", "Balance Sheet", "Cash Flow",

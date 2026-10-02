@@ -187,6 +187,7 @@ async function route() {
   view.className = "page"; view.innerHTML = `<div class="empty">${t("loading")}</div>`;
   host.replaceChildren(view);
   try { await page(view, parts, q); } catch (e) { view.innerHTML = `<div class="banner err">${esc(e.message)}</div>`; }
+  if (parts.length === 1) addImportMenu(view, parts[0]).catch(() => {});
   stackify(view);
   if (view.isConnected) window.scrollTo(0, 0);
 }
@@ -1556,6 +1557,13 @@ PAGES.data = async (view) => {
       <label class="f">${t("mode")}<select id="impmode"><option value="append">${t("append")}</option>${S.boot.user.is_admin ? `<option value="replace">${t("replace")}</option>` : ""}</select></label>
       <label class="f chk"><input type="checkbox" id="impdry" checked>${t("dry_run")}</label>
       <button class="btn pri" data-a="imp">${t("import_btn")}</button></div><div id="impres" style="margin-top:12px"></div>` : `<div class="muted">${t("view_only")}</div>`}</div></div>`;
+  await impSheets();
+  const tplCard = document.createElement("div"); tplCard.className = "card";
+  tplCard.innerHTML = `<h2>${L2("Templates for every screen", "قوالب لكل شاشة")}</h2><p class="muted" style="margin-top:0">${L2("Each screen also has an ⇅ Import button. Download the layout the app fully supports, or import your own sheet and match its columns.", "كل شاشة بها زر ⇅ استيراد. حمّل التنسيق المدعوم بالكامل، أو استورد ملفك الخاص وطابق أعمدته.")}</p>
+    <div class="tbl stack"><table><tbody>${(S.cache.impSheets || []).filter(x => x.name !== "Settings").map(x => `<tr><td><b>${esc(sheetLabel(x.name))}</b><div class="lines">${x.columns.filter(c => c.required).map(c => esc(S.lang === "ar" ? c.ar : c.en)).join(" · ")}</div></td>
+      <td><a class="btn sm" href="${tplUrl(x.name, "xlsx")}">⬇ Excel</a> <a class="btn sm" href="${tplUrl(x.name, "csv")}">⬇ CSV</a>${canImportSheet(x.name) ? ` <button class="btn sm" data-a="impopen" data-sheet="${esc(x.name)}">⇪ ${L2("Import", "استيراد")}</button>` : ""}</td></tr>`).join("")}</tbody></table></div>`;
+  view.appendChild(tplCard);
+  S.H.impopen = el => importWizard(el.dataset.sheet);
   S.H.csv = () => openApi("/api/export/csv?" + qs({ sheet: $("#csvs").value }));
   S.H.csvt = () => openApi("/api/export/csv?" + qs({ sheet: $("#csvs").value, template: 1 }));
   const fmtSel = $("#impfmt");
@@ -4173,6 +4181,87 @@ async function runRecurringOnOpen() {
     }
     try { localStorage.setItem(key, day); } catch { /* ignore */ }
   } catch { /* no permission / offline */ }
+}
+
+// ================================================================ per-screen import & templates
+// which import layouts belong to which screen
+const SCREEN_SHEETS = { costs: ["Direct Costs"], expenses: ["Operating Expenses"], payroll: ["Payroll"], receipts: ["Receipt Vouchers"],
+  payments: ["Payment Vouchers"], invoices: ["Sales Invoices", "Invoice Lines"], boqs: ["BOQ Lines"], prices: ["Price List"],
+  parties: ["Parties"], contacts: ["Parties"], bus: ["Business Units"], assets: ["Fixed Assets"], stock: ["Stock Items", "Stock Moves"],
+  moves: ["Stock Moves"], warehouses: ["Warehouses"], journal: ["Journal Vouchers"], coa: ["Chart of Accounts"],
+  partners: ["Partners", "Partner Shares", "Partner Transactions"], taxcodes: ["Tax Codes"], products: ["Products"] };
+const sheetLabel = n => { const s = (S.cache.impSheets || []).find(x => x.name === n); return s && S.lang === "ar" && s.ar ? s.ar : n; };
+const canImportSheet = n => { const s = (S.cache.impSheets || []).find(x => x.name === n); return can("import_export.import", "edit") || (s && s.perm && can(s.perm, "add")); };
+const tplUrl = (n, fmt) => "/api/templates/sheet?" + qs({ sheet: n, format: fmt, lang: S.lang });
+async function impSheets() { if (!S.cache.impSheets) { try { S.cache.impSheets = await api("GET", "/api/import-sheets"); } catch { S.cache.impSheets = []; } } return S.cache.impSheets; }
+// adds "⇅ Import" to the screen's toolbar: templates (Excel / CSV) and an import that accepts your own layout
+async function addImportMenu(view, screen) {
+  const names = SCREEN_SHEETS[screen]; if (!names || !view.isConnected) return;
+  await impSheets();
+  const bar = $(".toolbar", view); if (!bar || $(".impdd", bar)) return;
+  const usable = names.filter(n => (S.cache.impSheets || []).some(s => s.name === n));
+  if (!usable.length) return;
+  const dd = document.createElement("div"); dd.className = "dd impdd";
+  dd.innerHTML = `<button class="btn" type="button">⇅ ${L2("Import", "استيراد")} ▾</button><div class="dd-menu">${usable.map(n => `
+    ${usable.length > 1 ? `<div class="muted" style="padding:6px 10px 2px;font-size:.78em;font-weight:700">${esc(sheetLabel(n))}</div>` : ""}
+    ${canImportSheet(n) ? `<button type="button" data-a="impopen" data-sheet="${esc(n)}">⇪ ${L2("Import from Excel / CSV…", "استيراد من Excel / CSV…")}</button>` : ""}
+    <a href="${tplUrl(n, "xlsx")}">⬇ ${L2("Excel template", "قالب Excel")}</a><a href="${tplUrl(n, "csv")}">⬇ ${L2("CSV template", "قالب CSV")}</a>`).join("")}</div>`;
+  const sp = $(".spacer", bar); if (sp) sp.after(dd); else bar.appendChild(dd);
+  S.H.impopen = el => importWizard(el.dataset.sheet);
+}
+const mapKey = (sheet, headers) => "berp.map:" + sheet + ":" + headers.join("|").slice(0, 400);
+function importWizard(sheet) {
+  let file = null, an = null, checked = false, check, params;
+  const sheetInfo = () => (S.cache.impSheets || []).find(s => s.name === sheet) || { columns: [] };
+  drawer(`${L2("Import", "استيراد")} — ${sheetLabel(sheet)}`, `
+    <p class="muted" style="margin-top:0">${L2("Use the app's template, or your own sheet: its columns are matched by name (English or Arabic) and you can fix the matching below. A check runs first and lists every problem with its row number — nothing is saved until you press Import.", "استخدم قالب البرنامج أو ملفك الخاص: تتم مطابقة الأعمدة بالاسم (عربي أو إنجليزي) ويمكنك تعديل المطابقة بالأسفل. يتم الفحص أولاً ويعرض كل خطأ برقم الصف — ولا يُحفظ شيء حتى تضغط استيراد.")}</p>
+    <div class="row" style="gap:6px;flex-wrap:wrap;margin-bottom:8px"><a class="btn sm" href="${tplUrl(sheet, "xlsx")}">⬇ ${L2("Excel template", "قالب Excel")}</a><a class="btn sm" href="${tplUrl(sheet, "csv")}">⬇ ${L2("CSV template", "قالب CSV")}</a></div>
+    <label class="f">${L2("Your file (Excel or CSV)", "ملفك (Excel أو CSV)")}<input type="file" id="impwf" data-skip="1" accept=".xlsx,.xlsm,.csv,.txt"></label>
+    <div id="impwa"></div><div id="impwr"></div>`,
+  async () => { if (!an) throw new Error(L2("Choose a file first", "اختر ملفاً أولاً")); if (!checked) { await check(); return false; }
+    const r = await api("POST", "/api/import-sheet?" + qs(params()), undefined, await file.arrayBuffer());
+    toast(`${Object.values(r.counts || {}).reduce((a, b) => a + b, 0)} ${L2("imported", "تم استيرادها")}`); S.cache.impSheets = null; await refreshBoot(); },
+  { wide: true, submitLabel: L2("Check", "فحص"), onOpen: f => {
+    const btn = () => $("button[type=submit]", f);
+    const mapping = () => { const m = {}; $$("#impwm select", f).forEach(sel => { if (sel.value !== "") m[sel.value] = sel.dataset.key; }); return m; };
+    params = () => ({ sheet, filename: file.name, table: an.table, header_row: an.header_row, mapping: JSON.stringify(mapping()) });
+    const draw = () => {
+      const cols = an.columns, used = mapping();
+      $("#impwa", f).innerHTML = `${an.tables.length > 1 ? `<label class="f">${L2("Sheet in your file", "الورقة في ملفك")}<select id="impwt" data-skip="1">${an.tables.map(t => `<option ${t === an.table ? "selected" : ""}>${esc(t)}</option>`).join("")}</select></label>` : ""}
+        <div class="banner ${an.missing.length ? "warn" : "ok"}">${an.rows} ${L2("rows found", "صف")} · ${L2("heading row", "صف العناوين")} ${an.header_row + 1}${an.table !== "CSV" ? ` · “${esc(an.table)}”` : ""} — ${an.exact ? L2("your file matches the app's layout exactly.", "ملفك مطابق تماماً لتنسيق البرنامج.") : an.missing.length ? L2("match the required columns marked ★ below.", "طابق الأعمدة المطلوبة المعلّمة ★ بالأسفل.") : L2("columns matched — check the matching below.", "تمت مطابقة الأعمدة — راجعها بالأسفل.")}</div>
+        <label class="f" style="max-width:220px">${L2("Heading row", "صف العناوين")}<input type="number" id="impwh" data-skip="1" min="1" value="${an.header_row + 1}"></label>
+        <div class="tbl"><table id="impwm"><thead><tr><th>${L2("App column", "عمود البرنامج")}</th><th>${L2("Your column", "عمودك")}</th><th>${L2("First value", "أول قيمة")}</th><th>${L2("Format", "الصيغة")}</th></tr></thead><tbody>
+        ${cols.map(c => { const sel = Object.keys(an.mapping).find(i => an.mapping[i] === c.key); const v = sel != null && an.sample[0] ? an.sample[0][+sel] : "";
+          return `<tr class="${c.required && sel == null ? "miss" : ""}"><td>${c.required ? "★ " : ""}<b>${esc(S.lang === "ar" ? c.ar : c.en)}</b>${c.note ? `<div class="lines">${esc(c.note)}</div>` : ""}</td>
+          <td><select data-skip="1" data-key="${esc(c.key)}" data-change="impwsel"><option value="">— ${L2("not in my file", "غير موجود في ملفي")} —</option>${an.headers.map((h, i) => `<option value="${i}" ${String(i) === String(sel) ? "selected" : ""}>${esc(h)}</option>`).join("")}</select></td>
+          <td class="muted">${esc(v || "")}</td><td class="muted" style="font-size:.82em">${esc(c.format)}${c.choices.length ? `: ${esc(c.choices.join(", "))}` : ""}${c.default_role ? ` · ${L2("blank = default", "فارغ = الافتراضي")}` : ""}</td></tr>`; }).join("")}</tbody></table></div>
+        ${an.headers.some((h, i) => !(String(i) in an.mapping)) ? `<p class="muted" style="font-size:.85em">${L2("Not used from your file", "أعمدة لن تُستخدم من ملفك")}: ${an.headers.filter((h, i) => !Object.keys(mapping()).includes(String(i))).map(esc).join(" · ")}</p>` : ""}`;
+      const t = $("#impwt", f); if (t) t.addEventListener("change", () => analyze({ table: t.value }));
+      $("#impwh", f).addEventListener("change", e => analyze({ table: an.table, header_row: Math.max(0, (+e.target.value || 1) - 1) }));
+      checked = false; btn().textContent = L2("Check", "فحص"); $("#impwr", f).innerHTML = "";
+    };
+    S.H.impwsel = el => { an.mapping = Object.fromEntries(Object.entries(mapping()).map(([i, k]) => [i, k])); checked = false; btn().textContent = L2("Check", "فحص");
+      el.closest("tr").classList.toggle("miss", el.value === "" && an.columns.find(c => c.key === el.dataset.key).required); $("#impwr", f).innerHTML = ""; };
+    const analyze = async (extra = {}) => { const box = $("#impwa", f); box.innerHTML = `<div class="muted">${t("loading")}</div>`;
+      try { an = await api("POST", "/api/import-preview/analyze?" + qs({ sheet, filename: file.name, ...extra }), undefined, await file.arrayBuffer());
+        try { const saved = JSON.parse(localStorage.getItem(mapKey(sheet, an.headers)) || "null"); if (saved && !an.exact) { an.mapping = saved; an.missing = an.columns.filter(c => c.required && !Object.values(saved).includes(c.key)).map(c => c.key); } } catch { /* none */ }
+        draw(); } catch (e) { an = null; box.innerHTML = `<div class="banner err">${esc(e.message)}</div>`; } };
+    check = async () => { const out = $("#impwr", f);
+      try { const r = await api("POST", "/api/import-preview/check?" + qs(params()), undefined, await file.arrayBuffer());
+        try { localStorage.setItem(mapKey(sheet, an.headers), JSON.stringify(mapping())); } catch { /* private mode */ }
+        out.innerHTML = `<div class="banner ok">✓ ${r.rows} ${L2("rows checked — no problems. Press Import to save them.", "صف تم فحصها — لا توجد أخطاء. اضغط استيراد للحفظ.")}</div>`;
+        checked = true; btn().textContent = L2("Import", "استيراد");
+      } catch (e) { const errs = (e.data && e.data.errors) || [];
+        out.innerHTML = `<div class="banner err">${esc(e.message)}</div>${errs.length ? `<div class="tbl" style="max-height:300px;overflow:auto"><table><thead><tr><th>${L2("Row in your file", "الصف في ملفك")}</th><th>${L2("Problem", "المشكلة")}</th></tr></thead><tbody>
+          ${errs.map(x => `<tr><td>${x.row}</td><td>${esc(x.error)}</td></tr>`).join("")}</tbody></table></div>
+          <div class="row" style="gap:6px;margin-top:6px"><button type="button" class="btn sm" data-a="impwdl">⬇ ${L2("Download the problem list (CSV)", "تحميل قائمة الأخطاء (CSV)")}</button><a class="btn sm" href="${tplUrl(sheet, "xlsx")}">⬇ ${L2("The layout the app fully supports", "التنسيق المدعوم بالكامل")}</a></div>` : ""}`;
+        S.H.impwdl = () => { const keys = [...new Set(errs.flatMap(x => Object.keys(x.values || {})))];
+          const rows = [["row", "problem", ...keys], ...errs.map(x => [x.row, x.error, ...keys.map(k => (x.values || {})[k] ?? "")])];
+          const csvText = "﻿" + rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\r\n");
+          const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([csvText], { type: "text/csv" })); a.download = `${sheet.replace(/\W+/g, "_")}_problems.csv`; document.body.appendChild(a); a.click(); a.remove(); };
+        checked = false; } };
+    $("#impwf", f).addEventListener("change", e => { file = e.target.files[0]; if (file) analyze(); });
+  } });
 }
 
 // ================================================================= entry types
