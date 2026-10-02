@@ -169,6 +169,8 @@ SHEETS = [
               C("status", "Status", "الحالة", width=10, choices=["available", "reserved", "sold", "delivered", "hidden"]),
               C("bu_code", "Project / Business Unit", "المشروع", kind="bu"),
               C("stock_item", "Stock Item (sold from stock)", "صنف المخزون", width=18),
+              C("inventory_account", "Held in Account (cost of sales from)", "الحساب المحتفظ به", kind="acct",
+                note="e.g. 1210 Goods & Units for Sale — when sold, its cost moves to cost of sales"),
               C("specs", "Specifications", "المواصفات", width=30, note="Label: value; Label: value — e.g. Area: 150 m²; Floor: 3"),
               C("description", "Description", "الوصف", width=30)]},
     {"name": "Price List", "ar": "قائمة الأسعار", "module": "estimating",
@@ -368,6 +370,8 @@ SHEETS = [
                 note="Only when a line belongs to someone other than the voucher's party (e.g. each partner in a share transfer)")],
      "legs": [("debit", "account", "D"), ("credit", "account", "C")]},
 ]
+from . import setup_sheets as _setup  # noqa: E402
+SHEETS += _setup.specs(C)
 SHEET_BY_NAME = {s["name"]: s for s in SHEETS}
 POSTING_SHEETS = [s for s in SHEETS if s.get("legs")]
 
@@ -433,7 +437,7 @@ def export_data(db):
     bus_ = {b["id"]: b["code"] for b in db.q("SELECT id, code FROM business_units")}
     for p in db.q("SELECT * FROM products ORDER BY code"):
         out["Products"].append({k: p[k] for k in ("code", "name", "name_ar", "kind", "category", "unit", "vat_code", "status",
-                                                  "stock_item", "description")}
+                                                  "stock_item", "inventory_account", "description")}
                                | {"price": to_major(p["price"]), "cost": to_major(p["cost"]) or "", "bu_code": bus_.get(p["bu_id"], ""),
                                   "specs": "; ".join(f"{a}: {b}" for a, b in json.loads(p["specs"] or "[]"))})
     for r in db.q("SELECT * FROM rates ORDER BY category, id"):
@@ -935,6 +939,34 @@ def import_data(db, data, mode="append", dry_run=False, user=""):
             run("Stock Moves", lambda r: _imp_stock(db, r, user))
             run("Payment Vouchers", lambda r: acc.record_payment(db, {**r, "allow_overpay": True}, user))
             _imp_journal(db, data.get("Journal Vouchers") or [], errors, counts, user)
+            # modules built on their own screens: rows create new records through the module itself
+            rows_fn = dict(_setup.ROW_IMPORTERS)
+            groups = {n: (k, f) for n, k, f in _setup.GROUP_IMPORTERS}
+            for name in _setup.ORDER:
+                if name in rows_fn:
+                    fn = rows_fn[name]
+                    run(name, lambda r, fn=fn: fn(db, r, user))
+                    continue
+                key, fn = groups[name]
+                rows = data.get(name) or []
+                sheet = SHEET_BY_NAME[name]
+                ok_rows = []
+                for i, row in enumerate(rows, start=FIRST_DATA_ROW):
+                    missing = [c["en"] for c in sheet["cols"] if c["required"] and row.get(c["key"]) in ("", None)]
+                    if missing:
+                        errors.append({"sheet": name, "row": i, "error": "missing " + ", ".join(missing)})
+                    else:
+                        ok_rows.append((i, row))
+                n = 0
+                for _k, items in _setup._groups([r for _, r in ok_rows], key):
+                    first = ok_rows[[r for _, r in ok_rows].index(items[0][1])][0]
+                    try:
+                        fn(db, items, user)
+                        n += 1
+                    except (acc.ValidationError, LookupError) as e:
+                        errors.append({"sheet": name, "row": first, "error": str(e)})
+                if rows:
+                    counts[name] = n
             if isinstance(data.get("_extras"), dict):
                 _imp_extras(db, data["_extras"], mode, counts)
             db.conn.execute("INSERT OR REPLACE INTO settings(key,value) VALUES ('lock_date', ?)",

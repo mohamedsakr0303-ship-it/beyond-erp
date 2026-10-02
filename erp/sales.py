@@ -560,6 +560,8 @@ def _schedule(db, s, f, as_of):
         left = a - p - c
         if s["status"] == "cancelled":
             st = "cancelled"
+        elif s["status"] == "draft":      # nothing is owed on a draft yet
+            st = "due"
         elif left <= EPS and c <= EPS:
             st = "paid"
         elif left <= EPS:

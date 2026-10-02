@@ -68,7 +68,7 @@ COMPANY_KEYS = ("company_name", "company_tagline", "company_address", "company_t
                 "company_city", "company_phone", "company_email", "company_website", "bank_name", "bank_account",
                 "bank_holder", "bank_swift", "bank_iban", "offer_validity_days", "offer_prefix", "offer_digits", "regional",
                 "banks", "bank_default")
-PUBLIC_SETTINGS = COMPANY_KEYS + ("menu_labels", "reserve_pct", "report_from", "report_to", "lock_date", "hidden_modules",
+PUBLIC_SETTINGS = COMPANY_KEYS + ("demo_loaded", "menu_labels", "reserve_pct", "report_from", "report_to", "lock_date", "hidden_modules",
                                   "appearance")
 JSON_SETTINGS = {"menu_labels": {}, "units": [], "hidden_modules": [], "appearance": {}, "regional": {}, "banks": []}
 
@@ -142,6 +142,9 @@ def setup(ctx):
         ctx.db.set_setting("language", b["language"])
     token, user = auth.login(ctx.db, b.get("username"), b.get("password"))
     ctx.db.log(user["username"], "setup", "first administrator created")
+    if b.get("demo") in (True, 1, "1", "true", "on"):     # a new, unshared company can start with the demo company
+        from . import demo
+        demo.load(ctx.db, user["username"])
     return ctx.with_session(ok({"user": user}), token)
 
 
@@ -2011,10 +2014,49 @@ def template_sheet(ctx):
     from . import importkit
     name = ctx.q.get("sheet") or ""
     _sheet_can(ctx, name, "view")
-    fname = re.sub(r"\W+", "_", name).strip("_") + "_template"
+    demo_rows = None
+    if ctx.q.get("demo") == "1":       # the layout filled with the demo company, ready to import
+        from . import demo
+        from .db import Database
+        demo_rows = (demo.all_sheets(lambda: Database(":memory:")) if name == "Bank Statement Lines" else demo.sheets()).get(name) or []
+    fname = re.sub(r"\W+", "_", name).strip("_") + ("_demo" if demo_rows is not None else "_template")
     if (ctx.q.get("format") or "xlsx") == "csv":
-        return download(importkit.template_csv(name), fname + ".csv", "text/csv; charset=utf-8")
-    return download(importkit.template_xlsx(ctx.db, name, ctx.q.get("lang") or "en"), fname + ".xlsx", XLSX)
+        return download(importkit.template_csv(name, demo_rows), fname + ".csv", "text/csv; charset=utf-8")
+    return download(importkit.template_xlsx(ctx.db, name, ctx.q.get("lang") or "en", demo_rows), fname + ".xlsx", XLSX)
+
+
+@route("GET", "/api/demo")
+def demo_info(ctx):
+    from . import demo
+    return ok({"empty": demo.is_empty(ctx.db), "loaded": ctx.db.setting(demo.TAG) or ""})
+
+
+@route("POST", "/api/demo")
+def demo_load(ctx):
+    """Administrator only: fill the books with the demo company (replace = erase everything first, after a backup)."""
+    from . import demo
+    if not ctx.user["is_admin"]:
+        raise PermissionError()
+    replace = ctx.body.get("replace") in (True, 1, "1", "true")
+    if replace:
+        if (ctx.body.get("confirm") or "").strip().upper() != "DEMO":
+            raise acc.ValidationError("Type DEMO to replace everything with the demo company")
+        ctx.server.backup("before-demo")
+        keep = {k: ctx.db.setting(k) for k in ("company_name", "language")}
+        _erase(ctx.db, "all")
+        for k, v in keep.items():
+            if v:
+                ctx.db.set_setting(k, v)
+    r = demo.load(ctx.db, ctx.user["username"])
+    ctx.log("demo.load", json.dumps(r["counts"])[:300])
+    return ok(r)
+
+
+@route("GET", "/api/demo/workbook", "import_export")
+def demo_workbook(ctx):
+    from . import demo
+    from .db import Database
+    return download(demo.workbook_bytes(lambda: Database(":memory:")), "BEYOND_ERP_Demo_Company.xlsx", XLSX)
 
 
 @route("POST", "/api/import-preview/analyze")
@@ -2309,7 +2351,12 @@ def erase_data(ctx):
     if not scope:
         raise acc.ValidationError("Choose what to erase")
     backup = ctx.server.backup("before-erase")
-    db = ctx.db
+    _erase(ctx.db, scope)
+    ctx.log("erase", f"{scope} (backup {backup.name})")
+    return ok({"scope": scope, "backup": backup.name})
+
+
+def _erase(db, scope):
     with db.tx():
         for t in (ERASE_ALL if scope == "all" else ERASE_TRANSACTIONS):
             db.conn.execute(f"DELETE FROM {t}")
@@ -2322,8 +2369,7 @@ def erase_data(ctx):
             db._migrate()
             db.seed_documents()
             db.conn.execute("INSERT OR REPLACE INTO settings(key,value) VALUES ('docs_seeded','1')")
-    ctx.log("erase", f"{scope} (backup {backup.name})")
-    return ok({"scope": scope, "backup": backup.name})
+
 
 
 # =================================================================== system

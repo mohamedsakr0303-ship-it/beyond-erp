@@ -91,7 +91,7 @@ def q(name):
     return f"'{name}'"
 
 
-def build_workbook(db, template=False):
+def build_workbook(db, template=False, data=None):
     _need()
     from openpyxl import Workbook
     from openpyxl.comments import Comment
@@ -100,8 +100,11 @@ def build_workbook(db, template=False):
     from openpyxl.workbook.defined_name import DefinedName
     from openpyxl.worksheet.datavalidation import DataValidation
 
+    given = data
     data = export_data(db)
-    if template:
+    if given is not None:   # a ready-made set of rows (e.g. the demo company) in the import layout
+        data = {k: given.get(k, v if k in ("Chart of Accounts", "Tax Codes") else []) for k, v in data.items()}
+    elif template:
         keep = {"Settings", "Chart of Accounts", "Warehouses", "Tax Codes"}
         data = {k: (v if k in keep else []) for k, v in data.items()}
     company = db.setting("company_name", "BEYOND DESIGN")

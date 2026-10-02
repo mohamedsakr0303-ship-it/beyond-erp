@@ -494,6 +494,7 @@ async function renderAuth() {
       <label class="f">${t("username")}<input name="username" autocomplete="username" required></label>
       ${setup ? pwFields(true).replace(/minlength="6"/g, 'minlength="8"') : `<label class="f">${t("password")}<input name="password" type="password" autocomplete="current-password" required minlength="1"></label>
       <label class="f chk"><input type="checkbox" data-change="pwshow">${S.lang === "ar" ? "إظهار كلمة المرور" : "Show password"}</label>`}
+      ${setup ? `<label class="f chk"><input type="checkbox" name="demo">${S.lang === "ar" ? "ابدأ بشركة تجريبية (بيانات وهمية لكل الشاشات — للتجربة والتدريب، ويمكن مسحها لاحقاً)" : "Start with a demo company (sample data on every screen — for testing and training; erase it any time)"}</label>` : ""}
       <button class="btn pri" type="submit">${setup ? t("save") : t("sign_in")}</button>
       <button class="btn" type="button" data-a="lang2">${t("language")}</button></form></div>`;
   S.H = { lang2: () => { store.set("lang", S.lang === "ar" ? "en" : "ar"); renderAuth(); } };
@@ -502,11 +503,13 @@ async function renderAuth() {
     e.preventDefault();
     if (setup) { S.H.pwmatch(); if (!e.target.reportValidity()) return; }
     const v = Object.fromEntries(new FormData(e.target));
+    const sb = $("button[type=submit]", e.target);
     try {
       if (setup) v.language = S.lang;
+      if (v.demo) { sb.disabled = true; sb.textContent = S.lang === "ar" ? "جارٍ تجهيز الشركة التجريبية…" : "Setting up the demo company…"; }
       await api("POST", setup ? "/api/setup" : "/api/login", v);
       await boot();
-    } catch (err) { $("#lerr").innerHTML = `<div class="banner err">${esc(err.message)}</div>`; }
+    } catch (err) { sb.disabled = false; sb.textContent = setup ? t("save") : t("sign_in"); $("#lerr").innerHTML = `<div class="banner err">${esc(err.message)}</div>`; }
   });
 }
 
@@ -952,6 +955,7 @@ PAGES.dashboard = async (view, parts, q) => {
     `<div class="kpis">${k(t("cash"), money(d.cash), cur(), d.cash < 0 ? "neg" : "")}${k(t("receivable"), money(d.receivable))}${k(t("payable"), money(d.payable))}
       ${k(t("accrued"), money(d.accrued))}${k(t("advances"), money(d.advances))}${k(t("inventory"), money(d.inventory))}
       ${k(t("revenue"), money(d.revenue))}${k(t("ebitda"), money(d.ebitda), pct(d.margins.ebitda), d.ebitda < 0 ? "neg" : "")}${k(t("net_profit"), money(d.net_profit), pct(d.margins.net), d.net_profit < 0 ? "neg" : "pos")}</div>
+    ${S.boot.settings.demo_loaded ? `<div class="banner info">${L2("You are looking at the demo company (invented data).", "هذه بيانات الشركة التجريبية (بيانات وهمية).")} <a href="#/data">${L2("Demo & data", "البيانات التجريبية")} →</a></div>` : ""}
     ${d.recurring_due ? `<div class="banner ${d.recurring_due.errors ? "err" : "info"}">${L2("Recurring entries due", "قيود متكررة مستحقة")}: ${d.recurring_due.review ? `${d.recurring_due.review} ${L2("to review", "للمراجعة")}` : ""}${d.recurring_due.auto ? ` ${d.recurring_due.auto} ${L2("automatic", "تلقائية")}` : ""}${d.recurring_due.errors ? ` · ⚠ ${d.recurring_due.errors} ${L2("failed", "فشلت")}` : ""} · <a href="#/recurring">${L2("Open", "فتح")} →</a></div>` : ""}
     ${d.installments_overdue ? `<div class="banner err">${L2("Overdue installments", "أقساط متأخرة")}: ${money(d.installments_overdue.amount)} (${d.installments_overdue.count} · ${d.installments_overdue.customers} ${L2("customers", "عميل")}) · <a href="#/installments?status=overdue">${L2("Follow up", "متابعة التحصيل")} →</a></div>` : ""}
     ${d.cheques_due ? `<div class="banner warn">${d.cheques_due} ${L2("customer cheques are due — deposit them", "شيكات عملاء مستحقة — قم بإيداعها")} · <a href="#/installments">${L2("Open", "فتح")} →</a></div>` : ""}
@@ -1561,8 +1565,21 @@ PAGES.data = async (view) => {
   const tplCard = document.createElement("div"); tplCard.className = "card";
   tplCard.innerHTML = `<h2>${L2("Templates for every screen", "قوالب لكل شاشة")}</h2><p class="muted" style="margin-top:0">${L2("Each screen also has an ⇅ Import button. Download the layout the app fully supports, or import your own sheet and match its columns.", "كل شاشة بها زر ⇅ استيراد. حمّل التنسيق المدعوم بالكامل، أو استورد ملفك الخاص وطابق أعمدته.")}</p>
     <div class="tbl stack"><table><tbody>${(S.cache.impSheets || []).filter(x => x.name !== "Settings").map(x => `<tr><td><b>${esc(sheetLabel(x.name))}</b><div class="lines">${x.columns.filter(c => c.required).map(c => esc(S.lang === "ar" ? c.ar : c.en)).join(" · ")}</div></td>
-      <td><a class="btn sm" href="${tplUrl(x.name, "xlsx")}">⬇ Excel</a> <a class="btn sm" href="${tplUrl(x.name, "csv")}">⬇ CSV</a>${canImportSheet(x.name) ? ` <button class="btn sm" data-a="impopen" data-sheet="${esc(x.name)}">⇪ ${L2("Import", "استيراد")}</button>` : ""}</td></tr>`).join("")}</tbody></table></div>`;
+      <td><a class="btn sm" href="${tplUrl(x.name, "xlsx")}">⬇ Excel</a> <a class="btn sm" href="${tplUrl(x.name, "csv")}">⬇ CSV</a> <a class="btn sm" href="${tplUrl(x.name, "csv", 1)}" title="${esc(L2("Filled with the demo company", "مملوء ببيانات الشركة التجريبية"))}">⬇ ${L2("Demo", "تجريبي")}</a>${canImportSheet(x.name) ? ` <button class="btn sm" data-a="impopen" data-sheet="${esc(x.name)}">⇪ ${L2("Import", "استيراد")}</button>` : ""}</td></tr>`).join("")}</tbody></table></div>`;
   view.appendChild(tplCard);
+  let dm = { empty: false, loaded: "" }; try { dm = await api("GET", "/api/demo"); } catch { /* no permission */ }
+  const demoCard = document.createElement("div"); demoCard.className = "card";
+  demoCard.innerHTML = `<h2>${L2("Demo company", "الشركة التجريبية")}</h2>
+    <p class="muted" style="margin-top:0">${L2("“Nile Demo Co.” — about six months of an invented business on every screen: projects (cost-plus, fixed price, flexible) with costs, negotiation discounts, payroll, VAT & withholding, a BOQ and invoices, stock, fixed assets, loans, cash custody, equipment rentals with a signed handover and deposit, unit sales on installments with cheques, recurring entries and bank statements (one reconciled, one to do). Use it to test every function or to train people.", "«شركة النيل التجريبية» — حوالي ستة أشهر من نشاط وهمي على كل الشاشات: مشروعات بتكاليفها وخصومات التفاوض والرواتب والضرائب والمقايسة والفواتير والمخزون والأصول والقروض والعهد وتأجير المعدات بمحضر تسليم وتأمين وبيع وحدات بالتقسيط بشيكات وقيود متكررة وكشوف بنك (واحد مسوّى وواحد للتجربة). استخدمها لتجربة كل الوظائف أو للتدريب.")}</p>
+    <div class="row" style="gap:6px;flex-wrap:wrap"><a class="btn" href="/api/demo/workbook">⬇ ${L2("Demo company — Excel workbook (every sheet filled)", "الشركة التجريبية — ملف Excel (كل الأوراق مملوءة)")}</a>
+    ${S.boot.user.is_admin ? (dm.empty ? `<button class="btn pri" data-a="demoload">▶ ${L2("Load the demo company into these books", "تحميل الشركة التجريبية في هذه الدفاتر")}</button>`
+      : `<button class="btn danger" data-a="demorepl">${L2("Replace everything with the demo company…", "استبدال كل البيانات بالشركة التجريبية…")}</button>`) : ""}</div>
+    ${dm.loaded ? `<p class="muted">${L2("Demo data loaded on", "تم تحميل البيانات التجريبية في")} ${fd(dm.loaded)} — ${L2("erase it from Settings → System when you are done.", "امسحها من الإعدادات ← النظام عند الانتهاء.")}</p>` : ""}`;
+  view.appendChild(demoCard);
+  S.H.demoload = async el => { el.disabled = true; el.textContent = L2("Loading…", "جارٍ التحميل…");
+    try { await api("POST", "/api/demo", {}); await refreshBoot(); toast(L2("Demo company loaded", "تم تحميل الشركة التجريبية")); location.hash = "#/dashboard"; } catch (e) { fail(e); el.disabled = false; } };
+  S.H.demorepl = async () => { const c = prompt(L2("This ERASES all data in these books (a backup is made first) and loads the demo company. Type DEMO to continue.", "سيتم مسح كل البيانات (بعد عمل نسخة احتياطية) وتحميل الشركة التجريبية. اكتب DEMO للمتابعة."), "");
+    if (c == null) return; try { await api("POST", "/api/demo", { replace: true, confirm: c }); await refreshBoot(); toast(L2("Demo company loaded", "تم تحميل الشركة التجريبية")); location.hash = "#/dashboard"; } catch (e) { fail(e); } };
   S.H.impopen = el => importWizard(el.dataset.sheet);
   S.H.csv = () => openApi("/api/export/csv?" + qs({ sheet: $("#csvs").value }));
   S.H.csvt = () => openApi("/api/export/csv?" + qs({ sheet: $("#csvs").value, template: 1 }));
@@ -4189,10 +4206,12 @@ const SCREEN_SHEETS = { costs: ["Direct Costs"], expenses: ["Operating Expenses"
   payments: ["Payment Vouchers"], invoices: ["Sales Invoices", "Invoice Lines"], boqs: ["BOQ Lines"], prices: ["Price List"],
   parties: ["Parties"], contacts: ["Parties"], bus: ["Business Units"], assets: ["Fixed Assets"], stock: ["Stock Items", "Stock Moves"],
   moves: ["Stock Moves"], warehouses: ["Warehouses"], journal: ["Journal Vouchers"], coa: ["Chart of Accounts"],
-  partners: ["Partners", "Partner Shares", "Partner Transactions"], taxcodes: ["Tax Codes"], products: ["Products"] };
+  partners: ["Partners", "Partner Shares", "Partner Transactions"], taxcodes: ["Tax Codes"], products: ["Products"],
+  loans: ["Loans", "Loan Transactions"], custody: ["Cash Custody", "Custody Expenses"], rentfleet: ["Rental Equipment", "Rental Stock Lots"],
+  rentals: ["Rental Contracts"], sales: ["Sales Contracts"], bankrec: ["Bank Statement Lines"], recurring: ["Recurring Entries"] };
 const sheetLabel = n => { const s = (S.cache.impSheets || []).find(x => x.name === n); return s && S.lang === "ar" && s.ar ? s.ar : n; };
 const canImportSheet = n => { const s = (S.cache.impSheets || []).find(x => x.name === n); return can("import_export.import", "edit") || (s && s.perm && can(s.perm, "add")); };
-const tplUrl = (n, fmt) => "/api/templates/sheet?" + qs({ sheet: n, format: fmt, lang: S.lang });
+const tplUrl = (n, fmt, demo) => "/api/templates/sheet?" + qs({ sheet: n, format: fmt, lang: S.lang, demo: demo ? 1 : "" });
 async function impSheets() { if (!S.cache.impSheets) { try { S.cache.impSheets = await api("GET", "/api/import-sheets"); } catch { S.cache.impSheets = []; } } return S.cache.impSheets; }
 // adds "⇅ Import" to the screen's toolbar: templates (Excel / CSV) and an import that accepts your own layout
 async function addImportMenu(view, screen) {
@@ -4205,7 +4224,8 @@ async function addImportMenu(view, screen) {
   dd.innerHTML = `<button class="btn" type="button">⇅ ${L2("Import", "استيراد")} ▾</button><div class="dd-menu">${usable.map(n => `
     ${usable.length > 1 ? `<div class="muted" style="padding:6px 10px 2px;font-size:.78em;font-weight:700">${esc(sheetLabel(n))}</div>` : ""}
     ${canImportSheet(n) ? `<button type="button" data-a="impopen" data-sheet="${esc(n)}">⇪ ${L2("Import from Excel / CSV…", "استيراد من Excel / CSV…")}</button>` : ""}
-    <a href="${tplUrl(n, "xlsx")}">⬇ ${L2("Excel template", "قالب Excel")}</a><a href="${tplUrl(n, "csv")}">⬇ ${L2("CSV template", "قالب CSV")}</a>`).join("")}</div>`;
+    <a href="${tplUrl(n, "xlsx")}">⬇ ${L2("Excel template", "قالب Excel")}</a><a href="${tplUrl(n, "csv")}">⬇ ${L2("CSV template", "قالب CSV")}</a>
+    <a href="${tplUrl(n, "xlsx", 1)}">⬇ ${L2("Demo file (Excel)", "ملف تجريبي (Excel)")}</a><a href="${tplUrl(n, "csv", 1)}">⬇ ${L2("Demo file (CSV)", "ملف تجريبي (CSV)")}</a>`).join("")}</div>`;
   const sp = $(".spacer", bar); if (sp) sp.after(dd); else bar.appendChild(dd);
   S.H.impopen = el => importWizard(el.dataset.sheet);
 }

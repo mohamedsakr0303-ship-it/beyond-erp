@@ -31,7 +31,10 @@ SHEET_PERM = {
     "Stock Items": "stock.balances", "Stock Moves": "stock.moves", "Warehouses": "stock.warehouses",
     "Journal Vouchers": "accounting.journal", "Chart of Accounts": "accounting.coa", "Partners": "partners",
     "Partner Shares": "partners", "Partner Transactions": "partners.transactions", "Tax Codes": "tax.codes",
-    "Products": "shop.products", "Settings": "settings",
+    "Products": "shop.products", "Settings": "settings", "Loans": "accounting.loans", "Loan Transactions": "accounting.loans",
+    "Cash Custody": "purchasing.custody", "Custody Expenses": "purchasing.custody", "Rental Equipment": "rentals.fleet",
+    "Rental Stock Lots": "rentals.fleet", "Rental Contracts": "rentals.contracts", "Sales Contracts": "shop.orders",
+    "Bank Statement Lines": "accounting.bankrec", "Recurring Entries": "accounting.recurring",
 }
 
 # words people use for the same thing (English & Arabic); matched after the exact names
@@ -118,7 +121,7 @@ def _lists(db):
             "tax": [r["code"] for r in db.q("SELECT code FROM tax_codes WHERE active=1 ORDER BY code")]}
 
 
-def template_xlsx(db, name, lang="en"):
+def template_xlsx(db, name, lang="en", rows=None):
     """One sheet laid out exactly as the importer reads it, plus 'Lists' (drop-down values) and 'How to fill'."""
     import openpyxl
     from openpyxl.comments import Comment
@@ -171,6 +174,16 @@ def template_xlsx(db, name, lang="en"):
             for r in range(FIRST_DATA_ROW, FIRST_DATA_ROW + 300):
                 ws.cell(r, i).number_format = "yyyy-mm-dd"
     ws.cell(3, 1).value = ws.cell(3, 1).value if ws.cell(3, 1).value not in (None, "") else ("مثال" if ar else "e.g.")
+    for r, row in enumerate(rows or [], start=FIRST_DATA_ROW):       # demo rows, ready to import
+        for i, c in enumerate(cols, start=1):
+            v = row.get(c["key"])
+            if v not in (None, ""):
+                if c["kind"] == "date":
+                    try:
+                        v = _dt.date.fromisoformat(str(v)[:10])
+                    except ValueError:
+                        pass
+                ws.cell(r, i, v)
     ws.freeze_panes = ws.cell(FIRST_DATA_ROW, 1)
     ws.row_dimensions[HEADER_ROW].height = 32
     lst.sheet_state = "hidden"
@@ -195,7 +208,7 @@ def template_xlsx(db, name, lang="en"):
     return buf.getvalue()
 
 
-def template_csv(name):
+def template_csv(name, rows=None):
     s = sheet(name)
     cols = input_cols(s)
     from .workbook import EXAMPLES
@@ -203,7 +216,10 @@ def template_csv(name):
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow([f"{c['en']} / {c['ar']}" for c in cols])
-    if ex:
+    if rows:
+        for row in rows:
+            w.writerow([row.get(c["key"], "") for c in cols])
+    elif ex:
         w.writerow([ex.get(c["key"], "") for c in cols])
     return ("﻿" + buf.getvalue()).encode("utf-8")
 

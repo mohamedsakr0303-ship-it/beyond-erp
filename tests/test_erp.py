@@ -895,6 +895,37 @@ class LegacyJournalWorkbook(unittest.TestCase):
         self.assertEqual([c["check"] for c in a.audit(db) if not c["ok"]], [])
 
 
+class DemoCompany(unittest.TestCase):
+    """The demo company loads in one go through the import sheets and touches every module; its workbook re-imports."""
+
+    def test_demo(self):
+        from erp import demo, interchange, sales, bankrec, recurring, loans, custody, rentals
+        db = Database(":memory:")
+        demo.load(db, "admin")
+        self.assertEqual([c["check"] for c in a.audit(db) if not c["ok"]], [])
+        kinds = {r["kind"] for r in db.q("SELECT DISTINCT kind FROM journal_entries")}
+        for k in ("Direct Cost", "Operating Expense", "Payroll Accrual", "Receipt Voucher", "Payment Voucher", "Sales Invoice",
+                  "Goods Receipt", "Material Issue", "Stock Transfer" if False else "Stock Adjustment", "Depreciation", "Loan Received",
+                  "Loan Repayment", "Custody Issued", "Custody Settlement", "Rental Deposit", "Cheque Cleared", "Cheque Bounced",
+                  "Installment Interest", "Bank Entry", "Partner Loan", "Share Transfer", "Supplier Discount", "Asset Purchase"):
+            self.assertIn(k, kinds)
+        self.assertTrue(loans.register(db)["rows"] and custody.register(db)["rows"] and rentals.list_rentals(db)["rows"])
+        self.assertTrue(any(s["status"] == "reconciled" for s in bankrec.overview(db)["statements"]))
+        self.assertTrue(recurring.listing(db) and sales.register(db)["rows"])
+        with self.assertRaises(a.ValidationError):
+            demo.load(db)                                   # never on top of real books
+        if HAVE_XL:
+            import tempfile
+            with tempfile.NamedTemporaryFile(suffix=".xlsx") as f:
+                f.write(demo.workbook_bytes(lambda: Database(":memory:")))
+                f.flush()
+                data = interchange.read_xlsx(f.name)
+            db2 = Database(":memory:")
+            interchange.import_data(db2, data)
+            self.assertEqual([c["check"] for c in a.audit(db2) if not c["ok"]], [])
+            self.assertTrue(db2.one("SELECT 1 FROM bank_lines"))
+
+
 class ImportKit(unittest.TestCase):
     """Per-screen templates, and importing a user's own layout with column matching."""
 
@@ -923,9 +954,10 @@ class ImportKit(unittest.TestCase):
             wb = openpyxl.load_workbook(io.BytesIO(importkit.template_xlsx(db, "Products", "ar")))
             self.assertIn("How to fill", wb.sheetnames + ["How to fill"])
             ws = wb.worksheets[0]
-            ws.cell(5, 2, "Villa 9")
-            ws.cell(5, 7, 5000000)
-            ws.cell(5, 13, "Area: 300 m²; Floor: 2")
+            col = {c["key"]: i for i, c in enumerate(importkit.describe("Products")["columns"], start=1)}
+            ws.cell(5, col["name"], "Villa 9")
+            ws.cell(5, col["price"], 5000000)
+            ws.cell(5, col["specs"], "Area: 300 m²; Floor: 2")
             buf = io.BytesIO()
             wb.save(buf)
             self.assertTrue(importkit.analyze(db, "Products", buf.getvalue(), "t.xlsx")["exact"])
