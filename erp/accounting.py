@@ -493,7 +493,8 @@ def record_journal(db, d, user=""):
     """Manual journal: opening balances, depreciation, tax, loans, accruals..."""
     return post_entry(db, date=d.get("date"), kind=text(d.get("kind")) or "Journal Voucher", memo=text(d.get("memo")),
                       bu_id=bu_id_or_none(db, d.get("bu_id") or d.get("bu_code")), party=text(d.get("party")),
-                      ref=text(d.get("ref")), lines=d.get("lines") or [], user=user)
+                      ref=text(d.get("ref")), lines=d.get("lines") or [], user=user,
+                      meta={k: text(d[k]) for k in ("deal_ref", "deal_status") if d.get(k)} or None)
 
 
 # ------------------------------------------------------------- corrections

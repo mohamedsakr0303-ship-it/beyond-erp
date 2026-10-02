@@ -843,6 +843,58 @@ class ProductSales(unittest.TestCase):
         self.assertEqual(len(S.media_list(db2, S.get_product(db2, "P-0001")["id"])), 2)
 
 
+class LegacyJournalWorkbook(unittest.TestCase):
+    """V1.3+ workbooks: the General Journal is the source of truth; archive sheets are ignored; codes are remapped."""
+
+    @unittest.skipUnless(HAVE_XL, "openpyxl not installed")
+    def test_v13_journal(self):
+        import openpyxl
+        import tempfile
+        from erp import legacy, interchange
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Master Project Register"
+        ws.append(["Project ID", "Client Name", "Project Type", "Location", "Total Area (Sqm)", "Start Date", "Status",
+                   "Total Contract Value", "Billing Basis / Fee Type", "Supervision Fee %"])
+        ws.append(["PRJ-2026-001", "Villa A", "Villa", "X", 100, "2026-01-01", "In Progress", 0, "Cost-Plus %", 0.25])
+        gj = wb.create_sheet("General Journal")
+        gj.append(["BEYOND | GENERAL JOURNAL"])
+        gj.append(["JE #", "Date", "Source / Type", "Project", "Stage", "Account", "Description", "Vendor / Party",
+                   "Deal Ref", "Qty", "Unit", "Rate", "Debit", "Credit"])
+        for r in (["JE-1", "2026-01-02", "Partner funding (auto)", None, None, "1020", "Funding", "P1", None, None, None, None, 1000, None],
+                  ["JE-1", "2026-01-02", "Partner funding (auto)", None, None, "3150", "Funding", "P1", None, None, None, None, None, 1000],
+                  ["JE-2", "2026-01-05", "Project cost", "PRJ-2026-001", "All", "5020", "Works", "Sub", "SUB-1", 1, "Task", 600, 600, None],
+                  ["JE-2", "2026-01-05", "Project cost", "PRJ-2026-001", "All", "1020", "Works", "Sub", "SUB-1", None, None, None, None, 400],
+                  ["JE-2", "2026-01-05", "Project cost", "PRJ-2026-001", "All", "2010", "Works", "Sub", "SUB-1", None, None, None, None, 200],
+                  ["JE-3", "2026-01-06", "Custody", None, None, "1320", "Custody", "Ali", None, None, None, None, 100, 0],
+                  ["JE-3", "2026-01-06", "Custody", None, None, "1020", "Custody", "Ali", None, None, None, None, 0, 100],
+                  ["JE-4", "2026-01-07", "Accrual (auto)", "PRJ-2026-001", "All", "1150", "Accrued", None, None, None, None, None, 0, None],
+                  ["JE-4", "2026-01-07", "Accrual (auto)", "PRJ-2026-001", "All", "4010", "Accrued", None, None, None, None, None, None, 0]):
+            gj.append(r)
+        arch = wb.create_sheet("Project Costing (COGS)")   # archive: must not be imported again
+        arch.append(["Date", "Project ID", "Cost Category", "Item Description", "Vendor/Supplier", "Quantity", "Unit Cost", "Total Cost"])
+        arch.append(["2026-01-05", "PRJ-2026-001", "Subcontractor", "Works", "Sub", 1, 600, 600])
+        reg = wb.create_sheet("Invoice Register")
+        reg.append(["Invoice No", "Date", "Project", "Client", "Status"])
+        reg.append(["INV-1", "2026-01-10", "PRJ-2026-001", "Villa A", "Draft"])
+        il = wb.create_sheet("Invoice Lines")
+        il.append(["Invoice No", "Item No", "Category", "Sub-category", "Description", "Unit", "Contract Qty", "Qty this invoice", "Rate"])
+        il.append(["INV-1", "1.1", "Works", None, "Walls", "m2", 10, 4, 50])
+        il.append(["INV-1", "V-01", "Works", "Variation", "Extra", "LS", None, 1, 300])
+        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+            wb.save(f.name)
+            data = legacy.read_legacy_workbook(f.name)
+        db = Database(":memory:")
+        interchange.import_data(db, data, mode="replace")
+        tb = {r["code"]: round(r["debit"] - r["credit"], 2) for r in a.trial_balance(db)["rows"]}
+        self.assertEqual((tb["1020"], tb["3010"], tb["5020"], tb["2010"], tb["1035"]), (500, -1000, 600, -200, 100))
+        self.assertNotIn("1320", tb)
+        self.assertEqual(db.one("SELECT COUNT(*) n FROM journal_entries")["n"], 3)        # zero auto-accrual skipped
+        self.assertEqual(a.get_entry(db, db.one("SELECT id FROM journal_entries WHERE ref='JE-2'")["id"])["meta"]["deal_ref"], "SUB-1")
+        self.assertEqual([(x["number"], x["total"]) for x in a.list_extracts(db)], [("INV-1", 500)])
+        self.assertEqual([c["check"] for c in a.audit(db) if not c["ok"]], [])
+
+
 class BankReconciliation(unittest.TestCase):
     """Import a statement, match it to the vouchers, book what the bank did on its own, reconcile and lock."""
 

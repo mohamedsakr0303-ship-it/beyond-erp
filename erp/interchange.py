@@ -1101,7 +1101,7 @@ def _imp_journal(db, rows, errors, counts, user):
         try:
             acc.record_journal(db, {"date": first.get("date"), "kind": first.get("kind") or "Journal Voucher",
                                     "bu_code": first.get("bu_code"), "party": first.get("party"),
-                                    "ref": first.get("ref") or v, "memo": first.get("memo"),
+                                    "ref": first.get("ref") or v, "memo": first.get("memo"), "deal_ref": first.get("deal_ref"),
                                     "lines": [{"account": r.get("account"), "debit": r.get("debit"),
                                                "credit": r.get("credit"), "party": r.get("line_party")}
                                               for _, r in items]}, user)
