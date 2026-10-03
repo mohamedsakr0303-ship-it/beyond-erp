@@ -4,6 +4,7 @@ Every route declares the module permission it needs; the admin user bypasses
 checks. Sessions are HttpOnly SameSite=Strict cookies and every mutating
 request must carry the X-Requested-With header (CSRF guard).
 """
+import base64
 import datetime as _dt
 import json
 import mimetypes
@@ -1040,6 +1041,77 @@ def bank_rule_del(ctx, rid):
 
 
 # ============================================================ recurring entries
+def _att_access(ctx, owner, oid, edit=False):
+    """Who may see / change the files of a record: the people who may see / change that record."""
+    from . import attachments
+    if owner not in attachments.OWNERS:
+        raise acc.ValidationError("Unknown record type")
+    if owner == "entry":
+        e = ctx.db.one("SELECT kind, bu_id FROM journal_entries WHERE id=?", (int(oid) if str(oid).isdigit() else -1,))
+        if not e:
+            raise acc.ValidationError("Record not found")
+        mod = KIND_MODULE.get(e["kind"], "accounting.journal")
+        ok_ = (ctx.can("accounting.journal", "edit") or ctx.can(mod, "add")) if edit else \
+            (ctx.can("accounting.journal") or ctx.can(mod) or (e["bu_id"] and ctx.can("business_units.units")))
+    else:
+        perms = attachments.OWNERS[owner][2]
+        ok_ = any(ctx.can(p, "add") if edit else ctx.can(p) for p in perms)
+    if not ok_:
+        raise PermissionError()
+
+
+@route("GET", "/api/attachments")
+def attachments_list(ctx):
+    from . import attachments
+    owner, oid = ctx.q.get("owner"), ctx.q.get("id")
+    _att_access(ctx, owner, oid)
+    return ok({"rows": attachments.listing(ctx.db, owner, oid), "max_mb": attachments.MAX_FILE // 1048576})
+
+
+@route("POST", "/api/attachments")
+def attachments_add(ctx):
+    from . import attachments
+    b = ctx.body
+    _att_access(ctx, b.get("owner"), b.get("id"), edit=True)
+    return ok({"id": attachments.add(ctx.db, b.get("owner"), b.get("id"), b, ctx.user["username"])})
+
+
+@route("GET", "/api/attachments/<aid>")
+def attachments_get(ctx, aid):
+    from . import attachments
+    a = attachments.get(ctx.db, aid)
+    _att_access(ctx, a["owner"], a["owner_id"])
+    if a["url"] and not a["data"]:
+        return ok({"url": a["url"]})
+    name = re.sub(r'[\\/:*?"<>|\r\n]+', "_", a["title"] or "file")
+    ext = {"application/pdf": ".pdf", "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}.get(a["mime"], "")
+    if ext and not name.lower().endswith(ext):
+        name += ext
+    data = base64.b64decode(a["data"])
+    if ctx.q.get("format") == "json":
+        return ok({"data": f"data:{a['mime'] or 'application/octet-stream'};base64,{a['data']}", "mime": a["mime"], "title": a["title"]})
+    return download(data, name, a["mime"] or "application/octet-stream")
+
+
+@route("PUT", "/api/attachments/<aid>")
+def attachments_rename(ctx, aid):
+    from . import attachments
+    a = attachments.get(ctx.db, aid)
+    _att_access(ctx, a["owner"], a["owner_id"], edit=True)
+    attachments.rename(ctx.db, aid, ctx.body.get("title"))
+    return ok({})
+
+
+@route("DELETE", "/api/attachments/<aid>")
+def attachments_delete(ctx, aid):
+    from . import attachments
+    a = attachments.get(ctx.db, aid)
+    _att_access(ctx, a["owner"], a["owner_id"], edit=True)
+    attachments.delete(ctx.db, aid)
+    ctx.db.log(ctx.user["username"], "attachment", f"removed {a['title']} from {a['owner']} {a['owner_id']}")
+    return ok({})
+
+
 @route("GET", "/api/budgets", "accounting.budgets")
 def budgets_grid(ctx):
     from . import budgets
@@ -2363,7 +2435,7 @@ ERASE_TRANSACTIONS = ("bank_lines", "bank_statements", "recurring_runs", "sale_c
                       "rental_handovers", "rental_lines", "rentals", "rent_lots")
 ERASE_ALL = ERASE_TRANSACTIONS + ("parties", "stock_items", "boq_lines", "boqs", "partner_shares", "partners", "rates",
                                   "fixed_assets", "business_units", "offer_types", "tax_codes", "assets", "rent_kit_lines", "rent_kits",
-                                  "rent_items", "rent_models", "product_media", "products", "bank_rules", "recurring", "budgets")
+                                  "rent_items", "rent_models", "product_media", "products", "bank_rules", "recurring", "budgets", "attachments")
 
 
 @route("POST", "/api/erase")

@@ -207,8 +207,8 @@ def post_entry(db, **kw):
 
 
 def get_entry(db, eid):
-    e = db.one("SELECT e.*, b.code AS bu_code FROM journal_entries e LEFT JOIN business_units b ON b.id=e.bu_id "
-               "WHERE e.id=?", (eid,))
+    e = db.one("SELECT e.*, b.code AS bu_code, (SELECT COUNT(*) FROM attachments WHERE owner='entry' AND owner_id=e.id) AS files "
+               "FROM journal_entries e LEFT JOIN business_units b ON b.id=e.bu_id WHERE e.id=?", (eid,))
     if not e:
         return None
     e["meta"] = json.loads(e["meta"] or "{}")

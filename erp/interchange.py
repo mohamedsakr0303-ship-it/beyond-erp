@@ -738,7 +738,12 @@ def export_extras(db):
             "ownership_changes": _ownership_export(db), "loans": loans.export_rows(db),
             "custodies": custody.export_rows(db), "rentals": rentals.export_rows(db),
             "sales": sales.export_rows(db), "bank": bankrec.export_rows(db), "recurring": recurring.export_rows(db),
-            "entry_meta": _entry_meta_export(db)}
+            "entry_meta": _entry_meta_export(db), "attachments": _attachments_export(db)}
+
+
+def _attachments_export(db):
+    from . import attachments
+    return attachments.export_rows(db)
 
 
 def _entry_fp(e):
@@ -835,6 +840,11 @@ def _imp_extras(db, ex, mode, counts):
             n += 1
     if ex.get("offer_types") or ex.get("offers"):
         counts["Offers"] = n
+    if ex.get("attachments"):
+        from . import attachments
+        if mode == "replace":
+            db.conn.execute("DELETE FROM attachments")
+        counts["Attached files"] = attachments.import_rows(db, ex["attachments"])
     if ex.get("ownership_changes"):
         if mode == "replace":
             db.conn.execute("DELETE FROM ownership_changes")
@@ -873,7 +883,7 @@ def to_csv(db, sheet_name, template=False):
     return ("﻿" + buf.getvalue()).encode("utf-8")
 
 
-WIPE_ORDER = ("budgets", "bank_lines", "bank_statements", "bank_rules", "recurring_runs", "recurring", "sale_cheques", "sale_installments", "sale_lines", "sales_orders", "product_media", "products", "rent_moves", "rental_invoices", "rental_charges", "rental_handovers", "rental_lines", "rentals", "rent_lots",
+WIPE_ORDER = ("attachments", "budgets", "bank_lines", "bank_statements", "bank_rules", "recurring_runs", "recurring", "sale_cheques", "sale_installments", "sale_lines", "sales_orders", "product_media", "products", "rent_moves", "rental_invoices", "rental_charges", "rental_handovers", "rental_lines", "rentals", "rent_lots",
               "rent_kit_lines", "rent_kits", "rent_models", "rent_items", "loans", "custodies", "parties", "ownership_changes", "fixed_assets", "stock_moves", "stock_levels", "stock_items", "extract_lines", "extracts", "boq_lines", "boqs",
               "journal_lines", "journal_entries", "partner_shares", "partners", "rates", "business_units")
 

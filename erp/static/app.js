@@ -744,7 +744,7 @@ function voucherRows(rows) {
     ${rows.map(e => `<tr class="click ${e.status === "void" || e.reversed_by ? "void" : ""}" data-a="openv" data-id="${e.id}"><td>${fd(e.date)}</td><td>${e.id}</td><td><span class="chip">${esc(tl(e.kind))}</span></td>
       <td>${esc(e.memo)}<div class="lines">${e.lines.map(l => `${l.debit ? t("debit") : "&nbsp;&nbsp;" + t("credit")} ${esc(l.account)} ${esc(aname(l))} ${money(l.debit || l.credit)}`).join("<br>")}</div></td>
       <td>${esc(e.party)}</td><td>${esc(e.bu_code || "")}</td><td class="num">${money(e.amount)}</td>
-      <td>${e.status === "void" ? `<span class="chip bad">${t("void")}</span>` : ""}${e.reversed_by ? `<span class="chip warn">${t("reverse")}</span>` : ""}${e.history && e.history.length ? `<span class="chip">${t("edited")}</span>` : ""}</td></tr>`).join("")}</tbody></table></div>`;
+      <td>${e.status === "void" ? `<span class="chip bad">${t("void")}</span>` : ""}${e.reversed_by ? `<span class="chip warn">${t("reverse")}</span>` : ""}${e.history && e.history.length ? `<span class="chip">${t("edited")}</span>` : ""}${e.files ? `<span class="chip" title="${esc(L2("Attached files", "المرفقات"))}">📎 ${e.files}</span>` : ""}</td></tr>`).join("")}</tbody></table></div>`;
 }
 async function openVoucher(id) {
   const e = await api("GET", "/api/journal/" + id).catch(() => null) || (S.cache.v && S.cache.v[id]);
@@ -761,6 +761,7 @@ async function openVoucher(id) {
     <tr class="total"><td>${t("total")}</td><td class="num">${money(e.amount)}</td><td class="num">${money(e.amount)}</td></tr></tbody></table></div>
     ${e.meta && e.meta.void_reason ? `<div class="banner err" style="margin-top:10px">${t("void")}: ${esc(e.meta.void_reason)}</div>` : ""}
     ${e.history && e.history.length ? `<h4>${t("history")}</h4>${e.history.map(h => `<div class="lines">${esc(h.edited_at)} ${esc(h.edited_by || "")}: ${esc(h.memo)} — ${h.lines.map(l => `${l.account} ${l.debit || ""}/${l.credit || ""}`).join(", ")}</div>`).join("")}` : ""}
+    ${attBox("entry", e.id, edit || can(DOC_MOD[e.doc] || "accounting.journal", "add"))}
     <p class="muted" style="font-size:.8em;margin-top:12px">${S.lang === "ar" ? "الإلغاء يستبعد القيد من كل الأرصدة مع إبقاء أثره؛ القيد العكسي هو التصحيح المحاسبي الرسمي." : "Void removes the entry from every total but keeps a visible trace. Reverse posts the formal correcting entry — both stay on record."}</p>`;
   const btns = [];
   if (edit && live) {
@@ -784,7 +785,8 @@ async function openVoucher(id) {
   S.H.vform = () => openDoc(e.doc, null, e);
   S.H.vgo = el => { const h = el.getAttribute("href"); closeDrawer(); location.hash = h; };
   S.H.vdup = () => e.doc ? openDoc(e.doc, null, null, { ...e.form, date: today() }) : journalForm({ ...e, date: today() }, true);
-  drawer(`${tl(e.kind)} #${e.id}`, html, null, { readOnly: true, extraButtons: btns.join("") });
+  const f = drawer(`${tl(e.kind)} #${e.id}`, html, null, { readOnly: true, extraButtons: btns.join("") });
+  mountAttach($(".attbox", f));
 }
 S.GLOBAL_H.openv = el => openVoucher(el.dataset.id);
 
@@ -1721,8 +1723,9 @@ async function contactView(id) {
     ${d.balances.length ? `<h4 class="fsec">${esc(L2("Open balances", "الأرصدة المفتوحة"))}</h4><div class="tbl"><table><thead><tr><th>${t("account")}</th><th class="num">${L2("We owe", "لهم")}</th><th class="num">${L2("Owes us", "لنا عليهم")}</th></tr></thead><tbody>${d.balances.map(b => `<tr><td>${esc(b.account)} — ${esc(aname(b))}</td><td class="num">${b.we_owe ? money(b.we_owe) : ""}</td><td class="num">${b.owes_us ? money(b.owes_us) : ""}</td></tr>`).join("")}</tbody></table></div>` : ""}
     <h4 class="fsec">${esc(L2("Latest vouchers", "أحدث القيود"))}${d.first ? ` <span class="muted" style="font-weight:400">· ${fd(d.first)} → ${fd(d.last)}</span>` : ""}</h4>
     ${d.recent.length ? `<div class="tbl"><table><tbody>${d.recent.map(e => `<tr class="click" data-a="openv" data-id="${e.id}"><td>${fd(e.date)}</td><td>${esc(tl(e.kind))}</td><td>${esc(e.memo)}</td><td class="num">${money(e.amount)}</td></tr>`).join("")}</tbody></table></div>`
-      : `<div class="empty">${esc(L2("Nothing recorded with this name yet.", "لا توجد قيود بهذا الاسم بعد."))}</div>`}`,
-  null, { readOnly: true, wide: true, extraButtons: btns });
+      : `<div class="empty">${esc(L2("Nothing recorded with this name yet.", "لا توجد قيود بهذا الاسم بعد."))}</div>`}
+    ${attBox("party", p.id, can("purchasing.contacts", "add") || can("sales.parties", "add"))}`,
+  null, { readOnly: true, wide: true, extraButtons: btns, onOpen: f => mountAttach($(".attbox", f)) });
   Object.assign(S.H, { cvstmt: () => { closeDrawer(); location.hash = "#/statement?" + qs({ party: p.name }); }, cvedit: () => contactForm(p, cid => contactView(cid)), cvexp: () => openDoc("expense", null, null, { vendor: p.name }), cvcost: () => openDoc("direct_cost", null, null, { vendor: p.name }),
     cvpay: () => openDoc("payment", { party: p.name, amount: ap ? ap.we_owe : "", against: ap ? ap.account : "" }),
     cvbank: async () => { try { await navigator.clipboard.writeText(`${p.name}\n${p.bank_details}`); toast(L2("Copied", "تم النسخ")); } catch { toast(p.bank_details); } } });
@@ -3359,8 +3362,8 @@ async function assetView(id) {
   if (edit) btns.push(`<button type="button" class="btn" data-a="faedit">${t("edit")}</button>`);
   if (edit && !a.disposed) btns.push(`<button type="button" class="btn" data-a="fadisp">${L2("Sell / write off", "بيع / استبعاد")}</button>`);
   if (edit && !a.purchase_entry && !a.depreciation.length && !a.disposal_entry) btns.push(`<button type="button" class="btn danger" data-a="fadel">${t("delete")}</button>`);
-  drawer(`${a.code} — ${a.name}`, html + (a.life_months ? `<h4>${L2("Depreciation schedule", "جدول الإهلاك")}</h4><div id="fasch" class="muted">${t("loading")}</div>` : ""), null, { readOnly: true, wide: true, extraButtons: btns.join(""),
-    onOpen: async f => { const box = $("#fasch", f); if (!box) return; try { box.innerHTML = schedHtml(await api("GET", `/api/assets/${a.id}/schedule`)); } catch (e) { box.textContent = e.message; } } });
+  drawer(`${a.code} — ${a.name}`, html + (a.life_months ? `<h4>${L2("Depreciation schedule", "جدول الإهلاك")}</h4><div id="fasch" class="muted">${t("loading")}</div>` : "") + attBox("asset", a.id, can("assets.register", "add")), null, { readOnly: true, wide: true, extraButtons: btns.join(""),
+    onOpen: async f => { mountAttach($(".attbox", f)); const box = $("#fasch", f); if (!box) return; try { box.innerHTML = schedHtml(await api("GET", `/api/assets/${a.id}/schedule`)); } catch (e) { box.textContent = e.message; } } });
   S.H.faedit = () => assetForm(a);
   S.H.fadisp = () => disposeForm(a);
   S.H.fadel = () => confirmDelete(a.name, "/api/assets/" + a.id);
@@ -3540,6 +3543,67 @@ function shrinkImage(file, max, q) {
       c.width = Math.round(img.width * r); c.height = Math.round(img.height * r); c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
       URL.revokeObjectURL(u); res(c.toDataURL("image/jpeg", q)); };
     img.onerror = () => { URL.revokeObjectURL(u); rej(new Error(L2("Not an image this browser can read", "صيغة صورة غير مدعومة"))); }; img.src = u; });
+}
+// -------------------------------------------------------------- attachments
+// <div class="attbox" data-owner="entry" data-id="12" data-edit="1"></div> then mountAttach(el): list, add files / photos / links
+const attBox = (owner, id, edit) => `<div class="attbox" data-owner="${owner}" data-id="${id}" data-edit="${edit ? 1 : ""}"><h4 class="fsec">📎 ${L2("Attached files", "المرفقات")}</h4><div class="muted">…</div></div>`;
+const fileIcon = m => /pdf/.test(m) ? "📕" : /image/.test(m) ? "🖼" : /sheet|excel|csv/.test(m) ? "📊" : /word|document/.test(m) ? "📝" : "📄";
+const kb = n => n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB";
+async function attFile(id) {
+  const r = await api("GET", `/api/attachments/${id}?format=json`);
+  if (r.url) return { url: r.url };
+  const bin = atob(r.data.split(",")[1]), u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+  return { blob: URL.createObjectURL(new Blob([u8], { type: r.mime || "application/octet-stream" })), title: r.title, mime: r.mime };
+}
+async function mountAttach(box) {
+  if (!box) return;
+  const { owner, id } = box.dataset, edit = !!box.dataset.edit;
+  let d;
+  try { d = await api("GET", "/api/attachments?" + qs({ owner, id })); } catch (e) { box.remove(); return; }
+  const rows = d.rows;
+  box.innerHTML = `<h4 class="fsec">📎 ${L2("Attached files", "المرفقات")}${rows.length ? ` <span class="chip">${rows.length}</span>` : ""}</h4>
+    ${rows.length ? `<div class="attlist">${rows.map(a => `<div class="att" data-id="${a.id}">
+      <button type="button" class="attthumb" data-k="open" title="${esc(L2("Open", "فتح"))}">${a.thumb ? `<img src="${esc(a.thumb)}" alt="">` : `<span>${a.url ? "🔗" : fileIcon(a.mime)}</span>`}</button>
+      <div class="attmeta"><b dir="auto">${esc(a.title)}</b><span class="muted">${a.url ? L2("link", "رابط") : kb(a.size)} · ${fd((a.created_at || "").slice(0, 10))}${a.created_by ? " · " + esc(a.created_by) : ""}</span></div>
+      <div class="attbtns"><button type="button" class="btn sm" data-k="open">${L2("Open", "فتح")}</button>${a.url ? "" : `<button type="button" class="btn sm" data-k="dl">⬇</button>`}
+      ${edit ? `<button type="button" class="btn sm" data-k="ren" title="${esc(L2("Rename", "إعادة تسمية"))}">✎</button><button type="button" class="btn sm danger" data-k="del" title="${esc(t("delete"))}">✕</button>` : ""}</div></div>`).join("")}</div>`
+      : `<div class="muted" style="font-size:.88em">${L2("No files yet — attach the supplier's invoice, a receipt photo, a signed contract…", "لا توجد ملفات — أرفق فاتورة المورد أو صورة الإيصال أو العقد الموقّع…")}</div>`}
+    ${edit ? `<div class="row attadd" style="gap:6px;flex-wrap:wrap;margin-top:8px">
+      <label class="btn sm">＋ ${L2("Add files", "إضافة ملفات")}<input type="file" multiple hidden data-k="files"></label>
+      <label class="btn sm">📷 ${L2("Take a photo", "التقاط صورة")}<input type="file" accept="image/*" capture="environment" hidden data-k="files"></label>
+      <button type="button" class="btn sm" data-k="link">🔗 ${L2("Add a link", "إضافة رابط")}</button>
+      <span class="muted" style="font-size:.8em">${L2(`Up to ${d.max_mb} MB each; photos are shrunk automatically.`, `حتى ${d.max_mb} ميجا للملف؛ الصور تُصغّر تلقائياً.`)}</span></div><div class="attprog muted" style="font-size:.85em"></div>` : ""}`;
+  const reload = () => mountAttach(box);
+  box.onclick = async ev => {
+    const b = ev.target.closest("[data-k]"); if (!b || b.tagName === "INPUT") return;
+    const k = b.dataset.k, row = b.closest(".att"), aid = row && row.dataset.id, a = row && rows.find(x => String(x.id) === aid);
+    ev.preventDefault(); ev.stopPropagation();
+    try {
+      if (k === "open") { const f = await attFile(aid); window.open(f.url || f.blob, "_blank", "noopener"); }
+      else if (k === "dl") { const f = await attFile(aid); const l = document.createElement("a"); l.href = f.blob; l.download = a.title; document.body.appendChild(l); l.click(); l.remove(); }
+      else if (k === "ren") { const n = prompt(L2("File name", "اسم الملف"), a.title); if (!n) return; await api("PUT", "/api/attachments/" + aid, { title: n }); reload(); }
+      else if (k === "del") { if (!confirm(L2(`Remove “${a.title}”?`, `حذف «${a.title}»؟`))) return; await api("DELETE", "/api/attachments/" + aid); reload(); }
+      else if (k === "link") { const u = prompt(L2("Paste the link (Google Drive, Dropbox, OneDrive…)", "الصق الرابط (جوجل درايف، دروب بوكس…)")); if (!u) return;
+        const n = prompt(L2("Name", "الاسم"), u.replace(/^https?:\/\//, "").slice(0, 60)); await api("POST", "/api/attachments", { owner, id, url: u.trim(), title: n || "" }); reload(); }
+    } catch (e) { fail(e); }
+  };
+  $$("input[data-k=files]", box).forEach(inp => inp.onchange = async () => {
+    const files = [...inp.files], prog = $(".attprog", box); let done = 0;
+    for (const f of files) {
+      prog.textContent = `${L2("Uploading", "جارٍ الرفع")} ${f.name}… (${done + 1}/${files.length})`;
+      try {
+        let data, thumb = "", mime = f.type, name = f.name;
+        if (/^image\/(jpeg|png|webp|heic|heif)/i.test(f.type) || (/^image\//.test(f.type) && f.size > 1.5 * 1048576)) {
+          try { data = await shrinkImage(f, 2000, 0.85); mime = "image/jpeg"; if (!/\.jpe?g$/i.test(name)) name = name.replace(/\.\w+$/, "") + ".jpg"; } catch { data = await readDataUrl(f); }
+        } else data = await readDataUrl(f);
+        if (/^image\//.test(mime)) { try { thumb = await shrinkImage(f, 240, 0.7); } catch { /* no preview */ } }
+        if (data.length * 0.75 > MAX_UP) throw new Error(`${name}: ${kb(data.length * 0.75)} — ${L2("too large", "حجم كبير")} (max ${d.max_mb} MB)`);
+        await api("POST", "/api/attachments", { owner, id, data, mime, thumb, title: name });
+        done++;
+      } catch (e) { fail(e); }
+    }
+    prog.textContent = ""; reload();
+  });
 }
 const readDataUrl = file => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(r.error); r.readAsDataURL(file); });
 const MAX_UP = 8 * 1024 * 1024;
@@ -4125,6 +4189,17 @@ const rcSched = r => { const u = RC_UNIT_TXT[r.unit] || [[r.unit, r.unit], [r.un
   return `${L2("every", "كل")} ${r.every > 1 ? r.every + " " : ""}${S.lang === "ar" ? u[1][pl] : u[0][pl]}${r.month_end ? ` · ${L2("month end", "آخر الشهر")}` : ""}`; };
 const fillMonth = (v, due) => typeof v === "string" ? v.replace(/\{month\}/g, due.slice(0, 7)).replace(/\{year\}/g, due.slice(0, 4)).replace(/\{date\}/g, due) : v;
 
+// files on the record pages (business unit, offer, loan, custody, rental, sale): appended under the page
+[["bu", "bu", "business_units.units"], ["offer", "offer", "sales.offers"], ["loan", "loan", "accounting.loans"], ["cust", "custody", "purchasing.custody"],
+ ["rental", "rental", "rentals.contracts"], ["sale", "sale", "shop.orders"]].forEach(([page, owner, perm]) => {
+  const orig = PAGES[page];
+  PAGES[page] = async (view, parts, q) => {
+    await orig(view, parts, q);
+    if (!parts[1] || parts[1] === "new" || parts[2] || !view.isConnected || !$(".card", view) || $(".attbox", view)) return;   // no card = not found
+    view.insertAdjacentHTML("beforeend", `<div class="card">${attBox(owner, parts[1], can(perm, "add"))}</div>`);
+    mountAttach($(".attbox", view));
+  };
+});
 // ------------------------------------------------------------ budgets
 const MONTHS_L = () => S.lang === "ar" ? ["يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو", "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"] : ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const budgetYears = (have = []) => { const y = new Date().getFullYear(); return [...new Set([y - 1, y, y + 1, ...have])].sort(); };

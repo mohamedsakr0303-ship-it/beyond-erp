@@ -996,6 +996,40 @@ class StatementsAndBudgets(unittest.TestCase):
         interchange.import_data(db2, {"Budgets": rows})
         self.assertEqual(budgets.export_rows(db2), budgets.export_rows(db))
 
+class Attachments(unittest.TestCase):
+    """Files kept with vouchers and records; they survive a JSON backup and restore."""
+
+    def test_attach_and_restore(self):
+        import base64
+        import json as _json
+        from erp import attachments, demo, interchange
+        db = Database(":memory:")
+        demo.load(db)
+        eid = db.one("SELECT id FROM journal_entries WHERE kind='Operating Expense' ORDER BY id LIMIT 1")["id"]
+        pdf = "data:application/pdf;base64," + base64.b64encode(b"%PDF-1.4 test").decode()
+        a1 = attachments.add(db, "entry", eid, {"data": pdf, "title": "Supplier invoice.pdf"}, "admin")
+        attachments.add(db, "loan", db.one("SELECT code FROM loans LIMIT 1")["code"], {"url": "https://example.com/contract", "title": "Contract"})
+        attachments.add(db, "party", db.one("SELECT id FROM parties WHERE name='Atlas Builders'")["id"], {"data": pdf})
+        self.assertEqual(a.get_entry(db, eid)["files"], 1)
+        self.assertEqual(attachments.get(db, a1)["size"], 13)
+        attachments.rename(db, a1, "Invoice 77.pdf")
+        with self.assertRaises(a.ValidationError):
+            attachments.add(db, "entry", eid, {"url": "ftp://x"})
+        with self.assertRaises(a.ValidationError):
+            attachments.add(db, "entry", 999999, {"data": pdf})
+        with self.assertRaises(a.ValidationError):
+            attachments.add(db, "entry", eid, {"data": "data:application/pdf;base64," + base64.b64encode(b"x" * (attachments.MAX_FILE + 1)).decode()})
+        backup = _json.loads(interchange.to_json(db))
+        db2 = Database(":memory:")
+        interchange.import_data(db2, interchange.read_json(_json.dumps(backup).encode()))
+        titles = sorted(r["title"] for r in db2.q("SELECT title FROM attachments"))
+        self.assertEqual(titles, ["Contract", "File", "Invoice 77.pdf"])
+        e2 = db2.one("SELECT owner_id FROM attachments WHERE title='Invoice 77.pdf'")["owner_id"]
+        self.assertEqual(db2.one("SELECT memo FROM journal_entries WHERE id=?", (e2,))["memo"],
+                         db.one("SELECT memo FROM journal_entries WHERE id=?", (eid,))["memo"])
+        attachments.delete(db, a1)
+        self.assertEqual(a.get_entry(db, eid)["files"], 0)
+
 class ImportKit(unittest.TestCase):
     """Per-screen templates, and importing a user's own layout with column matching."""
 

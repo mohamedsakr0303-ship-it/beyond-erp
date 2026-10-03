@@ -578,6 +578,22 @@ CREATE TABLE IF NOT EXISTS bank_rules (
     active INTEGER NOT NULL DEFAULT 1
 );
 
+-- Files kept with a record (owner = entry, party, bu, rental, sale, loan, custody, asset, offer)
+CREATE TABLE IF NOT EXISTS attachments (
+    id INTEGER PRIMARY KEY,
+    owner TEXT NOT NULL,
+    owner_id INTEGER NOT NULL,
+    title TEXT DEFAULT '',
+    mime TEXT DEFAULT '',
+    data TEXT DEFAULT '',                       -- base64
+    thumb TEXT DEFAULT '',                      -- small preview (data URL) for images
+    url TEXT DEFAULT '',                        -- or a link to the file elsewhere
+    size INTEGER DEFAULT 0,
+    created_by TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS ix_att_owner ON attachments(owner, owner_id);
+
 -- Budgets: twelve monthly amounts per profit-and-loss account, for the whole company (bu_id 0) or one business unit.
 CREATE TABLE IF NOT EXISTS budgets (
     id INTEGER PRIMARY KEY,
