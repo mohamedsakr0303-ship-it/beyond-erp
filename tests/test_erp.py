@@ -906,6 +906,11 @@ class LegacyJournalWorkbook(unittest.TestCase):
         ws.append(["Project ID", "Client Name", "Project Type", "Location", "Total Area (Sqm)", "Start Date", "Status",
                    "Total Contract Value", "Billing Basis / Fee Type", "Supervision Fee %"])
         ws.append(["PRJ-2026-002", "Villa B", "Villa", "Palm Hills", 950, "2026-09-17", "In Progress", 0, "Measured (BOQ rates)", 0.5757])
+        ws.append(["PRJ-2026-003", "Flat C", "Flat", "Cairo", 100, "2026-09-20", "In Progress", 0, "Cost-Plus %", 0.25])
+        ca = wb.create_sheet("Cost Allocation")
+        ca.append(["BEYOND DESIGN | COST ALLOCATION RULES"])
+        ca.append(["Allocation rule", "Billable to client?", "Pooled amount (from journal)", "PRJ-2026-002", "PRJ-2026-003"])
+        ca.append(["Even split", "No", 0, 0.75, 0.25])
         coa = wb.create_sheet("Chart of Accounts")
         coa.append(["Code", "Account Name", "Type", "Normal", "Income Statement line"])
         coa.append(["5040", "Site Preparation", "COGS", "Debit", "Cost of sales"])
@@ -935,6 +940,7 @@ class LegacyJournalWorkbook(unittest.TestCase):
             wb.save(f.name)
             data = legacy.read_legacy_workbook(f.name)
         self.assertEqual(data["Business Units"][0]["basis"], "Fixed Price")
+        self.assertEqual([b["overhead_pct"] for b in data["Business Units"]], [0.75, 0.25])   # the sheet's first rule
         self.assertEqual([(x["item_no"], x["qty"], x["price"]) for x in data["Invoice Lines"]],
                          [("1.1", 4, 500), ("V-01", 1, 1500)])
         db = Database(":memory:")

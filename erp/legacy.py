@@ -147,9 +147,16 @@ def read_legacy_workbook(path):
                     "contract_value": contract if isinstance(contract, (int, float)) else ""})
             break
 
+    # V1.3+: the Cost Allocation sheet's first rule is what untagged shared costs follow — use its split exactly
+    rule = _allocation_rule(sheet("cost allocation"), codes)
+    if rule:
+        for bu in data["Business Units"]:
+            bu["overhead_pct"] = rule["split"].get(bu["code"], 0)
+        notes.append(f"Shared overhead split taken from the Cost Allocation sheet's '{rule['name']}' rule: "
+                     + ", ".join(f"{c} {v:.2%}" for c, v in rule["split"].items()) + ".")
     # the original workbook shared company overhead evenly across active projects — start from the same split
     active = [b for b in data["Business Units"] if b["status"] not in ("Completed", "Closed")]
-    if active:
+    if active and not rule:
         base = int(10000 / len(active)) / 10000
         for b in active:
             b["overhead_pct"] = base
@@ -396,6 +403,24 @@ def _account_v13(code, roles):
 
 _COA_SUBTYPE = {"Asset": "other_current_asset", "Liability": "other_current_liability", "Equity": "other_equity",
                 "Revenue": "operating_revenue", "COGS": "cogs", "Expense": "other_operating"}
+
+
+def _allocation_rule(ws, codes):
+    """The first rule on the Cost Allocation sheet: {name, split: {project: share}} (shares as fractions)."""
+    if ws is None:
+        return None
+    for hr, h in _headers(ws, ["allocation rule", "billable"], scan=10):
+        row_h = [_v(c.value) for c in ws[hr]]
+        cols = {i: str(v).strip() for i, v in enumerate(row_h) if str(v or "").strip() in codes}
+        for row in ws.iter_rows(min_row=hr + 1, values_only=True):
+            name = _v(row[0]) if row else None
+            if not name:
+                continue
+            split = {code: round(_f(row[i]), 10) for i, code in cols.items() if i < len(row)}
+            if split and 0.999 <= sum(split.values()) <= 1.0000001:
+                return {"name": name, "split": split}
+            return None
+    return None
 
 
 def _read_new_accounts(ws, data, notes):
