@@ -627,6 +627,64 @@ def safe_eval(expr, names):
     return v
 
 
+
+_XL_FUNCS = {"ceil": "ROUNDUP({},0)", "floor": "INT({})", "abs": "ABS({})", "sqrt": "SQRT({})"}
+_XL_OPS = {ast.Add: "+", ast.Sub: "-", ast.Mult: "*", ast.Div: "/", ast.Pow: "^"}
+_XL_CMP = {ast.Lt: "<", ast.LtE: "<=", ast.Gt: ">", ast.GtE: ">=", ast.Eq: "=", ast.NotEq: "<>"}
+
+
+def to_excel(expr, refs):
+    """The same formula as an Excel expression (no leading '='); refs maps each name to a cell such as $C$5."""
+    src = str(expr if expr is not None else "").strip() or "0"
+    try:
+        tree = ast.parse(src, mode="eval")
+    except SyntaxError:
+        raise ValidationError(f"Formula not understood: {src}")
+
+    def xl(n):
+        if isinstance(n, ast.Expression):
+            return xl(n.body)
+        if isinstance(n, ast.Constant) and isinstance(n.value, (int, float)) and not isinstance(n.value, bool):
+            return repr(n.value)
+        if isinstance(n, ast.Name):
+            if n.id not in refs:
+                raise ValidationError(f"Unknown name '{n.id}' in: {src}")
+            return refs[n.id]
+        if isinstance(n, ast.BinOp):
+            a, b = xl(n.left), xl(n.right)
+            if isinstance(n.op, ast.FloorDiv):
+                return f"INT(({a})/({b}))"
+            if isinstance(n.op, ast.Mod):
+                return f"MOD({a},{b})"
+            if type(n.op) not in _XL_OPS:
+                raise ValidationError(f"Operator not allowed in: {src}")
+            return f"({a}{_XL_OPS[type(n.op)]}{b})"
+        if isinstance(n, ast.UnaryOp) and isinstance(n.op, (ast.USub, ast.UAdd)):
+            return f"(-{xl(n.operand)})" if isinstance(n.op, ast.USub) else xl(n.operand)
+        if isinstance(n, ast.UnaryOp) and isinstance(n.op, ast.Not):
+            return f"NOT({xl(n.operand)})"
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id in _FUNCS and not n.keywords and n.args:
+            args = [xl(a) for a in n.args]
+            f = n.func.id
+            if f in ("max", "min"):
+                return f"{f.upper()}({','.join(args)})"
+            if f == "round":
+                return f"ROUND({args[0]},{args[1] if len(args) > 1 else 0})"
+            return _XL_FUNCS[f].format(args[0])
+        if isinstance(n, ast.IfExp):
+            return f"IF({xl(n.test)},{xl(n.body)},{xl(n.orelse)})"
+        if isinstance(n, ast.Compare):
+            parts, left = [], xl(n.left)
+            for op, right in zip(n.ops, n.comparators):
+                r = xl(right)
+                parts.append(f"{left}{_XL_CMP[type(op)]}{r}")
+                left = r
+            return parts[0] if len(parts) == 1 else f"AND({','.join(parts)})"
+        if isinstance(n, ast.BoolOp):
+            return f"{'AND' if isinstance(n.op, ast.And) else 'OR'}({','.join(xl(v) for v in n.values)})"
+        raise ValidationError(f"Not allowed in a formula: {src}")
+    return xl(tree)
+
 FRAME_MODEL = {
     "inputs": [{"key": "length", "label": "Facade length", "label_ar": "طول الواجهة", "unit": "m", "value": 72},
                {"key": "height", "label": "Scaffold height", "label_ar": "ارتفاع السقالة", "unit": "m", "value": 16}],

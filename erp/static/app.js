@@ -1550,10 +1550,11 @@ PAGES.data = async (view) => {
   view.innerHTML = (STATIC ? `<div class="banner info">${S.lang === "ar" ? "هذه نسخة المتصفح: البيانات محفوظة في هذا المتصفح فقط. نزّل نسخة JSON أو Excel بانتظام كنسخة احتياطية، واستخدمها لنقل البيانات لجهاز آخر." : "Browser edition: your data is stored in this browser only. Download a JSON or Excel copy regularly as your backup — it is also how you move data to another device."}</div>` : "") +
     `<div class="grid g2"><div class="card"><h2>${t("exp_title")}</h2><div class="grid">
       <a class="btn" href="/api/export/workbook">⬇ ${t("full_wb")}</a><a class="btn" href="/api/templates/workbook">⬇ ${t("empty_tpl")}</a>
+      <a class="btn" href="/api/demo/workbook">⬇ ${L2("Import template filled with demo data (Excel)", "قالب الاستيراد مملوء ببيانات تجريبية (Excel)")}</a>
       <a class="btn" href="/api/export/json">⬇ ${t("json_backup")}</a>${can("settings.system", "edit") ? `<a class="btn" href="/api/backup">⬇ ${t("db_backup")}</a>` : ""}
       <div class="row"><select id="csvs">${sheets.map(s => `<option value="${esc(s.name)}">${esc(S.lang === "ar" ? s.ar : s.name)}</option>`).join("")}</select>
         <button class="btn" data-a="csv">${t("csv_sheet")}</button><button class="btn" data-a="csvt">${t("csv_tpl")}</button></div></div>
-      <p class="muted" style="font-size:.85em">${S.lang === "ar" ? "المصنف الكامل هو نفسه قالب الاستيراد: نفس أسماء الأوراق والأعمدة، مع قوائم مالية تُحسب تلقائياً داخل Excel." : "The full workbook is also the import template: same sheet and column names, with statements that calculate inside Excel."}</p></div>
+      <p class="muted" style="font-size:.85em">${S.lang === "ar" ? "المصنف الكامل هو نفسه قالب الاستيراد: نفس أسماء الأوراق والأعمدة، مع قوائم مالية وتسعير سريع وحاسبة سقالات تُحسب تلقائياً داخل Excel." : "The full workbook is also the import template: same sheet and column names, with statements, a quick estimator and a scaffold calculator that calculate inside Excel."}</p></div>
     <div class="card"><h2>${t("imp_title")}</h2>${ed ? `<div class="grid">
       <label class="f">${t("file")}<input type="file" id="impf" accept=".xlsx,.json,.csv"></label>
       <label class="f">${t("format")}<select id="impfmt"><option value="xlsx">Excel (.xlsx)</option><option value="json">JSON</option><option value="csv">CSV</option></select></label>

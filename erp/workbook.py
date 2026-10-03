@@ -14,7 +14,7 @@ import io
 import re
 
 from . import accounting as acc
-from .db import SUBTYPES
+from .db import SUBTYPES, to_major
 from .interchange import FIRST_DATA_ROW, HEADER_ROW, POSTING_SHEETS, ROLE, SHEETS, export_data, input_cols
 
 # the original BEYOND workbook palette (V0.6.1): navy headers, light-blue bands, brown cover
@@ -804,6 +804,8 @@ def build_workbook(db, template=False, data=None):
     qe["H57"] = "=IFERROR(1-G57/F57,0)"
     qe["H57"].number_format = PCT
 
+    _scaffold_calculator(wb, db, colmap, F, fill, NAVY, BLUE, MONEY, L)
+
     # ----------------------------------------------------------------- audit
     au = wb.create_sheet("Model Audit")
     au.sheet_view.showGridLines = False
@@ -850,7 +852,9 @@ def build_workbook(db, template=False, data=None):
              "Stock Items", "Price List", "BOQ Lines", "Direct Costs", "Operating Expenses", "Payroll",
              "Receipt Vouchers", "Sales Invoices", "Invoice Lines", "Payment Vouchers", "Partner Transactions",
              "Stock Moves", "Journal Vouchers", "Trial Balance", "Income Statement", "Balance Sheet", "Cash Flow",
-             "Tax Summary", "BU Profitability", "Partner Equity", "Payables", "Quick Estimator", "Model Audit"]
+             "Tax Summary", "BU Profitability", "Partner Equity", "Payables", "Quick Estimator", "Scaffold Calculator",
+             "Model Audit"]
+    order[order.index("Trial Balance"):order.index("Trial Balance")] = [s["name"] for s in SHEETS if s["name"] not in order]
     descs = {s["name"]: s["title"] for s in SHEETS}
     descs.update({"Trial Balance": "ميزان المراجعة — opening, period movement, closing per account",
                   "Income Statement": "قائمة الدخل — Net sales → Gross profit → EBITDA → EBIT → EBT → Net profit",
@@ -861,6 +865,7 @@ def build_workbook(db, template=False, data=None):
                   "Partner Equity": "حقوق الشركاء — profit share, reserve, drawings, balance",
                   "Payables": "أرصدة الدائنين — what is owed to each supplier / worker",
                   "Quick Estimator": "التسعير السريع — price a scope from the price list",
+                  "Scaffold Calculator": "حاسبة السقالات — pieces, weight and monthly rent from a façade's length × height",
                   "Model Audit": "مراجعة النموذج — integrity checks (must all be OK)"})
     for name in order:
         c = cover.cell(r, 2, name)
@@ -879,12 +884,13 @@ def build_workbook(db, template=False, data=None):
         ws.sheet_properties.tabColor = (NAVY if ws.title in ("Trial Balance", "Income Statement", "Balance Sheet",
                                                               "Cash Flow", "Tax Summary", "BU Profitability", "Partner Equity",
                                                               "Payables", "Model Audit")
-                                        else ("C9A227" if ws.title in ("Cover", "Quick Estimator") else None))
+                                        else ("C9A227" if ws.title in ("Cover", "Quick Estimator", "Scaffold Calculator") else None))
     for name in ("Trial Balance", "Income Statement", "Balance Sheet", "Cash Flow", "Tax Summary", "BU Profitability",
                  "Partner Equity",
-                 "Payables", "Quick Estimator", "Model Audit", "Cover"):
+                 "Payables", "Quick Estimator", "Scaffold Calculator", "Model Audit", "Cover"):
         ws = wb[name]
-        ws.page_setup.orientation = "landscape" if name in ("Trial Balance", "BU Profitability", "Quick Estimator") \
+        ws.page_setup.orientation = "landscape" if name in ("Trial Balance", "BU Profitability", "Quick Estimator",
+                                                                "Scaffold Calculator") \
             else "portrait"
         ws.page_setup.paperSize = ws.PAPERSIZE_A4
         ws.sheet_properties.pageSetUpPr.fitToPage = True
@@ -998,3 +1004,129 @@ def classic_style(wb, company):
                                   color=f.color if f.color is not None and f.color.type == "rgb" else None)
         if ws.row_dimensions[4].height and ws.row_dimensions[4].height < 26.25:
             ws.row_dimensions[4].height = 26.25
+
+
+def _scaffold_calculator(wb, db, colmap, F, fill, NAVY, BLUE, MONEY, L):
+    """The rental scaffold calculator as live formulas: the company's first scaffolding model (or the standard
+    frame model), item rent / loss price / weight looked up on the Rental Equipment sheet."""
+    from . import rentals
+    spec, title = rentals.FRAME_MODEL, "Frame scaffolding (standard)"
+    try:
+        for m in rentals.list_models(db):
+            if m["category"] == "scaffolding" and (m["spec"] or {}).get("components"):
+                spec, title = rentals._spec(m["spec"]), m["name"]
+                break
+    except Exception:  # noqa: BLE001 — an older book without the rentals tables
+        pass
+    ws = wb.create_sheet("Scaffold Calculator")
+    ws.sheet_view.showGridLines = False
+    ws["A1"] = "Scaffold Calculator  |  حاسبة السقالات"
+    ws["A1"].font = F(bold=True, size=14, color=NAVY)
+    ws["A2"] = f"Model: {title}"
+    ws["A2"].font = F(bold=True, color=NAVY)
+    ws["A3"] = ("Type the blue cells. Quantities follow the same rules as the app's rental calculator; rent, loss price and "
+                "weight come from the Rental Equipment sheet by item code (or type your own rate in the last column).")
+    ws["A3"].font = F(size=8, color="555555")
+    for col, w in zip("ABCDEFGHIJ", (34, 13, 8, 30, 3, 26, 12, 24, 12, 13)):
+        ws.column_dimensions[col].width = w
+
+    def head(row, col, labels):
+        for i, h in enumerate(labels):
+            c = ws.cell(row, col + i, h)
+            c.font = F(bold=True, color="FFFFFF", size=9)
+            c.fill = fill(NAVY)
+
+    head(5, 1, ["Input / Setting", "Value", "Unit", "البيان"])
+    head(5, 6, ["Calculated", "Value", "البيان"])
+    refs, r = {}, 6
+    rows = spec["inputs"] + spec["params"] + [{"key": "months", "label": "Rental period", "label_ar": "مدة الإيجار",
+                                               "unit": "months", "value": 1}]
+    for p in rows:
+        ws.cell(r, 1, p.get("label") or p["key"]).font = F(bold=p in spec["inputs"])
+        c = ws.cell(r, 2, p.get("value", 0))
+        c.font = F(color=BLUE, bold=p in spec["inputs"])
+        ws.cell(r, 3, p.get("unit") or "")
+        ws.cell(r, 4, p.get("label_ar") or "")
+        refs[p["key"]] = f"$B${r}"
+        r += 1
+    last_input = r
+    d = 6
+    for p in spec["derived"]:
+        ws.cell(d, 6, p.get("label") or p["key"])
+        refs[p["key"]] = f"$G${d}"
+        ws.cell(d, 7, "=" + rentals.to_excel(p["expr"], refs)).number_format = "#,##0.##"
+        ws.cell(d, 8, p.get("label_ar") or "")
+        d += 1
+    if spec["area"].strip() in refs:
+        area = refs[spec["area"].strip()]
+    else:
+        ws.cell(d, 6, "Area (m²)").font = F(bold=True)
+        ws.cell(d, 7, "=" + rentals.to_excel(spec["area"], refs)).number_format = "#,##0.##"
+        ws.cell(d, 8, "المساحة (م²)")
+        area = f"$G${d}"
+        d += 1
+
+    top = max(last_input, d) + 1
+    head(top, 1, ["Item code", "Item", "Qty", "", "", "Rent / month", "Line rent / month", "Loss / damage price",
+                  "Loss value", "Your rate (optional)"])
+    ws.cell(top, 4, "Weight kg (line)").font = F(bold=True, color="FFFFFF", size=9)
+    rc = colmap["Rental Equipment"]
+    rng = lambda key: f"'Rental Equipment'!${rc[key]}${FIRST_DATA_ROW}:${rc[key]}$2000"  # noqa: E731
+
+    # when the Rental Equipment sheet has no row for a code, fall back to the company's own item (or the standard piece)
+    known = {c: {"name": n, "monthly_rate": 0, "loss_price": 0, "weight": 0} for c, n, *_ in rentals.STARTER_ITEMS}
+    try:
+        for it in db.q("SELECT code, name, monthly_rate, loss_price, weight FROM rent_items"):
+            known[it["code"]] = {"name": it["name"], "monthly_rate": to_major(it["monthly_rate"] or 0),
+                                 "loss_price": to_major(it["loss_price"] or 0), "weight": it["weight"] or 0}
+    except Exception:  # noqa: BLE001
+        pass
+
+    def look(row, key):
+        return f'INDEX({rng(key)},MATCH($A{row},{rng("code")},0))'
+
+    def fallback(code, key, row):
+        """A lookup that falls back to the known value of the default code (only while the code is unchanged)."""
+        v = (known.get(code) or {}).get(key)
+        if not code or v in (None, "", 0):
+            return f'IFERROR({"" if key == "name" else "N("}{look(row, key)}{"" if key == "name" else ")"},'
+        v = f'"{v}"' if key == "name" else repr(v)
+        return f'IFERROR({"" if key == "name" else "N("}{look(row, key)}{"" if key == "name" else ")"},IF($A{row}="{code}",{v},'
+    first = top + 1
+    lines = [(c["item"], "=" + rentals.to_excel(c["expr"], refs)) for c in spec["components"]] + [("", None)] * 4
+    for i, (code, qty) in enumerate(lines):
+        row = first + i
+        ws.cell(row, 1, code or None).font = F(color=BLUE)
+        close = lambda key: "))" if (known.get(code) or {}).get(key) not in (None, "", 0) else ")"  # noqa: E731
+        ws.cell(row, 2, f'=IF($A{row}="","",{fallback(code, "name", row)}"(not on Rental Equipment)"{close("name")})')
+        q = ws.cell(row, 3, f"=MAX(ROUNDUP({qty[1:]},0),0)" if qty else None)
+        if not qty:
+            q.font = F(color=BLUE)
+        ws.cell(row, 4, f'=IF($A{row}="",0,N(C{row})*{fallback(code, "weight", row)}0{close("weight")})').number_format = "#,##0.#"
+        ws.cell(row, 6, f'=IF(N(J{row})>0,J{row},IF($A{row}="",0,{fallback(code, "monthly_rate", row)}0{close("monthly_rate")}))').number_format = MONEY
+        ws.cell(row, 7, f"=N(C{row})*F{row}").number_format = MONEY
+        ws.cell(row, 8, f'=IF($A{row}="",0,{fallback(code, "loss_price", row)}0{close("loss_price")})').number_format = MONEY
+        ws.cell(row, 9, f"=N(C{row})*H{row}").number_format = MONEY
+        ws.cell(row, 10).font = F(color=BLUE)
+        ws.cell(row, 10).number_format = MONEY
+    end = first + len(lines) - 1
+    tot = end + 1
+    ws.cell(tot, 1, "TOTAL  |  الإجمالي").font = F(bold=True)
+    for col, fmt in ((3, "#,##0"), (4, "#,##0.#"), (7, MONEY), (9, MONEY)):
+        c = ws.cell(tot, col, f"=SUM({L(col)}{first}:{L(col)}{end})")
+        c.number_format, c.font = fmt, F(bold=True)
+    sm = tot + 2
+    summary = [("Rent per month", "الإيجار الشهري", f"=G{tot}", MONEY),
+               ("Rent for the period", "إيجار المدة", f"=G{tot}*N({refs['months']})", MONEY),
+               ("Rent per m² per month", "الإيجار لكل م² شهرياً", f"=IFERROR(G{tot}/{area},0)", MONEY),
+               ("Pieces", "عدد القطع", f"=C{tot}", "#,##0"),
+               ("Total weight (kg)", "الوزن الإجمالي (كجم)", f"=D{tot}", "#,##0"),
+               ("Loss value of all pieces", "قيمة فقد كل القطع", f"=I{tot}", MONEY)]
+    head(sm, 1, ["Summary", "Value", "", "الملخص"])
+    for i, (en, ar, f, fmt) in enumerate(summary, start=1):
+        ws.cell(sm + i, 1, en).font = F(bold=i == 1)
+        c = ws.cell(sm + i, 2, f)
+        c.number_format, c.font = fmt, F(bold=i == 1)
+        ws.cell(sm + i, 4, ar)
+    ws.freeze_panes = "A5"
+

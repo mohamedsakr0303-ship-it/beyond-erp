@@ -925,6 +925,32 @@ class DemoCompany(unittest.TestCase):
             self.assertEqual([c["check"] for c in a.audit(db2) if not c["ok"]], [])
             self.assertTrue(db2.one("SELECT 1 FROM bank_lines"))
 
+        self.assertTrue(db.one("SELECT 1 FROM rent_items WHERE code='SC-FRM2' AND monthly_rate>0"))  # calculator codes priced
+
+    def test_scaffold_calculator_formulas_match_the_app(self):
+        """The Excel calculator sheet uses the app's own model, translated formula by formula."""
+        import math
+        import re
+        from erp import rentals
+        spec = rentals.FRAME_MODEL
+        for vals in ({}, {"height": 24, "spare_pct": 10, "length": 41}, {"board_levels": 0, "tubes_per_tie": 2}):
+            names = {r["key"]: vals.get(r["key"], r["value"]) for r in spec["inputs"] + spec["params"]}
+            refs = {k: f"V_{k}" for k in names}
+            for r in spec["derived"]:
+                refs[r["key"]] = f"V_{r['key']}"
+                names[r["key"]] = rentals.safe_eval(r["expr"], names)
+            env = {f"V_{k}": v for k, v in names.items()}
+            env.update(ROUNDUP=lambda x, n: math.ceil(x), IF=lambda c, a, b: a if c else b)
+            for r in spec["derived"] + [{"expr": c["expr"]} for c in spec["components"]]:
+                xl = re.sub(r"(?<![<>!=])=(?!=)", "==", rentals.to_excel(r["expr"], refs)).replace("<>", "!=").replace("^", "**")
+                self.assertAlmostEqual(eval(xl, env), rentals.safe_eval(r["expr"], names), msg=r["expr"])  # noqa: S307
+        if HAVE_XL:
+            from erp import workbook
+            import io as _io2
+            import openpyxl as _ox
+            wb = _ox.load_workbook(_io2.BytesIO(workbook.build_workbook(Database(":memory:"), template=True)))
+            ws = wb["Scaffold Calculator"]
+            self.assertIn("SC-FRM2", [c.value for c in ws["A"]])
 
 class ImportKit(unittest.TestCase):
     """Per-screen templates, and importing a user's own layout with column matching."""

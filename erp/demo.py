@@ -280,32 +280,40 @@ def sheets():
         {"custody": "CU-D02", "report": "1", "date": d(3, 30), "description": "Office supplies", "amount": 1450, "account": "6080"},
         {"custody": "CU-D02", "report": "1", "date": d(3, 30), "description": "Coffee & hospitality", "amount": 900, "account": "6090"}]
     S["Rental Equipment"] = [
-        {"code": "SC-FRM", "name": "Frame 2 m", "name_ar": "شباك 2 م", "category": "scaffolding", "unit": "piece", "monthly_rate": 60,
+        {"code": "SC-FRM2", "name": "Frame 2 m", "name_ar": "شباك 2 م", "category": "scaffolding", "unit": "piece", "monthly_rate": 60,
          "loss_price": 1100, "std_cost": 900, "weight": 14, "life_months": 120, "residual_pct": 10, "opening_qty": 300,
          "opening_unit_cost": 900, "opening_date": d(0, 1)},
-        {"code": "SC-BRC", "name": "Cross brace", "name_ar": "مقص", "category": "scaffolding", "unit": "piece", "monthly_rate": 20,
+        {"code": "SC-BRC3", "name": "Cross brace 3 m", "name_ar": "مقص 3 متر", "category": "scaffolding", "unit": "piece", "monthly_rate": 20,
          "loss_price": 380, "std_cost": 320, "life_months": 120, "residual_pct": 10, "opening_qty": 500, "opening_unit_cost": 320, "opening_date": d(0, 1)},
-        {"code": "SC-PLK", "name": "Steel plank", "name_ar": "لوح مشي", "category": "scaffolding", "unit": "piece", "monthly_rate": 25,
+        {"code": "SC-BRD36", "name": "Walking board 3.6 m", "name_ar": "لوح بنط 3.6 متر", "category": "scaffolding", "unit": "piece", "monthly_rate": 25,
          "loss_price": 700, "std_cost": 600, "opening_qty": 150, "opening_unit_cost": 600, "opening_date": d(0, 1)},
-        {"code": "SC-JCK", "name": "Base jack", "name_ar": "جاك قاعدة", "category": "scaffolding", "unit": "piece", "monthly_rate": 10,
+        {"code": "SC-JACK", "name": "Screw jack", "name_ar": "فتيل", "category": "scaffolding", "unit": "piece", "monthly_rate": 10,
          "loss_price": 260, "std_cost": 220, "opening_qty": 200, "opening_unit_cost": 220, "opening_date": d(0, 1)},
-        {"code": "EL-01", "name": "Construction hoist 1.5 t", "name_ar": "مصعد إنشائي", "category": "elevator", "unit": "unit",
+        {"code": "SC-PLT60", "name": "Base plate 60 cm", "name_ar": "بليتة 60 سم", "category": "scaffolding", "unit": "piece", "monthly_rate": 8,
+         "loss_price": 180, "std_cost": 150, "opening_qty": 120, "opening_unit_cost": 150, "opening_date": d(0, 1)},
+        {"code": "SC-CLF", "name": "Fixed clamp", "name_ar": "كلبس ثابت", "category": "scaffolding", "unit": "piece", "monthly_rate": 5,
+         "loss_price": 130, "std_cost": 110, "opening_qty": 300, "opening_unit_cost": 110, "opening_date": d(0, 1)},
+        {"code": "SC-CLS", "name": "Swivel clamp", "name_ar": "كلبس متحرك", "category": "scaffolding", "unit": "piece", "monthly_rate": 5,
+         "loss_price": 130, "std_cost": 110, "opening_qty": 300, "opening_unit_cost": 110, "opening_date": d(0, 1)},
+        {"code": "SC-TUB6", "name": "Tube 2.8 mm × 6 m", "name_ar": "ماسورة 2.8 مم 6 متر", "category": "scaffolding", "unit": "piece",
+         "monthly_rate": 30, "loss_price": 850, "std_cost": 750, "weight": 24, "opening_qty": 120, "opening_unit_cost": 750, "opening_date": d(0, 1)},
+        {"code": "EL-HOIST", "name": "Construction hoist 1.5 t", "name_ar": "مصعد إنشائي", "category": "elevator", "unit": "unit",
          "monthly_rate": 28000, "loss_price": 0, "std_cost": 480000, "life_months": 120, "residual_pct": 15, "opening_qty": 1,
          "opening_unit_cost": 480000, "opening_date": d(0, 1)},
-        {"code": "CR-01", "name": "Motorized cradle 6 m", "name_ar": "سقالة معلقة كهربائية", "category": "cradle_motorized", "unit": "unit",
+        {"code": "CR-MOT", "name": "Motorized cradle 6 m", "name_ar": "سقالة معلقة كهربائية", "category": "cradle_motorized", "unit": "unit",
          "monthly_rate": 12000, "std_cost": 190000, "opening_qty": 2, "opening_unit_cost": 190000, "opening_date": d(0, 1)}]
-    S["Rental Stock Lots"] = [{"item": "SC-FRM", "date": d(2, 5), "qty": 100, "unit_cost": 980, "source": "purchase",
+    S["Rental Stock Lots"] = [{"item": "SC-FRM2", "date": d(2, 5), "qty": 100, "unit_cost": 980, "source": "purchase",
                                "supplier": "Steelform Scaffolding", "paid": 60000}]
     S["Rental Contracts"] = (
         [{"ref": "R1", "client": "Atlas Builders", "site": "Tower B", "site_location": "New Capital", "quote_date": d(2, 20),
           "start_date": d(3, 1), "duration_months": 6, "min_days": 30, "deposit": 20000, "line_kind": "item", "item": it, "qty": q, "rate": rt,
-          "po_number": "PO-ATL-77", "signed_client": "Eng. Hany (Atlas)", "signed_us": "Hossam Adel"} for it, q, rt in (("SC-FRM", 200, 60), ("SC-BRC", 300, 20),
-                                                                                          ("SC-PLK", 80, 25), ("SC-JCK", 100, 10))] +
+          "po_number": "PO-ATL-77", "signed_client": "Eng. Hany (Atlas)", "signed_us": "Hossam Adel"} for it, q, rt in (("SC-FRM2", 200, 60), ("SC-BRC3", 300, 20),
+                                                                                          ("SC-BRD36", 80, 25), ("SC-JACK", 100, 10))] +
         [{"ref": "R1", "client": "Atlas Builders", "line_kind": "charge", "charge_type": "install", "description": "Installation", "qty": 1, "rate": 15000},
          {"ref": "R1", "client": "Atlas Builders", "line_kind": "charge", "charge_type": "transport", "description": "Transport", "qty": 2, "rate": 3000},
          {"ref": "R2", "client": "Delta Tech Solutions", "site": "HQ façade", "quote_date": d(4, 20), "duration_months": 3, "line_kind": "item",
-          "item": "CR-01", "qty": 1, "rate": 12000},
-         {"ref": "R2", "client": "Delta Tech Solutions", "line_kind": "item", "item": "EL-01", "qty": 1, "rate": 28000}])
+          "item": "CR-MOT", "qty": 1, "rate": 12000},
+         {"ref": "R2", "client": "Delta Tech Solutions", "line_kind": "item", "item": "EL-HOIST", "qty": 1, "rate": 28000}])
     S["Sales Contracts"] = [
         {"code": "SO-D001", "date": d(1, 10), "customer": "Mona Adel", "bu_code": "SALES-01", "product": "U-A101", "plan": "installments",
          "down_pct": 10, "n": 24, "frequency": "monthly", "first_due": d(2, 10), "interest": 8, "revenue_on": "delivery", "confirm": "Yes",
@@ -384,6 +392,7 @@ def load(db, user="", replace=False):
             rentals.run_depreciation(db, last_month, user=user)
         except ValidationError:
             pass
+        rentals.starter(db)  # the remaining handover-form pieces, the frame set and the scaffold calculator
         # rental: deliver contract R1 on a signed handover, take the deposit, invoice the first month
         r1 = db.one("SELECT id FROM rentals WHERE client='Atlas Builders' ORDER BY id LIMIT 1")["id"]
         rr = rentals.get(db, r1)
