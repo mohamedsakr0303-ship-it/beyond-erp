@@ -293,6 +293,10 @@ def build_workbook(db, template=False, data=None, hide=None):
     # totals for revenue, cost of sales, expenses, shared operating overhead, payables, accruals and bad codes.
     # Statements then sum these with short SUMIFS — keeping every formula far below Excel's 8,192-char limit.
     coa_a = f"'Chart of Accounts'!$A${FIRST_DATA_ROW}:$A$3000"
+    # the unbilled-revenue (work in progress) and custody accounts, looked up once (Partner Pack)
+    lists["ZY1"] = f'=IFERROR({ROLE("unbilled_revenue")}&"","1180")'
+    lists["ZY2"] = f'=IFERROR({ROLE("custody")}&"","")'
+    WIPACCT, CUSTACCT = "Lists!$ZY$1", "Lists!$ZY$2"
     OPEX = '{"Expense|employee","Expense|general_admin","Expense|marketing","Expense|utilities","Expense|other_operating"}'
     for s in POSTING_SHEETS:
         ws = wb[s["name"]]
@@ -322,6 +326,40 @@ def build_workbook(db, template=False, data=None, hide=None):
             ("_accr", "accruals", lambda r: metric(r, lambda t: f'{t}="Liability|accrued"', False)),
             ("_ar", "receivables", lambda r: metric(r, lambda t: f'{t}="Asset|receivable"', True)),
             ("_adv", "client advances", lambda r: metric(r, lambda t: f'{t}="Liability|deferred_revenue"', False)),
+            # Partner Pack: work in progress, partner capital / drawings, and the cash basis
+            ("_wip", "work in progress", lambda r: "=" + "+".join(
+                f'IF({letters[acct]}{r}&""={WIPACCT},{"" if side == "D" else "-"}N({letters[amt]}{r}),0)'
+                for amt, acct, side in s["legs"])),
+            ("_cap", "partner capital", lambda r: metric(r, lambda t: f'OR({t}="Equity|capital",{t}="Equity|partner_current")', False)),
+            ("_drw", "partner drawings", lambda r: metric(r, lambda t: f'{t}="Equity|drawings"', True)),
+            ("_pty", "partner of the line", lambda r: (f'=IF({letters["line_party"]}{r}<>"",{letters["line_party"]}{r}&"",{letters["party"]}{r}&"")'
+                                         if "line_party" in letters else
+                                         (f'={letters[PARTY_COL[s["name"]]]}{r}&""' if PARTY_COL.get(s["name"]) in letters else '=""'))),
+            ("_cash", "cash moved", lambda r: metric(r, lambda t: f'{t}="Asset|cash"', True)),
+            ("_emp", "staff costs", lambda r: metric(r, lambda t: f'{t}="Expense|employee"', True)),
+            ("_ga", "G&A costs", lambda r: metric(r, lambda t: f'OR({t}="Expense|general_admin",{t}="Expense|marketing",{t}="Expense|utilities")', True)),
+            ("_arcr", "invoice collected", lambda r: "=" + ("+".join(
+                f'IF({letters["_t" + str(li)]}{r}="Asset|receivable",N({letters[amt]}{r}),0)'
+                for li, (amt, acct, side) in enumerate(s["legs"]) if side == "C") or "0")),
+            ("_gcash", "cash in the voucher", lambda r: (f'=SUMIFS({letters["_cash"]}:{letters["_cash"]},{letters["voucher"]}:{letters["voucher"]},{letters["voucher"]}{r})'
+                                                         if "voucher" in letters else f'={letters["_cash"]}{r}')),
+            ("_grev", "revenue in the voucher", lambda r: (f'=SUMIFS({letters["_rev"]}:{letters["_rev"]},{letters["voucher"]}:{letters["voucher"]},{letters["voucher"]}{r})'
+                                                           f'+SUMIFS({letters["_arcr"]}:{letters["_arcr"]},{letters["voucher"]}:{letters["voucher"]},{letters["voucher"]}{r})'
+                                                           if "voucher" in letters else f'={letters["_rev"]}{r}+{letters["_arcr"]}{r}')),
+            ("_gcost", "costs in the voucher", lambda r: (f'=SUMIFS({letters["_cogs"]}:{letters["_cogs"]},{letters["voucher"]}:{letters["voucher"]},{letters["voucher"]}{r})'
+                                                          f'+SUMIFS({letters["_exp"]}:{letters["_exp"]},{letters["voucher"]}:{letters["voucher"]},{letters["voucher"]}{r})'
+                                                          if "voucher" in letters else f'={letters["_cogs"]}{r}+{letters["_exp"]}{r}')),
+            ("_cr", "revenue received in cash", lambda r: (f'=IF(AND({letters["_gcash"]}{r}>0,{letters["_grev"]}{r}>0),'
+                                                           f'({letters["_rev"]}{r}+{letters["_arcr"]}{r})*MIN(1,{letters["_gcash"]}{r}/{letters["_grev"]}{r}),0)')),
+            ("_cf", "share of costs paid in cash", lambda r: (f'=IF(AND({letters["_gcash"]}{r}<0,{letters["_gcost"]}{r}>0),'
+                                                              f'MIN(1,-{letters["_gcash"]}{r}/{letters["_gcost"]}{r}),0)')),
+            ("_ccogs", "cost of sales paid", lambda r: f'={letters["_cogs"]}{r}*{letters["_cf"]}{r}'),
+            ("_cemp", "staff costs paid", lambda r: f'={letters["_emp"]}{r}*{letters["_cf"]}{r}'),
+            ("_cga", "G&A paid", lambda r: f'={letters["_ga"]}{r}*{letters["_cf"]}{r}'),
+            ("_coth", "other costs paid", lambda r: f'=({letters["_exp"]}{r}-{letters["_emp"]}{r}-{letters["_ga"]}{r})*{letters["_cf"]}{r}'),
+            ("_cin", "collected from clients", lambda r: (f'=MAX(0,{letters["_cash"]}{r})' if s["name"] == "Receipt Vouchers" else
+                                                         (f'=IF({letters["kind"]}{r}="Receipt Voucher",MAX(0,{letters["_cash"]}{r}),0)'
+                                                          if s["name"] == "Journal Vouchers" else "=0"))),
             ("_bad", "unknown account", lambda r: "=" + "+".join(
                 f'IF(AND(N({letters[amt]}{r})<>0,{letters["_t" + str(li)]}{r}=""),1,0)'
                 for li, (amt, acct, side) in enumerate(s["legs"]))),
@@ -869,10 +907,15 @@ def build_workbook(db, template=False, data=None, hide=None):
     hidden = _hidden_sheets(db, wb, data, hide)
     _dashboard(wb, data, colmap, POSTING_SHEETS, rng, pl_refs, bs_refs, n_bu, audit_ref, currency, F, fill, L, hide)
     wb.move_sheet("Dashboard", offset=-(len(wb.sheetnames) - 2))
+    _partner_pack(wb, data, colmap, POSTING_SHEETS, rng, within, upto, pl_refs, n_bu, audit_ref, currency, F, fill, L, WIPACCT, CUSTACCT)
     for name in hidden:
         wb[name].sheet_state = "hidden"
-    # sheet order: put statements after data
-    wb.move_sheet("Lists", offset=len(wb.sheetnames))
+    # sheet order: as in the BEYOND V1.4 workbook — what partners and managers read first, then the books, then the
+    # registers and tools, then data entry and setup. The importer finds sheets by name, so the order never matters to it.
+    front = [n for n in SHEET_ORDER if n in wb.sheetnames]
+    rest = [n for n in wb.sheetnames if n not in front and n != "Lists"]
+    wb._sheets = [wb[n] for n in front + rest + ["Lists"]]
+    wb.active = 0
     for ws in wb.worksheets:
         ws.sheet_properties.tabColor = (NAVY if ws.title in ("Trial Balance", "Income Statement", "Balance Sheet",
                                                               "Cash Flow", "Tax Summary", "BU Profitability", "Partner Equity",
@@ -1251,12 +1294,21 @@ def _budget_sheet(wb, colmap, F, fill, NAVY, BLUE, MONEY, PCT, L):
 
 
 
+SHEET_ORDER = ["Cover", "Partner Pack", "Dashboard", "Journal Vouchers", "Chart of Accounts", "Trial Balance", "Income Statement",
+               "Balance Sheet", "Cash Flow", "BU Profitability", "Payables", "Receivables", "Partner Equity", "Business Units",
+               "Sales Invoices", "Invoice Lines", "Rental Contracts", "Rental Equipment", "Rental Stock Lots", "Loans",
+               "Loan Transactions", "Price List", "BOQ Lines", "Quick Estimator", "Scaffold Calculator", "Budget vs Actual",
+               "Tax Summary", "Model Audit", "Receipt Vouchers", "Payment Vouchers", "Direct Costs", "Operating Expenses", "Payroll",
+               "Partner Transactions", "Cash Custody", "Custody Expenses", "Settings", "Parties", "Partners", "Partner Shares",
+               "Tax Codes"]
+
+
 # ------------------------------------------------------------------ sections a company does not use
 # report / tool sheets that belong to one section of the app (data sheets carry their own "module")
 EXTRA_SHEET_MODULE = {"Scaffold Calculator": "rentals.calculator", "Quick Estimator": "estimating", "Budget vs Actual": "accounting.budgets",
                       "Receivables": "sales.receivables", "Payables": "purchasing.payables", "Partner Equity": "partners",
                       "Tax Summary": "tax", "BU Profitability": "business_units.profitability"}
-NEVER_HIDDEN = {"Cover", "Dashboard", "Settings", "Chart of Accounts", "Journal Vouchers", "Trial Balance", "Income Statement",
+NEVER_HIDDEN = {"Cover", "Partner Pack", "Dashboard", "Settings", "Chart of Accounts", "Journal Vouchers", "Trial Balance", "Income Statement",
                 "Balance Sheet", "Cash Flow", "Model Audit"}
 
 
@@ -1473,7 +1525,8 @@ def _dashboard(wb, data, colmap, posting, rng, pl_refs, bs_refs, n_bu, audit_ref
 
 # ------------------------------------------------------------------ cover
 COVER_SECTIONS = [
-    ("START HERE", [("Dashboard", "Live position: cash, receivables, payables, profit, margins, projects, months"),
+    ("START HERE", [("Partner Pack", "The partners' management accounts: billed profit, work in progress, statements, each partner's equity"),
+                    ("Dashboard", "Live position: cash, receivables, payables, profit, margins, projects, months"),
                     ("Settings", "Company details and the report period (report_from / report_to)")]),
     ("EVERY DAY", [("Journal Vouchers", "Any entry as balanced debit and credit lines"),
                    ("Direct Costs", "Project costs: materials, subcontractors, site labour"),
@@ -1597,3 +1650,313 @@ def _polish(wb, data, fill):
         ws.sheet_view.zoomScale = 90
         rows = len(data.get(ws.title) or [])
         ws.print_area = f"A1:{L(last_col)}{FIRST_DATA_ROW + max(rows, 15) - 1}"
+
+
+# ------------------------------------------------------------------ partner pack
+def _partner_pack(wb, data, colmap, posting, rng, within, upto, pl_refs, n_bu, audit_ref, currency, F, fill, L, wipacct, custacct):
+    """The partners' management accounts (BEYOND V1.4 'Partner Pack'), live formulas over this workbook:
+    at a glance & project results, income statement earned vs cash, balance sheet, cash flow, partners' equity.
+    Profit is distributable once BILLED: a project's billed profit = its net result when it has no revenue or makes a
+    loss, else net x (revenue - work in progress) / revenue; the rest waits in work in progress."""
+    from openpyxl.styles import Alignment, Border, Side
+    ws = wb.create_sheet("Partner Pack")
+    ws.sheet_view.showGridLines = False
+    ws.sheet_properties.tabColor = "C9A227"
+    for col, w in zip("ABCDEFGH", (58, 18, 18, 18, 18, 18, 18, 18)):
+        ws.column_dimensions[col].width = w
+    tb = "'Trial Balance'"
+    IS = lambda k: f"'Income Statement'!$B${pl_refs[k]}"  # noqa: E731
+    H = lambda subs: "+".join(f'SUMIFS({tb}!$H:$H,{tb}!$D:$D,"{x}")' for x in subs)  # closing, Dr-Cr  # noqa: E731
+    MV = lambda subs: "+".join(f'(SUMIFS({tb}!$F:$F,{tb}!$D:$D,"{x}")-SUMIFS({tb}!$G:$G,{tb}!$D:$D,"{x}"))' for x in subs)  # noqa: E731
+    OPN = lambda subs: "+".join(f'SUMIFS({tb}!$E:$E,{tb}!$D:$D,"{x}")' for x in subs)  # noqa: E731
+    CODE = lambda cell: f'SUMIFS({tb}!$H:$H,{tb}!$A:$A,{cell})'  # noqa: E731
+
+    def tot(key, extra=""):
+        parts = [f"SUMIFS({rng(sh['name'], key)}{within(sh['name'])}{extra})" for sh in posting if key in colmap[sh["name"]]]
+        return "+".join(parts) or "0"
+
+    def tot_by(key, col_key, cell):
+        parts = [f"SUMIFS({rng(sh['name'], key)},{rng(sh['name'], col_key)},{cell}{within(sh['name'])})"
+                 for sh in posting if key in colmap[sh["name"]] and col_key in colmap[sh["name"]]]
+        return "+".join(parts) or "0"
+
+    def tot_upto_by(key, col_key, cell):
+        parts = [f"SUMIFS({rng(sh['name'], key)},{rng(sh['name'], col_key)},{cell}{upto(sh['name'])})"
+                 for sh in posting if key in colmap[sh["name"]] and col_key in colmap[sh["name"]]]
+        return "+".join(parts) or "0"
+
+    line = Side(style="thin", color="D5DDE8")
+    r = [1]
+
+    def put(label, f=None, fmt=MONEY, style="item", indent=0, cols=None):
+        row = r[0]
+        c = ws.cell(row, 1, label)
+        c.font = F(bold=style in ("total", "grand", "section", "head"), size=10 if style != "section" else 11,
+                   color="FFFFFF" if style == "section" else ("555555" if style == "note" else "111111"), italic=style == "note")
+        c.alignment = Alignment(indent=indent, wrap_text=style == "note", vertical="top")
+        vals = cols if cols is not None else ([f] if f is not None else [])
+        for i, v in enumerate(vals):
+            cell = ws.cell(row, 2 + i, v)
+            cell.number_format = fmt if not isinstance(fmt, (list, tuple)) else fmt[i]
+            cell.font = F(bold=style in ("total", "grand", "head"), size=10, color="1F2A44" if style == "head" else "111111")
+            if style == "head":
+                cell.alignment = Alignment(horizontal="center", wrap_text=True)
+        span = max(len(vals), 1) + 1
+        for ci in range(1, max(span, 8) + 1 if style in ("section", "grand", "total") else span + 1):
+            if style == "section":
+                ws.cell(row, ci).fill = fill("2E4A6B")
+            elif style == "grand":
+                ws.cell(row, ci).fill = fill("E6ECF4")
+                ws.cell(row, ci).border = Border(top=Side(style="thin", color="111111"), bottom=Side(style="double", color="111111"))
+            elif style == "total":
+                ws.cell(row, ci).fill = fill("F3F6FA")
+                ws.cell(row, ci).border = Border(top=Side(style="thin", color="9CA3AF"))
+            elif style in ("item", "head"):
+                ws.cell(row, ci).border = Border(bottom=line)
+        if style == "note":
+            ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=8)
+            ws.row_dimensions[row].height = 30
+        r[0] += 1
+        return row
+
+    ws["A1"] = "Partner Pack"
+    ws["A1"].font = F(bold=True, size=16, color=NAVY)
+    ws["A2"] = f'="Management accounts as at "&TEXT(ReportTo,"dd mmmm yyyy")&"   ·   {currency}   ·   period from "&TEXT(ReportFrom,"dd mmm yyyy")'
+    ws["A2"].font = F(size=9, italic=True, color="666666")
+    r[0] = 4
+
+    # ---- hidden helper block (columns K:Z): per project and per partner
+    bu = "'BU Profitability'"
+    bus = "'Business Units'"
+    bl = colmap["Business Units"]
+    n_rows = max(len(data.get("Business Units") or []) + 3, 6)
+    H0 = 300                              # helper rows start here, out of the printed area
+    ws.cell(H0 - 1, 11, "Helpers (project & partner workings for the Partner Pack)").font = F(bold=True, size=8, color="777777")
+    heads = ["Code", "Name", "Basis", "Revenue", "Total cost", "Net profit", "Work in progress", "Billed profit", "Collected"]
+    for i, h in enumerate(heads):
+        ws.cell(H0, 11 + i, h).font = F(bold=True, size=8)
+    for k in range(n_rows):
+        rr, src = H0 + 1 + k, 5 + k
+        ws.cell(rr, 11, f'={bu}!A{src}&""')
+        ws.cell(rr, 12, f'={bu}!B{src}')
+        ws.cell(rr, 13, f'=IF(K{rr}="","",IFERROR(INDEX({bus}!${bl["basis"]}$5:${bl["basis"]}$3000,MATCH(K{rr},{bus}!$A$5:$A$3000,0)),""))')
+        ws.cell(rr, 14, f'=IF(K{rr}="",0,N({bu}!C{src}))')
+        ws.cell(rr, 15, f'=IF(K{rr}="",0,N({bu}!D{src})+N({bu}!E{src})+N({bu}!G{src}))')
+        ws.cell(rr, 16, f'=IF(K{rr}="",0,N({bu}!H{src}))')
+        ws.cell(rr, 17, f'=IF(K{rr}="",0,{tot_by("_wip", "bu_code", f"$K{rr}")})')
+        ws.cell(rr, 18, f'=IF(K{rr}="",0,IF(N{rr}=0,P{rr},IF(P{rr}<0,P{rr},P{rr}*(N{rr}-Q{rr})/N{rr})))')
+        ws.cell(rr, 19, f'=IF(K{rr}="",0,{tot_by("_cin", "bu_code", f"$K{rr}")})')
+    he = H0 + n_rows
+    hr = f"${H0 + 1}:$"
+    rngh = lambda col: f"${col}${H0 + 1}:${col}${he}"  # noqa: E731
+    # company-level
+    ws.cell(he + 2, 11, "Company overhead not charged to a project")
+    ws.cell(he + 2, 12, f"={IS('net')}-SUM({rngh('P')})")
+    LEFT = f"$L${he + 2}"
+    ws.cell(he + 3, 11, "Billed profit — company")
+    ws.cell(he + 3, 12, f"=SUM({rngh('R')})+{LEFT}")
+    BILLED = f"$L${he + 3}"
+    ws.cell(he + 4, 11, "Profit held in work in progress")
+    ws.cell(he + 4, 12, f"={IS('net')}-{BILLED}")
+    WIPP = f"$L${he + 4}"
+    ws.cell(he + 5, 11, "Reserve %")
+    st = colmap["Settings"]
+    ws.cell(he + 5, 12, f'=IFERROR(VALUE(INDEX(Settings!${st["value"]}$5:${st["value"]}$500,MATCH("reserve_pct",Settings!$A$5:$A$500,0))&""),0.4)')
+    RES = f"$L${he + 5}"
+    ws.cell(he + 6, 11, "Months of activity")
+    ws.cell(he + 6, 11, "Months of activity (first entry to today / report end)")
+    firsts = ",".join(f'IF(COUNT({rng(sh["name"], "date")})=0,99999,MIN({rng(sh["name"], "date")}))' for sh in posting if "date" in colmap[sh["name"]])
+    ws.cell(he + 5, 14, f"=MIN({firsts})")
+    ws.cell(he + 5, 14).number_format = DATE
+    ws.cell(he + 6, 12, f'=MAX(1,(YEAR(MIN(ReportTo,TODAY()))-YEAR($N${he + 5}))*12+MONTH(MIN(ReportTo,TODAY()))-MONTH($N${he + 5})+1)')
+    ws.cell(he + 7, 11, "Cash safety floor (3 months of overhead + owed)")
+    ws.cell(he + 7, 12, f'=({H(("employee", "general_admin", "marketing", "utilities", "other_operating"))})/L{he + 6}*3-({H(("payable", "accrued"))})')
+    FLOOR = f"$L${he + 7}"
+    for i, (key, lab) in enumerate((("_cr", "Revenue received in cash"), ("_ccogs", "Direct costs paid in cash"),
+                                    ("_cemp", "Staff costs paid in cash"), ("_cga", "G&A paid in cash"), ("_coth", "Other costs paid in cash"))):
+        ws.cell(he + 8 + i, 11, lab)
+        ws.cell(he + 8 + i, 12, "=" + tot(key))
+    CASH = {"_cr": f"$L${he + 8}", "_ccogs": f"$L${he + 9}", "_cemp": f"$L${he + 10}", "_cga": f"$L${he + 11}", "_coth": f"$L${he + 12}"}
+    # partners (up to 6, from the Partners sheet) and their share of each project
+    pl = colmap["Partners"]
+    psh = colmap["Partner Shares"]
+    P0 = he + 15
+    ws.cell(P0, 11, "Partner").font = F(bold=True, size=8)
+    for j in range(6):
+        c = 12 + j
+        ws.cell(P0, c, f'=IF(Partners!$A${5 + j}="","",Partners!$A${5 + j}&"")')
+        ws.cell(P0 + 1, c, f'=N(Partners!${pl["default_share"]}${5 + j})')
+        PN, PD = f"{L(c)}${P0}", f"{L(c)}${P0 + 1}"
+        for k in range(n_rows):
+            rr = H0 + 1 + k
+            cnt = f"COUNTIFS('Partner Shares'!$A$5:$A$3000,{PN},'Partner Shares'!${psh['bu_code']}$5:${psh['bu_code']}$3000,$K{rr})"
+            sm = f"SUMIFS('Partner Shares'!${psh['share']}$5:${psh['share']}$3000,'Partner Shares'!$A$5:$A$3000,{PN},'Partner Shares'!${psh['bu_code']}$5:${psh['bu_code']}$3000,$K{rr})"
+            ws.cell(P0 + 2 + k, c, f'=IF(OR({PN}="",$K{rr}=""),0,IF({cnt}>0,{sm},{PD}))')
+        ws.cell(P0 + 2 + n_rows, c, f'=IF({PN}="",0,SUMPRODUCT({rngh("R")},{L(c)}{P0 + 2}:{L(c)}{P0 + 1 + n_rows})+{LEFT}*{PD})')
+        ws.cell(P0 + 3 + n_rows, c, f'=IF({L(c)}{P0 + 2 + n_rows}>0,{L(c)}{P0 + 2 + n_rows}*(1-{RES}),{L(c)}{P0 + 2 + n_rows})')
+        ws.cell(P0 + 4 + n_rows, c, f'=IF({PN}="",0,{tot_upto_by("_cap", "_pty", PN)})')
+        ws.cell(P0 + 5 + n_rows, c, f'=IF({PN}="",0,{tot_upto_by("_drw", "_pty", PN)})')
+    for i, lab in enumerate(("Profit share before reserve", "Share of billed profit", "Capital put in", "Distributions")):
+        ws.cell(P0 + 2 + n_rows + i, 11, lab)
+    SHARE, CAP, DRW = P0 + 3 + n_rows, P0 + 4 + n_rows, P0 + 5 + n_rows
+    for row in ws.iter_rows(min_row=H0 - 1, max_row=DRW, min_col=11, max_col=19):
+        for c in row:
+            c.font = F(size=8, color="777777")
+
+    # ---- 1. at a glance
+    put("1.  AT A GLANCE", style="section")
+    put("Net profit — billed (what partners can distribute from)", f"={BILLED}", style="total")
+    put("Work in progress — value of work done, not yet invoiced", f"={CODE(wipacct)}")
+    put("Expected profit on that work (NOT distributable until invoiced)", f"={WIPP}")
+    cash_rev = f"$L${he + 8}"
+    cash_cost = f"$L${he + 9}+$L${he + 10}+$L${he + 11}+$L${he + 12}"
+    cn = put("Net profit — cash actually received", f"={cash_rev}-({cash_cost})")
+    put("Cash & bank", f"={H(('cash',))}")
+    put("Clients — invoiced, not yet collected", f"={H(('receivable', 'allowance_doubtful'))}")
+    put("Owed by the company (suppliers & staff)", f"=-({H(('payable', 'accrued'))})")
+    put("Client advances held (work not yet done)", f"=-({H(('deferred_revenue',))})")
+    put("Loans owed", f"=-({H(('short_term_debt', 'long_term_debt'))})")
+    put("Partner capital — funding", f"=-({H(('capital', 'partner_current'))})")
+    cash_now = H(("cash",))
+    put("Distribution recommendation", f'=IF(({cash_now})<{FLOOR},"DO NOT DISTRIBUTE — below the cash floor ("&TEXT({FLOOR},"#,##0.00")&")",'
+                                         f'"Distribution possible up to "&TEXT(({cash_now})-{FLOOR},"#,##0.00")&" above the cash floor")', fmt="General")
+    put("Books integrity (Model Audit)", f'=IF({audit_ref}="ALL OK","ALL INTEGRITY CHECKS PASS","REVIEW THE MODEL AUDIT")', fmt="General")
+    r[0] += 1
+    put("PROJECT RESULTS", style="section")
+    put("Project", cols=["Billing basis", "Revenue billed", "Work in progress", "Total cost", "Net profit — billed", "Collected (cash)"],
+        style="head", fmt="General")
+    p_first = r[0]
+    for k in range(n_rows):
+        hrw = H0 + 1 + k
+        put(f'=IF(K{hrw}="","",K{hrw}&"  ·  "&L{hrw})', cols=[f'=IF(K{hrw}="","",M{hrw})', f'=IF(K{hrw}="","",N{hrw}-Q{hrw})',
+                                                                f'=IF(K{hrw}="","",Q{hrw})', f'=IF(K{hrw}="","",O{hrw})',
+                                                                f'=IF(K{hrw}="","",R{hrw})', f'=IF(K{hrw}="","",S{hrw})'],
+            fmt=["General", MONEY, MONEY, MONEY, MONEY, MONEY])
+    p_last = r[0] - 1
+    put("Company overhead not charged to any project", cols=["", "", "", f"=-{LEFT}", f"={LEFT}", ""], fmt=MONEY)
+    put("TOTAL", cols=["", f"=SUM(C{p_first}:C{p_last})", f"=SUM(D{p_first}:D{p_last})", f"=SUM(E{p_first}:E{p_last})-{LEFT}",
+                       f"={BILLED}", f"=SUM(G{p_first}:G{p_last})"], style="total")
+    put("Billed = invoiced to the client (or settled). Work in progress = work done but not invoiced yet: its revenue and profit are held back "
+        "until the invoice is issued, so a project in progress shows no billed profit. A project heading for a loss shows that loss at once. "
+        "Collected = cash actually received.", style="note")
+    r[0] += 1
+
+    # ---- 2. income statement, earned vs cash
+    put("2.  INCOME STATEMENT — earned and cash side by side", style="section")
+    put("", cols=["Earned (accrual)", "Cash basis"], style="head", fmt="General")
+    rv = put("Revenue earned from projects", cols=[f"={IS('net_sales')}", f"={cash_rev}"])
+    cg = put("Direct project costs (materials, subcontractors, site labour)", cols=[f"=-{IS('cogs')}", f"=-{CASH['_ccogs']}"])
+    gp = put("GROSS PROFIT", cols=[f"=B{rv}+B{cg}", f"=C{rv}+C{cg}"], style="total")
+    put("Gross margin", cols=[f"=IFERROR(B{gp}/B{rv},0)", f"=IFERROR(C{gp}/C{rv},0)"], fmt=PCT, indent=1)
+    e1 = put("Staff salaries (office)", cols=[f"=-{IS('emp')}", f"=-{CASH['_cemp']}"], indent=1)
+    e2 = put("General & administrative", cols=[f"=-({IS('ga')}+{IS('mkt')}+{IS('util')})", f"=-{CASH['_cga']}"], indent=1)
+    e3 = put("Other operating expenses", cols=[f"=-{IS('oth')}", f"=-{CASH['_coth']}"], indent=1)
+    ox = put("Total operating expenses", cols=[f"=-(B{e1}+B{e2}+B{e3})", f"=-(C{e1}+C{e2}+C{e3})"], style="total")
+    eb = put("EBITDA", cols=[f"=B{gp}-B{ox}", f"=C{gp}-C{ox}"], style="total")
+    dp = put("Depreciation & amortisation", cols=[f"=-({IS('dep')}+{IS('amort')})", 0])
+    it = put("Interest & non-operating (net of other income)", cols=[f"=-({IS('int')}+{IS('nonop')}-{IS('oi')})", 0])
+    pb = put("PROFIT BEFORE TAX", cols=[f"=B{eb}+B{dp}+B{it}", f"=C{eb}+C{dp}+C{it}"], style="total")
+    tx = put("Income tax", cols=[f"=-{IS('tax')}", 0])
+    npr = put("NET PROFIT", cols=[f"=B{pb}+B{tx}", f"=C{pb}+C{tx}"], style="grand")
+    put("Net margin", cols=[f"=IFERROR(B{npr}/B{rv},0)", f"=IFERROR(C{npr}/C{rv},0)"], fmt=PCT, indent=1)
+    put("Of which: profit on work in progress, not yet billed (not distributable)", f"={WIPP}")
+    put("NET PROFIT — BILLED (distributable base)", f"={BILLED}", style="total")
+    put("Earned basis counts revenue when the work is done and costs when incurred. Cash basis counts only money that moved in the same entry "
+        "(collections and payments).", style="note")
+    r[0] += 1
+
+    # ---- 3. balance sheet
+    put("3.  BALANCE SHEET — what the company owns and owes", style="section")
+    put("", cols=['="As at "&TEXT(ReportTo,"dd mmm yyyy")'], style="head", fmt="General")
+    a = [put("Cash & bank", f"={H(('cash',))}", indent=1),
+         put("Clients — invoiced, not yet collected", f"={H(('receivable', 'allowance_doubtful'))}", indent=1),
+         put("Work executed, not yet invoiced (work in progress)", f"={CODE(wipacct)}", indent=1),
+         put("Materials inventory", f"={H(('inventory',))}", indent=1),
+         put("Advances paid to suppliers", f"={H(('prepaid',))}", indent=1),
+         put("Cash held by staff (custody / عهدة)", f'=IF({custacct}="",0,{CODE(custacct)})', indent=1),
+         put("Other current assets", f"={H(('other_current_asset',))}-{CODE(wipacct)}-IF({custacct}=\"\",0,{CODE(custacct)})", indent=1)]
+    tca = put("Total current assets", f"=SUM(B{a[0]}:B{a[-1]})", style="total")
+    n = [put("Equipment at cost", f"={H(('fixed_asset',))}", indent=1),
+         put("Less: accumulated depreciation", f"={H(('accumulated_depreciation',))}", indent=1),
+         put("Other non-current assets", f"={H(('intangible', 'accumulated_amortization', 'investment', 'other_noncurrent_asset'))}", indent=1)]
+    tnca = put("Total non-current assets", f"=SUM(B{n[0]}:B{n[-1]})", style="total")
+    ta = put("TOTAL ASSETS", f"=B{tca}+B{tnca}", style="grand")
+    li = [put("Owed to suppliers & subcontractors", f"=-({H(('payable',))})", indent=1),
+          put("Salaries owed", f"=-({H(('accrued',))})", indent=1),
+          put("Client advances — paid before work is done", f"=-({H(('deferred_revenue',))})", indent=1),
+          put("Taxes payable", f"=-({H(('tax_payable',))})", indent=1),
+          put("Loans", f"=-({H(('short_term_debt',))})", indent=1),
+          put("Other current liabilities", f"=-({H(('other_current_liability', 'dividends_payable'))})", indent=1)]
+    tcl = put("Total current liabilities", f"=SUM(B{li[0]}:B{li[-1]})", style="total")
+    ncl = put("Non-current liabilities", f"=-({H(('long_term_debt', 'other_noncurrent_liability'))})", indent=1)
+    tl = put("TOTAL LIABILITIES", f"=B{tcl}+B{ncl}", style="total")
+    eq = [put("Partner capital — funding", f"=-({H(('capital', 'partner_current'))})", indent=1),
+          put("Reserves & retained earnings", f"=-({H(('reserves', 'retained_earnings', 'other_equity'))})", indent=1),
+          put("Profit to date (incl. work in progress)", f"=-({H(('operating_revenue', 'sales_discount', 'other_income', 'cogs', 'employee', 'general_admin', 'marketing', 'utilities', 'other_operating', 'depreciation', 'amortization', 'interest', 'other_nonoperating', 'income_tax'))})", indent=1),
+          put("Less: distributions paid to partners", f"=-({H(('drawings',))})", indent=1)]
+    te = put("TOTAL PARTNERS' EQUITY", f"=SUM(B{eq[0]}:B{eq[-1]})", style="total")
+    tle = put("TOTAL LIABILITIES + PARTNERS' EQUITY", f"=B{tl}+B{te}", style="grand")
+    put(f'=IF(ABS(B{ta}-B{tle})<0.01,"✓  Balanced — total assets equal total liabilities plus equity","✗  NOT balanced — open the Model Audit")',
+        style="note")
+    put("Working capital (current assets − current liabilities)", f"=B{tca}-B{tcl}")
+    put("Current ratio (current assets ÷ current liabilities)", f'=IFERROR(B{tca}/B{tcl},"")', fmt="0.00")
+    put("Cash after paying what is owed to suppliers & staff", f"=B{a[0]}-B{li[0]}-B{li[1]}")
+    r[0] += 1
+
+    # ---- 4. cash flow (period movements)
+    put("4.  CASH FLOW — where the cash actually went", style="section")
+    c0 = put("Net profit (earned basis)", f"=B{npr}")
+    cs = [put("Add back: depreciation", f"=-({MV(('accumulated_depreciation', 'accumulated_amortization'))})", indent=1),
+          put("Less: work done not yet collected (receivables & WIP)", f"=-({MV(('receivable', 'allowance_doubtful'))})-(SUMIFS({tb}!$F:$F,{tb}!$A:$A,{wipacct})-SUMIFS({tb}!$G:$G,{tb}!$A:$A,{wipacct}))", indent=1),
+          put("Less: materials bought for stock", f"=-({MV(('inventory',))})", indent=1),
+          put("Less: advances, custody & other current assets", f"=-({MV(('prepaid', 'other_current_asset'))})+(SUMIFS({tb}!$F:$F,{tb}!$A:$A,{wipacct})-SUMIFS({tb}!$G:$G,{tb}!$A:$A,{wipacct}))", indent=1),
+          put("Add: owed to suppliers, not yet paid", f"=-({MV(('payable',))})", indent=1),
+          put("Add: salaries owed, not yet paid", f"=-({MV(('accrued',))})", indent=1),
+          put("Add: client advances received", f"=-({MV(('deferred_revenue',))})", indent=1),
+          put("Add: taxes & other liabilities owed", f"=-({MV(('tax_payable', 'other_current_liability', 'dividends_payable'))})", indent=1)]
+    ops = put("Net cash from operations", f"=B{c0}+SUM(B{cs[0]}:B{cs[-1]})", style="total")
+    eqp = put("Equipment & other long-term assets bought", f"=-({MV(('fixed_asset', 'intangible', 'investment', 'other_noncurrent_asset'))})", indent=1)
+    lns = put("Loans received / (repaid)", f"=-({MV(('short_term_debt', 'long_term_debt', 'other_noncurrent_liability'))})", indent=1)
+    cin = put("Partner capital & funding put in", f"=-({MV(('capital', 'partner_current', 'reserves', 'retained_earnings', 'other_equity'))})", indent=1)
+    dis = put("Distributions paid to partners", f"=-({MV(('drawings',))})", indent=1)
+    fin = put("Net cash from investment, loans & partners", f"=B{eqp}+B{lns}+B{cin}+B{dis}", style="total")
+    op = put("Opening cash", f"={OPN(('cash',))}")
+    ch = put("Net change in cash", f"=B{ops}+B{fin}")
+    cl = put("CLOSING CASH", f"=B{op}+B{ch}", style="grand")
+    put(f'=IF(ABS(B{cl}-B{a[0]})<0.01,"✓  Ties to the cash & bank on the balance sheet","✗  Does not tie to the balance sheet cash")', style="note")
+    r[0] += 1
+
+    # ---- 5. partners' equity
+    put("5.  STATEMENT OF PARTNERS' EQUITY", style="section")
+    pc = [f"={L(12 + j)}{P0}" for j in range(6)]
+    put("Partner", cols=pc + ["TOTAL"], style="head", fmt="General")
+    row_cap = put("Capital put in (funding)", cols=[f"={L(12 + j)}{CAP}" for j in range(6)] + [f"=SUM(B{r[0]}:G{r[0]})"])
+    row_sh = put("Share of billed profit", cols=[f"={L(12 + j)}{SHARE}" for j in range(6)] + [f"=SUM(B{r[0]}:G{r[0]})"])
+    row_dr = put("Less: distributions received", cols=[f"=-{L(12 + j)}{DRW}" for j in range(6)] + [f"=SUM(B{r[0]}:G{r[0]})"])
+    row_cl = put("CLOSING EQUITY — billed", cols=[f"={L(2 + j)}{row_cap}+{L(2 + j)}{row_sh}+{L(2 + j)}{row_dr}" for j in range(7)], style="total")
+    put("Share of total equity", cols=[f'=IFERROR({L(2 + j)}{row_cl}/$H${row_cl},0)' for j in range(7)], fmt=PCT)
+    put("Billed profit still to be distributed (share − distributions)", cols=[f"={L(2 + j)}{row_sh}+{L(2 + j)}{row_dr}" for j in range(7)])
+    kept = put('="Kept in company (reserve "&TEXT(' + RES + ',"0%")&")"', f"={BILLED}-H{row_sh}")
+    other = put("Capital / drawings not tagged to a named partner",
+                f"=(B{eq[0]}-H{row_cap})-(-B{eq[3]}+H{row_dr})")
+    wipr = put("Profit on work in progress — not billed yet, held until invoiced", f"={WIPP}")
+    rese = put("Reserves & retained earnings (balance sheet)", f"=B{eq[1]}")
+    tot_eq = put("TOTAL EQUITY PER BALANCE SHEET", f"=B{te}", style="grand")
+    put(f'=IF(ABS(H{row_cl}+B{kept}+B{other}+B{wipr}+B{rese}-B{tot_eq})<0.01,"✓  Ties to the balance sheet — total partners\' equity "&TEXT(B{tot_eq},"#,##0.00"),'
+        f'"✗  Does not tie to the balance sheet — check partner names on capital and distributions")', style="note")
+    put("Each partner's profit share follows their ownership % per project (Partner Shares sheet, else their default share on the Partners "
+        "sheet), after the company reserve on the Settings sheet (reserve_pct). Capital and distributions are read from the books by partner name.",
+        style="note")
+    r[0] += 1
+    put("Prepared by: ______________________      Reviewed by (partner): ______________________", style="item")
+    for col in "BCDEFGH":
+        ws.column_dimensions[col].width = 18
+    for c in range(11, 20):
+        ws.column_dimensions[L(c)].hidden = True
+    ws.freeze_panes = "A4"
+    ws.page_setup.orientation = "portrait"
+    ws.page_setup.paperSize = ws.PAPERSIZE_A4
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.page_setup.fitToWidth, ws.page_setup.fitToHeight = 1, 0
+    ws.print_area = f"A1:H{r[0]}"
+    return ws

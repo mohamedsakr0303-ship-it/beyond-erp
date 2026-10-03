@@ -1587,7 +1587,8 @@ async function reportPage(view, name, q, fields) {
 PAGES.report = async (view, parts, q) => {
   const name = parts[1];
   const f = { income_statement: ["dates", "compare", "bu", "detail", "allocate", "lang"], balance_sheet: ["asof", "compare", "bu", "lang"],
-    cash_flow: ["dates", "compare", "bu", "lang"], trial_balance: ["dates", "bu", "lang"], bu_pnl: ["dates", "lang"], tax: ["dates", "lang"] }[name] || ["dates", "lang"];
+    cash_flow: ["dates", "compare", "bu", "lang"], trial_balance: ["dates", "bu", "lang"], bu_pnl: ["dates", "lang"], tax: ["dates", "lang"],
+    partner_pack: ["dates", "lang"] }[name] || ["dates", "lang"];
   if (name === "balance_sheet" && q.compare && q.compare !== "none" && !q.date_from) q.date_from = yearStart();
   return reportPage(view, name, q, name === "balance_sheet" && q.compare && q.compare !== "none" ? ["dates", "compare", "bu", "lang"] : f);
 };

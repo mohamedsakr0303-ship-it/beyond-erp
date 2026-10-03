@@ -898,6 +898,9 @@ def build(db, name, p):
     """Dispatch a report by name with query params dict p."""
     lang = p.get("lang") or "en"
     bu = p.get("bu_id") or None
+    if name == "partner_pack":
+        from . import partner_pack
+        return partner_pack.table(db, p.get("date_from") or None, p.get("date_to") or None, lang)
     if name == "income_statement":
         return income_statement_table(db, p.get("date_from"), p.get("date_to"), p.get("compare"), bu,
                                       p.get("detail", "1") != "0", lang, p.get("allocate", "1") != "0")
@@ -958,7 +961,7 @@ def build(db, name, p):
     raise acc.ValidationError(f"Unknown report {name!r}")
 
 
-REPORT_PERMS = {"income_statement": "reports.income_statement", "balance_sheet": "reports.balance_sheet",
+REPORT_PERMS = {"partner_pack": "partners.equity", "income_statement": "reports.income_statement", "balance_sheet": "reports.balance_sheet",
                 "cash_flow": "reports.cash_flow", "trial_balance": "reports.trial_balance",
                 "general_ledger": "accounting.ledger", "bu_pnl": "business_units.profitability",
                 "payables": "purchasing.payables", "stock": "stock.balances", "receivables": "sales.receivables",
@@ -1003,9 +1006,15 @@ def to_html(table, company="", auto_print=False, font="system", size=12, logo=No
         for i, v in enumerate(r["cells"]):
             f = _cell_fmt(table, r, i)
             cls = table["columns"][i].get("align", "left")
+            if cls == "right" and isinstance(v, str) and len(v) > 24:
+                cls = "right txt"   # a sentence in a number column: wrap it, keep its own direction
             neg = " neg" if isinstance(v, (int, float)) and v < 0 else ""
             pad = f' style="padding-inline-start:{8 + 16 * r.get("indent", 0)}px"' if i == 0 else ""
-            tds.append(f'<td class="{cls}{neg}"{pad}>{html.escape(_fmt(v, f))}</td>')
+            rest = r["cells"][i + 1:]
+            span = len(rest) + 1 if "txt" in cls and not any(x not in (None, "") for x in rest) else 1
+            tds.append(f'<td class="{cls}{neg}"{pad}{f" colspan={span}" if span > 1 else ""}>{html.escape(_fmt(v, f))}</td>')
+            if span > 1:
+                break
         body.append(f'<tr class="{r["style"]}">{"".join(tds)}</tr>')
     fam = "Arial, 'Segoe UI', Tahoma, sans-serif" if font in ("system", "", None) else f"'{font}', Arial, sans-serif"
     return f"""<!doctype html><html lang="{'ar' if rtl else 'en'}" dir="{'rtl' if rtl else 'ltr'}"><head><meta charset="utf-8">
@@ -1016,7 +1025,7 @@ h1{{font-size:{size + 8}px;margin:0}} .co{{font-weight:700;color:#1f3a5f;letter-
 .sub{{color:#555;margin:4px 0 14px}} table{{border-collapse:collapse;width:100%}}
 th{{background:#1f3a5f;color:#fff;padding:7px 8px;font-size:{size - 1}px}} td{{padding:5px 8px;border-bottom:1px solid #e5e7eb}}
 .right{{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;direction:ltr;unicode-bidi:isolate}} .left{{text-align:start}}
-[dir=rtl] .right{{text-align:left}}
+[dir=rtl] .right{{text-align:left}} .right.txt{{white-space:normal;direction:inherit;text-align:start}}
 tr.section td{{background:#dfe6ee;font-weight:700;text-transform:uppercase}} tr.header td{{font-weight:700;color:#1f3a5f}}
 tr.subtotal td{{font-weight:600;border-top:1px solid #9ca3af}} tr.total td{{font-weight:700;background:#f3f4f6;border-top:1px solid #111}}
 tr.grand td{{font-weight:800;background:#e8eef6;border-top:2px solid #111;border-bottom:3px double #111}}
@@ -1024,6 +1033,7 @@ tr.note td{{color:#6b7280;font-style:italic;font-size:{size - 1}px}} .neg{{color
 .foot{{margin-top:16px;color:#888;font-size:{size - 2}px}} @media print{{body{{margin:0}} .noprint{{display:none}} .wm{{position:fixed}}}}
 .hd{{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}} .hd img{{max-height:80px;max-width:220px}}
 .wm{{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:55%;max-width:520px;z-index:-1;pointer-events:none}}
+{"table{table-layout:fixed} td{word-wrap:break-word;white-space:normal} tr.header td{white-space:normal} td:first-child,th:first-child{width:" + table["label_width"] + "}" if table.get("label_width") else ""}
 </style></head><body>{f'<img class="wm" src="data:image/png;base64,{wm["data"]}" alt="">' if wm else ''}
 <div class="hd"><div><div class="co">{html.escape(company)}</div><h1>{html.escape(table['title'])}</h1>
 <div class="sub">{html.escape(table.get('subtitle', ''))}</div></div>{f'<img src="data:{logo["mime"]};base64,{logo["data"]}" alt="">' if logo else ''}</div>

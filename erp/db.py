@@ -876,7 +876,7 @@ DEFAULT_ACCOUNTS = [
     ("1160", "Employee Advances", "Asset", "other_current_asset", None),
     ("1170", "Due from Partners", "Asset", "other_current_asset", "partner_receivable"),
     ("1175", "Loans Receivable (Short-term)", "Asset", "other_current_asset", "loans_receivable"),
-    ("1180", "Unbilled Revenue (Work Done, Not Yet Invoiced)", "Asset", "other_current_asset", None),
+    ("1180", "Unbilled Revenue (Work Done, Not Yet Invoiced)", "Asset", "other_current_asset", "unbilled_revenue"),
     ("1185", "Accrued Interest Receivable", "Asset", "other_current_asset", "interest_receivable"),
     ("1190", "Allowance for Doubtful Accounts", "Asset", "allowance_doubtful", "doubtful_allowance"),
     ("1200", "Materials Inventory", "Asset", "inventory", "inventory"),
@@ -1010,7 +1010,7 @@ ACCOUNT_NAMES_AR.update({'4025': 'مبيعات البضائع والوحدات',
 ACCOUNT_NAMES_AR.update({'1120': 'أوراق القبض (شيكات تحت التحصيل)', '1170': 'مستحق من الشركاء', '1180': 'إيرادات مستحقة غير مفوترة (أعمال منفذة)', '1190': 'مخصص الديون المشكوك في تحصيلها', '1340': 'غطاء خطابات الضمان', '1440': 'أراضي', '1450': 'مباني وتحسينات أماكن مستأجرة', '1460': 'مشروعات تحت التنفيذ', '1520': 'الشهرة', '1700': 'استثمارات طويلة الأجل', '2050': 'أوراق الدفع (شيكات صادرة)', '2060': 'فوائد مستحقة', '2120': 'توزيعات أرباح مستحقة للشركاء', '2130': 'مستحق للشركاء المنسحبين', '2510': 'مخصص مكافأة نهاية الخدمة', '3020': 'جاري الشركاء', '3030': 'علاوة إصدار / علاوة حصص', '3110': 'الاحتياطي القانوني', '3120': 'الاحتياطي العام', '4060': 'أرباح بيع أصول ثابتة', '4070': 'إيرادات إيجار', '4080': 'خصم مكتسب', '6015': 'صيانة وإصلاحات', '6078': 'وقود ومصروفات سيارات', '6088': 'ديون معدومة', '7045': 'خسائر بيع أصول ثابتة'})
 NEW_IN_V12 = {"1120", "1170", "1180", "1190", "1340", "1440", "1450", "1460", "1520", "1700", "2050", "2060", "2120",
               "2130", "2510", "3020", "3030", "3110", "3120", "4060", "4070", "4080", "6015", "6078", "6088", "7045"}
-ROLES_ADDED_V12 = {"2500": "partner_loans", "4095": "interest_income"}
+ROLES_ADDED_V12 = {"2500": "partner_loans", "4095": "interest_income", "1180": "unbilled_revenue"}
 
 # Contra accounts carry the opposite normal balance of their type.
 CONTRA_SUBTYPES = {"accumulated_depreciation", "accumulated_amortization", "allowance_doubtful", "drawings",

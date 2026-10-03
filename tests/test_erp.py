@@ -166,7 +166,7 @@ class Reports(unittest.TestCase):
     def test_every_report_every_format(self):
         db = seeded()
         for name in ("income_statement", "balance_sheet", "cash_flow", "trial_balance", "general_ledger", "bu_pnl",
-                     "payables", "stock", "receivables"):
+                     "payables", "stock", "receivables", "partner_pack"):
             for lang in ("en", "ar"):
                 tb = reports.build(db, name, {"date_from": "2026-01-01", "date_to": "2026-12-31", "compare": "quarter",
                                               "lang": lang})
@@ -175,6 +175,25 @@ class Reports(unittest.TestCase):
                 self.assertEqual(reports.to_docx(tb)[:2], b"PK")
                 if HAVE_XL:
                     self.assertEqual(reports.to_xlsx(tb)[:2], b"PK")
+
+    def test_partner_pack(self):
+        from erp import partner_pack as pp
+        self.assertEqual(pp.billed_profit(0, 0, -500), -500)          # no revenue: net as is
+        self.assertEqual(pp.billed_profit(1000, 200, -50), -50)        # a loss is never deferred
+        self.assertAlmostEqual(pp.billed_profit(1000, 250, 400), 300)  # 25% still in work in progress
+        db = seeded()
+        d = pp.compute(db, "2026-01-01", "2026-12-31")
+        net = a.income_statement(db, "2026-01-01", "2026-12-31")["net_profit"]
+        self.assertAlmostEqual(d["billed_total"] + d["wip_profit"], net, places=2)
+        self.assertAlmostEqual(sum(p["net_profit"] for p in d["projects"]) + d["company_left"], net, places=2)
+        bs = a.balance_sheet(db, "2026-12-31")
+        self.assertAlmostEqual(d["bs"]["ta"], bs["total_assets"], places=2)
+        self.assertTrue(d["bs"]["balanced"])
+        self.assertTrue(d["audit_ok"])
+        self.assertEqual(reports.REPORT_PERMS["partner_pack"], "partners.equity")
+        tb = reports.build(db, "partner_pack", {"date_from": "2026-01-01", "date_to": "2026-12-31", "lang": "ar"})
+        self.assertIn("<table", reports.to_html(tb, auto_print=True))
+        self.assertEqual(reports.to_xlsx(tb)[:2], b"PK")
 
     def test_comparative_columns(self):
         tb = reports.income_statement_table(seeded(), "2026-01-01", "2026-06-30", "month")

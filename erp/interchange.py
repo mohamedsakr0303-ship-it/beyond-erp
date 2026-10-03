@@ -354,7 +354,7 @@ SHEETS = [
               C("cash_account", "Cash / Bank Account", "حساب النقدية", kind="acct", role="bank"),
               C("equity_account", "Equity Account", "حساب حقوق الملكية", kind="acct"),
               C("bu_code", "Business Unit", "وحدة الأعمال", kind="bu"), C("memo", "Description", "البيان", width=22),
-              eff("cash_account", "bank"),
+              eff_money("cash_account"),
               C("equity__eff", "equity (effective)", "الحساب الفعلي", kind="calc", width=10,
                 calc='=IF({equity_account}<>"",{equity_account}&"",IF(LEFT({type},7)="Capital",' + ROLE("capital") +
                      "," + ROLE("drawings") + "))"),
