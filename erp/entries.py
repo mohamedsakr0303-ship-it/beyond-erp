@@ -178,6 +178,7 @@ MENU_ITEMS = [
     ("asset:new", "New fixed asset", "أصل ثابت جديد", "assets.register"),
     ("asset:depr", "Run depreciation", "احتساب الإهلاك", "assets.depreciation"),
     ("po:new", "New purchase order", "أمر شراء جديد", "purchasing.orders"),
+    ("sub:new", "New subscription / maintenance contract", "اشتراك / عقد صيانة جديد", "shop.subscriptions"),
     ("loan:new", "New loan (taken or given)", "قرض جديد (مأخوذ أو ممنوح)", "accounting.loans"),
     ("loan:pay", "Loan payment / collection", "سداد / تحصيل قسط قرض", "accounting.loans"),
     ("custody:new", "Give cash custody", "صرف عهدة نقدية", "purchasing.custody"),
@@ -191,7 +192,7 @@ MENU_ITEMS = [
 ]
 DEFAULT_MENU = ["po:new", "doc:direct_cost", "doc:expense", "doc:payment", "doc:receipt", "doc:invoice", "doc:payroll",
                 "doc:stock_move", "doc:journal", "eq:contribute", "eq:distribute", "asset:new", "asset:depr", "loan:new", "loan:pay",
-                "custody:new", "custody:settle", "contact:new", "sale:new", "sale:collect", "doc:bu", "doc:offer"]
+                "custody:new", "custody:settle", "contact:new", "sale:new", "sale:collect", "sub:new", "doc:bu", "doc:offer"]
 
 
 def menu(db):

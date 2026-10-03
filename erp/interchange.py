@@ -296,7 +296,8 @@ SHEETS = [
               C("sub", "Sub-category", "البند الفرعي", width=12), C("item_no", "Item No.", "رقم البند", width=8),
               C("description", "Description", "الوصف", width=50, required=True), C("unit", "Unit", "الوحدة", width=8),
               C("qty", "Qty Executed", "الكمية المنفذة", kind="num", width=9), C("price", "Unit Price", "سعر الوحدة", kind="money"),
-              C("amount", "Amount", "الإجمالي", kind="calc", calc="=ROUND(N({qty})*N({price}),2)")]},
+              C("amount", "Amount", "الإجمالي", kind="calc", calc="=ROUND(N({qty})*N({price}),2)"),
+              C("account", "Line Revenue Account", "حساب إيراد البند", kind="acct", note="blank = the invoice's revenue account")]},
     {"name": "Payment Vouchers", "ar": "سندات الصرف", "module": "purchasing", "kind": "Payment Voucher",
      "title": "Payments settling what we owe suppliers, subcontractors and workers",
      "cols": [C("date", "Date", "التاريخ", kind="date", required=True), C("party", "Payee", "المستفيد", width=22, required=True),
@@ -463,8 +464,10 @@ def export_data(db):
             invoice_entries.add(e["id"])
             roles_ = {a["code"]: a["role"] for a in db.q("SELECT code, role FROM accounts")}
             dr = next(ln for ln in e["lines"] if ln["debit"] and roles_.get(ln["account"]) != "wht_receivable")
-            cr = next(ln for ln in e["lines"] if ln["credit"] and roles_.get(ln["account"]) != "vat_output")
-            status, ar_acc, rev_acc = "Posted", dr["account"], cr["account"]
+            types_ = {a["code"]: a["type"] for a in db.q("SELECT code, type FROM accounts")}
+            crs = [ln for ln in e["lines"] if ln["credit"] and roles_.get(ln["account"]) != "vat_output"]
+            cr = next((ln for ln in crs if types_.get(ln["account"]) == "Revenue"), None)   # none when all billed in advance
+            status, ar_acc, rev_acc = "Posted", dr["account"], cr["account"] if cr else ""
         else:
             status, ar_acc, rev_acc = "Draft", "", ""
         out["Sales Invoices"].append({"number": x["number"], "date": x["date"], "bu_code": code(x["bu_id"]),
@@ -474,7 +477,7 @@ def export_data(db):
         for ln in db.q("SELECT * FROM extract_lines WHERE extract_id=? ORDER BY seq, id", (x["id"],)):
             out["Invoice Lines"].append({"number": x["number"], "category": ln["category"], "sub": ln["sub"],
                                          "item_no": ln["item_no"], "description": ln["description"], "unit": ln["unit"],
-                                         "qty": ln["qty"], "price": to_major(ln["price"])})
+                                         "qty": ln["qty"], "price": to_major(ln["price"]), "account": ln["account"] or ""})
     # stock moves (only those still attached to a live entry, or entry-less transfers/counts)
     stock_entries = set()
     moves = db.q("SELECT m.*, i.name AS item, i.unit, w.name AS warehouse FROM stock_moves m "
@@ -739,7 +742,12 @@ def export_extras(db):
             "custodies": custody.export_rows(db), "rentals": rentals.export_rows(db),
             "sales": sales.export_rows(db), "bank": bankrec.export_rows(db), "recurring": recurring.export_rows(db),
             "entry_meta": _entry_meta_export(db), "attachments": _attachments_export(db),
-            "purchase_orders": _po_export(db)}
+            "purchase_orders": _po_export(db), "services": _svc_export(db)}
+
+
+def _svc_export(db):
+    from . import services
+    return services.export_rows(db)
 
 
 def _po_export(db):
@@ -846,6 +854,9 @@ def _imp_extras(db, ex, mode, counts):
             n += 1
     if ex.get("offer_types") or ex.get("offers"):
         counts["Offers"] = n
+    if isinstance(ex.get("services"), dict) and (mode == "replace" or not db.one("SELECT 1 FROM subscriptions")):
+        from . import services
+        services.import_rows(db, ex["services"], counts)
     if ex.get("purchase_orders"):
         from . import purchasing
         if mode == "replace":
@@ -894,7 +905,7 @@ def to_csv(db, sheet_name, template=False):
     return ("﻿" + buf.getvalue()).encode("utf-8")
 
 
-WIPE_ORDER = ("attachments", "po_receipts", "po_lines", "purchase_orders", "budgets", "bank_lines", "bank_statements", "bank_rules", "recurring_runs", "recurring", "sale_cheques", "sale_installments", "sale_lines", "sales_orders", "product_media", "products", "rent_moves", "rental_invoices", "rental_charges", "rental_handovers", "rental_lines", "rentals", "rent_lots",
+WIPE_ORDER = ("sub_recognitions", "sub_visits", "sub_invoices", "subscriptions", "service_plans", "attachments", "po_receipts", "po_lines", "purchase_orders", "budgets", "bank_lines", "bank_statements", "bank_rules", "recurring_runs", "recurring", "sale_cheques", "sale_installments", "sale_lines", "sales_orders", "product_media", "products", "rent_moves", "rental_invoices", "rental_charges", "rental_handovers", "rental_lines", "rentals", "rent_lots",
               "rent_kit_lines", "rent_kits", "rent_models", "rent_items", "loans", "custodies", "parties", "ownership_changes", "fixed_assets", "stock_moves", "stock_levels", "stock_items", "extract_lines", "extracts", "boq_lines", "boqs",
               "journal_lines", "journal_entries", "partner_shares", "partners", "rates", "business_units")
 

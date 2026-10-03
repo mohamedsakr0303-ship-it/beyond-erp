@@ -130,6 +130,7 @@ window.I18N = {
   run: ["Run report", "عرض التقرير"], as_of: ["As of", "في تاريخ"],
   // ---- data
   imp_title: ["Import data", "استيراد البيانات"], exp_title: ["Export data", "تصدير البيانات"], full_wb: ["Full workbook (Excel, with live statements)", "المصنف الكامل (Excel بقوائم حية)"],
+  m_subs: ["Subscriptions & maintenance", "الاشتراكات والصيانة"],
   m_pos: ["Purchase orders", "أوامر الشراء"],
   m_budgets: ["Budgets", "الموازنات"], m_budget_rep: ["Budget vs actual", "الموازنة مقابل الفعلي"],
   m_aging: ["Aging (who owes what, how old)", "أعمار الديون"], m_statement: ["Statement of account", "كشف حساب"],
@@ -196,7 +197,7 @@ window.MENU = [
   ["g_home", [["m_dashboard", "dashboard", "dashboard", "◧"]]],
   ["g_bu", [["m_bus", "bus", "business_units.units", "▦"]]],
   ["g_sales", [["m_offers", "offers", "sales.offers", "✉"], ["m_receipts", "receipts", "sales.receipts", "↘"], ["m_invoices", "invoices", "sales.invoices", "▤"], ["m_receivables", "receivables", "sales.receivables", "⇲"]]],
-  ["g_shop", [["m_products", "products", "shop.products", "◫"], ["m_sales_orders", "sales", "shop.orders", "⛁"], ["m_installments", "installments", "shop.installments", "⏲"]]],
+  ["g_shop", [["m_products", "products", "shop.products", "◫"], ["m_sales_orders", "sales", "shop.orders", "⛁"], ["m_installments", "installments", "shop.installments", "⏲"], ["m_subs", "subs", "shop.subscriptions", "↻"]]],
   ["g_est", [["m_boqs", "boqs", "estimating.boqs", "☰"], ["m_prices", "prices", "estimating.prices", "₤"]]],
   ["g_buy", [["m_pos", "pos", "purchasing.orders", "⎘"], ["m_costs", "costs", "purchasing.costs", "⚒"], ["m_expenses", "expenses", "purchasing.expenses", "◔"], ["m_payments", "payments", "purchasing.payments", "↗"], ["m_payables", "payables", "purchasing.payables", "⇱"], ["m_contacts", "contacts", "purchasing.contacts", "☏"], ["m_nego", "negotiations", "purchasing.negotiations", "⚖"]]],
   ["g_stock", [["m_stock", "stock", "stock.balances", "▣"], ["m_moves", "moves", "stock.moves", "⇄"], ["m_warehouses", "warehouses", "stock.warehouses", "⌂"]]],
@@ -215,7 +216,7 @@ window.MENU = [
 // labels for screen-level permissions (section.screen)
 window.SUBPERM = {
   "business_units.units": "m_bus", "business_units.allocation": "p_alloc", "business_units.profitability": "m_bup",
-  "sales.offers": "m_offers", "sales.receipts": "m_receipts", "sales.invoices": "m_invoices", "sales.receivables": "m_receivables", "sales.parties": "m_parties", "shop.products": "m_products", "shop.orders": "m_sales_orders", "shop.installments": "m_installments",
+  "sales.offers": "m_offers", "sales.receipts": "m_receipts", "sales.invoices": "m_invoices", "sales.receivables": "m_receivables", "sales.parties": "m_parties", "shop.products": "m_products", "shop.orders": "m_sales_orders", "shop.installments": "m_installments", "shop.subscriptions": "m_subs",
   "estimating.boqs": "m_boqs", "estimating.prices": "m_prices",
   "purchasing.orders": "m_pos", "purchasing.costs": "m_costs", "purchasing.expenses": "m_expenses", "purchasing.payments": "m_payments", "purchasing.payables": "m_payables", "purchasing.contacts": "m_contacts", "purchasing.negotiations": "m_nego", "rentals.contracts": "m_rentals", "rentals.fleet": "m_rentfleet", "rentals.calculator": "m_rentcalc", "purchasing.custody": "m_custody", "accounting.loans": "m_loans", "accounting.bankrec": "m_bankrec", "accounting.recurring": "m_recurring", "accounting.budgets": "m_budgets",
   "stock.balances": "m_stock", "stock.moves": "m_moves", "stock.warehouses": "m_warehouses",

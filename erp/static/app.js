@@ -884,6 +884,7 @@ function newItem(key) {
   if (kind === "product") return productForm();
   if (kind === "recurring") return recurringForm();
   if (kind === "po") return poForm();
+  if (kind === "sub") return subForm();
   if (kind === "bank") return bankImportForm();
   if (kind === "custody") return id === "settle" ? pickThen("custody", c => custodyAction(c, "settle")) : custodyForm();
 }
@@ -4190,6 +4191,137 @@ const rcSched = r => { const u = RC_UNIT_TXT[r.unit] || [[r.unit, r.unit], [r.un
   return `${L2("every", "كل")} ${r.every > 1 ? r.every + " " : ""}${S.lang === "ar" ? u[1][pl] : u[0][pl]}${r.month_end ? ` · ${L2("month end", "آخر الشهر")}` : ""}`; };
 const fillMonth = (v, due) => typeof v === "string" ? v.replace(/\{month\}/g, due.slice(0, 7)).replace(/\{year\}/g, due.slice(0, 4)).replace(/\{date\}/g, due) : v;
 
+// ------------------------------------------------------------ service subscriptions
+const SUB_KIND = { maintenance: ["Maintenance", "صيانة", "🔧"], warranty: ["Warranty", "ضمان", "🛡"], insurance: ["Insurance", "تأمين", "☂"], software: ["Software / app", "برنامج / تطبيق", "💻"], support: ["Support", "دعم فني", "☎"], addon: ["Add-on", "إضافة", "＋"], other: ["Other", "أخرى", "•"] };
+const SUB_ST = { active: ["Active", "سارية", "ok"], paused: ["Paused", "موقوفة", "warn"], cancelled: ["Cancelled", "ملغاة", "bad"], ended: ["Ended", "منتهية", ""] };
+const subChip = st => `<span class="chip ${SUB_ST[st][2]}">${esc(L2(SUB_ST[st][0], SUB_ST[st][1]))}</span>`;
+const kindL = k => L2((SUB_KIND[k] || SUB_KIND.other)[0], (SUB_KIND[k] || SUB_KIND.other)[1]);
+const everyL = n => n === 1 ? L2("monthly", "شهرياً") : n === 3 ? L2("quarterly", "ربع سنوي") : n === 6 ? L2("every 6 months", "نصف سنوي") : n === 12 ? L2("yearly", "سنوياً") : L2(`every ${n} months`, `كل ${n} شهر`);
+PAGES.subs = async (view, parts, q) => {
+  const tab = q.tab || "subs";
+  const add = can("shop.subscriptions", "add"), ed = can("shop.subscriptions", "edit");
+  Object.assign(S.H, { subnew: () => subForm(), plannew: () => planForm(),
+    subrun: async () => { try { const r = await api("POST", "/api/subscriptions-run", { through: today() });
+      toast(r.invoices ? `${r.invoices} ${L2("invoices", "فاتورة")} · ${money(r.amount)}` : L2("Nothing due", "لا يوجد مستحق")); route(); } catch (e) { fail(e); } } });
+  const tabs = `<div class="tabs">${[["subs", L2("Subscriptions", "الاشتراكات")], ["plans", L2("Plans", "الخطط")]].map(([k, l]) => `<a class="tab ${tab === k ? "on" : ""}" href="#/subs?tab=${k}">${esc(l)}</a>`).join("")}</div>`;
+  if (tab === "plans") {
+    const d = await api("GET", "/api/service-plans");
+    S.H.planedit = el => planForm(d.rows.find(p => String(p.id) === el.dataset.id));
+    view.innerHTML = `<div class="toolbar">${add ? `<button class="btn pri" data-a="plannew">+ ${L2("Plan", "خطة")}</button>` : ""}</div>${tabs}
+      <div class="card">${d.rows.length ? `<div class="tbl stack"><table><thead><tr><th>${t("name")}</th><th>${t("type")}</th><th class="num">${t("price")}</th><th>${L2("Billed", "الفوترة")}</th><th class="num">${L2("Per month", "شهرياً")}</th><th class="num">${L2("Visits", "زيارات")}</th><th class="num">${L2("Active", "سارية")}</th><th></th></tr></thead><tbody>
+        ${d.rows.map(p => `<tr class="${p.active ? "" : "void"}"><td><b>${esc(S.lang === "ar" && p.name_ar ? p.name_ar : p.name)}</b> <span class="muted">${esc(p.code)}</span>${p.description ? `<div class="muted" style="font-size:.85em">${esc(p.description)}</div>` : ""}</td><td>${(SUB_KIND[p.kind] || SUB_KIND.other)[2]} ${esc(kindL(p.kind))}</td><td class="num">${money(p.price)}</td><td>${esc(everyL(p.period_months))}</td><td class="num">${money(p.monthly)}</td>
+          <td class="num">${p.visits ? p.visits + (p.extra_visit_price ? ` · +${money(p.extra_visit_price)}` : "") : ""}</td><td class="num">${p.active_subs || ""}</td><td>${ed ? `<button class="btn sm" data-a="planedit" data-id="${p.id}">${t("edit")}</button>` : ""}</td></tr>`).join("")}</tbody></table></div>`
+        : `<div class="empty">${L2("No plans yet. A plan is what you sell repeatedly: yearly apartment maintenance with 4 visits, a 2-year extended warranty, monthly software support, an extra module…", "لا توجد خطط بعد. الخطة هي ما تبيعه بشكل متكرر: صيانة سنوية لشقة بأربع زيارات، ضمان ممتد سنتين، دعم فني شهري لبرنامج، موديول إضافي…")}</div>`}</div>`;
+    return;
+  }
+  q = { status: q.status ?? "active", ...q };
+  const d = await api("GET", "/api/subscriptions?" + qs(q));
+  view.innerHTML = `<div class="toolbar">${add ? `<button class="btn pri" data-a="subnew">+ ${L2("Subscription", "اشتراك")}</button>` : ""}${add && d.due ? `<button class="btn" data-a="subrun">⟳ ${L2("Invoice what is due", "فوترة المستحق")} (${d.due})</button>` : ""}<span class="spacer"></span>${exportMenu("subscriptions", q)}</div>${tabs}
+    <div class="kpis">${kpiBox(L2("Monthly recurring revenue", "الإيراد الشهري المتكرر"), d.mrr, "", `${L2("yearly", "سنوياً")} ${money(d.arr)}`)}${kpiBox(L2("Active contracts", "عقود سارية"), numf(d.active))}${kpiBox(L2("Due to invoice", "مستحق الفوترة"), numf(d.due), d.due ? "warn" : "")}${kpiBox(L2("Ending within a month", "تنتهي خلال شهر"), numf(d.renew_soon), d.renew_soon ? "warn" : "")}${kpiBox(L2("Billed, not yet earned", "مفوتر ولم يُكتسب بعد"), d.deferred)}</div>
+    ${filterBar(q, [["select", "status", t("status"), [["active", L2("Active", "سارية")], ["due", L2("Due to invoice", "مستحق الفوترة")], ["paused", L2("Paused", "موقوفة")], ["cancelled", L2("Cancelled", "ملغاة")], ["ended", L2("Ended", "منتهية")]]],
+      ["select", "kind", t("type"), Object.keys(SUB_KIND).map(k => [k, kindL(k)])], "q"])}
+    <div class="card">${d.rows.length ? `<div class="tbl stack"><table><thead><tr><th>${L2("Contract", "العقد")}</th><th>${L2("Customer", "العميل")}</th><th>${L2("Service", "الخدمة")}</th><th class="num">${t("price")}</th><th>${L2("Next invoice", "الفاتورة القادمة")}</th><th>${L2("Visits", "الزيارات")}</th><th>${t("status")}</th></tr></thead><tbody>
+      ${d.rows.map(r => `<tr class="click" data-href="#/sub/${encodeURIComponent(r.code)}"><td><b>${esc(r.code)}</b>${r.parent_code ? `<div class="muted" style="font-size:.85em">↳ ${esc(r.parent_code)}</div>` : ""}</td><td>${esc(r.customer)}</td>
+        <td>${(SUB_KIND[r.kind] || SUB_KIND.other)[2]} ${esc(r.title)}${r.covers ? `<div class="muted" style="font-size:.85em">${esc(r.covers)}</div>` : ""}</td><td class="num">${money(r.price)}<div class="muted" style="font-size:.8em">${esc(everyL(r.period_months))}</div></td>
+        <td class="${r.due ? "warn" : ""}">${r.status === "active" ? fd(r.next_bill) : ""}${r.end ? `<div class="muted ${r.renew_soon ? "warn" : ""}" style="font-size:.8em">${L2("ends", "ينتهي")} ${fd(r.end)}</div>` : ""}</td>
+        <td>${r.visits_included ? `${r.visits_used} / ${r.visits_included}` : r.visits_used || ""}</td><td>${subChip(r.status)}</td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="empty">${L2("No subscriptions here. Sell a plan to a customer: maintenance on the apartment they bought, an extended warranty on a device, monthly support for an app — invoices are then issued every period by themselves.", "لا توجد اشتراكات. بِع خطة لعميل: صيانة الشقة التي اشتراها، ضمان ممتد لجهاز، دعم شهري لتطبيق — وتصدر الفواتير كل فترة تلقائياً.")}</div>`}</div>`;
+};
+PAGES.sub = async (view, parts) => {
+  const s = await api("GET", "/api/subscriptions/" + encodeURIComponent(parts[1]));
+  $("#ttl").textContent = `${s.code} — ${s.customer}`;
+  const add = can("shop.subscriptions", "add"), ed = can("shop.subscriptions", "edit"), live = s.status === "active";
+  const st = async (status, extra = {}) => { try { await api("POST", `/api/subscriptions/${s.id}/status`, { status, ...extra }); toast(t("saved")); route(); } catch (e) { fail(e); } };
+  Object.assign(S.H, { subedit: () => subForm(s), subaddon: () => subForm({ parent_id: s.id, customer: s.customer, bu_id: s.bu_id, vat_code: s.vat_code }),
+    subpause: () => st("paused"), subresume: () => st("active"),
+    subcancel: () => { const end = confirm(L2(`Stop at the end of the period already invoiced (${fd(s.period_to)})?\nOK = at period end · Cancel = choose “stop now”.`, `الإيقاف في نهاية الفترة المفوترة (${fd(s.period_to)})؟\nموافق = في نهاية الفترة · إلغاء = لاختيار الإيقاف الآن.`));
+      if (end) return st("cancelled", { at_period_end: true }); if (confirm(L2("Stop now? No more invoices will be issued.", "إيقاف الآن؟ لن تصدر فواتير أخرى."))) st("cancelled"); },
+    subvisit: () => visitForm(s), subvedit: el => visitForm(s, s.visits.find(v => String(v.id) === el.dataset.id)),
+    subbill: async () => { try { await api("POST", `/api/subscriptions/${s.id}/bill-charges`, {}); toast(L2("Invoiced", "تمت الفوترة")); route(); } catch (e) { fail(e); } },
+    subrun: async () => { try { const r = await api("POST", "/api/subscriptions-run", { through: today() }); toast(r.invoices ? `${r.invoices} ${L2("invoices", "فاتورة")}` : L2("Nothing due", "لا يوجد مستحق")); route(); } catch (e) { fail(e); } },
+    subpay: () => openDoc("receipt", { party: s.customer }) });
+  const vSt = { scheduled: L2("scheduled", "مجدولة"), done: L2("done", "تمت"), cancelled: L2("cancelled", "ملغاة") };
+  view.innerHTML = `<div class="toolbar"><a class="btn" href="#/subs">← ${L2("Subscriptions", "الاشتراكات")}</a>${subChip(s.status)}<span class="chip">${(SUB_KIND[s.kind] || SUB_KIND.other)[2]} ${esc(kindL(s.kind))}</span><span class="spacer"></span>
+      ${add && s.due ? `<button class="btn pri" data-a="subrun">⟳ ${L2("Invoice what is due", "فوترة المستحق")}</button>` : ""}
+      ${add && live ? `<button class="btn" data-a="subvisit">+ ${L2("Visit / service call", "زيارة / طلب صيانة")}</button>` : ""}
+      ${can("sales.receipts", "add") ? `<button class="btn" data-a="subpay">${L2("Record payment", "تسجيل تحصيل")}</button>` : ""}
+      ${add && live && !s.parent_id ? `<button class="btn" data-a="subaddon">+ ${L2("Add-on", "إضافة")}</button>` : ""}
+      ${ed ? `<button class="btn" data-a="subedit">${t("edit")}</button>` : ""}
+      ${ed && live ? `<button class="btn" data-a="subpause">${L2("Pause", "إيقاف مؤقت")}</button>` : ""}${ed && !live ? `<button class="btn" data-a="subresume">${L2("Resume", "استئناف")}</button>` : ""}
+      ${ed && ["active", "paused"].includes(s.status) ? `<button class="btn danger" data-a="subcancel">${L2("Cancel", "إلغاء")}</button>` : ""}</div>
+    ${s.cancel_at && s.status === "active" ? `<div class="banner warn">${L2(`Stops on ${fd(s.cancel_at)} — no invoices after that.`, `يتوقف في ${fd(s.cancel_at)} — لا فواتير بعدها.`)}</div>` : ""}
+    ${s.renew_soon ? `<div class="banner warn">${L2(`The contract ends on ${fd(s.end)} and does not renew by itself — offer the customer a renewal.`, `ينتهي العقد في ${fd(s.end)} ولا يتجدد تلقائياً — اعرض على العميل التجديد.`)}</div>` : ""}
+    <div class="kpis">${kpiBox(t("price"), s.price, "", esc(everyL(s.period_months)))}${kpiBox(L2("Per month", "شهرياً"), s.monthly)}${kpiBox(L2("Next invoice", "الفاتورة القادمة"), live ? fd(s.next_bill) : "—", s.due ? "warn" : "")}${s.visits_included ? kpiBox(L2("Visits this period", "زيارات الفترة"), `${s.visits_used} / ${s.visits_included}`, s.visits_used > s.visits_included ? "warn" : "") : ""}${s.deferred ? kpiBox(L2("Billed, not yet earned", "مفوتر ولم يُكتسب"), s.deferred) : ""}</div>
+    <div class="card"><div class="tbl"><table><tbody>
+      <tr><th style="width:30%">${L2("Customer", "العميل")}</th><td><a href="#/statement?${qs({ party: s.customer })}">${esc(s.customer)}</a>${s.contact.phone ? ` · <a href="tel:${esc(s.contact.phone)}" dir="ltr">${esc(s.contact.phone)}</a>` : ""}</td></tr>
+      <tr><th>${L2("Service", "الخدمة")}</th><td>${esc(s.title)}${s.plan_code ? ` <span class="muted">(${esc(s.plan_code)})</span>` : ""}</td></tr>${s.covers ? `<tr><th>${L2("Covers", "يغطي")}</th><td>${esc(s.covers)}</td></tr>` : ""}
+      ${s.parent_code ? `<tr><th>${L2("Add-on to", "إضافة على")}</th><td><a href="#/sub/${encodeURIComponent(s.parent_code)}">${esc(s.parent_code)}</a></td></tr>` : ""}
+      <tr><th>${L2("Started", "البداية")}</th><td>${fd(s.start)}${s.term_months ? ` · ${s.term_months} ${L2("months", "شهر")}${s.auto_renew ? ` · ${L2("renews by itself", "يتجدد تلقائياً")}` : ` · ${L2("ends", "ينتهي")} ${fd(s.end)}`}` : ` · ${L2("until cancelled", "حتى الإلغاء")}`}</td></tr>
+      ${s.vat_code ? `<tr><th>${t("vat_code")}</th><td>${esc(s.vat_code)}</td></tr>` : ""}${s.notes ? `<tr><th>${t("notes")}</th><td style="white-space:pre-wrap">${esc(s.notes)}</td></tr>` : ""}</tbody></table></div></div>
+    ${s.addons.length ? `<div class="card"><h2>${L2("Add-ons", "الإضافات")}</h2><div class="tbl"><table><tbody>${s.addons.map(a => `<tr class="click" data-href="#/sub/${encodeURIComponent(a.code)}"><td><b>${esc(a.code)}</b></td><td>${esc(a.title)}</td><td>${esc(a.covers)}</td><td class="num">${money(a.price)} · ${esc(everyL(a.period_months))}</td><td>${subChip(a.status)}</td></tr>`).join("")}</tbody></table></div></div>` : ""}
+    <div class="card"><h2>${L2("Visits & service calls", "الزيارات وطلبات الصيانة")}${s.unbilled_charges ? ` <span class="chip warn">${L2("to invoice", "للفوترة")} ${money(s.unbilled_charges)}</span>` : ""}</h2>
+      ${s.unbilled_charges && add ? `<p class="muted" style="font-size:.85em">${L2("Extra-visit charges go on the next invoice.", "رسوم الزيارات الإضافية تُضاف للفاتورة القادمة.")} <button class="btn sm" data-a="subbill">${L2("Invoice them now", "فوترتها الآن")}</button></p>` : ""}
+      ${s.visits.length ? `<div class="tbl stack"><table><thead><tr><th>${t("date")}</th><th>${t("description")}</th><th>${L2("Technician", "الفني")}</th><th class="num">${L2("Our cost", "تكلفتنا")}</th><th class="num">${L2("Charge", "الرسوم")}</th><th>${t("status")}</th><th></th></tr></thead><tbody>
+        ${s.visits.map(v => `<tr class="${v.status === "cancelled" ? "void" : ""}"><td>${fd(v.date)}</td><td>${esc(v.description)}</td><td>${esc(v.technician)}</td><td class="num">${v.cost ? money(v.cost) : ""}</td><td class="num">${v.charge ? money(v.charge) + (v.extract_id ? " ✓" : "") : ""}</td><td><span class="chip ${v.status === "scheduled" ? "warn" : ""}">${esc(vSt[v.status])}</span></td><td>${ed && !v.extract_id ? `<button class="btn sm" data-a="subvedit" data-id="${v.id}">${t("edit")}</button>` : ""}</td></tr>`).join("")}</tbody></table></div>`
+        : `<div class="muted">${L2("No visits logged.", "لا توجد زيارات مسجلة.")}</div>`}</div>
+    <div class="card"><h2>${L2("Invoices", "الفواتير")}</h2>${s.invoices.length ? `<div class="tbl"><table><thead><tr><th>${L2("Invoice", "الفاتورة")}</th><th>${L2("Period", "الفترة")}</th><th class="num">${t("amount")}</th></tr></thead><tbody>
+      ${s.invoices.map(i => `<tr class="click" ${i.entry_id ? `data-a="openv" data-id="${i.entry_id}"` : ""}><td><b>${esc(i.number)}</b></td><td>${fd(i.period_from)} → ${fd(i.period_to)}</td><td class="num">${money(i.amount)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="muted">${L2("Not invoiced yet.", "لم تتم الفوترة بعد.")}</div>`}</div>`;
+};
+function planForm(p) {
+  p = p || { kind: "maintenance", period_months: 12, visits: 0 };
+  drawer(p.id ? `${p.code} — ${t("edit")}` : L2("New plan", "خطة جديدة"), `<div class="grid g2">
+    <label class="f">${t("name")} *<input name="name" required value="${esc(p.name || "")}"></label><label class="f">${L2("Arabic name", "الاسم بالعربية")}<input name="name_ar" dir="rtl" value="${esc(p.name_ar || "")}"></label>
+    <label class="f">${t("type")}<select name="kind">${optHtml(Object.keys(SUB_KIND).map(k => [k, kindL(k)]), p.kind)}</select></label>
+    <label class="f">${L2("Billed every", "الفوترة كل")}<select name="period_months">${optHtml([1, 2, 3, 4, 6, 12, 24, 36].map(n => [n, everyL(n)]), p.period_months)}</select></label>
+    <label class="f">${L2("Price per period", "السعر لكل فترة")} *<input name="price" type="number" step="any" required value="${p.price ?? ""}"></label>
+    <label class="f">${t("vat_code")}<select name="vat_code">${optHtml(taxOpts("vat"), p.vat_code || "")}</select></label>
+    <label class="f">${L2("Visits included per period", "زيارات مشمولة لكل فترة")}<input name="visits" type="number" min="0" value="${p.visits || 0}"></label>
+    <label class="f">${L2("Price of each extra visit", "سعر الزيارة الإضافية")}<input name="extra_visit_price" type="number" step="any" value="${p.extra_visit_price || ""}"></label>
+    <label class="f">${L2("Revenue account", "حساب الإيراد")}<select name="revenue_account">${optHtml(accts(["Revenue"]), p.revenue_account || accByRole("service_revenue"))}</select></label>
+    ${p.id ? `<label class="f chk"><input type="checkbox" name="active" ${p.active ? "checked" : ""}>${L2("Offered (active)", "متاحة للبيع")}</label>` : ""}</div>
+    <label class="f">${L2("What is included", "ما تشمله الخطة")}<textarea name="description" rows="3">${esc(p.description || "")}</textarea></label>
+    <p class="muted" style="font-size:.85em">${L2("Periods longer than a month are invoiced in advance and earned month by month (deferred revenue).", "الفترات الأطول من شهر تُفوتر مقدماً وتُكتسب شهراً بشهر (إيراد مؤجل).")}</p>`,
+    async v => { v.active = v.active ? 1 : (p.id ? 0 : 1); if (p.id) await api("PUT", "/api/service-plans/" + p.id, v); else await api("POST", "/api/service-plans", v); toast(t("saved")); }, { wide: true });
+}
+async function subForm(s) {
+  s = s || { start: today(), auto_renew: 1, term_months: 0 };
+  const plans = (await api("GET", "/api/service-plans")).rows.filter(p => p.active || p.id === s.plan_id);
+  const isNew = !s.id;
+  const f = drawer(isNew ? (s.parent_id ? L2("New add-on", "إضافة جديدة") : L2("New subscription", "اشتراك جديد")) : `${s.code} — ${t("edit")}`, `<div class="grid g2">
+    <label class="f">${L2("Customer", "العميل")} *<input name="customer" required list="sub-cust" value="${esc(s.customer || "")}" ${s.parent_id && isNew ? "readonly" : ""}>${partyList("sub-cust")}</label>
+    <label class="f">${L2("Plan", "الخطة")}<select name="plan_id"><option value="">— ${L2("no plan (type the details)", "بدون خطة (اكتب التفاصيل)")}</option>${optHtml(plans.map(p => [p.id, `${p.name} — ${money(p.price)} ${everyL(p.period_months)}`]), s.plan_id || "")}</select></label>
+    <label class="f">${L2("Service name", "اسم الخدمة")}<input name="title" value="${esc(s.title || "")}" placeholder="${esc(L2("from the plan", "من الخطة"))}"></label>
+    <label class="f">${L2("Covers (unit, device serial, app…)", "يغطي (وحدة، رقم جهاز، تطبيق…)")}<input name="covers" value="${esc(s.covers || "")}"></label>
+    <label class="f">${L2("Price per period", "السعر لكل فترة")}<input name="price" type="number" step="any" value="${s.price ?? ""}" placeholder="${esc(L2("from the plan", "من الخطة"))}"></label>
+    <label class="f">${L2("Billed every", "الفوترة كل")}<select name="period_months"><option value="">${esc(L2("as the plan", "حسب الخطة"))}</option>${optHtml([1, 2, 3, 4, 6, 12, 24, 36].map(n => [n, everyL(n)]), isNew ? "" : s.period_months)}</select></label>
+    <label class="f">${L2("Start (first invoice)", "البداية (أول فاتورة)")}<input type="date" name="start" value="${esc(s.start || today())}" ${isNew ? "" : "disabled"}></label>
+    <label class="f">${L2("Term in months (0 = until cancelled)", "المدة بالشهور (0 = حتى الإلغاء)")}<input name="term_months" type="number" min="0" value="${s.term_months || 0}"></label>
+    <label class="f chk"><input type="checkbox" name="auto_renew" ${s.auto_renew ? "checked" : ""}>${L2("Renews by itself at the end of the term", "يتجدد تلقائياً في نهاية المدة")}</label>
+    <label class="f">${t("vat_code")}<select name="vat_code"><option value="">${esc(L2("as the plan", "حسب الخطة"))}</option>${optHtml(taxOpts("vat").filter(x => x[0]), s.vat_code || "")}</select></label>
+    <label class="f">${t("bu")}<select name="bu_id">${optHtml(buOpts(L2("— services (shared)", "— الخدمات (عام)")), s.bu_id || "")}</select></label>
+    <label class="f">${L2("Sale / contract ref.", "مرجع البيع / العقد")}<input name="sale_code" value="${esc(s.sale_code || "")}"></label></div>
+    <label class="f">${t("notes")}<textarea name="notes" rows="2">${esc(s.notes || "")}</textarea></label>
+    <p class="muted" style="font-size:.85em">${L2("Invoices are issued at the start of each period (use “Invoice what is due”). A change of price applies from the next invoice.", "تصدر الفواتير في بداية كل فترة (من «فوترة المستحق»). تغيير السعر يسري من الفاتورة القادمة.")}</p>`,
+    async v => { const body = { ...v, auto_renew: v.auto_renew ? 1 : 0, parent_id: s.parent_id || "" };
+      if (isNew) { const r = await api("POST", "/api/subscriptions", body); toast(t("saved")); closeDrawer(); location.hash = "#/sub/" + encodeURIComponent(r.code); return false; }
+      await api("PUT", "/api/subscriptions/" + s.id, { ...body, start: s.start }); toast(t("saved")); }, { wide: true });
+  return f;
+}
+function visitForm(s, v) {
+  v = v || { date: today(), status: "done" };
+  drawer(v.id ? L2("Edit visit", "تعديل الزيارة") : L2("Visit / service call", "زيارة / طلب صيانة"), `<div class="grid g2">
+    <label class="f">${t("date")}<input type="date" name="date" value="${esc(v.date)}"></label>
+    <label class="f">${t("status")}<select name="status">${optHtml([["done", L2("done", "تمت")], ["scheduled", L2("scheduled", "مجدولة")], ["cancelled", L2("cancelled", "ملغاة")]], v.status)}</select></label>
+    <label class="f">${L2("Technician / contractor", "الفني / المقاول")}<input name="technician" list="sub-tech" value="${esc(v.technician || "")}">${partyList("sub-tech")}</label>
+    <label class="f">${L2("Our cost (for reference)", "تكلفتنا (للمتابعة)")}<input name="cost" type="number" step="any" value="${v.cost || ""}"></label>
+    <label class="f">${L2("Charge to the customer", "رسوم على العميل")}<input name="charge" type="number" step="any" value="${v.id ? v.charge || 0 : ""}" placeholder="${esc(s.visits_included ? L2(`auto: free within ${s.visits_included} visits, then ${money(s.extra_visit_price)}`, `تلقائي: مجانية حتى ${s.visits_included} زيارات ثم ${money(s.extra_visit_price)}`) : "0")}"></label></div>
+    <label class="f">${t("description")} *<textarea name="description" rows="2" required>${esc(v.description || "")}</textarea></label>
+    <label class="f">${t("notes")}<textarea name="notes" rows="2">${esc(v.notes || "")}</textarea></label>
+    <p class="muted" style="font-size:.85em">${L2("Pay the technician as usual (expense or direct cost); the cost here is for tracking.", "ادفع للفني كالمعتاد (مصروف أو تكلفة مباشرة)؛ التكلفة هنا للمتابعة فقط.")}</p>`,
+    async x => { if (v.id) await api("PUT", `/api/subscriptions/${s.id}/visits/${v.id}`, x); else await api("POST", `/api/subscriptions/${s.id}/visits`, x); toast(t("saved")); },
+    { extraButtons: v.id ? `<button type="button" class="btn danger" data-a="vdelv">${t("delete")}</button>` : "" });
+  S.H.vdelv = async () => { if (!confirm(t("confirm_delete"))) return; try { await api("DELETE", `/api/subscriptions/${s.id}/visits/${v.id}`); closeDrawer(); route(); } catch (e) { fail(e); } };
+}
 // ------------------------------------------------------------ purchase orders
 const PO_ST = { draft: ["Draft", "مسودة", "warn"], approved: ["Approved", "معتمد", ""], partial: ["Part received", "استلام جزئي", "warn"], received: ["Received", "تم الاستلام", "ok"], closed: ["Closed", "مغلق", ""], cancelled: ["Cancelled", "ملغى", "bad"] };
 const poChip = st => `<span class="chip ${PO_ST[st][2]}">${esc(L2(PO_ST[st][0], PO_ST[st][1]))}</span>`;
@@ -4470,7 +4602,7 @@ const SCREEN_SHEETS = { costs: ["Direct Costs"], expenses: ["Operating Expenses"
   moves: ["Stock Moves"], warehouses: ["Warehouses"], journal: ["Journal Vouchers"], coa: ["Chart of Accounts"],
   partners: ["Partners", "Partner Shares", "Partner Transactions"], taxcodes: ["Tax Codes"], products: ["Products"],
   loans: ["Loans", "Loan Transactions"], custody: ["Cash Custody", "Custody Expenses"], rentfleet: ["Rental Equipment", "Rental Stock Lots"],
-  rentals: ["Rental Contracts"], sales: ["Sales Contracts"], bankrec: ["Bank Statement Lines"], recurring: ["Recurring Entries"], budgets: ["Budgets"], pos: ["Purchase Orders"] };
+  rentals: ["Rental Contracts"], sales: ["Sales Contracts"], bankrec: ["Bank Statement Lines"], recurring: ["Recurring Entries"], budgets: ["Budgets"], pos: ["Purchase Orders"], subs: ["Service Plans", "Service Subscriptions"] };
 const sheetLabel = n => { const s = (S.cache.impSheets || []).find(x => x.name === n); return s && S.lang === "ar" && s.ar ? s.ar : n; };
 const canImportSheet = n => { const s = (S.cache.impSheets || []).find(x => x.name === n); return can("import_export.import", "edit") || (s && s.perm && can(s.perm, "add")); };
 const tplUrl = (n, fmt, demo) => "/api/templates/sheet?" + qs({ sheet: n, format: fmt, lang: S.lang, demo: demo ? 1 : "" });
@@ -4656,7 +4788,7 @@ PAGES.download = async view => {
 };
 
 // files on the record pages (business unit, offer, loan, custody, rental, sale): appended under the page
-[["bu", "bu", "business_units.units"], ["offer", "offer", "sales.offers"], ["po", "po", "purchasing.orders"], ["loan", "loan", "accounting.loans"], ["cust", "custody", "purchasing.custody"],
+[["bu", "bu", "business_units.units"], ["offer", "offer", "sales.offers"], ["po", "po", "purchasing.orders"], ["sub", "sub", "shop.subscriptions"], ["loan", "loan", "accounting.loans"], ["cust", "custody", "purchasing.custody"],
  ["rental", "rental", "rentals.contracts"], ["sale", "sale", "shop.orders"]].forEach(([page, owner, perm]) => {
   const orig = PAGES[page];
   PAGES[page] = async (view, parts, q) => {

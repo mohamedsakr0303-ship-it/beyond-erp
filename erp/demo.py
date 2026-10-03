@@ -326,6 +326,28 @@ def sheets():
          "confirm": "Yes", "collected": 397500},
         {"code": "SO-D004", "date": d(4, 22), "customer": "Karim Fahmy", "bu_code": "SALES-01", "product": "S-DES", "qty": 2,
          "vat_code": "VAT14", "plan": "deferred", "first_due": d(5, 28), "confirm": "Yes"}]
+    S["Service Plans"] = [
+        {"code": "SP-D01", "name": "Apartment maintenance — yearly", "name_ar": "صيانة شقة — سنوي", "kind": "maintenance", "price": 12000,
+         "period_months": 12, "visits": 4, "extra_visit_price": 900, "vat_code": "VAT14",
+         "description": "4 preventive visits a year: plumbing, electrical, AC filters; emergency calls at the extra-visit price"},
+        {"code": "SP-D02", "name": "Apartment maintenance — monthly", "name_ar": "صيانة شقة — شهري", "kind": "maintenance", "price": 1200,
+         "period_months": 1, "visits": 1, "extra_visit_price": 900, "vat_code": "VAT14"},
+        {"code": "SP-D03", "name": "Extended warranty — kitchen appliances (2 years)", "name_ar": "ضمان ممتد — أجهزة المطبخ (سنتان)",
+         "kind": "warranty", "price": 4800, "period_months": 24, "vat_code": "VAT14"},
+        {"code": "SP-D04", "name": "Software support & hosting", "name_ar": "دعم فني واستضافة البرنامج", "kind": "software", "price": 2500,
+         "period_months": 1, "vat_code": "VAT14"},
+        {"code": "SP-D05", "name": "Extra module (add-on)", "name_ar": "موديول إضافي", "kind": "addon", "price": 600, "period_months": 1,
+         "vat_code": "VAT14"}]
+    S["Service Subscriptions"] = [
+        {"code": "SUB-D01", "customer": "Tamer Nabil", "plan": "SP-D01", "covers": "Unit A-204, Palm Hills", "start": d(1, 1),
+         "term_months": 12, "auto_renew": "Yes"},
+        {"code": "SUB-D02", "customer": "Laila Samir", "plan": "SP-D02", "covers": "Apartment 14, Zamalek", "start": d(2, 1)},
+        {"code": "SUB-D03", "customer": "Tamer Nabil", "plan": "SP-D03", "covers": "Oven + hob, serials OV-88231 / HB-11873", "start": d(1, 15),
+         "term_months": 24, "auto_renew": "No"},
+        {"code": "SUB-D04", "customer": "Delta Tech Solutions", "plan": "SP-D04", "title": "ERP support & hosting", "covers": "BEYOND ERP — 10 users",
+         "start": d(3, 1)},
+        {"code": "SUB-D05", "customer": "Delta Tech Solutions", "plan": "SP-D05", "parent": "SUB-D04", "title": "Extra module — Rentals",
+         "covers": "Rentals module", "start": d(4, 1)}]
     S["Purchase Orders"] = [{"code": "PO-D100", "date": d(4, 2), "supplier": "Cleopatra Tiles Trading", "bu_code": "PRJ-D01",
                              "expected": d(4, 20), "vat_code": "VAT14", "kind": "cost", "description": desc, "account": "5010",
                              "qty": q, "unit": u, "rate": r, "terms": "Ex-works, 50 % advance", "approved": "Yes"}
@@ -461,6 +483,19 @@ def load(db, user="", replace=False):
         purchasing.save(db, {"supplier": "Spark Electric", "date": acc.today(), "terms": "Quotation SE-221",
                              "lines": [{"kind": "expense", "description": "Office UPS replacement", "qty": 1, "rate": 14500, "account": "6090"}]},
                         "Sara Kamal")
+        # subscriptions: a maintenance visit (one extra beyond the plan), then bill every period started by today
+        from . import services
+        sub = services.get(db, "SUB-D02")
+
+        def d(month, day):
+            y, m = a0.year + (a0.month - 1 + month) // 12, (a0.month - 1 + month) % 12 + 1
+            return min(_dt.date(y, m, min(day, calendar.monthrange(y, m)[1])), today).isoformat()
+        for k, txt in ((2, "Monthly check — water heater"), (3, "Monthly check"), (3, "Emergency: kitchen leak")):
+            services.save_visit(db, sub["id"], {"date": d(k, 20 if "Emergency" in txt else 10), "technician": "Eng. Fathy Plumbing",
+                                                "description": txt, "cost": 350})
+        services.save_visit(db, services.get(db, "SUB-D01")["id"], {"date": acc.today(), "status": "scheduled",
+                                                                     "technician": "Spark Electric", "description": "Quarterly preventive visit"})
+        services.run(db, acc.today(), user)
         # recurring entries due by now
         recurring.run(db, acc.today(), user)
         # bank: last month reconciled, this month open

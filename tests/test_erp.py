@@ -1073,6 +1073,45 @@ class PurchaseOrders(unittest.TestCase):
         self.assertEqual(db2.one(live)["n"], db.one(live)["n"])
         self.assertEqual({r["code"]: r["open_value"] for r in P.listing(db2)["rows"]}, {r["code"]: r["open_value"] for r in P.listing(db)["rows"]})
 
+class ServiceSubscriptions(unittest.TestCase):
+    """Maintenance / warranty / software subscriptions: invoices per period, deferred revenue, visits, add-ons."""
+
+    def test_subscription_cycle(self):
+        from erp import demo, interchange, services as S
+        db = Database(":memory:")
+        demo.load(db)
+        self.assertTrue(S.listing(db)["mrr"] > 0)
+        p = S.save_plan(db, {"name": "Yearly maintenance", "price": 12000, "period_months": 12, "visits": 2, "extra_visit_price": 500})
+        m = S.save_plan(db, {"name": "Support", "kind": "software", "price": 1000, "period_months": 1})
+        a1 = S.save(db, {"customer": "Laila Samir", "plan_id": p, "covers": "Villa 3", "start": "2025-01-10", "term_months": 12, "auto_renew": 0})
+        s2 = S.save(db, {"customer": "Karim Fahmy", "plan_id": m, "start": "2025-01-01"})
+        S.save(db, {"customer": "Karim Fahmy", "plan_id": m, "parent_id": s2, "title": "Extra module", "price": 300, "period_months": 1, "start": "2025-01-01"})
+        for k in range(3):
+            S.save_visit(db, a1, {"date": f"2025-0{3 + k}-05", "description": "Check"})
+        third = db.one("SELECT charge FROM sub_visits WHERE sub_id=? ORDER BY date DESC LIMIT 1", (a1,))["charge"]
+        self.assertEqual(third, 50000)                                                  # beyond the 2 included visits
+        r = S.run(db, "2025-03-31")
+        inv = db.q("SELECT x.number FROM sub_invoices i JOIN extracts x ON x.id=i.extract_id WHERE i.sub_id=?", (s2,))
+        self.assertEqual(len(inv), 3)                                                   # Jan, Feb, Mar (add-on on the same invoices)
+        self.assertEqual(db.one("SELECT COUNT(DISTINCT extract_id) n FROM sub_invoices i JOIN subscriptions s ON s.id=i.sub_id "
+                                "WHERE s.customer='Karim Fahmy' AND i.period_from<'2025-04-01'")["n"], 3)
+        dfr = db.acct("service_deferred")
+        bal = lambda acct: db.one("SELECT COALESCE(SUM(credit-debit),0) n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id "  # noqa: E731
+                                  "WHERE e.status='posted' AND l.account=? AND e.ref LIKE 'SUB-0%'", (acct,))["n"]
+        self.assertEqual(bal(dfr), (12000 - 3 * 1000) * 100)                           # 3 of 12 months earned
+        self.assertGreaterEqual(r["recognized"], 3)
+        S.run(db, "2026-02-01")
+        self.assertEqual(S.get(db, a1)["status"], "ended")
+        self.assertEqual(db.one("SELECT COUNT(*) n FROM sub_visits WHERE sub_id=? AND charge>0 AND extract_id IS NULL", (a1,))["n"], 0)
+        S.set_status(db, s2, "cancelled")
+        self.assertEqual({x["status"] for x in db.q("SELECT status FROM subscriptions WHERE parent_id=?", (s2,))}, {"cancelled"})
+        self.assertEqual([c["check"] for c in a.audit(db) if not c["ok"]], [])
+        db2 = Database(":memory:")
+        interchange.import_data(db2, interchange.read_json(interchange.to_json(db).encode()))
+        self.assertEqual(S.listing(db2)["mrr"], S.listing(db)["mrr"])
+        self.assertEqual(S.listing(db2)["deferred"], S.listing(db)["deferred"])
+        self.assertEqual(S.run(db2, a.today())["invoices"], 0)                          # nothing billed twice after a restore
+
 class ImportKit(unittest.TestCase):
     """Per-screen templates, and importing a user's own layout with column matching."""
 

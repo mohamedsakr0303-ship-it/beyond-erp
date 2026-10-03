@@ -34,7 +34,7 @@ SHEET_PERM = {
     "Products": "shop.products", "Settings": "settings", "Loans": "accounting.loans", "Loan Transactions": "accounting.loans",
     "Cash Custody": "purchasing.custody", "Custody Expenses": "purchasing.custody", "Rental Equipment": "rentals.fleet",
     "Rental Stock Lots": "rentals.fleet", "Rental Contracts": "rentals.contracts", "Sales Contracts": "shop.orders",
-    "Bank Statement Lines": "accounting.bankrec", "Recurring Entries": "accounting.recurring", "Budgets": "accounting.budgets", "Purchase Orders": "purchasing.orders",
+    "Bank Statement Lines": "accounting.bankrec", "Recurring Entries": "accounting.recurring", "Budgets": "accounting.budgets", "Purchase Orders": "purchasing.orders", "Service Plans": "shop.subscriptions", "Service Subscriptions": "shop.subscriptions",
 }
 
 # words people use for the same thing (English & Arabic); matched after the exact names

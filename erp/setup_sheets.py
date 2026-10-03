@@ -139,6 +139,28 @@ def specs(C):
                   C("account", "Account (expense / debit)", "الحساب (المصروف / المدين)", kind="acct"),
                   C("credit_account", "Credit Account (journal / receipt)", "الحساب الدائن", kind="acct"),
                   C("party", "Supplier / Party", "المورد / الطرف", width=16), C("bu_code", "Business Unit", "وحدة الأعمال", kind="bu")]},
+        {"name": "Service Plans", "ar": "خطط الخدمات والاشتراكات", "module": "shop", "setup": True,
+         "title": "Maintenance, warranty / insurance, software support and add-on plans you sell by the month / quarter / year",
+         "cols": [C("code", "Plan Code", "كود الخطة", width=10, note="blank = automatic"), C("name", "Plan", "الخطة", width=28, required=True),
+                  C("name_ar", "Arabic Name", "الاسم بالعربية", width=24),
+                  C("kind", "Type", "النوع", width=11, choices=["maintenance", "warranty", "insurance", "software", "support", "addon", "other"]),
+                  C("price", "Price per Period", "السعر لكل فترة", kind="money", required=True),
+                  C("period_months", "Every (months)", "كل (شهور)", kind="num", width=7, note="1, 3, 6, 12…"),
+                  C("visits", "Visits Included / Period", "زيارات مشمولة", kind="num", width=7),
+                  C("extra_visit_price", "Extra Visit Price", "سعر الزيارة الإضافية", kind="money"),
+                  C("revenue_account", "Revenue Account", "حساب الإيراد", kind="acct", role="service_revenue"),
+                  C("vat_code", "VAT Code", "كود الضريبة", width=8), C("description", "What is included", "ما تشمله", width=30)]},
+        {"name": "Service Subscriptions", "ar": "اشتراكات العملاء", "module": "shop", "setup": True,
+         "title": "Each customer's contract. Billing starts on the start date (bill due periods on the Subscriptions screen). " + MONEY_NOTE,
+         "cols": [C("code", "Code", "الكود", width=10, note="blank = automatic; needed to attach add-ons"),
+                  C("customer", "Customer", "العميل", width=22, required=True), C("plan", "Plan Code", "كود الخطة", width=10),
+                  C("parent", "Add-on to (code)", "إضافة على (كود)", width=10), C("title", "Service", "الخدمة", width=24),
+                  C("covers", "Covers (unit / device / app)", "يغطي (وحدة / جهاز / تطبيق)", width=24),
+                  C("start", "Start", "البداية", kind="date", required=True), C("price", "Price per Period", "السعر لكل فترة", kind="money"),
+                  C("period_months", "Every (months)", "كل (شهور)", kind="num", width=7),
+                  C("term_months", "Term (months, 0 = open)", "المدة (شهور)", kind="num", width=7),
+                  C("auto_renew", "Renews", "يتجدد", width=7, choices=["Yes", "No"]), C("vat_code", "VAT Code", "كود الضريبة", width=8),
+                  C("bu_code", "Business Unit", "وحدة الأعمال", kind="bu"), C("notes", "Notes", "ملاحظات", width=20)]},
         {"name": "Purchase Orders", "ar": "أوامر الشراء", "module": "purchasing", "setup": True,
          "title": "One row per order line; rows with the same order code form one order. Approved = Yes approves it "
                   "(nothing is booked until a delivery is received on its screen)",
@@ -328,6 +350,17 @@ def budget_row(db, r, user):
     budgets.import_row(db, r)
 
 
+def service_plan(db, r, user):
+    from . import services
+    ex = db.one("SELECT id FROM service_plans WHERE code=?", (r.get("code"),)) if r.get("code") else None
+    services.save_plan(db, r, ex["id"] if ex else None)
+
+
+def service_sub(db, r, user):
+    from . import services
+    services.save(db, {**r, "auto_renew": "No" if str(r.get("auto_renew") or "").lower() in ("no", "لا") else "Yes"}, user)
+
+
 def purchase_order(db, items, user):
     from . import purchasing
     h = items[0][1]
@@ -343,11 +376,11 @@ def purchase_order(db, items, user):
 
 ROW_IMPORTERS = [("Loans", loan), ("Loan Transactions", loan_tx), ("Cash Custody", custody_row),
                  ("Rental Equipment", rent_item), ("Rental Stock Lots", rent_lot), ("Recurring Entries", recurring_row),
-                 ("Budgets", budget_row)]
+                 ("Budgets", budget_row), ("Service Plans", service_plan), ("Service Subscriptions", service_sub)]
 GROUP_IMPORTERS = [("Custody Expenses", lambda r: (str(r.get("custody")), str(r.get("report") or r.get("date"))), custody_reports),
                    ("Rental Contracts", lambda r: str(r.get("ref")), rent_contract),
                    ("Sales Contracts", lambda r: str(r.get("code")), sale_contract),
                    ("Purchase Orders", lambda r: str(r.get("code")), purchase_order),
                    ("Bank Statement Lines", lambda r: (str(r.get("account")), str(r.get("statement") or "")), bank_statement)]
 ORDER = ["Loans", "Loan Transactions", "Cash Custody", "Custody Expenses", "Rental Equipment", "Rental Stock Lots",
-         "Rental Contracts", "Sales Contracts", "Recurring Entries", "Bank Statement Lines", "Purchase Orders", "Budgets"]
+         "Rental Contracts", "Sales Contracts", "Recurring Entries", "Bank Statement Lines", "Purchase Orders", "Budgets", "Service Plans", "Service Subscriptions"]

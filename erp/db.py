@@ -578,6 +578,76 @@ CREATE TABLE IF NOT EXISTS bank_rules (
     active INTEGER NOT NULL DEFAULT 1
 );
 
+-- Service subscriptions sold to customers (maintenance, warranty / insurance, software support, add-ons)
+CREATE TABLE IF NOT EXISTS service_plans (
+    id INTEGER PRIMARY KEY,
+    code TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    name_ar TEXT DEFAULT '',
+    kind TEXT NOT NULL DEFAULT 'maintenance',
+    price INTEGER NOT NULL DEFAULT 0,          -- per period
+    period_months INTEGER NOT NULL DEFAULT 1,
+    visits INTEGER NOT NULL DEFAULT 0,          -- maintenance visits included per period (0 = not counted)
+    extra_visit_price INTEGER NOT NULL DEFAULT 0,
+    revenue_account TEXT DEFAULT '',
+    vat_code TEXT DEFAULT '',
+    description TEXT DEFAULT '',
+    active INTEGER NOT NULL DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS subscriptions (
+    id INTEGER PRIMARY KEY,
+    code TEXT NOT NULL UNIQUE,
+    customer TEXT NOT NULL,
+    plan_id INTEGER REFERENCES service_plans(id) ON DELETE SET NULL,
+    parent_id INTEGER REFERENCES subscriptions(id) ON DELETE SET NULL,   -- an add-on billed with its main subscription
+    title TEXT DEFAULT '',
+    covers TEXT DEFAULT '',                     -- the unit / device serial / app it covers
+    sale_code TEXT DEFAULT '',
+    bu_id INTEGER REFERENCES business_units(id) ON DELETE SET NULL,
+    start TEXT NOT NULL,
+    period_months INTEGER NOT NULL DEFAULT 1,
+    price INTEGER NOT NULL DEFAULT 0,
+    vat_code TEXT DEFAULT '',
+    wht_code TEXT DEFAULT '',
+    term_months INTEGER NOT NULL DEFAULT 0,     -- 0 = until cancelled
+    auto_renew INTEGER NOT NULL DEFAULT 1,
+    status TEXT NOT NULL DEFAULT 'active',      -- active, paused, cancelled, ended
+    next_bill TEXT NOT NULL,
+    cancel_at TEXT DEFAULT '',
+    notes TEXT DEFAULT '',
+    created_by TEXT DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS sub_invoices (
+    id INTEGER PRIMARY KEY,
+    sub_id INTEGER NOT NULL REFERENCES subscriptions(id) ON DELETE CASCADE,
+    extract_id INTEGER REFERENCES extracts(id) ON DELETE SET NULL,
+    period_from TEXT NOT NULL,
+    period_to TEXT NOT NULL,                    -- exclusive
+    amount INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS sub_recognitions (
+    id INTEGER PRIMARY KEY,
+    sub_id INTEGER NOT NULL REFERENCES subscriptions(id) ON DELETE CASCADE,
+    invoice_id INTEGER NOT NULL REFERENCES sub_invoices(id) ON DELETE CASCADE,
+    month TEXT NOT NULL,
+    amount INTEGER NOT NULL,
+    account TEXT DEFAULT '',
+    bu_id INTEGER,
+    entry_id INTEGER REFERENCES journal_entries(id) ON DELETE SET NULL
+);
+CREATE TABLE IF NOT EXISTS sub_visits (
+    id INTEGER PRIMARY KEY,
+    sub_id INTEGER NOT NULL REFERENCES subscriptions(id) ON DELETE CASCADE,
+    date TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'done',        -- scheduled, done, cancelled
+    technician TEXT DEFAULT '',
+    description TEXT DEFAULT '',
+    cost INTEGER NOT NULL DEFAULT 0,
+    charge INTEGER NOT NULL DEFAULT 0,          -- billed to the customer on the next invoice
+    extract_id INTEGER REFERENCES extracts(id) ON DELETE SET NULL,
+    notes TEXT DEFAULT ''
+);
+
 -- Purchase orders: a commitment until goods / work arrive; each receipt posts a normal voucher (po_receipts links them)
 CREATE TABLE IF NOT EXISTS purchase_orders (
     id INTEGER PRIMARY KEY,
@@ -842,6 +912,7 @@ DEFAULT_ACCOUNTS = [
     ("2100", "Client Advances (Unearned Revenue)", "Liability", "deferred_revenue", "client_advances"),
     ("2105", "Security Deposits from Clients", "Liability", "other_current_liability", "rental_deposits"),
     ("2106", "Deferred Installment Interest", "Liability", "other_current_liability", "installment_deferred"),
+    ("2107", "Deferred Service & Subscription Revenue", "Liability", "deferred_revenue", "service_deferred"),
     ("2110", "Retention Payable", "Liability", "other_current_liability", None),
     ("2120", "Profit Distributions Payable to Partners", "Liability", "dividends_payable", "dividends_payable"),
     ("2130", "Due to Departing Partners", "Liability", "other_current_liability", "partner_payable"),
@@ -874,6 +945,7 @@ DEFAULT_ACCOUNTS = [
     ("4045", "Equipment Rental Revenue", "Revenue", "operating_revenue", "rental_revenue"),
     ("4025", "Sales of Goods & Units", "Revenue", "operating_revenue", "product_sales"),
     ("4096", "Installment Interest Income", "Revenue", "other_income", "installment_income"),
+    ("4035", "Maintenance, Service & Subscription Revenue", "Revenue", "operating_revenue", "service_revenue"),
     ("4046", "Installation, Dismantling & Transport Revenue", "Revenue", "operating_revenue", "rental_services"),
     ("4075", "Compensation for Lost / Damaged Equipment", "Revenue", "other_income", "rental_compensation"),
     ("4090", "Other Income", "Revenue", "other_income", "other_income"),
@@ -930,6 +1002,7 @@ SUBTYPES = {
                 "depreciation", "amortization", "interest", "other_nonoperating", "income_tax"],
 }
 ACCOUNT_NAMES_AR = {'1010': 'النقدية بالصندوق', '1020': 'الحساب البنكي', '1030': 'العهد النقدية', '1416': 'مجمع إهلاك معدات التأجير', '2105': 'تأمينات العملاء (ودائع ضمان)', '1415': 'معدات التأجير (سقالات، مصاعد، سقالات معلقة)', '4045': 'إيرادات تأجير المعدات', '4046': 'إيرادات التركيب والفك والنقل', '4075': 'تعويضات المعدات المفقودة / التالفة', '7046': 'خسائر معدات التأجير (فقد / تكهين)', '1035': 'عهد نقدية لدى العاملين', '1175': 'قروض ممنوحة للغير (قصيرة الأجل)', '1185': 'فوائد مستحقة التحصيل', '1610': 'قروض ممنوحة للغير (طويلة الأجل)', '7060': 'ديون معدومة وإعدام قروض', '1100': 'العملاء (المدينون)', '1150': 'محتجزات لدى العملاء (ضمان أعمال)', '1160': 'سلف العاملين', '1200': 'مخزون الخامات', '1300': 'مصروفات مدفوعة مقدماً', '1310': 'دفعات مقدمة للموردين', '1320': 'ضريبة القيمة المضافة (مدخلات)', '1330': 'ضريبة خصم وتحصيل لدى العملاء', '1400': 'أثاث ومعدات مكتبية', '1410': 'عدد ومعدات مواقع', '1420': 'سيارات', '1430': 'أجهزة حاسب ومعدات تقنية', '1490': 'مجمع الإهلاك', '1500': 'برامج وتراخيص', '1510': 'العلامة التجارية والموقع ومكتبة التصميمات', '1590': 'مجمع الاستهلاك', '1600': 'تأمينات لدى الغير', '2010': 'الموردون (الدائنون)', '2015': 'مقاولو الباطن', '2020': 'أجور مستحقة', '2030': 'مصروفات مستحقة', '2040': 'تأمينات اجتماعية مستحقة', '2100': 'دفعات مقدمة من العملاء (إيرادات مؤجلة)', '2110': 'محتجزات مقاولي الباطن', '2200': 'ضريبة القيمة المضافة (مخرجات)', '2210': 'ضريبة الخصم والتحصيل المستحقة (من الموردين)', '2220': 'ضريبة الدخل المستحقة', '2300': 'قروض قصيرة الأجل', '2310': 'بطاقات ائتمان مستحقة', '2400': 'قروض طويلة الأجل', '2500': 'قروض الشركاء', '3010': 'رأس مال الشركاء', '3100': 'الأرباح المحتجزة', '3200': 'مسحوبات الشركاء / توزيعات الأرباح', '4010': 'إيرادات المشروعات — التنفيذ', '4020': 'أتعاب التصميم', '4030': 'أتعاب الإشراف والإدارة', '4040': 'مبيعات أثاث وتوريدات', '4050': 'خصومات ومسموحات المبيعات', '4085': 'أرباح التفاوض', '4090': 'إيرادات أخرى', '4095': 'إيرادات فوائد', '5010': 'خامات', '5020': 'تكاليف مقاولي الباطن', '5030': 'عمالة مباشرة', '5040': 'تجهيز الموقع', '5050': 'إيجار معدات', '5060': 'نقل وتشوين', '5070': 'تصميم خارجي ورندرات', '5080': 'تسويات المخزون', '6010': 'الإيجار', '6020': 'برامج واشتراكات', '6030': 'دعاية وإعلان', '6040': 'كهرباء ومياه', '6045': 'هاتف وإنترنت', '6050': 'رواتب إدارية', '6055': 'تأمينات اجتماعية ومزايا', '6060': 'أتعاب مهنية (قانونية ومراجعة)', '6065': 'مصروفات بنكية', '6070': 'مصروفات المشروعات غير المحملة', '6075': 'انتقالات وسفر', '6080': 'أدوات مكتبية', '6085': 'تأمين', '6090': 'مصروفات تشغيلية أخرى', '7010': 'مصروف الإهلاك', '7020': 'مصروف الاستهلاك', '7030': 'مصروفات الفوائد', '7040': 'خسائر (أرباح) فروق العملة', '7050': 'مصروف ضريبة الدخل'}
+ACCOUNT_NAMES_AR.update({'4035': 'إيرادات الصيانة والخدمات والاشتراكات', '2107': 'إيرادات خدمات واشتراكات مؤجلة'})
 ACCOUNT_NAMES_AR.update({'4025': 'مبيعات البضائع والوحدات', '4096': 'إيرادات فوائد التقسيط', '2106': 'فوائد تقسيط مؤجلة',
                          '5005': 'تكلفة البضاعة والوحدات المباعة', '1210': 'بضائع ووحدات بغرض البيع'})
 ACCOUNT_NAMES_AR.update({'1120': 'أوراق القبض (شيكات تحت التحصيل)', '1170': 'مستحق من الشركاء', '1180': 'إيرادات مستحقة غير مفوترة (أعمال منفذة)', '1190': 'مخصص الديون المشكوك في تحصيلها', '1340': 'غطاء خطابات الضمان', '1440': 'أراضي', '1450': 'مباني وتحسينات أماكن مستأجرة', '1460': 'مشروعات تحت التنفيذ', '1520': 'الشهرة', '1700': 'استثمارات طويلة الأجل', '2050': 'أوراق الدفع (شيكات صادرة)', '2060': 'فوائد مستحقة', '2120': 'توزيعات أرباح مستحقة للشركاء', '2130': 'مستحق للشركاء المنسحبين', '2510': 'مخصص مكافأة نهاية الخدمة', '3020': 'جاري الشركاء', '3030': 'علاوة إصدار / علاوة حصص', '3110': 'الاحتياطي القانوني', '3120': 'الاحتياطي العام', '4060': 'أرباح بيع أصول ثابتة', '4070': 'إيرادات إيجار', '4080': 'خصم مكتسب', '6015': 'صيانة وإصلاحات', '6078': 'وقود ومصروفات سيارات', '6088': 'ديون معدومة', '7045': 'خسائر بيع أصول ثابتة'})
@@ -959,7 +1032,7 @@ SUBMODULES = {
     "sales": ["offers", "receipts", "invoices", "receivables", "parties"],
     "estimating": ["boqs", "prices"],
     "purchasing": ["orders", "costs", "expenses", "payments", "payables", "contacts", "negotiations", "custody"],
-    "shop": ["products", "orders", "installments"],
+    "shop": ["products", "orders", "installments", "subscriptions"],
     "stock": ["balances", "moves", "warehouses"],
     "rentals": ["contracts", "fleet", "calculator"],
     "payroll": [],
@@ -1113,7 +1186,7 @@ class Database:
             for code, name, typ, sub, role in DEFAULT_ACCOUNTS:
                 if role not in ("custody", "loans_receivable", "interest_receivable", "loans_receivable_lt", "bad_debt", "rental_fleet",
                                 "rental_revenue", "rental_services", "rental_compensation", "rental_loss", "rental_accum",
-                                "rental_deposits", "product_sales", "installment_income", "installment_deferred",
+                                "rental_deposits", "product_sales", "installment_income", "installment_deferred", "service_revenue", "service_deferred",
                                 "cost_of_sales", "goods_inventory") or \
                         self.conn.execute("SELECT 1 FROM accounts WHERE role=?", (role,)).fetchone():
                     continue

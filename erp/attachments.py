@@ -11,7 +11,8 @@ OWNERS = {"entry": ("journal_entries", None, None), "party": ("parties", "name",
           "bu": ("business_units", "code", ("business_units.units",)), "rental": ("rentals", "code", ("rentals.contracts",)),
           "sale": ("sales_orders", "code", ("shop.orders",)), "loan": ("loans", "code", ("accounting.loans",)),
           "custody": ("custodies", "code", ("purchasing.custody",)), "asset": ("fixed_assets", "code", ("assets.register",)),
-          "offer": ("offers", "number", ("sales.offers",)), "po": ("purchase_orders", "code", ("purchasing.orders",))}
+          "offer": ("offers", "number", ("sales.offers",)), "po": ("purchase_orders", "code", ("purchasing.orders",)),
+          "sub": ("subscriptions", "code", ("shop.subscriptions",))}
 
 
 def _owner(db, owner, oid):

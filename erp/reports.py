@@ -835,6 +835,30 @@ def purchase_orders_table(db, p, lang="en"):
             "columns": cols, "rows": rows, "lang": lang}
 
 
+SUB_KINDS = {"maintenance": ("Maintenance", "صيانة"), "warranty": ("Warranty", "ضمان"), "insurance": ("Insurance", "تأمين"),
+             "software": ("Software / app", "برنامج / تطبيق"), "support": ("Support", "دعم فني"), "addon": ("Add-on", "إضافة"),
+             "other": ("Other", "أخرى")}
+
+
+def subscriptions_table(db, p, lang="en"):
+    from . import services
+    ar = lang == "ar"
+    d = services.listing(db, p.get("q"), p.get("status"), p.get("kind"), p.get("customer"))
+    st = {"active": ("Active", "سارية"), "paused": ("Paused", "موقوفة مؤقتاً"), "cancelled": ("Cancelled", "ملغاة"), "ended": ("Ended", "منتهية")}
+    cols = _mkcols([("Code", "الكود", "left"), ("Customer", "العميل", "left"), ("Service", "الخدمة", "left"), ("Covers", "يغطي", "left"),
+                    ("Price", "السعر", "right"), ("Every (months)", "كل (شهور)", "right", "num"), ("Monthly value", "القيمة الشهرية", "right"),
+                    ("Next invoice", "الفاتورة القادمة", "left"), ("Ends", "تنتهي", "left"), ("Status", "الحالة", "left")], lang)
+    rows = [{"cells": [r["code"] + (f" ↳ {r['parent_code']}" if r["parent_code"] else ""), r["customer"], r["title"], r["covers"], r["price"],
+                       r["period_months"], r["monthly"] or "", r["next_bill"] if r["status"] == "active" else "", r["end"],
+                       st[r["status"]][1 if ar else 0]], "style": "item", "indent": 1 if r["parent_code"] else 0} for r in d["rows"]]
+    rows.append({"cells": [("الإيراد الشهري المتكرر" if ar else "Monthly recurring revenue"), "", "", "", "", "", d["mrr"], "", "", ""],
+                 "style": "grand", "indent": 0})
+    return {"title": "الاشتراكات وعقود الصيانة" if ar else "Subscriptions & maintenance contracts",
+            "subtitle": f"{L('as_of', lang)} {acc.today()} · {db.setting('currency')} · " +
+                        (f"إيراد سنوي متكرر {d['arr']:,.2f}" if ar else f"annual recurring {d['arr']:,.2f}"),
+            "columns": cols, "rows": rows, "lang": lang}
+
+
 def tax_table(db, date_from=None, date_to=None, lang="en"):
     t = acc.tax_summary(db, date_from, date_to)
     ar = lang == "ar"
@@ -923,6 +947,8 @@ def build(db, name, p):
         return aging_table(db, p.get("date_to"), p.get("side"), lang)
     if name == "budget":
         return budget_table(db, p.get("year"), p.get("bu_id", ""), p.get("through"), lang)
+    if name == "subscriptions":
+        return subscriptions_table(db, p, lang)
     if name == "purchase_order":
         return purchase_order_table(db, p.get("id") or p.get("code"), lang)
     if name == "purchase_orders":
@@ -943,7 +969,8 @@ REPORT_PERMS = {"income_statement": "reports.income_statement", "balance_sheet":
                 "products": "shop.products", "bank_reconciliation": "accounting.bankrec",
                 "party_statement": ("sales.parties", "purchasing.contacts", "sales.receivables", "purchasing.payables"),
                 "aging": ("sales.receivables", "purchasing.payables"), "budget": "accounting.budgets",
-                "purchase_order": "purchasing.orders", "purchase_orders": "purchasing.orders"}
+                "purchase_order": "purchasing.orders", "purchase_orders": "purchasing.orders",
+                "subscriptions": "shop.subscriptions"}
 
 
 # ==================================================================== writers

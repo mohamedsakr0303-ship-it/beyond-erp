@@ -603,7 +603,7 @@ def list_docs(ctx, dtype):
     return ok({"rows": [acc.get_entry(ctx.db, i) for i in ids], "total": count, "limit": limit, "offset": offset})
 
 
-KIND_MODULE = {"Supplier Discount": "purchasing.payments", "Direct Cost": "purchasing.costs", "Operating Expense": "purchasing.expenses",
+KIND_MODULE = {"Revenue Recognition": "shop.subscriptions", "Supplier Discount": "purchasing.payments", "Direct Cost": "purchasing.costs", "Operating Expense": "purchasing.expenses",
                "Payment Voucher": "purchasing.payments", "Payroll Accrual": "payroll", "Receipt Voucher": "sales.receipts",
                "Sales Invoice": "sales.invoices", "Capital Contribution": "partners.transactions",
                "Owner Drawing": "partners.transactions", "Capital Withdrawal": "partners.transactions",
@@ -1041,6 +1041,87 @@ def bank_rule_del(ctx, rid):
 
 
 # ============================================================ recurring entries
+# ============================================================ service subscriptions
+def _svc():
+    from . import services
+    return services
+
+
+@route("GET", "/api/service-plans", "shop.subscriptions")
+def svc_plans(ctx):
+    return ok({"rows": _svc().plans(ctx.db)})
+
+
+@route("POST", "/api/service-plans", "shop.subscriptions", "add")
+def svc_plan_add(ctx):
+    return ok({"id": _svc().save_plan(ctx.db, ctx.body)})
+
+
+@route("PUT", "/api/service-plans/<pid>", "shop.subscriptions", "edit")
+def svc_plan_edit(ctx, pid):
+    _svc().save_plan(ctx.db, ctx.body, pid)
+    return ok({})
+
+
+@route("GET", "/api/subscriptions", "shop.subscriptions")
+def svc_list(ctx):
+    return ok(_svc().listing(ctx.db, ctx.q.get("q"), ctx.q.get("status"), ctx.q.get("kind"), ctx.q.get("customer")))
+
+
+@route("GET", "/api/subscriptions/<sid>", "shop.subscriptions")
+def svc_get(ctx, sid):
+    return ok(_svc().detail(ctx.db, sid))
+
+
+@route("POST", "/api/subscriptions", "shop.subscriptions", "add")
+def svc_add(ctx):
+    sid = _svc().save(ctx.db, ctx.body, ctx.user["username"])
+    ctx.log("subscription.add", sid)
+    return ok({"id": sid, "code": _svc().get(ctx.db, sid)["code"]})
+
+
+@route("PUT", "/api/subscriptions/<sid>", "shop.subscriptions", "edit")
+def svc_edit(ctx, sid):
+    _svc().save(ctx.db, ctx.body, ctx.user["username"], sid)
+    return ok({})
+
+
+@route("POST", "/api/subscriptions/<sid>/status", "shop.subscriptions", "edit")
+def svc_status(ctx, sid):
+    _svc().set_status(ctx.db, sid, ctx.body.get("status"), ctx.body, ctx.user["username"])
+    ctx.log("subscription." + str(ctx.body.get("status")), sid)
+    return ok({})
+
+
+@route("POST", "/api/subscriptions/<sid>/visits", "shop.subscriptions", "add")
+def svc_visit_add(ctx, sid):
+    return ok({"id": _svc().save_visit(ctx.db, sid, ctx.body)})
+
+
+@route("PUT", "/api/subscriptions/<sid>/visits/<vid>", "shop.subscriptions", "edit")
+def svc_visit_edit(ctx, sid, vid):
+    _svc().save_visit(ctx.db, sid, ctx.body, vid)
+    return ok({})
+
+
+@route("DELETE", "/api/subscriptions/<sid>/visits/<vid>", "shop.subscriptions", "edit")
+def svc_visit_del(ctx, sid, vid):
+    _svc().delete_visit(ctx.db, sid, vid)
+    return ok({})
+
+
+@route("POST", "/api/subscriptions/<sid>/bill-charges", "shop.subscriptions", "add")
+def svc_bill_charges(ctx, sid):
+    return ok({"extract_id": _svc().bill_charges(ctx.db, sid, ctx.body.get("date"), ctx.user["username"])})
+
+
+@route("POST", "/api/subscriptions-run", "shop.subscriptions", "add")
+def svc_run(ctx):
+    r = _svc().run(ctx.db, ctx.body.get("through"), ctx.user["username"])
+    ctx.log("subscriptions.run", f"{r['invoices']} invoices")
+    return ok(r)
+
+
 # ============================================================ purchase orders
 @route("GET", "/api/purchase-orders", "purchasing.orders")
 def po_list(ctx):
@@ -2492,12 +2573,12 @@ def offer_type_del(ctx, tid):
 
 
 # ============================================================ erase all data
-ERASE_TRANSACTIONS = ("po_receipts", "po_lines", "purchase_orders", "bank_lines", "bank_statements", "recurring_runs", "sale_cheques", "sale_installments", "sale_lines", "sales_orders", "stock_moves", "stock_levels", "extract_lines", "extracts", "ownership_changes", "journal_lines",
+ERASE_TRANSACTIONS = ("sub_recognitions", "sub_visits", "sub_invoices", "subscriptions", "po_receipts", "po_lines", "purchase_orders", "bank_lines", "bank_statements", "recurring_runs", "sale_cheques", "sale_installments", "sale_lines", "sales_orders", "stock_moves", "stock_levels", "extract_lines", "extracts", "ownership_changes", "journal_lines",
                       "journal_entries", "offers", "loans", "custodies", "rent_moves", "rental_invoices", "rental_charges",
                       "rental_handovers", "rental_lines", "rentals", "rent_lots")
 ERASE_ALL = ERASE_TRANSACTIONS + ("parties", "stock_items", "boq_lines", "boqs", "partner_shares", "partners", "rates",
                                   "fixed_assets", "business_units", "offer_types", "tax_codes", "assets", "rent_kit_lines", "rent_kits",
-                                  "rent_items", "rent_models", "product_media", "products", "bank_rules", "recurring", "budgets", "attachments")
+                                  "rent_items", "rent_models", "product_media", "products", "bank_rules", "recurring", "budgets", "attachments", "service_plans")
 
 
 @route("POST", "/api/erase")

@@ -854,7 +854,7 @@ def save_extract(db, d, extract_id=None):
             extract_id = db.conn.execute("INSERT INTO extracts(bu_id,boq_id,number,date,customer,vat_code,wht_code) "
                                          "VALUES (?,?,?,?,?,?,?)", vals).lastrowid
         for ln in lines:   # a line may earn into its own revenue account (rent, services, compensation...)
-            if ln["account"]:
+            if ln["account"] and ln["account"] != db.acct("service_deferred"):   # billed in advance, earned month by month
                 account_code(db, ln["account"], types=("Revenue",), field="revenue account")
         db.conn.executemany("INSERT INTO extract_lines(extract_id,seq,category,sub,item_no,description,unit,qty,price,account) "
                             "VALUES (?,?,?,?,?,?,?,?,?,?)",
