@@ -1729,6 +1729,28 @@ def rent_model_del(ctx, mid):
     return ok()
 
 
+@route("GET", "/api/rent-service-rates")
+def rent_service_rates(ctx):
+    if not (ctx.can("rentals.calculator") or ctx.can("rentals.contracts")):
+        raise PermissionError()
+    return ok(rentals.service_rates(ctx.db))
+
+
+@route("PUT", "/api/rent-service-rates", "rentals.calculator", "edit")
+def rent_service_rates_save(ctx):
+    return ok(rentals.save_service_rates(ctx.db, ctx.body))
+
+
+@route("POST", "/api/rent-services-preview")
+def rent_services_quote(ctx):
+    if not (ctx.can("rentals.calculator") or ctx.can("rentals.contracts")):
+        raise PermissionError()
+    b = ctx.body
+    return ok(rentals.service_quote(ctx.db, acc.num(b.get("area") or 0, "area"), acc.num(b.get("weight") or 0, "weight"),
+                                    acc.num(b.get("monthly_rent") or 0, "monthly rent"), b.get("scope") or "both",
+                                    b.get("overrides") if isinstance(b.get("overrides"), dict) else None))
+
+
 @route("POST", "/api/rent-models-preview/eval")
 def rent_model_eval(ctx):
     if not (ctx.can("rentals.calculator") or ctx.can("rentals.contracts")):

@@ -2918,7 +2918,9 @@ PAGES.rental = async (view, parts) => {
       steps.map((s, i) => `<span class="chip ${i < cur ? "ok" : i === cur ? "warn" : ""}">${i < cur ? "✓ " : ""}${esc(RENT_ST(s)[1])}</span>`).join("<span class='muted'>→</span>")}
       ${R.po_number && !R.signed_on && !done ? `<span class="chip bad">${L2("Contract not signed — deliveries need both signatures", "العقد غير موقّع — التسليم يحتاج توقيع الطرفين")}</span>` : ""}</div>
     <div class="kpis">${kpiBox(L2("Rent / month on site", "الإيجار الشهري بالموقع"), d.on_site_monthly, "pos", R.status === "quote" ? `${L2("offer", "العرض")}: ${money(q.monthly)}` : "")}
-      ${kpiBox(L2("One-time charges (offer)", "مبالغ لمرة واحدة"), q.one_time)}${kpiBox(L2("Not invoiced yet", "لم تُفوتر بعد"), d.unbilled_charges, d.unbilled_charges ? "neg" : "", L2("charges", "مبالغ"))}
+      ${kpiBox(L2("One-time charges (offer)", "مبالغ لمرة واحدة"), q.one_time, "", (() => { const ch = d.lines.filter(l => l.kind === "charge" && l.cost); if (!ch.length) return "";
+        const amt = ch.reduce((x, l) => x + l.qty * l.rate, 0), cost = ch.reduce((x, l) => x + l.cost, 0);
+        return `${L2("services profit", "ربح الخدمات")} <b class="${amt - cost < 0 ? "neg" : ""}">${money(amt - cost)}</b>${amt ? ` (${Math.round((amt - cost) / amt * 100)}%)` : ""}`; })())}${kpiBox(L2("Not invoiced yet", "لم تُفوتر بعد"), d.unbilled_charges, d.unbilled_charges ? "neg" : "", L2("charges", "مبالغ"))}
       ${kpiBox(L2("Pieces on site", "القطع بالموقع"), numf(d.held.reduce((s, h) => s + h.qty, 0)), "", `${L2("value", "القيمة")} ${money(d.held.reduce((s, h) => s + h.value, 0))}`)}
       ${R.deposit || R.deposit_held ? kpiBox(L2("Security deposit held", "التأمين المحتفظ به"), R.deposit_held, R.deposit && R.deposit_held < R.deposit && !done ? "neg" : "", R.deposit ? `${L2("required", "المطلوب")} ${money(R.deposit)}${R.deposit_first ? " · " + L2("before delivery", "قبل التسليم") : ""}` : "") : ""}</div>
     <div class="card"><div class="tbl"><table><tbody>
@@ -2954,7 +2956,7 @@ async function rentalForm(d, pre) {
   const R = d ? d.rental : {}, cat = await rentCatalog();
   const models = (await api("GET", "/api/rent-models")).models;
   let lines = d ? d.lines.map(l => ({ id: l.id, kind: l.kind, item_id: l.item_id, kit_id: l.kit_id, model_id: l.model_id, description: l.description, unit: l.unit, qty: l.qty, rate: l.rate,
-    charge_type: l.charge_type, charge_when: l.charge_when, components: l.components.map(c => ({ item_id: c.item_id, per_unit: c.per_unit })), inputs: l.inputs })) : (pre && pre.lines) || [];
+    charge_type: l.charge_type, charge_when: l.charge_when, cost: l.cost || 0, components: l.components.map(c => ({ item_id: c.item_id, per_unit: c.per_unit })), inputs: l.inputs })) : (pre && pre.lines) || [];
   const itemById = id => cat.items.find(i => i.id === +id) || {};
   const html = form([
     { k: "client", l: t("client"), v: R.client || (pre && pre.client) || "", list: "rcl", req: 1 }, { k: "contact", l: L2("Contact person", "المسؤول"), v: R.contact || "" },
@@ -2985,14 +2987,15 @@ async function rentalForm(d, pre) {
             ${l.kind === "kit" || l.kind === "sqm" ? `<div class="lines">${esc(l.components.map(c => `${nm(itemById(c.item_id))} × ${numf(Math.ceil(c.per_unit * (+l.qty || 0) - 1e-4))}`).join(" · "))}</div>` : ""}</td>
           <td><input data-skip="1" value="${esc(l.unit || "")}" data-input="rln" data-i="${i}" data-k="unit" style="width:80px"></td>
           <td><input data-skip="1" class="num" type="number" step="any" value="${l.qty ?? ""}" data-input="rln" data-i="${i}" data-k="qty" style="width:90px"></td>
-          <td><input data-skip="1" class="num" type="number" step="any" value="${l.rate ?? ""}" data-input="rln" data-i="${i}" data-k="rate" style="width:110px"></td>
+          <td><input data-skip="1" class="num" type="number" step="any" value="${l.rate ?? ""}" data-input="rln" data-i="${i}" data-k="rate" style="width:110px">
+            ${l.kind === "charge" ? `<div class="muted" style="font-size:.75em;margin-top:2px">${L2("our cost", "تكلفتنا")} <input data-skip="1" class="num" type="number" step="any" value="${l.cost || ""}" data-input="rln" data-i="${i}" data-k="cost" style="width:80px"></div>` : ""}</td>
           <td class="num" data-tot="${i}">${money((+l.qty || 0) * (+l.rate || 0))}</td><td><button type="button" class="btn sm danger" data-a="rlndel" data-i="${i}">✕</button></td></tr>`).join("") || `<tr><td colspan="7" class="muted">${L2("Add lines below.", "أضف البنود من الأسفل.")}</td></tr>`}</tbody></table></div>
         <div class="row" style="margin-top:6px;flex-wrap:wrap;gap:6px">
           <select data-skip="1" id="rpick" style="max-width:260px"><option value="">${L2("+ Piece / unit…", "+ قطعة / وحدة…")}</option>${cat.items.map(i => `<option value="${i.id}">${esc(i.code)} — ${esc(nm(i))} (${money(i.monthly_rate)})</option>`).join("")}</select>
           <select data-skip="1" id="rkpick" style="max-width:220px"><option value="">${L2("+ Frame / set…", "+ شباك / طقم…")}</option>${cat.kits.map(k => `<option value="${k.id}">${esc(k.code)} — ${esc(nm(k))} (${money(k.monthly_rate)})</option>`).join("")}</select>
-          <button type="button" class="btn sm" data-a="rcalc">+ ${L2("By m² (calculator)", "بالمتر المربع (الحاسبة)")}</button><button type="button" class="btn sm" data-a="rcharge">+ ${L2("One-time charge", "مبلغ لمرة واحدة")}</button>
+          <button type="button" class="btn sm" data-a="rcalc">+ ${L2("By m² (calculator)", "بالمتر المربع (الحاسبة)")}</button><button type="button" class="btn sm" data-a="rcharge">+ ${L2("One-time charge", "مبلغ لمرة واحدة")}</button><button type="button" class="btn sm" data-a="rsvc">+ ${L2("Installation / transport…", "تركيب / نقل…")}</button>
           <span class="spacer"></span><span>${L2("Monthly rent", "الإيجار الشهري")}: <b id="rmt">${money(tot)}</b> · ${L2("one-time", "لمرة واحدة")}: <b id="rot">${money(one)}</b></span></div>
-        <div id="rcalcbox"></div>`;
+        <div id="rcalcbox"></div><div id="rsvcbox"></div>`;
       drawCalc(); };
     const totals = () => { const tot = lines.filter(l => l.kind !== "charge").reduce((s, l) => s + (+l.qty || 0) * (+l.rate || 0), 0), one = lines.filter(l => l.kind === "charge").reduce((s, l) => s + (+l.qty || 0) * (+l.rate || 0), 0);
       if ($("#rmt", f)) $("#rmt", f).textContent = money(tot); if ($("#rot", f)) $("#rot", f).textContent = money(one);
@@ -3015,6 +3018,15 @@ async function rentalForm(d, pre) {
     Object.assign(S.H, {
       rln: el => { const l = lines[+el.dataset.i]; l[el.dataset.k] = el.value; totals(); },
       rlndel: el => { lines.splice(+el.dataset.i, 1); draw(); },
+      rsvc: () => { const box = $("#rsvcbox", f);
+        if (box.innerHTML) { box.innerHTML = ""; return; }
+        const rent = lines.filter(l => l.kind !== "charge").reduce((s2, l) => s2 + (+l.qty || 0) * (+l.rate || 0), 0);
+        const area = lines.filter(l => l.kind === "sqm").reduce((s2, l) => s2 + (+l.qty || 0), 0);
+        const kg = lines.reduce((s2, l) => s2 + (l.kind === "item" ? (+l.qty || 0) * (+itemById(l.item_id).weight || 0)
+          : (l.components || []).reduce((w, c) => w + c.per_unit * (+l.qty || 0) * (+itemById(c.item_id).weight || 0), 0)), 0);
+        box.innerHTML = `<div class="card" style="margin-top:8px"><h4 style="margin:0 0 6px">${L2("Installation, dismantling & transport", "التركيب والفك والنقل")}</h4><div class="svcp"></div></div>`;
+        svcPanel($(".svcp", box), { area, weight: kg, rent, button: L2("Put these on the offer (replaces earlier ones)", "أضفها للعرض (تستبدل السابقة)"),
+          onAdd: add => { lines = lines.filter(l => !(l.kind === "charge" && ["install", "dismantle", "transport"].includes(l.charge_type))).concat(add); box.innerHTML = ""; draw(); } }); },
       rcharge: () => { lines.push({ kind: "charge", charge_type: "install", charge_when: "delivery", description: L2("Installation", "التركيب"), unit: L2("lump sum", "مقطوعية"), qty: 1, rate: "" }); draw(); },
       rcalc: () => { calc = { model_id: (models[0] || {}).id, values: {}, rate: "" }; drawCalc(); $("#rcalcbox", f).scrollIntoView({ behavior: "smooth", block: "nearest" }); },
       rcm: el => { calc.model_id = +el.value; calc.values = {}; drawCalc(); },
@@ -3262,6 +3274,68 @@ function rentSettingsForm(st) {
 }
 
 // ------------------------------------------------------------ scaffold calculator
+// Installation / dismantling / transport priced with a scaffold: client price vs our cost (crew, truck) and the profit.
+// ctx: {area, weight, rent, scope, button, onAdd(lines)} — onAdd receives contract charge lines (with their cost).
+const SCOPE_L = () => [["both", L2("Install + dismantle", "تركيب + فك")], ["install", L2("Install only", "تركيب فقط")], ["dismantle", L2("Dismantle only", "فك فقط")], ["none", L2("Client installs (no install / dismantle)", "العميل يركّب (بدون تركيب / فك)")]];
+const BASIS_L = b => ({ rent_months: L2("× monthly rent", "× الإيجار الشهري"), m2: L2("per m²", "للمتر²"), trip: L2("per trip", "للنقلة"), ton: L2("per ton", "للطن"), lump: L2("lump sum", "مقطوعية") })[b] || b;
+function svcPanel(box, ctx) {
+  const st = { area: ctx.area || 0, weight: Math.round(ctx.weight || 0), rent: Math.round((ctx.rent || 0) * 100) / 100, scope: ctx.scope || "both", over: {}, transport: true };
+  let res = null, tm;
+  const run = async () => {
+    const over = { ...st.over }; if (!st.transport) { over.transport_out = { ...(over.transport_out || {}), off: true }; over.transport_back = { ...(over.transport_back || {}), off: true }; }
+    try { res = await api("POST", "/api/rent-services-preview", { area: st.area, weight: st.weight, monthly_rent: st.rent, scope: st.scope, overrides: over }); draw(); }
+    catch (e) { $(".svcres", box).innerHTML = `<div class="banner err">${esc(e.message)}</div>`; } };
+  const later = () => { clearTimeout(tm); tm = setTimeout(run, 300); };
+  box.innerHTML = `<div class="grid g2 svcin" style="gap:8px">
+      <label class="f">${L2("Installation by us", "التركيب بمعرفتنا")}<select data-sv="scope">${optHtml(SCOPE_L(), st.scope)}</select></label>
+      <label class="f chk" style="align-self:end"><input type="checkbox" data-sv="transport" checked>${L2("We transport (to site and back)", "النقل بمعرفتنا (ذهاب وعودة)")}</label>
+      <label class="f">${L2("Area (m²)", "المساحة (م²)")}<input type="number" step="any" data-sv="area" value="${st.area}"></label>
+      <label class="f">${L2("Monthly rent of the scaffold", "الإيجار الشهري للسقالة")}<input type="number" step="any" data-sv="rent" value="${st.rent}"></label>
+      <label class="f">${L2("Weight to move (kg)", "الوزن المنقول (كجم)")}<input type="number" step="any" data-sv="weight" value="${st.weight}"></label></div>
+    <div class="svcres muted">…</div>`;
+  box.addEventListener("input", e => { const k = e.target.dataset.sv, o = e.target.dataset.ov;
+    if (k && k !== "scope" && k !== "transport") { st[k] = +e.target.value || 0; later(); }
+    if (o) { const [code, f] = o.split(":"); st.over[code] = { ...(st.over[code] || {}), [f]: e.target.value }; later(); } });
+  box.addEventListener("change", e => { const k = e.target.dataset.sv; if (k === "scope") { st.scope = e.target.value; run(); } if (k === "transport") { st.transport = e.target.checked; run(); } });
+  box.addEventListener("click", e => { if (e.target.dataset.sv === "add" && res && ctx.onAdd) ctx.onAdd(svcLines(res)); if (e.target.dataset.sv === "rates") serviceRatesForm(run); });
+  const draw = () => {
+    const r = res, T = r.totals;
+    $(".svcres", box).classList.remove("muted");
+    $(".svcres", box).innerHTML = r.lines.length ? `<div class="tbl"><table><thead><tr><th>${L2("Service", "الخدمة")}</th><th class="num">${t("qty")}</th><th class="num">${L2("Client price", "سعر العميل")}</th><th class="num">${L2("Charge", "المطلوب")}</th><th class="num">${L2("Our cost / unit", "تكلفتنا / وحدة")}</th><th class="num">${L2("Our cost", "تكلفتنا")}</th><th class="num">${L2("Profit", "الربح")}</th></tr></thead><tbody>
+      ${r.lines.map(l => `<tr><td><b>${esc(S.lang === "ar" && l.name_ar ? l.name_ar : l.name)}</b><div class="muted" style="font-size:.8em">${esc(BASIS_L(l.basis))}${l.basis === "rent_months" ? ` (${numf(rateOf0(l))})` : ""} · ${l.when === "return" ? L2("on return", "عند الإرجاع") : L2("on delivery", "عند التسليم")}</div></td>
+        <td class="num">${l.basis === "rent_months" ? "1" : numf(l.qty)}</td>
+        <td class="num"><input type="number" step="any" data-ov="${l.code}:price" value="${l.price}" style="width:100px" title="${esc(l.basis === "rent_months" ? L2("Amount of the one-time fee", "قيمة الرسوم لمرة واحدة") : BASIS_L(l.basis))}"></td>
+        <td class="num"><b>${money(l.amount)}</b>${l.min_applied ? `<div class="muted" style="font-size:.75em">${L2("minimum charge", "الحد الأدنى")}</div>` : ""}</td>
+        <td class="num"><input type="number" step="any" data-ov="${l.code}:cost" value="${l.cost}" style="width:90px"><div class="muted" style="font-size:.75em">× ${numf(l.cost_qty)} ${esc(BASIS_L(l.cost_basis))}</div></td>
+        <td class="num">${money(l.total_cost)}</td><td class="num ${l.profit < 0 ? "neg" : ""}"><b>${money(l.profit)}</b><div class="muted" style="font-size:.75em">${l.margin}%</div></td></tr>`).join("")}
+      <tr class="total"><td>${t("total")}</td><td></td><td></td><td class="num">${money(T.amount)}</td><td></td><td class="num">${money(T.total_cost)}</td><td class="num ${T.profit < 0 ? "neg" : ""}">${money(T.profit)} <span class="muted">(${T.margin}%)</span></td></tr></tbody></table></div>
+      <p class="muted" style="font-size:.85em;margin:6px 0">${L2(`${numf(r.trips)} truck trip(s) each way at ${numf(r.truck_tons)} t per truck · services ${money(T.per_m2)} per m²`, `${numf(r.trips)} نقلة في كل اتجاه بحمولة ${numf(r.truck_tons)} طن · الخدمات ${money(T.per_m2)} للمتر²`)}</p>`
+      : `<div class="muted">${L2("No services — the client installs and transports.", "لا خدمات — العميل يركّب وينقل.")}</div>`;
+    $(".svcres", box).insertAdjacentHTML("beforeend", `<div class="row" style="gap:6px">${ctx.onAdd && r.lines.length ? `<button type="button" class="btn sm pri" data-sv="add">${esc(ctx.button || L2("Add to the offer", "أضف إلى العرض"))}</button>` : ""}${can("rentals.calculator", "edit") ? `<button type="button" class="btn sm" data-sv="rates">${L2("Default rates…", "الأسعار الافتراضية…")}</button>` : ""}</div>`);
+  };
+  const rateOf0 = l => res && res.monthly_rent ? l.price / res.monthly_rent : 0;
+  run();
+  return { set: (k, v) => { st[k] = v; const el = $(`[data-sv="${k}"]`, box); if (el) el.value = v; later(); } };
+}
+// contract charge lines from a services quote (the profit is kept as each line's cost)
+const svcLines = r => r.lines.map(l => ({ kind: "charge", charge_type: l.charge_type, charge_when: l.when,
+  description: S.lang === "ar" && l.name_ar ? l.name_ar : l.name, unit: l.basis === "rent_months" || l.min_applied ? L2("lump sum", "مقطوعية") : l.unit,
+  qty: l.basis === "rent_months" || l.min_applied ? 1 : l.qty, rate: l.basis === "rent_months" || l.min_applied ? l.amount : l.price, cost: l.total_cost, components: [], inputs: {} }));
+async function serviceRatesForm(after) {
+  const r = await api("GET", "/api/rent-service-rates");
+  const row = (x = {}) => `<tr class="srow"><td><select data-f="charge_type">${optHtml(CHG_T(), x.charge_type || "install")}</select></td><td><input data-f="name" value="${esc(x.name || "")}"><input data-f="name_ar" dir="rtl" value="${esc(x.name_ar || "")}" placeholder="عربي"><input type="hidden" data-f="code" value="${esc(x.code || "")}"></td>
+    <td><input data-f="price" type="number" step="any" value="${x.price ?? ""}" style="width:80px"><select data-f="basis">${optHtml(["rent_months", "m2", "trip", "ton", "lump"].map(b => [b, BASIS_L(b)]), x.basis || "m2")}</select></td>
+    <td><input data-f="cost" type="number" step="any" value="${x.cost ?? ""}" style="width:80px"><select data-f="cost_basis">${optHtml(["m2", "trip", "ton", "lump"].map(b => [b, BASIS_L(b)]), x.cost_basis || "m2")}</select></td>
+    <td><input data-f="min_charge" type="number" step="any" value="${x.min_charge || 0}" style="width:80px"></td><td><select data-f="when">${optHtml(CHG_W(), x.when || "delivery")}</select></td><td><button type="button" class="btn sm danger" data-k="rm">✕</button></td></tr>`;
+  const f = drawer(L2("Installation, dismantling & transport rates", "أسعار التركيب والفك والنقل"), `<p class="muted" style="font-size:.88em">${L2("Price = what the client pays (e.g. 0.6 × monthly rent for installation and 0.4 for dismantling = one month of rent, charged once). Cost = what the crew / truck costs us. Both are defaults; each offer can change them.", "السعر = ما يدفعه العميل (مثلاً 0.6 × الإيجار الشهري للتركيب و0.4 للفك = إيجار شهر، مرة واحدة). التكلفة = ما يتكلفه الطاقم / النقل. القيم افتراضية ويمكن تعديلها في كل عرض.")}</p>
+    <label class="f" style="max-width:220px">${L2("Truck capacity (tons)", "حمولة النقلة (طن)")}<input name="truck_tons" type="number" step="any" value="${r.truck_tons}"></label>
+    <div class="tbl"><table><thead><tr><th>${t("type")}</th><th>${L2("Service", "الخدمة")}</th><th>${L2("Client price", "سعر العميل")}</th><th>${L2("Our cost", "تكلفتنا")}</th><th>${L2("Minimum", "الحد الأدنى")}</th><th>${L2("Charged", "يُحتسب")}</th><th></th></tr></thead><tbody>${r.services.map(row).join("")}</tbody></table></div>
+    <button type="button" class="btn sm" data-k="add">+ ${L2("Service", "خدمة")}</button>`,
+    async v => { const services = $$("tr.srow", f).map(tr => Object.fromEntries($$("[data-f]", tr).map(el => [el.dataset.f, el.value])));
+      await api("PUT", "/api/rent-service-rates", { truck_tons: v.truck_tons, services }); toast(t("saved")); if (after) after(); return false; }, { wide: true });
+  f.addEventListener("click", e => { if (e.target.dataset.k === "add") $("tbody", f).insertAdjacentHTML("beforeend", row()); if (e.target.dataset.k === "rm") e.target.closest("tr").remove(); });
+  f.addEventListener("submit", () => setTimeout(() => closeDrawer(), 400));
+}
 PAGES.rentcalc = async (view, parts, q) => {
   let { models } = await api("GET", "/api/rent-models");
   const ed = can("rentals.calculator", "edit"), add = can("rentals.calculator", "add");
@@ -3281,15 +3355,20 @@ PAGES.rentcalc = async (view, parts, q) => {
           <h2 style="margin-top:14px">${L2("Settings you can tweak", "إعدادات قابلة للتعديل")}</h2><div class="grid g2">${sp.params.map(p => `<label class="f">${lab(p)}${p.unit ? ` (${esc(p.unit)})` : ""}<input class="num" type="number" step="any" value="${values[p.key] ?? p.value}" data-input="rcval" data-k="${p.key}"></label>`).join("")}</div></div>
         <div class="card"><h2>${L2("Worked out", "المحسوب")}</h2><div id="rcder" class="muted">…</div>
           <h2 style="margin-top:14px">${L2("Pricing", "التسعير")}</h2><label class="f" style="max-width:220px">${L2("Target monthly return on equipment cost %", "العائد الشهري المستهدف على تكلفة المعدات %")}<input class="num" type="number" step="any" id="rcpct" value="${values._pct ?? 3.5}" data-input="rcpctv"></label><div id="rcprice"></div></div></div>
-      <div class="card"><h2>${L2("Pieces needed", "القطع المطلوبة")}</h2><div id="rcres">…</div></div>`;
-    run(); };
+      <div class="card"><h2>${L2("Pieces needed", "القطع المطلوبة")}</h2><div id="rcres">…</div></div>
+      <div class="card"><h2>${L2("Installation, dismantling & transport", "التركيب والفك والنقل")}</h2><div id="rcsvc"></div></div>`;
+    svc = null; run(); };
+  let svc = null;
+  const svcSync = () => { if (!res) return; const rent = res.piece_rent || +(res.value * ((+$("#rcpct").value || 0) / 100)).toFixed(2);
+    if (!svc) svc = svcPanel($("#rcsvc"), { area: res.area, weight: res.weight, rent, onAdd: null });
+    else { svc.set("area", res.area); svc.set("weight", Math.round(res.weight)); svc.set("rent", rent); } };
   const run = async () => { try { res = await api("POST", "/api/rent-models-preview/eval", { spec: m.spec, values });
       $("#rcder").innerHTML = `<div class="tbl"><table><tbody>${res.derived.map(x => `<tr><td>${esc(S.lang === "ar" && x.label_ar ? x.label_ar : x.label || x.key)}</td><td class="num"><b>${numf(x.value)}</b></td><td class="muted" style="font-size:.8em">${esc(x.expr)}</td></tr>`).join("")}</tbody></table></div>`;
       $("#rcres").innerHTML = `<div class="tbl stack"><table><thead><tr><th>${L2("Piece", "القطعة")}</th><th class="num">${t("qty")}</th><th class="num">${L2("Per m²", "لكل م²")}</th><th class="num">${L2("In the yard", "بالمخزن")}</th><th class="num">${L2("Unit cost", "تكلفة القطعة")}</th><th class="num">${L2("Value", "القيمة")}</th><th class="muted">${L2("Formula", "المعادلة")}</th></tr></thead><tbody>
         ${res.components.map(c => `<tr><td>${c.missing ? `<span class="neg">${esc(c.item)} — ${L2("not in your equipment list", "غير موجود بقائمة المعدات")}</span>` : `${esc(c.item)} — ${esc(nm(c))}`}</td><td class="num"><b>${numf(c.qty)}</b></td><td class="num">${res.area ? (c.qty / res.area).toFixed(3) : ""}</td>
           <td class="num ${c.short ? "neg" : ""}">${c.missing ? "" : numf(c.in_yard)}${c.short ? `<div class="lines">${L2("short", "عجز")} ${numf(c.short)}</div>` : ""}</td><td class="num">${c.missing ? "" : money(c.unit_cost)}</td><td class="num">${c.missing ? "" : money(c.value)}</td><td class="muted" style="font-size:.8em">${esc(c.expr)}</td></tr>`).join("")}
         <tr class="total"><td>${t("total")}</td><td class="num">${numf(res.pieces)}</td><td></td><td></td><td></td><td class="num">${money(res.value)}</td><td></td></tr></tbody></table></div>`;
-      price();
+      price(); svcSync();
     } catch (e) { $("#rcres").innerHTML = `<div class="banner err">${esc(e.message)}</div>`; } };
   const price = () => { if (!res) return; const p = (+$("#rcpct").value || 0) / 100;
     $("#rcprice").innerHTML = `<div class="tbl" style="margin-top:8px"><table><tbody><tr><td>${L2("Area", "المساحة")}</td><td class="num"><b>${numf(res.area)} m²</b></td></tr>
@@ -3300,14 +3379,20 @@ PAGES.rentcalc = async (view, parts, q) => {
   Object.assign(S.H, {
     rcmodel: el => { m = models.find(x => x.id === +el.value); values = {}; draw(); },
     rcval: el => { values[el.dataset.k] = el.value; clearTimeout(tm); tm = setTimeout(run, 300); },
-    rcpctv: el => { values._pct = el.value; price(); },
+    rcpctv: el => { values._pct = el.value; price(); svcSync(); },
     rcsave: async () => { const sp = JSON.parse(JSON.stringify(m.spec)); [...sp.inputs, ...sp.params].forEach(p => { if (values[p.key] !== undefined && values[p.key] !== "") p.value = +values[p.key]; });
       try { await api("PUT", "/api/rent-models/" + m.id, { name: m.name, name_ar: m.name_ar, category: m.category, spec: sp }); m.spec = sp; toast(t("saved")); } catch (e) { fail(e); } },
     rccopy: async () => { try { const r = await api("POST", "/api/rent-models", { name: m.name + " (copy)", name_ar: (m.name_ar || "") + " (نسخة)", category: m.category, spec: m.spec }); location.hash = "#/rentcalc?model=" + r.id; } catch (e) { fail(e); } },
     rcedit: () => rentModelEditor(m, async () => { models = (await api("GET", "/api/rent-models")).models; m = models.find(x => x.id === m.id) || models[0]; draw(); }),
-    rcoffer: () => { if (!res || !res.area) return; const comps = res.components.filter(c => !c.missing && c.qty > 0).map(c => ({ item_id: c.item_id, per_unit: c.qty / res.area }));
+    rcoffer: async () => { if (!res || !res.area) return;
+      const sv = $("#rcsvc") ? Object.fromEntries($$("#rcsvc [data-sv]").filter(x => x.type !== "button").map(x => [x.dataset.sv, x.type === "checkbox" ? x.checked : x.value])) : null;
+      const over = {}; $$("#rcsvc [data-ov]").forEach(x => { const [c, k] = x.dataset.ov.split(":"); (over[c] = over[c] || {})[k] = x.value; });
+      if (sv && !sv.transport) { over.transport_out = { off: true }; over.transport_back = { off: true }; }
+      let extra = [];
+      try { if (sv) extra = svcLines(await api("POST", "/api/rent-services-preview", { area: +sv.area, weight: +sv.weight, monthly_rent: +sv.rent, scope: sv.scope, overrides: over })); } catch { /* offer without services */ }
+      const comps = res.components.filter(c => !c.missing && c.qty > 0).map(c => ({ item_id: c.item_id, per_unit: c.qty / res.area }));
       rentalForm(null, { lines: [{ kind: "sqm", model_id: m.id, description: `${nm(m)} — ${Object.values(res.values).slice(0, 2).map(numf).join(" × ")} m`, unit: "m²", qty: res.area,
-        rate: +(res.value_per_m2 * ((+$("#rcpct").value || 0) / 100)).toFixed(2) || "", components: comps, inputs: res.values }] }); } });
+        rate: +(res.value_per_m2 * ((+$("#rcpct").value || 0) / 100)).toFixed(2) || "", components: comps, inputs: res.values }, ...extra] }); } });
   draw();
 };
 

@@ -395,7 +395,8 @@ CREATE TABLE IF NOT EXISTS rental_lines (
     charge_when TEXT DEFAULT '',
     components TEXT DEFAULT '[]',                   -- [{item_id, per_unit}] pieces per billing unit
     inputs TEXT DEFAULT '{}',
-    notes TEXT DEFAULT ''
+    notes TEXT DEFAULT '',
+    cost INTEGER NOT NULL DEFAULT 0                 -- charge lines: what the service costs us (crew, truck), for its profit
 );
 CREATE TABLE IF NOT EXISTS rental_handovers (
     id INTEGER PRIMARY KEY,
@@ -1138,6 +1139,7 @@ class Database:
     def _migrate(self):
         """Additive, idempotent upgrades for databases created by older versions."""
         have = self._add_cols("accounts", [("name_ar", "TEXT DEFAULT ''")])
+        self._add_cols("rental_lines", [("cost", "INTEGER NOT NULL DEFAULT 0")])
         if "name_ar" not in have:
             for code, ar in ACCOUNT_NAMES_AR.items():
                 self.conn.execute("UPDATE accounts SET name_ar=? WHERE code=? AND name_ar=''", (ar, code))

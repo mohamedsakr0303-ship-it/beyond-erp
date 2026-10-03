@@ -1156,6 +1156,37 @@ class HostedBilling(unittest.TestCase):
         self.assertEqual(appended(2), 200)
         sb.shutdown()
 
+class RentalServices(unittest.TestCase):
+    """Installation / dismantling (months of rent or per m²) and transport (per trip): price vs our cost, scope."""
+
+    def test_service_quote_and_contract_cost(self):
+        from erp import demo, rentals as R
+        db = Database(":memory:")
+        demo.load(db)
+        q = R.service_quote(db, 1152, 23000, 60000, "both")
+        by = {x["code"]: x for x in q["lines"]}
+        self.assertEqual((by["install"]["amount"], by["dismantle"]["amount"]), (36000, 24000))   # 0.6 + 0.4 = one month of rent
+        self.assertEqual(by["install"]["total_cost"], 1152 * 6)                                    # crew paid per m²
+        self.assertEqual((q["trips"], by["transport_out"]["amount"]), (3, 3 * 3500))               # 23 t on 10 t trucks
+        self.assertEqual({x["code"] for x in R.service_quote(db, 1152, 23000, 60000, "install")["lines"]}, {"install", "transport_out", "transport_back"})
+        self.assertEqual({x["charge_type"] for x in R.service_quote(db, 1152, 23000, 60000, "none")["lines"]}, {"transport"})
+        small = R.service_quote(db, 40, 500, 2000, "both")
+        self.assertTrue({x["code"]: x for x in small["lines"]}["install"]["min_applied"])            # minimum charge
+        R.save_service_rates(db, {"truck_tons": 8, "services": [{"code": "inst", "charge_type": "install", "name": "Install",
+                                                                 "basis": "m2", "price": 25, "cost_basis": "m2", "cost": 15}]})
+        self.assertEqual(R.service_quote(db, 100, 0, 0)["lines"][0]["profit"], 1000)
+        with self.assertRaises(a.ValidationError):
+            R.service_quote(db, 100, 0, 0, "half")
+        rid = db.one("SELECT id FROM rentals ORDER BY id LIMIT 1")["id"]
+        d = R.detail(db, rid)
+        lines = [{**{k: ln[k] for k in ("id", "kind", "item_id", "kit_id", "model_id", "description", "unit", "qty", "rate",
+                                         "charge_type", "charge_when", "inputs")},
+                  "components": [{"item_id": c["item_id"], "per_unit": c["per_unit"]} for c in ln["components"]]} for ln in d["lines"]]
+        lines.append({"kind": "charge", "charge_type": "install", "charge_when": "delivery", "description": "Installation", "qty": 1,
+                      "rate": 30000, "cost": 20736})
+        R.save(db, {**{k: d["rental"][k] for k in ("client", "site", "start_date", "duration_months")}, "lines": lines}, rid=rid)
+        self.assertEqual(next(ln for ln in R.detail(db, rid)["lines"] if ln["description"] == "Installation" and ln["rate"] == 30000)["cost"], 20736)
+
 class ImportKit(unittest.TestCase):
     """Per-screen templates, and importing a user's own layout with column matching."""
 

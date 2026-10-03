@@ -785,14 +785,116 @@ def evaluate(db, spec, values=None):
             row.update(item_id=it["id"], name=it["name"], name_ar=it["name_ar"], unit=it["unit"], in_yard=st["in_yard"],
                        short=round(max(qty - st["in_yard"], 0), 4), unit_cost=to_major(int(round(cost))),
                        value=to_major(int(round(cost * qty))), monthly_rate=to_major(it["monthly_rate"]),
-                       piece_rent=to_major(int(round(it["monthly_rate"] * qty))))
+                       piece_rent=to_major(int(round(it["monthly_rate"] * qty))), weight=round((it["weight"] or 0) * qty, 2))
         comps.append(row)
     value = round(sum(c.get("value", 0) for c in comps), 2)
     piece_rent = round(sum(c.get("piece_rent", 0) for c in comps), 2)
     return {"values": {k: names[k] for k in (r["key"] for r in spec["inputs"] + spec["params"])}, "derived": derived,
             "area": round(area, 4), "components": comps, "value": value, "piece_rent": piece_rent,
             "value_per_m2": round(value / area, 2) if area else 0, "piece_rent_per_m2": round(piece_rent / area, 2) if area else 0,
-            "pieces": round(sum(c["qty"] for c in comps), 2)}
+            "pieces": round(sum(c["qty"] for c in comps), 2), "weight": round(sum(c.get("weight", 0) for c in comps), 2)}
+
+
+# ---------------------------------------------------------------- services priced with the rental
+# Installation, dismantling and transport are services sold with the rent and expected to make their own profit.
+# Each has a client price and our cost, on its own basis:
+#   price: per m², per truck trip, per ton, a lump sum, or a number of months of the scaffold's rent
+#          (e.g. "installation + dismantling = one month of rent", charged once);
+#   cost:  what the crew / truck costs us, per m², trip, ton or lump sum.
+# The client may take installation only, dismantling only, both or neither (scope).
+SERVICE_DEFAULTS = {
+    "truck_tons": 10,
+    "services": [
+        {"code": "install", "charge_type": "install", "name": "Installation", "name_ar": "التركيب", "basis": "rent_months",
+         "price": 0.6, "cost_basis": "m2", "cost": 6, "min_charge": 3000, "when": "delivery"},
+        {"code": "dismantle", "charge_type": "dismantle", "name": "Dismantling", "name_ar": "الفك", "basis": "rent_months",
+         "price": 0.4, "cost_basis": "m2", "cost": 4, "min_charge": 2000, "when": "return"},
+        {"code": "transport_out", "charge_type": "transport", "name": "Transport to site", "name_ar": "النقل إلى الموقع", "basis": "trip",
+         "price": 3500, "cost_basis": "trip", "cost": 2200, "min_charge": 0, "when": "delivery"},
+        {"code": "transport_back", "charge_type": "transport", "name": "Transport back to the yard", "name_ar": "النقل للمخزن", "basis": "trip",
+         "price": 3500, "cost_basis": "trip", "cost": 2200, "min_charge": 0, "when": "return"},
+    ],
+}
+SERVICE_BASES = ("rent_months", "m2", "trip", "ton", "lump")
+COST_BASES = ("m2", "trip", "ton", "lump")
+SCOPES = {"both": ("install", "dismantle"), "install": ("install",), "dismantle": ("dismantle",), "none": ()}
+
+
+def service_rates(db):
+    try:
+        v = json.loads(db.setting("rent_service_rates") or "null")
+    except ValueError:
+        v = None
+    if not (isinstance(v, dict) and v.get("services")):
+        return json.loads(json.dumps(SERVICE_DEFAULTS))
+    for r in v["services"]:
+        r.setdefault("cost_basis", r["basis"] if r.get("basis") in COST_BASES else "m2")
+    return v
+
+
+def save_service_rates(db, d):
+    out = {"truck_tons": num(d.get("truck_tons") or 10, "truck capacity (tons)", allow_zero=False), "services": []}
+    for i, r in enumerate(d.get("services") or [], start=1):
+        if not isinstance(r, dict) or not text(r.get("name")):
+            continue
+        ct = r.get("charge_type") or "other"
+        if ct not in CHARGE_TYPES:
+            raise ValidationError(f"Service {i}: unknown type")
+        basis, cbasis = r.get("basis") or "m2", r.get("cost_basis") or "m2"
+        if basis not in SERVICE_BASES:
+            raise ValidationError(f"Service {i}: priced by months of rent, per m², trip, ton or lump sum")
+        if cbasis not in COST_BASES:
+            raise ValidationError(f"Service {i}: cost per m², trip, ton or lump sum")
+        out["services"].append({"code": text(r.get("code"), maxlen=40) or f"svc{i}", "charge_type": ct, "name": text(r.get("name"), maxlen=120),
+                                "name_ar": text(r.get("name_ar"), maxlen=120), "basis": basis,
+                                "price": num(r.get("price"), f"service {i} price"), "cost_basis": cbasis, "cost": num(r.get("cost"), f"service {i} cost"),
+                                "min_charge": num(r.get("min_charge") or 0, f"service {i} minimum"),
+                                "when": r.get("when") if r.get("when") in CHARGE_WHEN else "delivery"})
+    db.set_setting("rent_service_rates", json.dumps(out, ensure_ascii=False))
+    return out
+
+
+def service_quote(db, area, weight_kg=0, monthly_rent=0, scope="both", overrides=None, rates=None):
+    """Services for a scaffold of `area` m², weighing `weight_kg`, renting at `monthly_rent` a month: quantity, client
+    price, our cost and profit for each. scope: both | install | dismantle | none (installation / dismantling taken).
+    overrides: {code: {qty, price, cost, off}} typed on the quote."""
+    rates = rates or service_rates(db)
+    if scope not in SCOPES:
+        raise ValidationError("Scope must be both, install, dismantle or none")
+    trips = max(1, math.ceil((weight_kg or 0) / (rates["truck_tons"] * 1000))) if weight_kg else 1
+    tons = round((weight_kg or 0) / 1000, 3)
+    measure = {"m2": area or 0, "trip": trips, "ton": tons, "lump": 1}
+    lines = []
+    for r in rates["services"]:
+        o = (overrides or {}).get(r["code"]) or {}
+        if o.get("off") or (r["charge_type"] in ("install", "dismantle") and r["charge_type"] not in SCOPES[scope]):
+            continue
+        if r["basis"] == "rent_months":   # e.g. 0.5 month of rent: one charge of half the monthly rent
+            qty, unit_price, unit = 1, round((monthly_rent or 0) * r["price"], 2), f"{r['price']:g} × monthly rent"
+        else:
+            qty, unit_price, unit = measure[r["basis"]], r["price"], {"m2": "m²", "trip": "trip", "ton": "ton", "lump": "lump sum"}[r["basis"]]
+        if o.get("qty") not in (None, ""):
+            qty = num(o["qty"], "quantity")
+        if o.get("price") not in (None, ""):
+            unit_price = num(o["price"], "price")
+        amount = round(qty * unit_price, 2)
+        floor = r.get("min_charge") or 0
+        min_applied = bool(floor and amount < floor)
+        if min_applied:
+            amount = floor
+        cqty = measure[r.get("cost_basis") or "m2"]
+        cost = num(o["cost"], "cost") if o.get("cost") not in (None, "") else r["cost"]
+        total_cost = round(cqty * cost, 2)
+        lines.append({"code": r["code"], "charge_type": r["charge_type"], "when": r["when"], "basis": r["basis"], "unit": unit,
+                      "name": r["name"], "name_ar": r.get("name_ar", ""), "qty": round(qty, 3), "price": unit_price,
+                      "cost_basis": r.get("cost_basis"), "cost_qty": round(cqty, 3), "cost": cost,
+                      "amount": amount, "total_cost": total_cost, "profit": round(amount - total_cost, 2),
+                      "margin": round((amount - total_cost) / amount * 100, 1) if amount else 0, "min_applied": min_applied})
+    tot = {k: round(sum(x[k] for x in lines), 2) for k in ("amount", "total_cost", "profit")}
+    tot["margin"] = round(tot["profit"] / tot["amount"] * 100, 1) if tot["amount"] else 0
+    tot["per_m2"] = round(tot["amount"] / area, 2) if area else 0
+    return {"area": area, "weight_kg": weight_kg, "tons": tons, "trips": trips, "truck_tons": rates["truck_tons"], "monthly_rent": monthly_rent,
+            "scope": scope, "lines": lines, "totals": tot}
 
 
 def list_models(db):
@@ -858,7 +960,8 @@ def _clean_lines(db, raw):
         row = {"id": int(r["id"]) if str(r.get("id") or "").isdigit() else None, "seq": i, "kind": kind, "item_id": None,
                "kit_id": None, "model_id": None, "description": text(r.get("description"), maxlen=500), "unit": text(r.get("unit")),
                "qty": qty, "rate": rate, "charge_type": "", "charge_when": "", "components": [], "inputs": {},
-               "notes": text(r.get("notes"), maxlen=1000)}
+               "notes": text(r.get("notes"), maxlen=1000),
+               "cost": to_minor(num(r.get("cost") or 0, "cost")) if kind == "charge" else 0}   # our cost of a service (crew, truck)
         if kind == "item":
             it = get_item(db, r.get("item_id") or r.get("item"))
             row.update(item_id=it["id"], description=row["description"] or it["name"], unit=row["unit"] or it["unit"],
@@ -954,13 +1057,14 @@ def save(db, d, rid=None, user=""):
                                   head + (code, "quote", _now(), user)).lastrowid
         for ln in lines:
             vals = (ln["seq"], ln["kind"], ln["item_id"], ln["kit_id"], ln["model_id"], ln["description"], ln["unit"], ln["qty"], ln["rate"],
-                    ln["charge_type"], ln["charge_when"], json.dumps(ln["components"]), json.dumps(ln["inputs"], ensure_ascii=False), ln["notes"])
+                    ln["charge_type"], ln["charge_when"], json.dumps(ln["components"]), json.dumps(ln["inputs"], ensure_ascii=False), ln["notes"],
+                    ln.get("cost", 0))
             if ln["id"] and db.one("SELECT 1 FROM rental_lines WHERE id=? AND rental_id=?", (ln["id"], rid)):
                 db.conn.execute("UPDATE rental_lines SET seq=?, kind=?, item_id=?, kit_id=?, model_id=?, description=?, unit=?, qty=?, rate=?, "
-                                "charge_type=?, charge_when=?, components=?, inputs=?, notes=? WHERE id=?", vals + (ln["id"],))
+                                "charge_type=?, charge_when=?, components=?, inputs=?, notes=?, cost=? WHERE id=?", vals + (ln["id"],))
             else:
                 db.conn.execute("INSERT INTO rental_lines(seq,kind,item_id,kit_id,model_id,description,unit,qty,rate,charge_type,charge_when,"
-                                "components,inputs,notes,rental_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", vals + (rid,))
+                                "components,inputs,notes,cost,rental_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", vals + (rid,))
     return rid
 
 
@@ -1110,7 +1214,7 @@ def detail(db, rid):
     for ln in lines:
         comps = [{"item_id": c["item_id"], "per_unit": c["per_unit"], **{k: names.get(c["item_id"], {}).get(k) for k in ("code", "name", "name_ar", "unit")}}
                  for c in _j(ln["components"], [])]
-        out_lines.append({**ln, "rate": to_major(ln["rate"]), "components": comps, "inputs": _j(ln["inputs"], {}),
+        out_lines.append({**ln, "rate": to_major(ln["rate"]), "cost": to_major(ln.get("cost") or 0), "components": comps, "inputs": _j(ln["inputs"], {}),
                           "on_site": round(on.get(ln["id"], 0), 4), **delivered.get(ln["id"], {"delivered": 0, "returned": 0}),
                           "monthly": to_major(int(round(ln["qty"] * ln["rate"]))) if ln["kind"] != "charge" else 0})
     held = {}
