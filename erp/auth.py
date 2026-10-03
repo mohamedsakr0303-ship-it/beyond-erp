@@ -75,7 +75,7 @@ def public_user(u):
         return None
     perms = {m: "edit" for m in MODULES} if u["is_admin"] else clean_perms(json.loads(u["perms"] or "{}"))
     return {"id": u["id"], "username": u["username"], "full_name": u["full_name"], "email": u.get("email") or "",
-            "is_admin": bool(u["is_admin"]), "active": bool(u["active"]), "perms": perms}
+            "is_admin": bool(u["is_admin"]), "is_super": bool(u.get("is_super")), "active": bool(u["active"]), "perms": perms}
 
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -102,14 +102,15 @@ def create_user(db, d, first=False):
     username = text(d.get("username"), "username", required=True, maxlen=60)
     if db.one("SELECT 1 FROM users WHERE username=?", (username,)):
         raise ValidationError("Username already exists")
-    is_admin = 1 if (first or d.get("is_admin")) else 0
+    is_super = 1 if (first or d.get("is_super")) else 0      # the first account owns the books
+    is_admin = 1 if (is_super or d.get("is_admin")) else 0
     email = clean_email(db, d.get("email"))
     # "!" = no local password: the person signs in through the shared workspace (Supabase), or the password is
     # set on this device only (passwords are never sent to the workspace)
     pw = "!" if d.get("_no_password") and not d.get("password") else hash_password(d.get("password") or "")
     from .db import now
-    uid = db.x("INSERT INTO users(username,full_name,pw_hash,is_admin,perms,created_at,email) VALUES (?,?,?,?,?,?,?)",
-               (username, text(d.get("full_name")), pw, is_admin,
+    uid = db.x("INSERT INTO users(username,full_name,pw_hash,is_admin,is_super,perms,created_at,email) VALUES (?,?,?,?,?,?,?,?)",
+               (username, text(d.get("full_name")), pw, is_admin, is_super,
                 json.dumps(clean_perms(d.get("perms"))), now().strftime("%Y-%m-%d %H:%M:%S"), email)).lastrowid
     return uid
 
@@ -118,17 +119,24 @@ def update_user(db, uid, d, acting_user_id):
     u = db.one("SELECT * FROM users WHERE id=?", (uid,))
     if not u:
         raise ValidationError("User not found")
-    is_admin = 1 if d.get("is_admin", bool(u["is_admin"])) else 0
+    is_super = 1 if d.get("is_super", bool(u.get("is_super"))) else 0
+    if "is_admin" in d and not d["is_admin"] and not d.get("is_super"):   # no longer an administrator: no longer super either
+        is_super = 0
+    is_admin = 1 if (is_super or d.get("is_admin", bool(u["is_admin"]))) else 0
     active = 1 if d.get("active", bool(u["active"])) else 0
     if u["is_admin"] and (not is_admin or not active):
         admins = db.one("SELECT COUNT(*) AS n FROM users WHERE is_admin=1 AND active=1")["n"]
         if admins <= 1:
             raise ValidationError("At least one active administrator must remain")
+    if u.get("is_super") and (not is_super or not active):
+        supers = db.one("SELECT COUNT(*) AS n FROM users WHERE is_super=1 AND active=1")["n"]
+        if supers <= 1:
+            raise ValidationError("At least one active super administrator must remain — make someone else super administrator first")
     if uid == acting_user_id and not active:
         raise ValidationError("You cannot deactivate yourself")
     email = clean_email(db, d.get("email", u.get("email")), uid)
-    db.x("UPDATE users SET full_name=?, is_admin=?, active=?, perms=?, email=? WHERE id=?",
-         (text(d.get("full_name", u["full_name"])), is_admin, active,
+    db.x("UPDATE users SET full_name=?, is_admin=?, is_super=?, active=?, perms=?, email=? WHERE id=?",
+         (text(d.get("full_name", u["full_name"])), is_admin, is_super, active,
           json.dumps(clean_perms(d.get("perms") or json.loads(u["perms"] or "{}"))), email, uid))
     if d.get("password"):
         db.x("UPDATE users SET pw_hash=? WHERE id=?", (hash_password(d["password"]), uid))
@@ -148,6 +156,9 @@ def delete_user(db, uid, acting_user_id):
         admins = db.one("SELECT COUNT(*) AS n FROM users WHERE is_admin=1 AND active=1")["n"]
         if admins <= 1:
             raise ValidationError("At least one active administrator must remain")
+    if u.get("is_super") and u["active"]:
+        if db.one("SELECT COUNT(*) AS n FROM users WHERE is_super=1 AND active=1")["n"] <= 1:
+            raise ValidationError("At least one active super administrator must remain")
     db.x("DELETE FROM sessions WHERE user_id=?", (uid,))
     db.x("DELETE FROM users WHERE id=?", (uid,))
     return u

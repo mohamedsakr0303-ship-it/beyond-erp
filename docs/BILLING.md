@@ -84,3 +84,29 @@ It also costs far less than Odoo with an implementation partner.
 * Larger clients get custom pricing.
 
 At launch, consider a "founding customer" offer (for example 30 % off the first year for the first 20 companies). It brings in references and feedback.
+
+## Offline (desktop) edition — one-time purchase (recommendation)
+
+| Product | What buyers pay | Notes |
+|---|---|---|
+| DEXEF | 4,000–15,000 EGP | Perpetual licences |
+| Typical Egyptian desktop accounting packages | ≈ 5,000–30,000 EGP | Usually with paid yearly updates |
+
+A perpetual licence normally costs about 1.3–1.5 years of the equivalent cloud subscription. Because ETA e-invoicing rules keep changing, desktop buyers need updates, so sell them as a yearly maintenance plan rather than free forever.
+
+| Licence | One-time | Users | Companies | Includes |
+|---|---|---|---|---|
+| Desktop Starter | 9,900 EGP | 2 | 1 | Core accounting, sales, purchasing, ETA |
+| Desktop Business (office network) | 24,000 EGP | 5 | 1 | Everything in the Business plan |
+| Desktop Pro | 45,000 EGP | 15 | 3 | All modules |
+
+* **Updates and support:** every licence includes 12 months. After that, an optional yearly maintenance plan at 20 % of the licence (≈ 2,000 / 4,800 / 9,000 EGP) covers updates, ETA changes and support. Without it the software keeps working on the last version received.
+* **Extra users:** 1,500 EGP each, one-time.
+* **Services, sold separately (good margin):**
+
+  | Service | Price |
+  |---|---|
+  | Setup and data migration from Excel / another system | 3,000–10,000 EGP |
+  | On-site training | 2,500 EGP per day |
+
+* The desktop app does not check a licence key yet: anyone with the installer can run it. Licence activation (a key tied to the company name and number of users) can be added before you sell desktop copies.

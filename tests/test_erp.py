@@ -1187,6 +1187,48 @@ class RentalServices(unittest.TestCase):
         R.save(db, {**{k: d["rental"][k] for k in ("client", "site", "start_date", "duration_months")}, "lines": lines}, rid=rid)
         self.assertEqual(next(ln for ln in R.detail(db, rid)["lines"] if ln["description"] == "Installation" and ln["rate"] == 30000)["cost"], 20736)
 
+class SuperAdmin(unittest.TestCase):
+    """Super administrators manage administrators and can erase / replace the books; there is always one."""
+
+    def test_levels(self):
+        from erp import auth
+        db = Database(":memory:")
+        boss = auth.create_user(db, {"username": "boss", "password": "pw123456"}, first=True)
+        self.assertTrue(auth.public_user(db.one("SELECT * FROM users WHERE id=?", (boss,)))["is_super"])
+        adm = auth.create_user(db, {"username": "adm", "password": "pw123456", "is_admin": True})
+        clerk = auth.create_user(db, {"username": "clerk", "password": "pw123456"})
+        self.assertFalse(auth.public_user(db.one("SELECT * FROM users WHERE id=?", (adm,)))["is_super"])
+        with self.assertRaises(a.ValidationError):
+            auth.update_user(db, boss, {"is_super": False}, adm)              # the only super administrator
+        auth.update_user(db, adm, {"is_super": True}, boss)
+        auth.update_user(db, boss, {"is_super": False}, adm)                  # fine now: another one exists
+        self.assertTrue(db.one("SELECT is_admin FROM users WHERE id=?", (boss,))["is_admin"])
+        with self.assertRaises(a.ValidationError):
+            auth.delete_user(db, adm, boss)                                   # last super administrator
+        self.assertTrue(clerk)
+
+    def test_server_rules(self):
+        import io as _io
+        from erp import auth, server
+        db = Database(":memory:")
+        auth.create_user(db, {"username": "boss", "password": "pw123456"}, first=True)
+        auth.create_user(db, {"username": "adm", "password": "pw123456", "is_admin": True})
+        clerk = auth.create_user(db, {"username": "clerk", "password": "pw123456"})
+        class App:
+            pass
+        app = App()
+        app.db, app.backup = db, (lambda *a_, **k: None)
+        tok_adm, _ = auth.login(db, "adm", "pw123456")
+        call = lambda m, p, b=None: server.handle(app, m, p, {"x-session": tok_adm, "x-requested-with": "BeyondERP",  # noqa: E731
+                                                              "content-type": "application/json"}, json.dumps(b or {}).encode())
+        r = call("POST", "/api/erase", {"confirm": "ERASE", "scope": "transactions"})
+        self.assertEqual(r.status, 403)
+        self.assertIn("super administrator", json.loads(r.body)["error"])
+        self.assertEqual(call("POST", "/api/users", {"username": "x", "password": "pw123456", "is_admin": True}).status, 403)
+        self.assertEqual(call("PUT", f"/api/users/{clerk}", {"full_name": "Clerk K", "is_admin": False, "active": True}).status, 200)
+        boss = db.one("SELECT id FROM users WHERE username='boss'")["id"]
+        self.assertEqual(call("PUT", f"/api/users/{boss}", {"active": False}).status, 403)       # admins cannot touch the owner
+
 class ImportKit(unittest.TestCase):
     """Per-screen templates, and importing a user's own layout with column matching."""
 

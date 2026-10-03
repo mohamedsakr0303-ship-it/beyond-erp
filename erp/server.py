@@ -2302,6 +2302,7 @@ def demo_load(ctx):
         raise PermissionError()
     replace = ctx.body.get("replace") in (True, 1, "1", "true")
     if replace:
+        _need_super(ctx, "replace the books with the demo company")
         if (ctx.body.get("confirm") or "").strip().upper() != "DEMO":
             raise acc.ValidationError("Type DEMO to replace everything with the demo company")
         ctx.server.backup("before-demo")
@@ -2371,8 +2372,8 @@ def do_import(ctx):
         raise acc.ValidationError("Upload a file")
     mode = ctx.q.get("mode") or "append"
     dry = ctx.q.get("dry_run") == "1"
-    if mode == "replace" and not ctx.user["is_admin"]:
-        raise PermissionError()
+    if mode == "replace":
+        _need_super(ctx, "replace all the books with an import")
     if mode == "replace" and not dry:
         ctx.server.backup("before-import")
     if fmt == "json":
@@ -2410,10 +2411,20 @@ def users(ctx):
     return ok([auth.public_user(u) for u in ctx.db.q("SELECT * FROM users ORDER BY id")])
 
 
+class SuperOnly(PermissionError):
+    pass
+
+
+def _need_super(ctx, what):
+    """Super administrators only: administrators, erasing and replacing the books."""
+    if not ctx.user.get("is_super"):
+        raise SuperOnly(f"Only a super administrator can {what}")
+
+
 @route("POST", "/api/users", "users.users", "add")
 def user_add(ctx):
-    if ctx.body.get("is_admin") and not ctx.user["is_admin"]:
-        raise PermissionError()
+    if ctx.body.get("is_admin") or ctx.body.get("is_super"):
+        _need_super(ctx, "create administrators")
     uid = auth.create_user(ctx.db, ctx.body)
     ctx.log("user.add", ctx.body.get("username"))
     return ok({"id": uid})
@@ -2421,9 +2432,14 @@ def user_add(ctx):
 
 @route("PUT", "/api/users/<uid>", "users.users", "edit")
 def user_edit(ctx, uid):
-    target = ctx.db.one("SELECT is_admin FROM users WHERE id=?", (int(uid),))
-    if (ctx.body.get("is_admin") or (target and target["is_admin"])) and not ctx.user["is_admin"]:
-        raise PermissionError()
+    target = ctx.db.one("SELECT is_admin, is_super FROM users WHERE id=?", (int(uid),))
+    if not target:
+        raise acc.ValidationError("User not found")
+    b = ctx.body
+    raises = bool(b.get("is_admin")) and not target["is_admin"] or bool(b.get("is_super")) and not target["is_super"]
+    lowers = ("is_admin" in b and not b["is_admin"] and target["is_admin"]) or ("is_super" in b and not b["is_super"] and target["is_super"])
+    if raises or ((target["is_admin"] or target["is_super"]) and int(uid) != ctx.user["id"]) or (lowers and int(uid) != ctx.user["id"]):
+        _need_super(ctx, "change administrators")   # an administrator may still edit their own name, email, password
     auth.update_user(ctx.db, int(uid), ctx.body, ctx.user["id"])
     ctx.log("user.edit", uid)
     return ok()
@@ -2431,9 +2447,9 @@ def user_edit(ctx, uid):
 
 @route("DELETE", "/api/users/<uid>", "users.users", "edit")
 def user_del(ctx, uid):
-    target = ctx.db.one("SELECT is_admin FROM users WHERE id=?", (int(uid),))
-    if target and target["is_admin"] and not ctx.user["is_admin"]:
-        raise PermissionError()
+    target = ctx.db.one("SELECT is_admin, is_super FROM users WHERE id=?", (int(uid),))
+    if target and (target["is_admin"] or target["is_super"]):
+        _need_super(ctx, "remove administrators")
     u = auth.delete_user(ctx.db, int(uid), ctx.user["id"])
     ctx.log("user.delete", u["username"])
     return ok({"username": u["username"], "email": u.get("email") or ""})
@@ -2605,9 +2621,8 @@ ERASE_ALL = ERASE_TRANSACTIONS + ("parties", "stock_items", "boq_lines", "boqs",
 
 @route("POST", "/api/erase")
 def erase_data(ctx):
-    """Administrator only. scope 'transactions' keeps master data; 'all' is a factory reset (users are kept)."""
-    if not ctx.user["is_admin"]:
-        raise PermissionError()
+    """Super administrator only. scope 'transactions' keeps master data; 'all' is a factory reset (users are kept)."""
+    _need_super(ctx, "erase data")
     if (ctx.body.get("confirm") or "").strip().upper() != "ERASE":
         raise acc.ValidationError('Type ERASE to confirm')
     scope = ctx.body.get("scope") if ctx.body.get("scope") in ("transactions", "all") else None
@@ -2976,8 +2991,8 @@ def handle(app, method, target, headers, raw=b"", as_user=None, dry=False):
             ctx.cloud_hook = getattr(app, "cloud", None)
             return fn(ctx, **match.groupdict())
         return ok({"error": "Not found"}, 404)
-    except PermissionError:
-        return ok({"error": "You do not have permission for this"}, 403)
+    except PermissionError as e:
+        return ok({"error": str(e) if isinstance(e, SuperOnly) else "You do not have permission for this"}, 403)
     except (acc.ValidationError, LookupError, ValueError, json.JSONDecodeError) as e:
         return ok({"error": str(e)}, 400)
     except Exception as e:  # noqa: BLE001

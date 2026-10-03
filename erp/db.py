@@ -813,6 +813,7 @@ CREATE TABLE IF NOT EXISTS users (
     full_name TEXT DEFAULT '',
     pw_hash TEXT NOT NULL,
     is_admin INTEGER NOT NULL DEFAULT 0,
+    is_super INTEGER NOT NULL DEFAULT 0,   -- super administrator: manages administrators, erases / restores the books
     perms TEXT NOT NULL DEFAULT '{}',      -- {"module": "view"|"edit"}
     active INTEGER NOT NULL DEFAULT 1,
     created_at TEXT DEFAULT (datetime('now'))
@@ -1140,6 +1141,9 @@ class Database:
         """Additive, idempotent upgrades for databases created by older versions."""
         have = self._add_cols("accounts", [("name_ar", "TEXT DEFAULT ''")])
         self._add_cols("rental_lines", [("cost", "INTEGER NOT NULL DEFAULT 0")])
+        self._add_cols("users", [("is_super", "INTEGER NOT NULL DEFAULT 0")])
+        if not self.conn.execute("SELECT 1 FROM users WHERE is_super=1 AND active=1").fetchone():   # books from before the level
+            self.conn.execute("UPDATE users SET is_super=1 WHERE id=(SELECT id FROM users WHERE is_admin=1 AND active=1 ORDER BY id LIMIT 1)")
         if "name_ar" not in have:
             for code, ar in ACCOUNT_NAMES_AR.items():
                 self.conn.execute("UPDATE accounts SET name_ar=? WHERE code=? AND name_ar=''", (ar, code))

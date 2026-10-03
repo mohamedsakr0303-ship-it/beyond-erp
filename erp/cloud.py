@@ -223,8 +223,10 @@ def ensure_app_user(db, email, admin=False):
     if not u:
         name = email.split("@")[0]
         username = name if not db.one("SELECT 1 FROM users WHERE lower(username)=?", (name.lower(),)) else email
+        # the company's first administrator owns the books (super administrator); later ones are administrators
+        first = admin and not db.one("SELECT 1 FROM users WHERE is_super=1 AND active=1")
         auth.create_user(db, {"username": username, "email": email, "full_name": name, "is_admin": admin,
-                              "_no_password": True, "perms": {"dashboard": "view"}}, first=admin)
+                              "_no_password": True, "perms": {"dashboard": "view"}}, first=first)
     elif admin and not u["is_admin"]:
         db.x("UPDATE users SET is_admin=1, active=1 WHERE id=?", (u["id"],))
 

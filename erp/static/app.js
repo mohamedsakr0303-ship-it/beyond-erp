@@ -1599,7 +1599,7 @@ PAGES.data = async (view) => {
       <label class="f">${t("file")}<input type="file" id="impf" accept=".xlsx,.json,.csv"></label>
       <label class="f">${t("format")}<select id="impfmt"><option value="xlsx">Excel (.xlsx)</option><option value="json">JSON</option><option value="csv">CSV</option></select></label>
       <label class="f" id="impsheetl" style="display:none">CSV → <select id="impsheet">${sheets.map(s => `<option value="${esc(s.name)}">${esc(s.name)}</option>`).join("")}</select></label>
-      <label class="f">${t("mode")}<select id="impmode"><option value="append">${t("append")}</option>${S.boot.user.is_admin ? `<option value="replace">${t("replace")}</option>` : ""}</select></label>
+      <label class="f">${t("mode")}<select id="impmode"><option value="append">${t("append")}</option>${S.boot.user.is_super ? `<option value="replace">${t("replace")}</option>` : ""}</select></label>
       <label class="f chk"><input type="checkbox" id="impdry" checked>${t("dry_run")}</label>
       <button class="btn pri" data-a="imp">${t("import_btn")}</button></div><div id="impres" style="margin-top:12px"></div>` : `<div class="muted">${t("view_only")}</div>`}</div></div>`;
   await impSheets();
@@ -1614,7 +1614,7 @@ PAGES.data = async (view) => {
     <p class="muted" style="margin-top:0">${L2("“Nile Demo Co.” — about six months of an invented business on every screen: projects (cost-plus, fixed price, flexible) with costs, negotiation discounts, payroll, VAT & withholding, a BOQ and invoices, stock, fixed assets, loans, cash custody, equipment rentals with a signed handover and deposit, unit sales on installments with cheques, recurring entries and bank statements (one reconciled, one to do). Use it to test every function or to train people.", "«شركة النيل التجريبية» — حوالي ستة أشهر من نشاط وهمي على كل الشاشات: مشروعات بتكاليفها وخصومات التفاوض والرواتب والضرائب والمقايسة والفواتير والمخزون والأصول والقروض والعهد وتأجير المعدات بمحضر تسليم وتأمين وبيع وحدات بالتقسيط بشيكات وقيود متكررة وكشوف بنك (واحد مسوّى وواحد للتجربة). استخدمها لتجربة كل الوظائف أو للتدريب.")}</p>
     <div class="row" style="gap:6px;flex-wrap:wrap"><a class="btn" href="/api/demo/workbook">⬇ ${L2("Demo company — Excel workbook (every sheet filled)", "الشركة التجريبية — ملف Excel (كل الأوراق مملوءة)")}</a>
     ${S.boot.user.is_admin ? (dm.empty ? `<button class="btn pri" data-a="demoload">▶ ${L2("Load the demo company into these books", "تحميل الشركة التجريبية في هذه الدفاتر")}</button>`
-      : `<button class="btn danger" data-a="demorepl">${L2("Replace everything with the demo company…", "استبدال كل البيانات بالشركة التجريبية…")}</button>`) : ""}</div>
+      : S.boot.user.is_super ? `<button class="btn danger" data-a="demorepl">${L2("Replace everything with the demo company…", "استبدال كل البيانات بالشركة التجريبية…")}</button>` : "") : ""}</div>
     ${dm.loaded ? `<p class="muted">${L2("Demo data loaded on", "تم تحميل البيانات التجريبية في")} ${fd(dm.loaded)} — ${L2("erase it from Settings → System when you are done.", "امسحها من الإعدادات ← النظام عند الانتهاء.")}</p>` : ""}`;
   view.appendChild(demoCard);
   S.H.demoload = async el => { el.disabled = true; el.textContent = L2("Loading…", "جارٍ التحميل…");
@@ -1936,7 +1936,7 @@ PAGES.settings = async (view, parts, q) => {
       ${ed ? `<div class="row" style="margin-top:10px"><label class="f">${t("backups_keep")}<input id="bkeep" type="number" value="${esc(st.backup_keep || 14)}" style="max-width:100px"></label><button class="btn" data-a="maint">${t("maintenance")}</button><a class="btn" href="/api/backup">⬇ ${t("db_backup")}</a></div>` : ""}</div>
     <div class="card" id="lockcard"><h2>${t("lock_date")}</h2><div class="row"><input type="date" name="lock_date" value="${esc(st.lock_date || "")}" style="max-width:200px" ${ed ? "" : "disabled"}>${ed ? `<button class="btn" data-a="locksave">${t("save")}</button>` : ""}</div><p class="muted">${t("lock_note")}</p></div>
     <div class="card"><h2>${t("hidden_mods")}</h2><p class="muted">${t("hidden_moved")} <a href="#/settings?tab=menus">${t("tab_menus")}</a></p></div>` : "") +
-    (S.boot.user.is_admin ? `<div class="card danger-zone" id="erasecard"><h2 class="neg">${t("erase_title")}</h2>
+    (S.boot.user.is_super ? `<div class="card danger-zone" id="erasecard"><h2 class="neg">${t("erase_title")}</h2>
       <div class="banner ${STATIC ? "err" : "info"}">${STATIC ? t("erase_static") + ` <a href="/api/export/json">⬇ JSON</a>` : t("erase_note")}</div>
       <label class="f chk"><input type="radio" name="escope" value="transactions" checked>${t("erase_tx")}</label>
       <label class="f chk"><input type="radio" name="escope" value="all">${t("erase_all")}</label>
@@ -2072,11 +2072,13 @@ PAGES.users = async (view) => {
       : (ar ? "اختياري — يُستخدم لتسجيل الدخول إلى مساحة العمل المشتركة عند تفعيلها." : "Optional — used for signing in to the shared workspace when you connect one.") },
     { html: pwFields(true, (cloudOn() ? (ar ? "كلمة مرور الدخول" : "Sign-in password") : t("password")) + (u.id ? (ar ? " (اتركها فارغة للإبقاء)" : " (leave blank to keep)") : ""), !!u.id,
         cloudOn() ? (ar ? "يسجل بها الدخول فوراً — بدون رسائل تأكيد." : "They can sign in with it right away — no confirmation email.") : ""), span: "spanall" },
-    ...(S.boot.user.is_admin ? [{ k: "is_admin", l: t("admin") + (S.lang === "ar" ? " (كل الصلاحيات)" : " (everything, ignores the matrix)"), type: "checkbox", v: u.is_admin }] : []),
+    ...(S.boot.user.is_super ? [{ k: "is_admin", l: t("admin") + (S.lang === "ar" ? " (كل الصلاحيات)" : " (everything, ignores the matrix)"), type: "checkbox", v: u.is_admin },
+      { k: "is_super", l: L2("Super administrator (manages administrators, can erase / restore the books)", "مسؤول أعلى (يدير المسؤولين ويمكنه مسح / استبدال الدفاتر)"), type: "checkbox", v: u.is_super }] : []),
     ...(u.id ? [{ k: "active", l: t("active") + (cloudOn() ? (ar ? " (إلغاء التحديد يمنع تسجيل الدخول)" : " (untick to block sign-in)") : ""), type: "checkbox", v: u.active !== false }] : []),
     { html: `<h4 style="margin:8px 0 0">${t("perm_matrix")}</h4>${permMatrix(u.perms || {})}`, span: "spanall" }]),
   async (v, f) => { const perms = readPerms(f);
-    const body = { username: v.username || u.username, full_name: v.full_name, email: v.email, password: v.password, is_admin: v.is_admin, active: v.active, perms, _no_password: !v.password };
+    const body = { username: v.username || u.username, full_name: v.full_name, email: v.email, password: v.password, is_admin: v.is_admin || v.is_super, active: v.active, perms, _no_password: !v.password };
+    if (S.boot.user.is_super) body.is_super = !!v.is_super; else { body.is_admin = !!u.is_admin; }
     if (u.id) await api("PUT", "/api/users/" + u.id, body); else await api("POST", "/api/users", body);
     if (!cloudOn()) { toast(t("saved")); return; }
     // shared workspace: create / update their sign-in account so they can sign in with username + password now
@@ -2091,7 +2093,7 @@ PAGES.users = async (view) => {
       } else toast((ar ? "تم حفظ المستخدم، لكن لم يُنشأ حساب الدخول: " : "User saved, but the sign-in account was not set: ") + e.message, true);
     } },
   { onOpen: f => { wirePerms(f); pwWire(f); },
-    extraButtons: u.id && ed && u.id !== S.boot.user.id && (!u.is_admin || S.boot.user.is_admin) ? `<button type="button" class="btn danger" data-a="udel">${t("delete")}</button>` : "" });
+    extraButtons: u.id && ed && u.id !== S.boot.user.id && (!u.is_admin || S.boot.user.is_super) ? `<button type="button" class="btn danger" data-a="udel">${t("delete")}</button>` : "" });
   S.H.udel = () => {};
   S.H.unew = () => edit({ perms: { dashboard: "view" } });
   S.H.uedit = el => { const u = rows.find(x => String(x.id) === el.dataset.id);
@@ -2100,6 +2102,7 @@ PAGES.users = async (view) => {
       async () => { if (cloudOn()) await CloudAPI.deleteAccount({ username: u.username, email: u.email }).catch(e => { if (e.status !== 404) toast((ar ? "حُذف المستخدم، لكن حساب الدخول لم يُحذف: " : "User deleted, but their sign-in account was not: ") + e.message, true); }); }); };
   const L = ["none", "view", "add", "edit"];
   const summary = u => {
+    if (u.is_super) return `<span class="chip ok">★ ${L2("Super administrator", "مسؤول أعلى")}</span>`;
     if (u.is_admin) return `<span class="chip ok">${t("admin")}</span>`;
     const subs = S.boot.enums.submodules || {};
     return S.boot.enums.modules.map(m => { const ss = subs[m] || [];
