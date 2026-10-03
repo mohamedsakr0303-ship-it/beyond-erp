@@ -15,3 +15,7 @@ verify_jwt = false
 # create / update sign-in accounts from the Users screen: checks the caller's token itself
 [functions.manage-user]
 verify_jwt = false
+
+# subscription payments: Paymob's callback carries no JWT (it is checked by HMAC); the checkout checks the caller's token itself
+[functions.billing]
+verify_jwt = false

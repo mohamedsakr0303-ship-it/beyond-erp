@@ -181,6 +181,8 @@ async function route() {
   }
   $(".app") && $(".app").classList.remove("menu");
   renderNav(parts.join("/"));
+  if (cloudOn() && window.BeyondCloud && (!S.billingAt || Date.now() - S.billingAt > 10 * 60 * 1000)) refreshBilling();
+  renderBillBar();
   const page = PAGES[parts[0]] || PAGES.dashboard;
   // each visit draws into its own box: a slower page still loading when the person moved on draws off-screen
   const host = $("#view"), view = document.createElement("div");
@@ -215,8 +217,9 @@ function renderShell() {
       <div class="dd"><button class="btn sm user-btn"><span class="avatar">${esc(((S.boot.user.full_name || S.boot.user.username || "?").trim().split(/\s+/).map(w => w[0]).join("").slice(0, 2)).toUpperCase())}</span><span class="lbl">${esc(S.boot.user.full_name || S.boot.user.username)} ▾</span></button><div class="dd-menu">
         <button data-a="theme">${t("theme")}: ${esc(store.get("theme", "auto"))}</button>
         ${cloudOn() ? `<button data-a="coswitch">⇄ ${S.lang === "ar" ? "الشركات" : "Companies"}</button>` : ""}
+        ${cloudOn() && window.BeyondCloud && window.BeyondCloud.billing ? `<a href="#/subscription">◎ ${S.lang === "ar" ? "الاشتراك" : "Subscription"}</a>` : ""}${S.billing && S.billing.is_owner ? `<a href="#/platform">⚙ ${S.lang === "ar" ? "إدارة الاشتراكات (المالك)" : "Platform billing (owner)"}</a>` : ""}
         <a href="#/settings">${t("m_settings")}</a>${STATIC && /^https?:$/.test(location.protocol) ? `<a href="#/download">⬇ ${S.lang === "ar" ? "تحميل التطبيق" : "Get the app"}</a>` : ""}<button data-a="pw">${t("change_pw")}</button><button data-a="logout">${t("logout")}</button></div></div>
-    </header><main class="content" id="view"></main></div></div>`;
+    </header><div id="billbar"></div><main class="content" id="view"></main></div></div>`;
   // "+ New": the items chosen in Settings → Menus, in that order, that this user may add
   const items = newMenuItems().filter(i => i.show && i.ok);
   $("#newmenu").innerHTML = items.map(i => `<button data-a="quicknew" data-doc="${esc(i.key)}">${esc(i.label)}</button>`).join("") || `<div class="muted" style="padding:8px">${t("view_only")}</div>`;
@@ -335,6 +338,7 @@ async function renderCloudAuth(msg, kind = "info", mode = "start") {
   applyLook();
   const ar = S.lang === "ar", C = window.BeyondCloud;
   const prov = S.providers || (S.providers = await C.providers());
+  if (!S.billingPublic && C.billingPublic) S.billingPublic = await C.billingPublic();
   const googleUrl = C.oauthUrl("google");
   const remember = `<label class="f chk" style="justify-content:center;margin:6px 0"><input type="checkbox" id="remember" ${C.remembered() ? "checked" : ""}>${ar ? "تذكرني لتسجيل دخول أسرع" : "Remember me for faster sign in"}</label>`;
   const emailField = mode === "email"
@@ -368,7 +372,8 @@ async function renderCloudAuth(msg, kind = "info", mode = "start") {
     <h1 class="center">${esc(title)}</h1><div id="lerr">${msg ? `<div class="banner ${kind}">${esc(msg)}</div>` : ""}</div>${body}
     ${mode !== "start" ? `<p class="center">${back}</p>` : ""}
     <div class="row" style="justify-content:space-between;margin-top:14px;font-size:.8em"><a href="#" data-a="lang2">${ar ? "English" : "العربية"}</a>
-      <a href="#" data-a="clocal" class="muted">${ar ? "استخدام هذا الجهاز بدون مساحة العمل" : "Use this device without the workspace"}</a></div></div>`;
+      ${(S.billingPublic || {}).enabled ? "" : `<a href="#" data-a="clocal" class="muted">${ar ? "استخدام هذا الجهاز بدون مساحة العمل" : "Use this device without the workspace"}</a>`}</div></div>
+    ${(S.billingPublic || {}).enabled && mode === "signup" ? `<p class="center muted" style="font-size:.85em">${ar ? `جرّب كل المزايا مجاناً لمدة ${S.billingPublic.trial_days} يوماً — بدون بطاقة.` : `Try everything free for ${S.billingPublic.trial_days} days — no card needed.`}</p>` : ""}`;
   const show = (m, k = "err") => { $("#lerr").innerHTML = `<div class="banner ${k}">${esc(m)}</div>`; };
   const needEmail = () => { const e = $("[name=email]"); if (!e || !e.value || !e.checkValidity()) { if (e) e.reportValidity(); return null; } store.set("lastEmail", e.value.trim()); return e.value.trim(); };
   const keepChoice = () => { const r = $("#remember"); C.setRemember(r ? r.checked : true); };
@@ -476,6 +481,11 @@ function renderCompanyGate(info, msg, kind = "err") {
 
 async function renderAuth() {
   if (STATIC && window.BeyondCloud && window.BeyondCloud.hasPendingAuth()) { store.set("cloudLocal", false); if (await cloudReturn()) return; }
+  // once paid subscriptions are live, the hosted app works through the workspace only (no device-only books)
+  if (STATIC && window.BeyondCloud && window.BeyondCloud.configured() && store.get("cloudLocal", false) && window.BeyondCloud.billingPublic) {
+    S.billingPublic = await window.BeyondCloud.billingPublic();
+    if (S.billingPublic.enabled) store.set("cloudLocal", false);
+  }
   if (STATIC && window.BeyondCloud && window.BeyondCloud.configured() && !store.get("cloudLocal", false)) {
     // still signed in to the workspace (e.g. after switching company): carry on without asking again
     if (window.BeyondCloud.signedIn()) {
@@ -4191,6 +4201,146 @@ const rcSched = r => { const u = RC_UNIT_TXT[r.unit] || [[r.unit, r.unit], [r.un
   return `${L2("every", "كل")} ${r.every > 1 ? r.every + " " : ""}${S.lang === "ar" ? u[1][pl] : u[0][pl]}${r.month_end ? ` · ${L2("month end", "آخر الشهر")}` : ""}`; };
 const fillMonth = (v, due) => typeof v === "string" ? v.replace(/\{month\}/g, due.slice(0, 7)).replace(/\{year\}/g, due.slice(0, 4)).replace(/\{date\}/g, due) : v;
 
+// ------------------------------------------------------------ our own subscription (hosted service)
+// Trial / paid status of the open company comes from the workspace (supabase/migrations/*_billing.sql). Once the trial or
+// the paid period is over the workspace refuses new changes; viewing, printing and exporting keep working.
+async function refreshBilling() {
+  S.billingAt = Date.now();
+  try { S.billing = await window.BeyondCloud.billing(); } catch { S.billing = null; }
+  renderBillBar();
+  const um = $(".user-btn + .dd-menu") || $(".user-btn") && $(".user-btn").parentElement.querySelector(".dd-menu");
+  if (um && S.billing && S.billing.is_owner && !$('a[href="#/platform"]', um))
+    um.insertAdjacentHTML("afterbegin", `<a href="#/platform">⚙ ${S.lang === "ar" ? "إدارة الاشتراكات (المالك)" : "Platform billing (owner)"}</a>`);
+}
+window.addEventListener("beyond-billing", () => { S.billingAt = 0; refreshBilling(); });
+function renderBillBar() {
+  const box = $("#billbar"); if (!box) return;
+  const b = S.billing;
+  if (!b || !b.enabled || ["comped", "free"].includes(b.status) || (b.status === "active" && b.days_left > 7)) { box.innerHTML = ""; return; }
+  const ar = S.lang === "ar", d = b.days_left;
+  const msg = b.status === "trial" ? (ar ? `فترة تجريبية مجانية — متبقي ${d} يوم.` : `Free trial — ${d} day${d === 1 ? "" : "s"} left.`)
+    : b.status === "active" ? (ar ? `ينتهي الاشتراك خلال ${d} يوم.` : `Your subscription ends in ${d} day${d === 1 ? "" : "s"}.`)
+    : b.status === "past_due" ? (ar ? `انتهت الفترة المدفوعة — ادفع خلال ${d} يوم لتستمر في الحفظ.` : `Your paid period has ended — pay within ${d} day${d === 1 ? "" : "s"} to keep saving changes.`)
+    : (ar ? "انتهت الفترة التجريبية / المدفوعة: يمكنك العرض والطباعة والتصدير فقط حتى يتم الاشتراك." : "Your trial / paid period has ended: you can view, print and export, but not save changes, until you subscribe.");
+  const cls = b.status === "expired" ? "err" : b.status === "trial" && d > 3 ? "info" : "warn";
+  box.innerHTML = `<div class="banner ${cls} billbar">${esc(msg)} ${b.is_admin ? `<a class="btn sm ${cls === "err" ? "pri" : ""}" href="#/subscription">${ar ? "اشترك الآن" : "Subscribe"}</a>` : `<span class="muted">${ar ? "اطلب من مسؤول الشركة الاشتراك." : "Ask your company administrator to subscribe."}</span>`}</div>`;
+}
+const billDate = x => x ? fd(String(x).slice(0, 10)) : "—";
+const BILL_ST = { trial: ["Free trial", "تجربة مجانية", "warn"], active: ["Active", "ساري", "ok"], past_due: ["Payment due", "مستحق الدفع", "warn"], expired: ["Ended — read only", "منتهي — عرض فقط", "bad"], comped: ["Free (complimentary)", "مجاني", "ok"], free: ["Billing not switched on", "الاشتراكات غير مفعلة", ""] };
+const billChip = st => `<span class="chip ${(BILL_ST[st] || BILL_ST.free)[2]}">${esc(L2(...(BILL_ST[st] || BILL_ST.free).slice(0, 2)))}</span>`;
+PAGES.subscription = async (view, parts, q) => {
+  $("#ttl").textContent = L2("Subscription", "الاشتراك");
+  if (!cloudOn() || !window.BeyondCloud) { view.innerHTML = `<div class="card"><div class="empty">${L2("Subscriptions apply to companies in the online workspace.", "الاشتراكات خاصة بالشركات على مساحة العمل الأونلاين.")}</div></div>`; return; }
+  const C = window.BeyondCloud;
+  const [b, pub] = await Promise.all([C.billing(), C.billingPublic()]);
+  S.billing = b; S.billingAt = Date.now(); renderBillBar();
+  if (!b.enabled) { view.innerHTML = `<div class="card"><h2>${L2("Subscription", "الاشتراك")}</h2><p>${L2("Billing is not switched on for this workspace — everything is free to use.", "الاشتراكات غير مفعلة على مساحة العمل هذه — الاستخدام مجاني.")}</p>${b.is_owner ? `<a class="btn pri" href="#/platform">${L2("Platform billing", "إدارة الاشتراكات")}</a>` : ""}</div>`; return; }
+  const ar = S.lang === "ar", cur = b.currency || pub.currency || "EGP";
+  const months = +(q.months || 1), extra = +(q.extra || 0);
+  const plans = pub.plans || [];
+  const priceOf = p => (+p.price + (+pub.extra_user || 0) * extra) * (months === 12 ? (+pub.yearly_months || 10) : 1);
+  const fits = p => (b.users || 0) <= (+p.users || 0) + extra;
+  Object.assign(S.H, {
+    bmonths: el => setQ({ ...q, months: el.dataset.m }),
+    bextra: el => setQ({ ...q, months, extra: Math.max(0, extra + (+el.dataset.d)) }),
+    bpay: async el => { const plan = el.dataset.plan;
+      try { el.disabled = true; const r = await C.checkout(plan, months, extra); location.href = r.url; }
+      catch (e) { el.disabled = false; fail(e); } },
+    bcancel: async () => { const n = prompt(L2("Not renewing? Tell us why (optional). You keep full access until the end of the period already paid.", "لن تجدد؟ أخبرنا بالسبب (اختياري). يبقى الوصول كاملاً حتى نهاية الفترة المدفوعة.")); if (n === null) return;
+      try { await C.billingCancel(n); toast(t("saved")); route(); } catch (e) { fail(e); } } });
+  const paidNote = q.paid ? `<div class="banner ok">${L2("Thank you! Your payment is being confirmed — this page updates within a minute.", "شكراً! يجري تأكيد الدفع — تتحدث هذه الصفحة خلال دقيقة.")}</div>` : "";
+  if (q.paid && b.status !== "active") setTimeout(() => { if (location.hash.startsWith("#/subscription")) route(); }, 8000);
+  view.innerHTML = `${paidNote}<div class="kpis">${kpiBox(L2("Status", "الحالة"), billChip(b.status))}${kpiBox(b.status === "trial" ? L2("Trial ends", "نهاية التجربة") : b.status === "expired" ? L2("Ended on", "انتهى في") : L2("Paid until", "مدفوع حتى"), billDate(b.status === "trial" ? b.trial_ends : b.paid_until || b.ends), "", b.days_left != null ? `${b.days_left} ${L2("days left", "يوم متبقي")}` : "")}
+      ${kpiBox(L2("Plan", "الباقة"), esc(b.plan_name || "—"))}${kpiBox(L2("People", "المستخدمون"), `${b.users}${b.users_allowed ? " / " + b.users_allowed : ""}`, b.users_allowed && b.users > b.users_allowed ? "neg" : "")}</div>
+    ${b.cancel_note ? `<div class="banner warn">${L2("You asked not to renew. Access continues until the end of the paid period; paying again re-activates it.", "طلبت عدم التجديد. يستمر الوصول حتى نهاية الفترة المدفوعة؛ والدفع مرة أخرى يعيد التفعيل.")}</div>` : ""}
+    ${b.is_admin ? `<div class="card"><h2>${L2("Choose a plan", "اختر الباقة")}</h2>
+      <div class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:12px"><div class="seg">${[[1, L2("Monthly", "شهري")], [12, L2(`Yearly — ${12 - (+pub.yearly_months || 10)} months free`, `سنوي — ${12 - (+pub.yearly_months || 10)} شهر مجاناً`)]].map(([m, l]) => `<button class="btn sm ${months === m ? "pri" : ""}" data-a="bmonths" data-m="${m}">${esc(l)}</button>`).join("")}</div>
+        <span class="muted">${L2("Extra users", "مستخدمون إضافيون")}: <button class="btn sm" data-a="bextra" data-d="-1">−</button> <b>${extra}</b> <button class="btn sm" data-a="bextra" data-d="1">+</button> × ${money(pub.extra_user)} ${esc(cur)} / ${L2("month", "شهر")}</span></div>
+      <div class="plans">${plans.map(p => `<div class="plan ${b.plan === p.code && b.status === "active" ? "on" : ""}"><h3>${esc(ar && p.name_ar ? p.name_ar : p.name)}</h3>
+        <div class="price">${money(priceOf(p))} <small>${esc(cur)} / ${months === 12 ? L2("year", "سنة") : L2("month", "شهر")}</small></div>
+        <div class="muted">${L2(`${p.users} users`, `${p.users} مستخدمين`)}${p.companies > 1 ? ` · ${L2(`${p.companies} companies`, `${p.companies} شركات`)}` : ""}</div>
+        <ul>${(p.features || []).map(f => `<li>${esc(f)}</li>`).join("")}</ul>
+        ${fits(p) ? `<button class="btn pri" data-a="bpay" data-plan="${esc(p.code)}">${L2("Pay by card / wallet", "ادفع بالبطاقة / المحفظة")}</button>` : `<div class="muted" style="font-size:.85em">${L2(`You have ${b.users} people — add ${b.users - p.users - extra} extra user(s) for this plan.`, `لديك ${b.users} مستخدمين — أضف ${b.users - p.users - extra} مستخدم إضافي لهذه الباقة.`)}</div>`}</div>`).join("")}</div>
+      ${pub.payment_note ? `<div class="banner info" style="margin-top:12px;white-space:pre-wrap"><b>${L2("Prefer InstaPay or a bank transfer?", "تفضل إنستاباي أو التحويل البنكي؟")}</b>\n${esc(pub.payment_note)}</div>` : ""}
+      <p class="muted" style="font-size:.85em">${L2("Each payment adds a month (or a year) after the current period — nothing renews or charges by itself. When a period ends without payment, the books become read-only (still viewable and exportable) until you pay again.", "كل دفعة تضيف شهراً (أو سنة) بعد الفترة الحالية — لا يوجد تجديد أو خصم تلقائي. عند انتهاء الفترة دون دفع تصبح الدفاتر للعرض فقط (مع إمكانية التصدير) حتى تدفع مرة أخرى.")}</p>
+      ${b.status === "active" && !b.cancel_note ? `<button class="btn" data-a="bcancel">${L2("I will not renew", "لن أجدد")}</button>` : ""}</div>
+    ${(b.payments || []).length ? `<div class="card"><h2>${L2("Payments", "المدفوعات")}</h2><div class="tbl stack"><table><thead><tr><th>${t("date")}</th><th>${L2("Plan", "الباقة")}</th><th>${L2("Period", "المدة")}</th><th class="num">${t("amount")}</th><th>${L2("Method", "الطريقة")}</th><th>${t("status")}</th><th>${L2("Reference", "المرجع")}</th></tr></thead><tbody>
+      ${b.payments.map(x => `<tr><td>${billDate(x.date)}</td><td>${esc(x.plan)}</td><td>${x.months === 12 ? L2("1 year", "سنة") : L2(`${x.months} month(s)`, `${x.months} شهر`)}</td><td class="num">${money(x.amount)} ${esc(x.currency)}</td><td>${esc(x.provider === "paymob" ? L2("card / wallet", "بطاقة / محفظة") : L2("transfer / cash", "تحويل / نقدي"))}</td><td><span class="chip ${x.status === "paid" ? "ok" : x.status === "failed" ? "bad" : "warn"}">${esc(x.status)}</span></td><td dir="ltr">${esc(x.reference || "")}</td></tr>`).join("")}</tbody></table></div></div>` : ""}`
+    : `<div class="card"><p>${L2("Only the company's administrators can change the subscription.", "مسؤولو الشركة فقط يمكنهم تغيير الاشتراك.")}</p></div>`}`;
+};
+PAGES.platform = async (view, parts, q) => {
+  $("#ttl").textContent = L2("Platform billing", "إدارة الاشتراكات");
+  const C = window.BeyondCloud;
+  let d;
+  try { d = await C.billingAdmin(); } catch (e) { view.innerHTML = `<div class="banner err">${esc(e.message)}</div><div class="card"><p class="muted">${L2("Only the platform owner (listed in the workspace's platform_admins table) can open this page.", "هذه الصفحة لمالك المنصة فقط (المسجل في جدول platform_admins).")}</p></div>`; return; }
+  const c = d.config, cur = c.currency;
+  const fil = q.f || "all";
+  const rows = d.companies.filter(x => fil === "all" || x.state.status === fil);
+  const counts = d.companies.reduce((a, x) => { a[x.state.status] = (a[x.state.status] || 0) + 1; return a; }, {});
+  Object.assign(S.H, {
+    pftoggle: async () => { const on = !c.enabled;
+      if (!confirm(on ? L2(`Switch billing ON? Every company gets a ${c.trial_days}-day free trial starting now; after it, changes need a paid subscription.`, `تفعيل الاشتراكات؟ كل شركة تحصل على ${c.trial_days} يوم تجربة مجانية تبدأ الآن، وبعدها يلزم اشتراك مدفوع للحفظ.`)
+        : L2("Switch billing OFF? Everyone can use the app free again.", "إيقاف الاشتراكات؟ يعود الاستخدام مجانياً للجميع."))) return;
+      try { await C.billingConfig({ enabled: on }); S.billingPublic = null; toast(t("saved")); route(); } catch (e) { fail(e); } },
+    pfcfg: () => platformConfigForm(c), pfplans: () => platformPlansForm(c),
+    pfpay: el => platformPayForm(d.companies.find(x => x.id === el.dataset.id), c),
+    pfset: el => platformCompanyForm(d.companies.find(x => x.id === el.dataset.id)) });
+  view.innerHTML = `<div class="card"><div class="row" style="gap:12px;flex-wrap:wrap;align-items:center">
+      <h2 style="margin:0">${L2("Billing", "الاشتراكات")} ${c.enabled ? `<span class="chip ok">${L2("ON", "مفعّلة")}</span>` : `<span class="chip">${L2("OFF — the app is free", "متوقفة — الاستخدام مجاني")}</span>`}</h2><span class="spacer"></span>
+      <button class="btn ${c.enabled ? "danger" : "pri"}" data-a="pftoggle">${c.enabled ? L2("Switch billing off", "إيقاف الاشتراكات") : L2("Go live: switch billing on", "إطلاق: تفعيل الاشتراكات")}</button>
+      <button class="btn" data-a="pfcfg">${L2("Trial & payment settings", "إعدادات التجربة والدفع")}</button><button class="btn" data-a="pfplans">${L2("Plans & prices", "الباقات والأسعار")}</button></div>
+      <p class="muted" style="font-size:.88em">${L2(`Trial ${c.trial_days} days (on the ${c.trial_plan} plan) · grace ${c.grace_days} days after a paid period · yearly = ${c.yearly_months} months · extra user ${money(c.extra_user)} ${cur}/month${c.enabled_at ? ` · live since ${billDate(c.enabled_at)}` : ""}`,
+        `تجربة ${c.trial_days} يوم (باقة ${c.trial_plan}) · مهلة ${c.grace_days} أيام بعد الفترة المدفوعة · السنة = ${c.yearly_months} شهور · مستخدم إضافي ${money(c.extra_user)} ${cur}/شهر${c.enabled_at ? ` · مفعّلة منذ ${billDate(c.enabled_at)}` : ""}`)}</p>
+      <div class="plans compact">${c.plans.map(p => `<div class="plan"><h3>${esc(p.name)}</h3><div class="price">${money(p.price)} <small>${esc(cur)}/${L2("mo", "شهر")}</small></div><div class="muted">${p.users} ${L2("users", "مستخدمين")} · ${p.companies || 1} ${L2("co.", "شركة")}</div></div>`).join("")}</div></div>
+    <div class="kpis">${kpiBox(L2("Monthly recurring revenue", "الإيراد الشهري المتكرر"), +d.mrr || 0, "", esc(cur))}${["trial", "active", "past_due", "expired", "comped"].map(k => kpiBox(L2(...BILL_ST[k].slice(0, 2)), numf(counts[k] || 0))).join("")}</div>
+    <div class="card"><div class="tabs">${[["all", L2("All", "الكل")], ["trial", L2("Trial", "تجربة")], ["active", L2("Paying", "مدفوع")], ["past_due", L2("Payment due", "مستحق")], ["expired", L2("Ended", "منتهي")], ["comped", L2("Free", "مجاني")]].map(([k, l]) => `<a class="tab ${fil === k ? "on" : ""}" href="#/platform?f=${k}">${esc(l)} (${k === "all" ? d.companies.length : counts[k] || 0})</a>`).join("")}</div>
+      ${rows.length ? `<div class="tbl stack"><table><thead><tr><th>${L2("Company", "الشركة")}</th><th>${L2("Owner", "المنشئ")}</th><th>${t("status")}</th><th>${L2("Plan", "الباقة")}</th><th>${L2("Until", "حتى")}</th><th class="num">${L2("Users", "المستخدمون")}</th><th class="num">${L2("Paid so far", "إجمالي المدفوع")}</th><th></th></tr></thead><tbody>
+        ${rows.map(x => `<tr><td><b>${esc(x.name)}</b><div class="muted" style="font-size:.8em">${L2("since", "منذ")} ${billDate(x.created_at)}</div></td><td>${esc(x.created_by || "")}</td><td>${billChip(x.state.status)}${x.state.cancel_note ? `<div class="muted" style="font-size:.8em">✗ ${esc(x.state.cancel_note)}</div>` : ""}</td>
+          <td>${esc(x.state.plan_name || "")}</td><td>${billDate(x.state.ends)}${x.state.days_left != null ? `<div class="muted" style="font-size:.8em">${x.state.days_left} ${L2("days", "يوم")}</div>` : ""}</td><td class="num">${x.state.users}${x.state.users_allowed ? " / " + x.state.users_allowed : ""}</td>
+          <td class="num">${money(+x.paid_total || 0)}</td><td style="white-space:nowrap"><button class="btn sm pri" data-a="pfpay" data-id="${x.id}">${L2("Record payment", "تسجيل دفعة")}</button> <button class="btn sm" data-a="pfset" data-id="${x.id}">${L2("Trial / free…", "تجربة / مجاني…")}</button></td></tr>`).join("")}</tbody></table></div>`
+        : `<div class="empty">${L2("No companies here.", "لا توجد شركات.")}</div>`}</div>`;
+};
+function platformConfigForm(c) {
+  drawer(L2("Trial & payment settings", "إعدادات التجربة والدفع"), `<div class="grid g2">
+    <label class="f">${L2("Free trial (days)", "التجربة المجانية (أيام)")}<input name="trial_days" type="number" min="0" max="365" value="${c.trial_days}"></label>
+    <label class="f">${L2("Trial uses the plan", "باقة فترة التجربة")}<select name="trial_plan">${optHtml(c.plans.map(p => [p.code, p.name]), c.trial_plan)}</select></label>
+    <label class="f">${L2("Grace after a paid period ends (days)", "مهلة بعد انتهاء الفترة المدفوعة (أيام)")}<input name="grace_days" type="number" min="0" max="60" value="${c.grace_days}"></label>
+    <label class="f">${L2("A year costs (months)", "سعر السنة (بعدد الشهور)")}<input name="yearly_months" type="number" min="1" max="12" value="${c.yearly_months}"></label>
+    <label class="f">${L2("Extra user per month", "المستخدم الإضافي شهرياً")}<input name="extra_user" type="number" step="any" value="${c.extra_user}"></label>
+    <label class="f">${L2("Currency", "العملة")}<input name="currency" value="${esc(c.currency)}"></label></div>
+    <label class="f">${L2("Manual payment details shown to customers (InstaPay, bank account, wallet…)", "بيانات الدفع اليدوي للعملاء (إنستاباي، حساب بنكي، محفظة…)")}<textarea name="payment_note" rows="4">${esc(c.payment_note || "")}</textarea></label>
+    <p class="muted" style="font-size:.85em">${L2("Card / wallet payments need the Paymob keys in Supabase → Edge Functions → Secrets (see docs/BILLING.md).", "الدفع بالبطاقة / المحفظة يحتاج مفاتيح Paymob في Supabase ← Edge Functions ← Secrets (راجع docs/BILLING.md).")}</p>`,
+    async v => { await window.BeyondCloud.billingConfig({ ...v, trial_days: +v.trial_days, grace_days: +v.grace_days, yearly_months: +v.yearly_months, extra_user: +v.extra_user }); S.billingPublic = null; toast(t("saved")); }, { wide: true });
+}
+function platformPlansForm(c) {
+  const row = (p = {}) => `<tr class="plrow"><td><input data-f="code" value="${esc(p.code || "")}" style="width:90px"></td><td><input data-f="name" value="${esc(p.name || "")}"></td><td><input data-f="name_ar" dir="rtl" value="${esc(p.name_ar || "")}"></td>
+    <td><input data-f="price" type="number" step="any" value="${p.price ?? ""}" style="width:90px"></td><td><input data-f="users" type="number" min="1" value="${p.users ?? 1}" style="width:70px"></td><td><input data-f="companies" type="number" min="1" value="${p.companies ?? 1}" style="width:60px"></td>
+    <td><textarea data-f="features" rows="2" style="min-width:220px">${esc((p.features || []).join("\n"))}</textarea></td><td><button type="button" class="btn sm danger" data-k="rm">✕</button></td></tr>`;
+  const f = drawer(L2("Plans & prices", "الباقات والأسعار"), `<div class="tbl"><table><thead><tr><th>${L2("Code", "الكود")}</th><th>${t("name")}</th><th>${L2("Arabic", "بالعربية")}</th><th>${L2("Price / month", "السعر / شهر")}</th><th>${L2("Users", "مستخدمون")}</th><th>${L2("Companies", "شركات")}</th><th>${L2("Features (one per line)", "المزايا (سطر لكل ميزة)")}</th><th></th></tr></thead><tbody>${c.plans.map(row).join("")}</tbody></table></div>
+    <button type="button" class="btn sm" data-k="add">+ ${L2("Plan", "باقة")}</button>
+    <p class="muted" style="font-size:.85em">${L2("New prices apply to the next payment; periods already paid are not touched.", "الأسعار الجديدة تسري على الدفعة القادمة؛ الفترات المدفوعة لا تتأثر.")}</p>`,
+    async () => { const plans = $$("tr.plrow", f).map(tr => { const g = k => $(`[data-f=${k}]`, tr).value.trim();
+      return { code: g("code"), name: g("name"), name_ar: g("name_ar"), price: +g("price") || 0, users: +g("users") || 1, companies: +g("companies") || 1, features: g("features").split("\n").map(x => x.trim()).filter(Boolean) }; }).filter(p => p.code);
+      await window.BeyondCloud.billingConfig({ plans }); S.billingPublic = null; toast(t("saved")); }, { wide: true });
+  f.addEventListener("click", e => { const k = e.target.dataset.k; if (k === "add") $("tbody", f).insertAdjacentHTML("beforeend", row()); if (k === "rm") e.target.closest("tr").remove(); });
+}
+function platformPayForm(x, c) {
+  drawer(`${x.name} — ${L2("record a payment", "تسجيل دفعة")}`, `<div class="grid g2">
+    <label class="f">${L2("Plan", "الباقة")}<select name="plan">${optHtml(c.plans.map(p => [p.code, `${p.name} — ${money(p.price)}`]), x.state.plan || c.trial_plan)}</select></label>
+    <label class="f">${L2("Period", "المدة")}<select name="months">${optHtml([[1, L2("1 month", "شهر")], [3, L2("3 months", "3 شهور")], [6, L2("6 months", "6 شهور")], [12, L2("1 year", "سنة")]], 1)}</select></label>
+    <label class="f">${L2("Extra users", "مستخدمون إضافيون")}<input name="extra_users" type="number" min="0" value="${x.state.extra_users || 0}"></label>
+    <label class="f">${L2("Amount received (blank = list price)", "المبلغ المستلم (فارغ = سعر القائمة)")}<input name="amount" type="number" step="any"></label>
+    <label class="f">${L2("Reference (InstaPay / transfer no.)", "المرجع (رقم إنستاباي / التحويل)")}<input name="reference"></label>
+    <label class="f">${t("notes")}<input name="note"></label></div>
+    <p class="muted" style="font-size:.85em">${L2("The paid period starts when the current trial / paid period ends (or today if it already has).", "تبدأ الفترة المدفوعة عند انتهاء التجربة / الفترة الحالية (أو اليوم إن كانت انتهت).")}</p>`,
+    async v => { await window.BeyondCloud.billingRecord({ ...v, company: x.id }); toast(t("saved")); });
+}
+function platformCompanyForm(x) {
+  drawer(`${x.name}`, `<label class="f chk"><input type="checkbox" name="comped" ${x.comped ? "checked" : ""}>${L2("Free of charge (partner, staff, pilot customer)", "مجاني (شريك، موظفون، عميل تجريبي)")}</label>
+    <label class="f">${L2("Trial ends on (blank = automatic)", "نهاية التجربة (فارغ = تلقائي)")}<input type="date" name="trial_ends" value="${esc(String(x.state.trial_ends || "").slice(0, 10))}"></label>
+    <label class="f">${L2("Paid until (correction)", "مدفوع حتى (تصحيح)")}<input type="date" name="paid_until" value="${esc(String(x.state.paid_until || "").slice(0, 10))}"></label>`,
+    async v => { await window.BeyondCloud.billingSetCompany(x.id, { comped: !!v.comped, trial_ends: v.trial_ends ? v.trial_ends + "T23:59:59Z" : "", paid_until: v.paid_until ? v.paid_until + "T23:59:59Z" : "" }); toast(t("saved")); });
+}
 // ------------------------------------------------------------ service subscriptions
 const SUB_KIND = { maintenance: ["Maintenance", "صيانة", "🔧"], warranty: ["Warranty", "ضمان", "🛡"], insurance: ["Insurance", "تأمين", "☂"], software: ["Software / app", "برنامج / تطبيق", "💻"], support: ["Support", "دعم فني", "☎"], addon: ["Add-on", "إضافة", "＋"], other: ["Other", "أخرى", "•"] };
 const SUB_ST = { active: ["Active", "سارية", "ok"], paused: ["Paused", "موقوفة", "warn"], cancelled: ["Cancelled", "ملغاة", "bad"], ended: ["Ended", "منتهية", ""] };

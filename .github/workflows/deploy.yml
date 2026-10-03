@@ -94,11 +94,11 @@ jobs:
               echo "::error title=Database migrations::$(tail -c 1500 out.txt | tr '\n' ' ')"
             fi
             exit 1; }
-      - name: Deploy the sign-in functions (login, manage-user)
+      - name: Deploy the functions (login, manage-user, billing)
         if: steps.changed.outputs.run == 'true' && env.SUPABASE_ACCESS_TOKEN != '' && env.PROJECT_ID != ''
         run: |
           set -o pipefail
-          for fn in login manage-user; do
+          for fn in login manage-user billing; do
             supabase functions deploy "$fn" --project-ref "$PROJECT_ID" --no-verify-jwt --use-api 2>&1 | tee out.txt ||
               { echo "::error title=Function $fn::$(tail -c 1500 out.txt | tr '\n' ' ')"; exit 1; }
           done

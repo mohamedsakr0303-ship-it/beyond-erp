@@ -1112,6 +1112,50 @@ class ServiceSubscriptions(unittest.TestCase):
         self.assertEqual(S.listing(db2)["deferred"], S.listing(db)["deferred"])
         self.assertEqual(S.run(db2, a.today())["invoices"], 0)                          # nothing billed twice after a restore
 
+class HostedBilling(unittest.TestCase):
+    """Trial -> expired (changes refused) -> paid; mirrors supabase/migrations/*_billing.sql (checked on Postgres too)."""
+
+    def test_trial_expiry_and_payment(self):
+        import json as _json
+        import urllib.request
+        sys.path.insert(0, str(Path(__file__).parent))
+        import mock_supabase
+        sb = mock_supabase.start()
+        base = f"http://127.0.0.1:{sb.server_address[1]}"
+        op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+        def rpc(fn, body, who):
+            r = urllib.request.Request(f"{base}/rest/v1/rpc/{fn}", data=_json.dumps(body).encode(), method="POST",
+                                       headers={"Content-Type": "application/json", "Authorization": f"Bearer tok:{who}"})
+            try:
+                with op.open(r) as x:
+                    return x.status, _json.loads(x.read() or b"null")
+            except urllib.error.HTTPError as e:
+                return e.code, _json.loads(e.read() or b"null")
+        st = sb.state
+        st.owners.add("boss@x.com")
+        cid = rpc("create_company", {"p_name": "Acme"}, "ali@x.com")[1]["id"]
+        appended = lambda seq: rpc("append_op", {"p_company": cid, "p_seq": seq, "p_version": "1", "p_app_user": "", "p_device": "t",  # noqa: E731
+                                                  "p_method": "POST", "p_path": "/api/x", "p_body": "{}", "p_content_type": "application/json",
+                                                  "p_clock": "2026-01-01T00:00:00"}, "ali@x.com")[0]
+        self.assertEqual(rpc("billing_status", {"p_company": cid}, "ali@x.com")[1]["status"], "free")
+        self.assertEqual(rpc("billing_set_config", {"p": {"enabled": True}}, "ali@x.com")[0], 403)   # customers cannot
+        rpc("billing_set_config", {"p": {"enabled": True}}, "boss@x.com")
+        s = rpc("billing_status", {"p_company": cid}, "ali@x.com")[1]
+        self.assertEqual((s["status"], s["days_left"], s["users_allowed"]), ("trial", 15, 5))
+        self.assertEqual(appended(1), 200)
+        st.days_shift = 16
+        self.assertEqual(rpc("billing_status", {"p_company": cid}, "ali@x.com")[1]["status"], "expired")
+        self.assertEqual(appended(2), 400)                                                  # nothing saved once expired
+        self.assertEqual(rpc("billing_quote", {"p_company": cid, "p_plan": "business", "p_months": 12, "p_extra_users": 1}, "ali@x.com")[1]["amount"],
+                         (1490 + 150) * 10)
+        rpc("billing_record_payment", {"p_company": cid, "p_plan": "starter", "p_months": 1, "p_extra_users": 0, "p_amount": None,
+                                       "p_reference": "INSTAPAY-1", "p_note": ""}, "boss@x.com")
+        s = rpc("billing_status", {"p_company": cid}, "ali@x.com")[1]
+        self.assertEqual((s["status"], s["plan"], s["payments"][0]["amount"]), ("active", "starter", 690))
+        self.assertEqual(appended(2), 200)
+        sb.shutdown()
+
 class ImportKit(unittest.TestCase):
     """Per-screen templates, and importing a user's own layout with column matching."""
 

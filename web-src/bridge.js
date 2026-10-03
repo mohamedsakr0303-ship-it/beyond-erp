@@ -319,6 +319,10 @@ def cloud_new_books(name, email):
             }
             return jsonReply(409, { error: "The workspace is very busy — please try again" });
           } catch (e) {
+            if (/subscription_ended/.test(e.message)) {   // the trial / paid period is over: nothing was saved (see append_op)
+              window.dispatchEvent(new CustomEvent("beyond-billing", { detail: { status: "expired" } }));
+              return jsonReply(402, { error: e.message.replace(/^.*subscription_ended:\s*/, ""), billing: "expired" });
+            }
             fail(e);
             const msg = e.code === "offline" ? "You are offline — changes need a connection to the shared workspace (viewing still works)." :
               e.code === "update" ? e.message : e.code === "signed_out" || e.status === 401 ? "Your workspace sign-in expired — sign out and sign in again." : "Workspace: " + e.message;
@@ -475,6 +479,24 @@ def cloud_new_books(name, email):
         manageUser: async m => req("POST", "/functions/v1/manage-user", { company: co(), username: m.username, email: m.email || "", password: m.password || "",
           full_name: m.full_name || "", active: m.active !== false }, await token()),
         snapshot: () => maybeSnapshot(true),
+        // --- paid subscriptions (supabase/migrations/*_billing.sql, supabase/functions/billing). Older workspaces
+        // without billing answer "function not found": treated as billing switched off.
+        async billingPublic() {
+          try { return await req("POST", "/rest/v1/rpc/billing_public", {}); } catch (e) { return { enabled: false, missing: e.status === 404 }; }
+        },
+        async billing() {
+          try { return await rpc("billing_status", { p_company: co() }); }
+          catch (e) { if (e.status === 404 || e.code === "PGRST202") return { enabled: false, status: "free", can_write: true }; throw e; }
+        },
+        quote: (plan, months, extra) => rpc("billing_quote", { p_company: co(), p_plan: plan, p_months: months, p_extra_users: extra || 0 }),
+        checkout: async (plan, months, extra, phone) => req("POST", "/functions/v1/billing", { company: co(), plan, months, extra_users: extra || 0, phone: phone || "",
+          return_url: appUrl() ? appUrl() + "#/subscription?paid=1" : "" }, await token()),
+        billingCancel: note => rpc("billing_cancel", { p_company: co(), p_note: note || "" }),
+        billingAdmin: () => rpc("billing_admin_overview"),
+        billingConfig: p => rpc("billing_set_config", { p }),
+        billingRecord: x => rpc("billing_record_payment", { p_company: x.company, p_plan: x.plan, p_months: Number(x.months) || 1, p_extra_users: Number(x.extra_users) || 0,
+          p_amount: x.amount === "" || x.amount == null ? null : Number(x.amount), p_reference: x.reference || "", p_note: x.note || "" }),
+        billingSetCompany: (id, p) => rpc("billing_set_company", { p_company: id, p }),
         // open the app user that matches the signed-in workspace account
         async openSession() {
           const r = localRun("POST", "/api/cloud/session", { "x-requested-with": "BeyondERP", "content-type": "application/json", "x-beyond-static": "1" },

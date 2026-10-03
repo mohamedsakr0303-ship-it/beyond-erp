@@ -26,6 +26,77 @@ class State:
         self.confirm_required = False   # Supabase's "Confirm email" setting
         self.unconfirmed = set()
         self.banned = set()             # accounts switched off (manage-user with active = false)
+        # paid subscriptions (supabase/migrations/*_billing.sql); days_shift moves the clock for tests
+        self.owners = set()
+        self.billing = {"enabled": False, "enabled_at": None, "trial_days": 15, "grace_days": 3, "currency": "EGP",
+                        "trial_plan": "business", "yearly_months": 10, "extra_user": 150, "payment_note": "",
+                        "plans": [{"code": "starter", "name": "Starter", "price": 690, "users": 2, "companies": 1, "features": ["Core"]},
+                                  {"code": "business", "name": "Business", "price": 1490, "users": 5, "companies": 1, "features": ["More"]},
+                                  {"code": "pro", "name": "Pro", "price": 2990, "users": 15, "companies": 3, "features": ["All"]}]}
+        self.co_billing = {}            # company id -> {plan, extra_users, trial_ends, paid_until, comped, cancel_note}
+        self.payments = []
+        self.days_shift = 0
+        self.paymob = False             # card checkout configured
+
+    def now(self):
+        import datetime
+        return datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=self.days_shift)
+
+    def plan(self, code):
+        return next((p for p in self.billing["plans"] if p["code"] == code), None)
+
+    def bstate(self, cid):
+        """Mirror of beyond_billing_state."""
+        import datetime
+        cfg = self.billing
+        if not cfg["enabled"]:
+            return {"enabled": False, "status": "free", "can_write": True}
+        co, b, now = self.companies[cid], self.co_billing.get(cid, {}), self.now()
+        start = max(co["created_at"], cfg["enabled_at"] or co["created_at"])
+        trial_end = b.get("trial_ends") or start + datetime.timedelta(days=cfg["trial_days"])
+        paid = b.get("paid_until")
+        grace = datetime.timedelta(days=cfg["grace_days"])
+        if b.get("comped"):
+            status, ends = "comped", None
+        elif paid and paid > now:
+            status, ends = "active", paid
+        elif paid and paid + grace > now and paid >= trial_end:
+            status, ends = "past_due", paid + grace
+        elif trial_end > now:
+            status, ends = "trial", trial_end
+        else:
+            status, ends = "expired", max(trial_end, paid or trial_end)
+        plan = self.plan(cfg["trial_plan"] if status == "trial" else (b.get("plan") or cfg["trial_plan"])) or cfg["plans"][0]
+        users = plan["users"] + (0 if status == "trial" else b.get("extra_users", 0))
+        n = sum(1 for k, m in self.members.items() if k[0] == cid and m["active"] and not m["pending"])
+        iso = lambda d: d.isoformat() if d else None  # noqa: E731
+        return {"enabled": True, "status": status, "can_write": status != "expired", "ends": iso(ends),
+                "days_left": None if ends is None else max(0, -(-int((ends - now).total_seconds()) // 86400)),
+                "trial_ends": iso(trial_end), "paid_until": iso(paid), "plan": plan["code"], "plan_name": plan["name"],
+                "users_allowed": None if status == "comped" else users, "users": n, "extra_users": b.get("extra_users", 0),
+                "cancel_note": b.get("cancel_note"), "currency": cfg["currency"], "grace_days": cfg["grace_days"]}
+
+    def price(self, plan, months, extra):
+        p = self.plan(plan)
+        if not p:
+            raise ValueError(f"unknown plan {plan}")
+        if months not in (1, 12):
+            raise ValueError("pay for 1 month or 12 months")
+        return round((p["price"] + self.billing["extra_user"] * (extra or 0)) * (self.billing["yearly_months"] if months == 12 else 1), 2)
+
+    def apply_payment(self, pay):
+        import datetime
+        if pay["status"] == "paid":
+            return
+        b = self.co_billing.setdefault(pay["company_id"], {})
+        st = self.bstate(pay["company_id"])
+        start = max(self.now(), b.get("paid_until") or self.now(),
+                    datetime.datetime.fromisoformat(st["trial_ends"]) if st.get("trial_ends") else self.now())
+        m = start.month - 1 + pay["months"]
+        y, mo = start.year + m // 12, m % 12 + 1
+        b.update(plan=pay["plan"], extra_users=pay["extra_users"], cancel_note=None,
+                 paid_until=start.replace(year=y, month=mo, day=min(start.day, 28)))
+        pay.update(status="paid", paid_at=self.now().isoformat())
 
     # helpers for tests
     def company_named(self, name):
@@ -89,6 +160,14 @@ class Handler(BaseHTTPRequestHandler):
         with st.lock:
             if url.path == "/auth/v1/settings":
                 return self._send(200, {"external": {"email": True, "google": True}})
+            if url.path == "/test/paymob":            # stand-in for Paymob's checkout page: pays, then back to the app
+                pay = next((x for x in st.payments if x["reference"] == q.get("ref", [""])[0]), None)
+                if pay:
+                    st.apply_payment(pay)
+                self.send_response(302)
+                self.send_header("Location", q.get("back", ["/"])[0] or "/")
+                self.end_headers()
+                return
             if url.path == "/auth/v1/authorize":     # stand-in for "Sign in with Google": straight back, signed in
                 e = "google.user@gmail.com"
                 st.accounts.setdefault(e, None)
@@ -155,6 +234,17 @@ class Handler(BaseHTTPRequestHandler):
             if url.path == "/test/confirm":         # test helper: the person clicked the emailed link
                 st.unconfirmed.discard(body["email"].lower())
                 return self._send(200, {})
+            if url.path == "/rest/v1/rpc/billing_public":
+                c = st.billing
+                return self._send(200, {k: c[k] for k in ("enabled", "trial_days", "currency", "plans", "extra_user", "yearly_months", "payment_note")})
+            if url.path == "/functions/v1/billing":   # supabase/functions/billing (checkout)
+                return self._send(*self.checkout(body))
+            if url.path == "/test/billing":           # test helper: owners, clock, card checkout on/off
+                for e in body.get("owners", []):
+                    st.owners.add(e.lower())
+                st.days_shift = body.get("days_shift", st.days_shift)
+                st.paymob = body.get("paymob", st.paymob)
+                return self._send(200, {})
             if url.path.startswith("/rest/v1/rpc/"):
                 email = self._email()
                 if not email:
@@ -162,6 +252,26 @@ class Handler(BaseHTTPRequestHandler):
                 status, out = self.rpc(url.path.rsplit("/", 1)[1], body, email)
                 return self._send(status, out)
         self._send(404, {"message": "not found"})
+
+    # ---------------------------------------------------------------- supabase/functions/billing
+    def checkout(self, body):
+        st, email = self.server.state, self._email()
+        if not email:
+            return 401, {"msg": "Sign in to the workspace again"}
+        status, q = self.rpc("billing_quote", {"p_company": body.get("company"), "p_plan": body.get("plan"),
+                                               "p_months": 12 if body.get("months") == 12 else 1, "p_extra_users": body.get("extra_users") or 0}, email)
+        if status != 200:
+            return 400, {"msg": q.get("message")}
+        if not st.paymob:
+            return 503, {"msg": "Card payments are not set up yet. Pay by InstaPay or bank transfer (see the details on this screen) "
+                                "and we will activate your subscription."}
+        ref = "BEY-" + uuid.uuid4().hex[:10].upper()
+        st.payments.append({"id": len(st.payments) + 1, "company_id": body["company"], "plan": q["plan"], "months": q["months"],
+                            "extra_users": q["extra_users"], "amount": q["amount"], "currency": "EGP", "provider": "paymob",
+                            "reference": ref, "status": "pending", "created_at": st.now().isoformat(), "paid_at": None})
+        host = self.headers.get("Host")
+        from urllib.parse import quote
+        return 200, {"url": f"http://{host}/test/paymob?ref={ref}&back={quote(body.get('return_url') or '', safe='')}", "reference": ref}
 
     # ---------------------------------------------------------------- supabase/functions/manage-user
     def manage_user(self, body):
@@ -241,6 +351,69 @@ class Handler(BaseHTTPRequestHandler):
                     "is_admin": bool(admin()), "gateway": bool(m and m["gateway"]),
                     "last_seq": (ops[-1]["seq"] if ops else 0) if m else None,
                     "snapshot_seq": snap["seq"] if snap else None, "snapshot_version": snap["version"] if snap else None}
+        if fn == "billing_status":
+            if not m:
+                return _err("42501", "not a member of this company", 403)
+            out = {**st.bstate(cid), "is_admin": bool(admin()), "is_owner": email in st.owners}
+            if admin():
+                out["payments"] = [{k: x[k] for k in ("id", "plan", "months", "amount", "currency", "provider", "status", "reference")}
+                                   | {"date": x["paid_at"] or x["created_at"]} for x in reversed(st.payments) if x["company_id"] == cid]
+            return 200, out
+        if fn == "billing_quote":
+            if not admin():
+                return _err("42501", "only administrators of this company can pay for it", 403)
+            plan = st.plan(p.get("p_plan"))
+            if not plan:
+                return _err("P0001", f"unknown plan {p.get('p_plan')}")
+            n = sum(1 for k, x in st.members.items() if k[0] == cid and x["active"] and not x["pending"])
+            if n > plan["users"] + (p.get("p_extra_users") or 0):
+                return _err("22023", f"this company has {n} active people — choose a bigger plan")
+            try:
+                amt = st.price(plan["code"], p.get("p_months") or 1, p.get("p_extra_users") or 0)
+            except ValueError as e:
+                return _err("P0001", str(e))
+            return 200, {"plan": plan["code"], "months": p.get("p_months") or 1, "extra_users": p.get("p_extra_users") or 0,
+                         "amount": amt, "currency": st.billing["currency"], "email": email}
+        if fn == "billing_cancel":
+            if not admin():
+                return _err("42501", "only administrators of this company can do this", 403)
+            st.co_billing.setdefault(cid, {})["cancel_note"] = p.get("p_note") or "cancelled"
+            return 200, st.bstate(cid)
+        if fn.startswith("billing_") and fn != "billing_status" and email not in st.owners:
+            return _err("42501", "only the platform owner can do this", 403)
+        if fn == "billing_admin_overview":
+            cfg = {**st.billing, "enabled_at": st.billing["enabled_at"].isoformat() if st.billing["enabled_at"] else None}
+            return 200, {"config": cfg, "mrr": sum(x["amount"] / (12 if x["months"] == 12 else 1) for x in st.payments if x["status"] == "paid"),
+                         "companies": [{"id": c["id"], "name": c["name"], "created_at": c["created_at"].isoformat(), "created_by": c.get("created_by"),
+                                        "state": st.bstate(c["id"]), "comped": st.co_billing.get(c["id"], {}).get("comped", False),
+                                        "paid_total": sum(x["amount"] for x in st.payments if x["company_id"] == c["id"] and x["status"] == "paid")}
+                                       for c in st.companies.values()]}
+        if fn == "billing_set_config":
+            c, x = st.billing, p.get("p") or {}
+            if x.get("enabled") and not c["enabled"]:
+                c["enabled_at"] = st.now()
+            for k in ("enabled", "trial_days", "grace_days", "currency", "trial_plan", "yearly_months", "extra_user", "plans", "payment_note"):
+                if k in x:
+                    c[k] = x[k]
+            return 200, {**c, "enabled_at": c["enabled_at"].isoformat() if c["enabled_at"] else None}
+        if fn == "billing_record_payment":
+            pid = len(st.payments) + 1
+            pay = {"id": pid, "company_id": p["p_company"], "plan": p["p_plan"], "months": p.get("p_months") or 1,
+                   "extra_users": p.get("p_extra_users") or 0, "currency": "EGP", "provider": "manual", "reference": p.get("p_reference"),
+                   "amount": p.get("p_amount") if p.get("p_amount") is not None else st.price(p["p_plan"], 12 if p.get("p_months") == 12 else 1, p.get("p_extra_users") or 0),
+                   "status": "pending", "created_at": st.now().isoformat(), "paid_at": None}
+            st.payments.append(pay)
+            st.apply_payment(pay)
+            return 200, st.bstate(p["p_company"])
+        if fn == "billing_set_company":
+            import datetime
+            b, x = st.co_billing.setdefault(p["p_company"], {}), p.get("p") or {}
+            if "comped" in x:
+                b["comped"] = bool(x["comped"])
+            for k in ("trial_ends", "paid_until"):
+                if k in x:
+                    b[k] = datetime.datetime.fromisoformat(x[k].replace("Z", "+00:00")) if x[k] else None
+            return 200, st.bstate(p["p_company"])
         if fn == "my_companies":
             return 200, sorted([{"id": k[0], "name": st.companies[k[0]]["name"], "is_admin": x["is_admin"],
                                  "pending": x["pending"], "active": x["active"]}
@@ -251,7 +424,8 @@ class Handler(BaseHTTPRequestHandler):
             if not name:
                 return _err("P0001", "enter the company name")
             new = str(uuid.uuid4())
-            st.companies[new] = {"id": new, "name": name, "invite_code": uuid.uuid4().hex[:8].upper()}
+            st.companies[new] = {"id": new, "name": name, "invite_code": uuid.uuid4().hex[:8].upper(), "created_at": st.now(),
+                                 "created_by": email}
             st.members[(new, email)] = {"email": email, "is_admin": True, "gateway": False, "active": True, "pending": False}
             st.people.setdefault(email, None)
             return 200, {"id": new, "name": name, "is_admin": True, "pending": False}
@@ -275,6 +449,9 @@ class Handler(BaseHTTPRequestHandler):
         if fn == "append_op":
             if not m:
                 return _err("42501", "not a member of this company", 403)
+            if not st.bstate(cid)["can_write"]:
+                return _err("P0402", "subscription_ended: the free trial / paid period of this company has ended — an administrator "
+                                     "can subscribe in Settings → Subscription. Everything stays available to view, print and export.")
             ops = st.ops.setdefault(cid, [])
             last = ops[-1]["seq"] if ops else 0
             if p["p_seq"] != last + 1:
