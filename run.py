@@ -30,7 +30,8 @@ from erp.db import Database, default_data_dir  # noqa: E402
 def main(argv=None):
     p = argparse.ArgumentParser(description=f"Beyond ERP {__version__}")
     p.add_argument("command", nargs="?", default="serve",
-                   choices=["serve", "reset-password", "import-legacy", "import", "build-workbook", "backup"])
+                   choices=["serve", "reset-password", "import-legacy", "import", "build-workbook", "backup",
+                            "licence-keygen", "licence-issue"])
     p.add_argument("arg", nargs="?")
     p.add_argument("--host", default="127.0.0.1", help="127.0.0.1 = this computer only; 0.0.0.0 = whole network")
     p.add_argument("--port", type=int, default=8765)
@@ -38,7 +39,40 @@ def main(argv=None):
     p.add_argument("--no-browser", action="store_true")
     p.add_argument("--replace", action="store_true", help="import: wipe existing data first")
     p.add_argument("--verbose", action="store_true")
+    lic = p.add_argument_group("licences (vendor only)")
+    lic.add_argument("--key", help="licence-issue: your private key file (from licence-keygen)")
+    lic.add_argument("--company", help="licence-issue: the customer's company name")
+    lic.add_argument("--edition", default="business", help="starter | business | pro | enterprise")
+    lic.add_argument("--users", type=int, default=5)
+    lic.add_argument("--companies", type=int, default=1)
+    lic.add_argument("--updates-months", type=int, default=12, help="months of updates included (maintenance)")
+    lic.add_argument("--install", default="", help="the customer's installation ID (Settings → System → Licence)")
+    lic.add_argument("--expires", default="", help="YYYY-MM-DD for a time-limited licence; blank = perpetual")
     a = p.parse_args(argv)
+
+    if a.command == "licence-keygen":
+        from erp import licence
+        try:
+            priv, pub = licence.keygen(a.arg or Path.home() / ".beyond-licence")
+        except FileExistsError as e:
+            sys.exit(str(e))
+        print(f"Private key: {priv}\n  KEEP IT SECRET AND BACKED UP. Anyone with it can make licences; losing it means you cannot.")
+        print(f"Public key written to {licence.PUBLIC_KEY_FILE} — commit it: from the next release, installations need a licence.")
+        return
+    if a.command == "licence-issue":
+        from erp import licence
+        import datetime as _dt
+        if not a.key or not a.company:
+            sys.exit("Give --key (your private key file) and --company")
+        seed = bytes.fromhex(Path(a.key).expanduser().read_text().strip())
+        today = _dt.date.today()
+        m = today.month - 1 + a.updates_months
+        until = today.replace(year=today.year + m // 12, month=m % 12 + 1, day=min(today.day, 28)).isoformat()
+        payload = {"company": a.company, "edition": a.edition, "users": a.users, "companies": a.companies,
+                   "issued": today.isoformat(), "updates_until": until, "install": a.install.strip().upper(),
+                   "expires": a.expires, "id": __import__("secrets").token_hex(4)}
+        print(licence.issue(seed, payload))
+        return
 
     data_dir = Path(a.data).expanduser() if a.data else default_data_dir()
     data_dir.mkdir(parents=True, exist_ok=True)

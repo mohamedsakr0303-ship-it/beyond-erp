@@ -87,6 +87,30 @@ def settings_dict(db):
     return out
 
 
+# changes allowed without a licence: signing in / out, own password, entering the licence, previews (nothing saved)
+LICENCE_FREE = re.compile(r"^/api/(login|logout|me/password|licence|[\w-]+-preview(/[\w-]+)?)$")
+
+
+@route("GET", "/api/licence")
+def licence_get(ctx):
+    from . import licence
+    return ok({**licence.status(ctx.db, None if getattr(ctx.app, "licensing", False) else False),
+               "vendor_key": licence.vendor_key() is not None})
+
+
+@route("POST", "/api/licence")
+def licence_set(ctx):
+    from . import licence
+    if not ctx.user.get("is_super"):
+        raise SuperOnly("Only a super administrator can enter the licence")
+    try:
+        st = licence.activate(ctx.db, ctx.body.get("key") or "")
+    except ValueError as e:
+        raise acc.ValidationError(str(e))
+    ctx.log("licence.activate", (st.get("licence") or {}).get("company", ""))
+    return ok(st)
+
+
 @route("GET", "/api/bootstrap", public=True)
 def bootstrap(ctx):
     db, user = ctx.db, ctx.user
@@ -104,6 +128,12 @@ def bootstrap(ctx):
                                   "regional")}}
     if not user:
         return ok(base)
+    if getattr(ctx.app, "licensing", False):
+        from . import licence
+        lst = licence.status(db)
+        base["licence"] = {k: lst.get(k) for k in ("enabled", "state", "can_write", "days_left", "problem", "warning", "updates_until")}
+        if lst.get("licence"):
+            base["licence"]["licensee"] = lst["licence"].get("company")
     sync = getattr(ctx.app, "cloud", None)
     base.update({
         "cloud": {"joined": bool(sync and sync.active)},
@@ -2415,6 +2445,16 @@ class SuperOnly(PermissionError):
     pass
 
 
+def _licence_seat(ctx):
+    """Adding / re-activating a user: within the users the licence covers."""
+    if not getattr(ctx.app, "licensing", False):
+        return
+    from . import licence
+    st = licence.status(ctx.db)
+    if st["state"] == "licensed" and st["users"] >= int(st["licence"].get("users") or 1):
+        raise acc.ValidationError(f"The licence covers {st['licence'].get('users')} active users — deactivate someone, or buy more users")
+
+
 def _need_super(ctx, what):
     """Super administrators only: administrators, erasing and replacing the books."""
     if not ctx.user.get("is_super"):
@@ -2425,6 +2465,7 @@ def _need_super(ctx, what):
 def user_add(ctx):
     if ctx.body.get("is_admin") or ctx.body.get("is_super"):
         _need_super(ctx, "create administrators")
+    _licence_seat(ctx)
     uid = auth.create_user(ctx.db, ctx.body)
     ctx.log("user.add", ctx.body.get("username"))
     return ok({"id": uid})
@@ -2440,6 +2481,8 @@ def user_edit(ctx, uid):
     lowers = ("is_admin" in b and not b["is_admin"] and target["is_admin"]) or ("is_super" in b and not b["is_super"] and target["is_super"])
     if raises or ((target["is_admin"] or target["is_super"]) and int(uid) != ctx.user["id"]) or (lowers and int(uid) != ctx.user["id"]):
         _need_super(ctx, "change administrators")   # an administrator may still edit their own name, email, password
+    if ctx.body.get("active") and not ctx.db.one("SELECT active FROM users WHERE id=?", (int(uid),))["active"]:
+        _licence_seat(ctx)
     auth.update_user(ctx.db, int(uid), ctx.body, ctx.user["id"])
     ctx.log("user.edit", uid)
     return ok()
@@ -2987,6 +3030,13 @@ def handle(app, method, target, headers, raw=b"", as_user=None, dry=False):
                 return ok({"error": "Please sign in"}, 401)
             if module and not auth.can(user, module, level):
                 return ok({"error": "You do not have permission for this"}, 403)
+            if (method != "GET" and as_user is None and getattr(app, "licensing", False) and not public
+                    and not LICENCE_FREE.match(url.path)):
+                from . import licence
+                st = licence.status(db)
+                if not st["can_write"]:
+                    return ok({"error": f"{st.get('problem') or 'No licence'} — the books are read-only (view, print and export "
+                                        "still work). Enter a licence key in Settings → System → Licence.", "licence": st["state"]}, 402)
             ctx = Ctx(app, db, user, token, q, body, raw, headers)
             ctx.cloud_hook = getattr(app, "cloud", None)
             return fn(ctx, **match.groupdict())
@@ -3080,6 +3130,7 @@ class ERPServer(ThreadingHTTPServer):
     def __init__(self, addr, db, backup_dir, verbose=False):
         super().__init__(addr, Handler)
         self.db, self.backup_dir, self.verbose = db, Path(backup_dir), verbose
+        self.licensing = True     # desktop / self-hosted: needs a licence once the vendor key is in the app (erp/licence.py)
         self.backup_dir.mkdir(parents=True, exist_ok=True)
         self.cloud = cloud.CloudSync(self)
         if self.cloud.active:

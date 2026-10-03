@@ -1934,6 +1934,7 @@ PAGES.settings = async (view, parts, q) => {
   view.innerHTML = head + (sys ? `<div class="card"><h2>${t("system_info")}</h2><div class="grid g2"><div>Version ${esc(sys.version)}<br><span class="muted">${esc(sys.db_path)}</span><br>${(sys.db_size / 1048576).toFixed(2)} MB</div>
       <div>${Object.entries(sys.counts).map(([k, v]) => `${esc(k)}: ${v}`).join(" · ")}<br><span class="muted">${sys.backups.length} backups: ${esc(sys.backups.slice(0, 3).join(", "))}</span></div></div>
       ${ed ? `<div class="row" style="margin-top:10px"><label class="f">${t("backups_keep")}<input id="bkeep" type="number" value="${esc(st.backup_keep || 14)}" style="max-width:100px"></label><button class="btn" data-a="maint">${t("maintenance")}</button><a class="btn" href="/api/backup">⬇ ${t("db_backup")}</a></div>` : ""}</div>
+    ${STATIC ? "" : `<div class="card" id="liccard"><h2>${L2("Licence", "الترخيص")}</h2><div class="muted">${t("loading")}</div></div>`}
     <div class="card" id="lockcard"><h2>${t("lock_date")}</h2><div class="row"><input type="date" name="lock_date" value="${esc(st.lock_date || "")}" style="max-width:200px" ${ed ? "" : "disabled"}>${ed ? `<button class="btn" data-a="locksave">${t("save")}</button>` : ""}</div><p class="muted">${t("lock_note")}</p></div>
     <div class="card"><h2>${t("hidden_mods")}</h2><p class="muted">${t("hidden_moved")} <a href="#/settings?tab=menus">${t("tab_menus")}</a></p></div>` : "") +
     (S.boot.user.is_super ? `<div class="card danger-zone" id="erasecard"><h2 class="neg">${t("erase_title")}</h2>
@@ -1943,6 +1944,24 @@ PAGES.settings = async (view, parts, q) => {
       <div class="row" style="margin-top:10px"><input id="econfirm" placeholder="${t("erase_type")}" style="max-width:220px" autocomplete="off"><button class="btn danger" data-a="erase">${t("erase_btn")}</button></div></div>`
       : `<div class="card"><h2>${t("erase_title")}</h2><div class="muted">${t("admin_only")}</div></div>`);
   S.H.maint = async () => { try { await api("PUT", "/api/settings", { backup_keep: $("#bkeep").value }); const r = await api("POST", "/api/maintenance", {}); toast(`${(r.size_before / 1048576).toFixed(2)} → ${(r.size_after / 1048576).toFixed(2)} MB`); route(); } catch (e) { fail(e); } };
+  if (!STATIC) (async () => {
+    const box = $("#liccard"); if (!box) return;
+    let L; try { L = await api("GET", "/api/licence"); } catch (e) { box.remove(); return; }
+    const sup = S.boot.user.is_super, ar = S.lang === "ar", P = L.licence || {};
+    const state = { free: L2("Licensing not switched on — free to use", "الترخيص غير مفعّل — استخدام مجاني"), trial: L2(`Trial — ${L.days_left} days left`, `نسخة تجريبية — متبقي ${L.days_left} يوم`),
+      licensed: L2("Licensed", "مرخّص"), unlicensed: L2("Not licensed — read-only", "غير مرخّص — للعرض فقط") }[L.state];
+    box.innerHTML = `<h2>${L2("Licence", "الترخيص")} <span class="chip ${L.state === "licensed" || L.state === "free" ? "ok" : L.state === "trial" ? "warn" : "bad"}">${esc(state)}</span></h2>
+      <div class="tbl"><table><tbody>
+        <tr><th style="width:38%">${L2("Installation ID (send it when buying)", "رقم التثبيت (أرسله عند الشراء)")}</th><td><b dir="ltr" style="font-family:monospace;font-size:1.1em">${esc(L.install_id)}</b> <button class="btn sm" data-a="liccopy">⧉</button></td></tr>
+        ${P.company ? `<tr><th>${L2("Licensed to", "مرخّص لـ")}</th><td>${esc(P.company)}</td></tr><tr><th>${L2("Edition", "الإصدار")}</th><td>${esc(P.edition || "")} · ${P.users || 1} ${L2("users", "مستخدمين")} · ${P.companies || 1} ${L2("companies", "شركات")}</td></tr>
+          <tr><th>${L2("Updates included until", "التحديثات مشمولة حتى")}</th><td>${fd(P.updates_until)}${P.expires ? ` · ${L2("licence ends", "ينتهي الترخيص")} ${fd(P.expires)}` : ` · ${L2("perpetual", "دائم")}`}</td></tr>` : ""}
+        ${L.problem ? `<tr><th>${L2("Problem", "المشكلة")}</th><td class="neg">${esc(L.problem)}</td></tr>` : ""}${L.warning ? `<tr><th></th><td class="warn">${esc(L.warning)}</td></tr>` : ""}
+        <tr><th>${L2("This version released", "تاريخ إصدار هذه النسخة")}</th><td>${fd(L.release_date || "")} · v${esc(S.boot.version)}</td></tr></tbody></table></div>
+      ${L.enabled && sup ? `<label class="f" style="margin-top:10px">${L2("Licence key", "مفتاح الترخيص")}<textarea id="lickey" rows="3" dir="ltr" placeholder="BEYOND1-…" style="font-family:monospace"></textarea></label>
+        <button class="btn pri" data-a="licsave">${L2("Activate", "تفعيل")}</button>` : L.enabled ? `<p class="muted">${L2("A super administrator enters the licence key.", "يُدخل المسؤول الأعلى مفتاح الترخيص.")}</p>` : ""}`;
+    S.H.liccopy = async () => { try { await navigator.clipboard.writeText(L.install_id); toast(L2("Copied", "تم النسخ")); } catch { toast(L.install_id); } };
+    S.H.licsave = async () => { try { await api("POST", "/api/licence", { key: $("#lickey").value }); toast(L2("Licence activated", "تم تفعيل الترخيص")); await refreshBoot(); route(); } catch (e) { fail(e); } };
+  })();
   S.H.locksave = async () => { try { await api("PUT", "/api/settings", { lock_date: $("[name=lock_date]").value }); await refreshBoot(); toast(t("saved")); } catch (e) { fail(e); } };
   S.H.erase = async () => {
     const scope = ($("input[name=escope]:checked") || {}).value, word = $("#econfirm").value;
@@ -4303,6 +4322,14 @@ async function refreshBilling() {
 window.addEventListener("beyond-billing", () => { S.billingAt = 0; refreshBilling(); });
 function renderBillBar() {
   const box = $("#billbar"); if (!box) return;
+  const lic = S.boot && S.boot.licence;
+  if (lic && lic.enabled && lic.state !== "licensed" || lic && lic.warning) {
+    const ar = S.lang === "ar";
+    const msg = lic.state === "trial" ? (ar ? `نسخة تجريبية — متبقي ${lic.days_left} يوم. أدخل مفتاح الترخيص لمواصلة الحفظ بعدها.` : `Trial — ${lic.days_left} day${lic.days_left === 1 ? "" : "s"} left. Enter a licence key to keep saving after that.`)
+      : lic.state === "unlicensed" ? (ar ? `${lic.problem} — الدفاتر للعرض فقط (العرض والطباعة والتصدير متاحة).` : `${lic.problem} — the books are read-only (view, print and export still work).`) : lic.warning;
+    box.innerHTML = `<div class="banner ${lic.state === "unlicensed" ? "err" : lic.state === "trial" && lic.days_left > 3 ? "info" : "warn"} billbar">${esc(msg)} ${S.boot.user.is_super ? `<a class="btn sm" href="#/settings?tab=system">${ar ? "الترخيص" : "Licence"}</a>` : ""}</div>`;
+    return;
+  }
   const b = S.billing;
   if (!b || !b.enabled || ["comped", "free"].includes(b.status) || (b.status === "active" && b.days_left > 7)) { box.innerHTML = ""; return; }
   const ar = S.lang === "ar", d = b.days_left;

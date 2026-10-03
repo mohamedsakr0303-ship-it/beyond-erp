@@ -1229,6 +1229,66 @@ class SuperAdmin(unittest.TestCase):
         boss = db.one("SELECT id FROM users WHERE username='boss'")["id"]
         self.assertEqual(call("PUT", f"/api/users/{boss}", {"active": False}).status, 403)       # admins cannot touch the owner
 
+class OfflineLicence(unittest.TestCase):
+    """Signed licences for the desktop edition: trial, read-only without a licence, users / installation / updates."""
+
+    def setUp(self):
+        import os
+        import secrets as _s
+        from erp import licence
+        self.seed = _s.token_bytes(32)
+        os.environ["BEYOND_LICENCE_PUBLIC_KEY"] = licence.public_from_private(self.seed).hex()
+
+    def tearDown(self):
+        import os
+        os.environ.pop("BEYOND_LICENCE_PUBLIC_KEY", None)
+
+    def test_lifecycle(self):
+        import datetime as _dt
+        import secrets as _s
+        from erp import auth, licence, server
+        db = Database(":memory:")
+        auth.create_user(db, {"username": "boss", "password": "pw123456"}, first=True)
+        st = licence.status(db)
+        self.assertEqual((st["state"], st["can_write"], st["days_left"]), ("trial", True, 15))
+
+        class App:
+            pass
+        app = App()
+        app.db, app.backup, app.licensing = db, (lambda *a_, **k: None), True
+        tok, _ = auth.login(db, "boss", "pw123456")
+        call = lambda m, p, b=None: server.handle(app, m, p, {"x-session": tok, "x-requested-with": "BeyondERP",  # noqa: E731
+                                                              "content-type": "application/json"}, json.dumps(b or {}).encode())
+        self.assertEqual(call("POST", "/api/bus", {"code": "P1", "name": "One"}).status, 200)
+        db.set_setting("first_run", (_dt.date.today() - _dt.timedelta(days=16)).isoformat())
+        self.assertEqual(licence.status(db)["state"], "unlicensed")
+        self.assertEqual(call("POST", "/api/bus", {"code": "P2", "name": "Two"}).status, 402)   # read-only
+        self.assertEqual(call("GET", "/api/bus").status, 200)                                     # viewing still works
+        iid = licence.install_id(db)
+        base = {"company": "Acme", "edition": "business", "users": 2, "companies": 1, "updates_until": "2099-01-01", "install": iid}
+        self.assertEqual(call("POST", "/api/licence", {"key": "BEYOND1-garbage.x"}).status, 400)
+        forged = licence.issue(_s.token_bytes(32), base)                                          # signed with another key
+        self.assertEqual(call("POST", "/api/licence", {"key": forged}).status, 400)
+        other = licence.issue(self.seed, {**base, "install": "AAAA-BBBB-CCCC-DDDD"})
+        self.assertEqual(call("POST", "/api/licence", {"key": other}).status, 400)
+        old = licence.issue(self.seed, {**base, "updates_until": "2020-01-01"})
+        db.set_setting("licence_key", old)
+        self.assertEqual(licence.status(db)["state"], "unlicensed")                               # updates ended before this version
+        good = licence.issue(self.seed, base)
+        r = call("POST", "/api/licence", {"key": good})
+        self.assertEqual((r.status, json.loads(r.body)["state"]), (200, "licensed"))
+        self.assertEqual(call("POST", "/api/bus", {"code": "P2", "name": "Two"}).status, 200)
+        self.assertEqual(call("POST", "/api/users", {"username": "u2", "password": "pw123456"}).status, 200)
+        self.assertEqual(call("POST", "/api/users", {"username": "u3", "password": "pw123456"}).status, 400)  # 2 users bought
+
+    def test_free_without_vendor_key(self):
+        import os
+        from erp import licence
+        os.environ.pop("BEYOND_LICENCE_PUBLIC_KEY", None)
+        if licence.PUBLIC_KEY_FILE.exists():
+            self.skipTest("a vendor key is installed in this checkout")
+        self.assertEqual(licence.status(Database(":memory:"))["state"], "free")
+
 class ImportKit(unittest.TestCase):
     """Per-screen templates, and importing a user's own layout with column matching."""
 
