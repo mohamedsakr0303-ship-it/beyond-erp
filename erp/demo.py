@@ -326,6 +326,10 @@ def sheets():
          "confirm": "Yes", "collected": 397500},
         {"code": "SO-D004", "date": d(4, 22), "customer": "Karim Fahmy", "bu_code": "SALES-01", "product": "S-DES", "qty": 2,
          "vat_code": "VAT14", "plan": "deferred", "first_due": d(5, 28), "confirm": "Yes"}]
+    S["Budgets"] = [{"year": today.year, "account": acct, "total": tot, "notes": note} for acct, tot, note in (
+        ("4010", 4200000, "Contract revenue target"), ("4025", 3000000, "Unit sales"), ("5005", 2200000, ""),
+        ("5010", 900000, ""), ("6010", 300000, "Salaries"), ("6020", 24000, "Internet & phones"), ("6040", 30000, "Electricity"))] + [
+        {"year": today.year, "account": "6030", "bu_code": "", **{f"m{i}": 3000 for i in range(1, 13)}, "notes": "Office rent"}]
     S["Recurring Entries"] = [
         {"name": "Office rent {month}", "doc_type": "expense", "start": eom(4), "every": 1, "unit": "month", "month_end": "Yes",
          "mode": "auto", "amount": 25000, "description": "Office rent {month}", "account": "6010", "party": "Demo Properties"},

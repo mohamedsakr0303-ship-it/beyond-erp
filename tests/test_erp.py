@@ -952,6 +952,50 @@ class DemoCompany(unittest.TestCase):
             ws = wb["Scaffold Calculator"]
             self.assertIn("SC-FRM2", [c.value for c in ws["A"]])
 
+class StatementsAndBudgets(unittest.TestCase):
+    """A contact's statement with aging, and budgets against actual results."""
+
+    def test_statement_and_aging(self):
+        from erp import statements, reports
+        db2 = Database(":memory:")
+        from erp import demo
+        demo.load(db2)
+        st = statements.statement(db2, "Atlas Builders")
+        self.assertAlmostEqual(st["closing"], st["opening"] + st["debits"] - st["credits"], places=2)
+        self.assertAlmostEqual(sum(st["aging"]), st["closing"], places=2)
+        self.assertEqual(st["closing"], sum(b["balance"] for b in st["balances"]))
+        ag = statements.aging(db2)
+        self.assertAlmostEqual(sum(ag["receivable"]["aging"]), ag["receivable"]["balance"], places=2)
+        self.assertTrue(ag["payable"]["balance"] < 0 < ag["receivable"]["balance"])
+        for name, p in (("party_statement", {"party": "Atlas Builders", "lang": "ar"}), ("aging", {"side": "payable"})):
+            self.assertTrue(reports.build(db2, name, p)["rows"])
+        with self.assertRaises(a.ValidationError):
+            statements.statement(db2, "")
+
+    def test_budgets(self):
+        from erp import budgets, interchange
+        db = Database(":memory:")
+        from erp import demo
+        demo.load(db)
+        y = int(a.today()[:4])
+        r = budgets.report(db, y, None, 12)
+        rev = next(s for s in r["sections"] if s["type"] == "Revenue")
+        self.assertEqual(rev["total"]["year_budget"], 7200000)
+        exp = next(s for s in r["sections"] if s["type"] == "Expense")
+        rent = next(x for x in exp["rows"] if x["account"] == "6030")
+        self.assertEqual(rent["year_budget"], 36000)
+        self.assertEqual(rent["variance"], round(36000 - rent["actual"], 2))          # a cost under budget is favourable
+        budgets.save(db, y, 0, [{"account": "6020", "total": 1000}])
+        g = {x["code"]: x for x in budgets.grid(db, y, 0)["rows"]}
+        self.assertEqual(g["6020"]["total"], 1000)
+        self.assertTrue(budgets.seed(db, y + 1, 0, y, 10))
+        with self.assertRaises(a.ValidationError):
+            budgets.save(db, y, 0, [{"account": "1010", "total": 5}])                 # balance-sheet accounts have no budget
+        rows = interchange.export_data(db)["Budgets"]
+        db2 = Database(":memory:")
+        interchange.import_data(db2, {"Budgets": rows})
+        self.assertEqual(budgets.export_rows(db2), budgets.export_rows(db))
+
 class ImportKit(unittest.TestCase):
     """Per-screen templates, and importing a user's own layout with column matching."""
 

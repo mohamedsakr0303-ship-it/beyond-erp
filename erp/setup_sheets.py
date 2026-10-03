@@ -139,6 +139,16 @@ def specs(C):
                   C("account", "Account (expense / debit)", "الحساب (المصروف / المدين)", kind="acct"),
                   C("credit_account", "Credit Account (journal / receipt)", "الحساب الدائن", kind="acct"),
                   C("party", "Supplier / Party", "المورد / الطرف", width=16), C("bu_code", "Business Unit", "وحدة الأعمال", kind="bu")]},
+        {"name": "Budgets", "ar": "الموازنات", "module": "accounting", "setup": True,
+         "title": "Monthly budget per income / cost / expense account (blank business unit = company level). Fill the months, or "
+                  "only the Year Total to spread it evenly. Re-importing a row replaces that account's budget",
+         "cols": [C("year", "Year", "السنة", kind="num", width=7, required=True),
+                  C("account", "Account", "الحساب", kind="acct", required=True), C("bu_code", "Business Unit", "وحدة الأعمال", kind="bu"),
+                  C("total", "Year Total (if no months)", "إجمالي السنة (بدون الشهور)", kind="money")] +
+                 [C(f"m{i + 1}", m, ar, kind="money", width=11) for i, (m, ar) in enumerate(zip(
+                     ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
+                     ["يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو", "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"]))] +
+                 [C("notes", "Notes", "ملاحظات", width=18)]},
     ]
 
 
@@ -301,11 +311,17 @@ def recurring_row(db, r, user):
                         "mode": r.get("mode") or "review", "payload": {k: v for k, v in payload.items() if v not in (None, "")}})
 
 
+def budget_row(db, r, user):
+    from . import budgets
+    budgets.import_row(db, r)
+
+
 ROW_IMPORTERS = [("Loans", loan), ("Loan Transactions", loan_tx), ("Cash Custody", custody_row),
-                 ("Rental Equipment", rent_item), ("Rental Stock Lots", rent_lot), ("Recurring Entries", recurring_row)]
+                 ("Rental Equipment", rent_item), ("Rental Stock Lots", rent_lot), ("Recurring Entries", recurring_row),
+                 ("Budgets", budget_row)]
 GROUP_IMPORTERS = [("Custody Expenses", lambda r: (str(r.get("custody")), str(r.get("report") or r.get("date"))), custody_reports),
                    ("Rental Contracts", lambda r: str(r.get("ref")), rent_contract),
                    ("Sales Contracts", lambda r: str(r.get("code")), sale_contract),
                    ("Bank Statement Lines", lambda r: (str(r.get("account")), str(r.get("statement") or "")), bank_statement)]
 ORDER = ["Loans", "Loan Transactions", "Cash Custody", "Custody Expenses", "Rental Equipment", "Rental Stock Lots",
-         "Rental Contracts", "Sales Contracts", "Recurring Entries", "Bank Statement Lines"]
+         "Rental Contracts", "Sales Contracts", "Recurring Entries", "Bank Statement Lines", "Budgets"]

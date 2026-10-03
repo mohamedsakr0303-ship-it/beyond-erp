@@ -297,3 +297,4 @@ h4.fsec{margin:14px 0 4px;font-size:.85em;text-transform:uppercase;letter-spacin
 #impwm tr.miss td{background:rgba(185,28,28,.07)}
 #impwm select{min-width:160px;max-width:100%}
 .impdd .dd-menu{min-width:240px}
+.bgrid input{width:96px;min-width:80px;padding:4px 6px}.bgrid td{padding:3px 4px}.bgrid input.bt{font-weight:600}

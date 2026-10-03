@@ -1077,7 +1077,7 @@ PAGES.payables = async (view, parts, q) => {
   const tot = d.rows.reduce((s, r) => s + r.balance, 0);
   const owedBy = {}; d.rows.forEach(r => { owedBy[r.party] = (owedBy[r.party] || 0) + r.balance; });
   const ar = S.lang === "ar";
-  view.innerHTML = `<div class="toolbar"><span class="spacer"></span>${exportMenu("payables", q)}</div>` +
+  view.innerHTML = `<div class="toolbar"><a class="btn" href="#/aging?side=payable">⏳ ${t("m_aging")}</a><a class="btn" href="#/statement">☰ ${t("m_statement")}</a><span class="spacer"></span>${exportMenu("payables", q)}</div>` +
     filterBar(q, ["asof", ["select", "kind", t("type"), [["payable", t("payable")], ["payroll", t("m_payroll")]]]]) +
     `<div class="card"><h2>${t("m_payables")} — ${money(tot)}</h2>${d.rows.length ? `<div class="tbl stack"><table><thead><tr><th>${t("party")}</th><th>${t("account")}</th><th class="num">${t("amount")}</th><th class="num">${t("paid_now")}</th><th class="num">${t("balance")}</th><th>${t("date")}</th><th></th></tr></thead><tbody>
       ${d.rows.map(r => `<tr class="click" data-href="#/ledger?${qs({ party: r.party, account: r.account })}"><td>${esc(r.party || "—")}</td><td>${esc(r.account)}</td><td class="num">${money(r.owed)}</td><td class="num">${money(r.paid)}</td><td class="num ${r.balance < 0 ? "neg" : ""}"><b>${money(r.balance)}</b></td><td>${fd(r.last_date)}</td>
@@ -1086,7 +1086,33 @@ PAGES.payables = async (view, parts, q) => {
     ${d.deals.length ? `<div class="card"><h2>${t("deal_ref")}</h2><div class="tbl"><table><thead><tr><th>${t("deal_ref")}</th><th>${t("supplier")}</th><th class="num">${t("amount")}</th><th class="num">${t("savings")}</th><th class="num">${t("net_cost")}</th><th>${t("status")}</th></tr></thead><tbody>
       ${d.deals.map(g => `<tr><td>${esc(g.ref)}</td><td>${esc(g.vendor)}</td><td class="num">${money(g.quoted)}</td><td class="num">${money(g.savings)}</td><td class="num">${money(g.cost)}</td><td>${esc(g.status)}${g.status === "Settled" && owedBy[g.vendor] > 0 ? ` <span class="chip warn" title="${ar ? "الحالة «تمت التسوية» لكن المورد ما زال له رصيد — سدده أو «تسوية بخصم»" : "Marked Settled, but this supplier is still owed money — pay it or use “Settle with discount”"}">${ar ? "ما زال مستحقاً" : "still owed"} ${money(owedBy[g.vendor])}</span>` : ""}</td></tr>`).join("")}</tbody></table></div></div>` : ""}`;
 };
-PAGES.receivables = async (view, parts, q) => reportPage(view, "receivables", q, ["dates"]);
+PAGES.receivables = async (view, parts, q) => {
+  await reportPage(view, "receivables", q, ["dates"]);
+  $(".toolbar", view).insertAdjacentHTML("afterbegin", `<a class="btn" href="#/aging?side=receivable">⏳ ${t("m_aging")}</a><a class="btn" href="#/statement">☰ ${t("m_statement")}</a>`);
+};
+PAGES.aging = async (view, parts, q) => {
+  q = { date_from: "", ...q };
+  await reportPage(view, "aging", q, ["asof", ["select", "side", t("type"), [["all", L2("Both", "الكل")], ["receivable", L2("They owe us", "مستحق لنا")], ["payable", L2("We owe them", "مستحق علينا")]]], "lang"]);
+  $(".toolbar", view).insertAdjacentHTML("afterbegin", `<a class="btn" href="#/statement">☰ ${t("m_statement")}</a>`);
+  // a contact's row opens their statement
+  $$("tbody tr", view).forEach(tr => { const n = tr.cells[0] && tr.cells[0].textContent.trim(); const lvl = tr.className || "";
+    if (n && /item/.test(lvl)) { tr.classList.add("click"); tr.dataset.href = "#/statement?" + qs({ party: n }); } });
+};
+PAGES.statement = async (view, parts, q) => {
+  if (!q.party) {
+    let open = [];
+    try { open = (await api("GET", "/api/reports/aging?" + qs({ lang: "en" }))).rows.filter(r => /item/.test(r.style)).map(r => r.cells[0]); } catch (e) { /* no aging access */ }
+    const names = [...new Set([...open, ...(S.boot.parties || []).map(p => p.name)])].sort();
+    view.innerHTML = `<div class="card"><h2>${t("m_statement")}</h2><p class="muted">${L2("Pick a customer, supplier, worker or any contact. The statement lists every voucher with them — invoices, payments, receipts, advances, deposits, cheques — with a running balance and how old the open balance is.", "اختر عميلاً أو مورداً أو عاملاً أو أي جهة. يعرض الكشف كل القيود معها — فواتير ومدفوعات ومقبوضات ودفعات مقدمة وتأمينات وشيكات — مع الرصيد المتحرك وأعمار الرصيد المفتوح.")}</p>
+      <form id="stf" class="row" style="gap:8px;flex-wrap:wrap"><input name="party" list="stl" required style="min-width:260px" placeholder="${esc(t("party"))}"><datalist id="stl">${names.map(n => `<option value="${esc(n)}">`).join("")}</datalist>
+      <button class="btn pri">${L2("Show statement", "عرض الكشف")}</button><a class="btn" href="#/aging">⏳ ${t("m_aging")}</a></form></div>`;
+    $("#stf").addEventListener("submit", e => { e.preventDefault(); location.hash = "#/statement?" + qs({ party: new FormData(e.target).get("party") }); });
+    return;
+  }
+  q = { date_from: "", ...q };
+  await reportPage(view, "party_statement", q, ["party", "dates", "lang"]);
+  $(".toolbar", view).insertAdjacentHTML("afterbegin", `<a class="btn" href="#/statement">← ${t("m_statement")}</a><a class="btn" href="#/aging">⏳ ${t("m_aging")}</a>`);
+};
 PAGES.negotiations = async (view, parts, q) => {
   const d = await api("GET", "/api/negotiations?" + qs(q));
   const k = (l, v, cls = "", sub = "") => `<div class="kpi"><div class="l">${esc(l)}</div><div class="v ${cls}">${money(v)}</div>${sub ? `<div class="muted" style="font-size:.78em">${sub}</div>` : ""}</div>`;
@@ -1683,6 +1709,7 @@ async function contactView(id) {
   const ed = can("purchasing.contacts", "edit") || can("sales.parties", "edit");
   const row = (l, v, ltr) => v ? `<tr><th style="width:38%">${esc(l)}</th><td ${ltr ? 'dir="ltr"' : ""} style="white-space:pre-wrap">${esc(v)}</td></tr>` : "";
   const btns = [ed ? `<button type="button" class="btn" data-a="cvedit">${t("edit")}</button>` : "",
+    `<button type="button" class="btn" data-a="cvstmt">☰ ${t("m_statement")}</button>`,
     can("purchasing.expenses", "add") ? `<button type="button" class="btn" data-a="cvexp">+ ${t("m_expenses")}</button>` : "",
     can("purchasing.costs", "add") ? `<button type="button" class="btn" data-a="cvcost">+ ${t("m_costs")}</button>` : "",
     can("purchasing.payments", "add") ? `<button type="button" class="btn pri" data-a="cvpay">${L2("Pay", "صرف دفعة")}</button>` : ""].join("");
@@ -1696,7 +1723,7 @@ async function contactView(id) {
     ${d.recent.length ? `<div class="tbl"><table><tbody>${d.recent.map(e => `<tr class="click" data-a="openv" data-id="${e.id}"><td>${fd(e.date)}</td><td>${esc(tl(e.kind))}</td><td>${esc(e.memo)}</td><td class="num">${money(e.amount)}</td></tr>`).join("")}</tbody></table></div>`
       : `<div class="empty">${esc(L2("Nothing recorded with this name yet.", "لا توجد قيود بهذا الاسم بعد."))}</div>`}`,
   null, { readOnly: true, wide: true, extraButtons: btns });
-  Object.assign(S.H, { cvedit: () => contactForm(p, cid => contactView(cid)), cvexp: () => openDoc("expense", null, null, { vendor: p.name }), cvcost: () => openDoc("direct_cost", null, null, { vendor: p.name }),
+  Object.assign(S.H, { cvstmt: () => { closeDrawer(); location.hash = "#/statement?" + qs({ party: p.name }); }, cvedit: () => contactForm(p, cid => contactView(cid)), cvexp: () => openDoc("expense", null, null, { vendor: p.name }), cvcost: () => openDoc("direct_cost", null, null, { vendor: p.name }),
     cvpay: () => openDoc("payment", { party: p.name, amount: ap ? ap.we_owe : "", against: ap ? ap.account : "" }),
     cvbank: async () => { try { await navigator.clipboard.writeText(`${p.name}\n${p.bank_details}`); toast(L2("Copied", "تم النسخ")); } catch { toast(p.bank_details); } } });
 }
@@ -4098,6 +4125,59 @@ const rcSched = r => { const u = RC_UNIT_TXT[r.unit] || [[r.unit, r.unit], [r.un
   return `${L2("every", "كل")} ${r.every > 1 ? r.every + " " : ""}${S.lang === "ar" ? u[1][pl] : u[0][pl]}${r.month_end ? ` · ${L2("month end", "آخر الشهر")}` : ""}`; };
 const fillMonth = (v, due) => typeof v === "string" ? v.replace(/\{month\}/g, due.slice(0, 7)).replace(/\{year\}/g, due.slice(0, 4)).replace(/\{date\}/g, due) : v;
 
+// ------------------------------------------------------------ budgets
+const MONTHS_L = () => S.lang === "ar" ? ["يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو", "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"] : ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const budgetYears = (have = []) => { const y = new Date().getFullYear(); return [...new Set([y - 1, y, y + 1, ...have])].sort(); };
+PAGES.budgets = async (view, parts, q) => {
+  const year = +(q.year || new Date().getFullYear()), bu = q.bu_id || "0";
+  const d = await api("GET", "/api/budgets?" + qs({ year, bu_id: bu }));
+  const ed = can("accounting.budgets", "edit");
+  const all = q.all === "1";
+  const sections = [["Revenue", L2("Income", "الإيرادات")], ["COGS", L2("Cost of sales", "تكلفة المبيعات")], ["Expense", L2("Expenses", "المصروفات")]];
+  const M = MONTHS_L();
+  const show = r => all || r.total || r.last_year;
+  const rowHtml = r => `<tr data-acc="${esc(r.code)}"><td style="white-space:nowrap"><b>${esc(r.code)}</b> ${esc(aname(r))}</td><td class="num muted">${r.last_year ? money(r.last_year) : ""}</td>
+    <td><input class="num bt" type="number" step="any" value="${r.total || ""}" ${ed ? "" : "disabled"} title="${esc(L2("Type a year total to spread it evenly over 12 months", "اكتب إجمالي السنة ليتوزع بالتساوي على 12 شهراً"))}"></td>
+    ${r.months.map((v, i) => `<td><input class="num bm" data-m="${i}" type="number" step="any" value="${v || ""}" ${ed ? "" : "disabled"}></td>`).join("")}</tr>`;
+  view.innerHTML = `<div class="toolbar"><a class="btn" href="#/budget-report?${qs({ year, bu_id: bu === "0" ? "" : bu })}">◰ ${L2("Budget vs actual", "الموازنة مقابل الفعلي")}</a><span class="spacer"></span>
+      ${ed ? `<button class="btn" data-a="bseed">⇣ ${L2(`Fill from ${year - 1} actual results`, `ملء من نتائج ${year - 1} الفعلية`)}</button><button class="btn pri" data-a="bsave">${t("save")}</button>` : ""}</div>
+    <div class="card"><div class="row" style="gap:10px;flex-wrap:wrap;align-items:end">
+      <label class="f">${L2("Year", "السنة")}<select id="byear">${budgetYears(d.years).map(y => `<option ${y === year ? "selected" : ""}>${y}</option>`).join("")}</select></label>
+      <label class="f">${t("bu")}<select id="bbu"><option value="0">${esc(L2("Company level (shared)", "المستوى العام للشركة"))}</option>${S.boot.bus.map(b => `<option value="${b.id}" ${String(bu) === String(b.id) ? "selected" : ""}>${esc(b.code)} — ${esc(b.name)}</option>`).join("")}</select></label>
+      <label class="f chk"><input type="checkbox" id="ball" ${all ? "checked" : ""}>${L2("Show every account", "عرض كل الحسابات")}</label>
+      <span class="muted" style="font-size:.85em;flex:1;min-width:220px">${L2("Amounts on each account's normal side: income as income, costs as costs. Business-unit budgets add up into the company total on the report.", "المبالغ بطبيعة الحساب: الإيراد كإيراد والتكلفة كتكلفة. موازنات وحدات الأعمال تُجمع في إجمالي الشركة في التقرير.")}</span></div></div>
+    ${sections.map(([typ, label]) => { const rows = d.rows.filter(r => r.type === typ && show(r));
+      return `<div class="card"><h2>${esc(label)} <span class="muted" style="font-weight:400">· ${money(d.total[typ])}</span></h2>${rows.length ? `<div class="tbl"><table class="bgrid"><thead><tr><th>${t("account")}</th><th class="num">${L2(`${year - 1} actual`, `فعلي ${year - 1}`)}</th><th class="num">${L2("Year total", "إجمالي السنة")}</th>${M.map(m => `<th class="num">${m}</th>`).join("")}</tr></thead><tbody>${rows.map(rowHtml).join("")}</tbody></table></div>` : `<div class="empty">${L2("No budget yet — tick “Show every account” to add one.", "لا توجد موازنة بعد — اختر «عرض كل الحسابات» للإضافة.")}</div>`}</div>`; }).join("")}`;
+  const go = ch => setQ({ year, bu_id: bu, all: all ? "1" : "", ...ch });
+  $("#byear").onchange = e => go({ year: e.target.value });
+  $("#bbu").onchange = e => go({ bu_id: e.target.value });
+  $("#ball").onchange = e => go({ all: e.target.checked ? "1" : "" });
+  const dirty = new Set();
+  $$("tr[data-acc]", view).forEach(tr => {
+    const tot = $(".bt", tr), ms = $$(".bm", tr);
+    tot.addEventListener("change", () => { const v = +tot.value || 0, each = Math.floor(v / 12 * 100) / 100;
+      ms.forEach((m, i) => { m.value = i < 11 ? (each || "") : (Math.round((v - each * 11) * 100) / 100 || ""); }); dirty.add(tr.dataset.acc); });
+    ms.forEach(m => m.addEventListener("input", () => { tot.value = Math.round(ms.reduce((s, x) => s + (+x.value || 0), 0) * 100) / 100 || ""; dirty.add(tr.dataset.acc); }));
+  });
+  S.H.bsave = async () => {
+    const rows = [...dirty].map(code => { const tr = $(`tr[data-acc="${CSS.escape(code)}"]`, view); return { account: code, months: $$(".bm", tr).map(x => +x.value || 0) }; });
+    if (!rows.length) { toast(L2("Nothing changed", "لا تغييرات")); return; }
+    try { await api("PUT", "/api/budgets", { year, bu_id: bu, rows }); toast(t("saved")); route(); } catch (e) { fail(e); }
+  };
+  S.H.bseed = () => drawer(L2(`Fill ${year} from actual results`, `ملء موازنة ${year} من النتائج الفعلية`), `
+    <label class="f">${L2("Copy the results of", "انسخ نتائج سنة")}<select name="from_year">${budgetYears(d.years).filter(y => y < year).reverse().map(y => `<option>${y}</option>`).join("")}</select></label>
+    <label class="f">${L2("Growth / change %", "نسبة النمو / التغيير %")}<input name="growth_pct" type="number" step="any" value="10"></label>
+    <label class="f chk"><input type="checkbox" name="replace">${L2("Replace accounts that already have a budget", "استبدال الحسابات التي لها موازنة بالفعل")}</label>
+    <p class="muted" style="font-size:.85em">${L2("Each month copies the same month's actual, times the growth. You can edit any cell afterwards.", "كل شهر ينسخ فعلي نفس الشهر مضروباً في نسبة النمو، ويمكنك تعديل أي خلية بعد ذلك.")}</p>`,
+    async v => { const r = await api("POST", "/api/budgets/seed", { year, bu_id: bu, from_year: v.from_year, growth_pct: v.growth_pct, replace: !!v.replace }); toast(`${r.saved} ${L2("accounts filled", "حساب")}`); });
+};
+PAGES["budget-report"] = async (view, parts, q) => {
+  q = { date_from: "", ...q };
+  const M = MONTHS_L();
+  await reportPage(view, "budget", q, [["select", "year", L2("Year", "السنة"), budgetYears().map(y => [y, y])], "bu",
+    ["select", "through", L2("Up to month", "حتى شهر"), M.map((m, i) => [i + 1, m])], "lang"]);
+  $(".toolbar", view).insertAdjacentHTML("afterbegin", `<a class="btn" href="#/budgets?${qs({ year: q.year || "", bu_id: q.bu_id && q.bu_id !== "none" ? q.bu_id : "0" })}">✎ ${L2("Edit budgets", "تعديل الموازنات")}</a>`);
+};
 PAGES.recurring = async (view) => {
   const d = await api("GET", "/api/recurring");
   const add = can("accounting.recurring", "add");
@@ -4209,7 +4289,7 @@ const SCREEN_SHEETS = { costs: ["Direct Costs"], expenses: ["Operating Expenses"
   moves: ["Stock Moves"], warehouses: ["Warehouses"], journal: ["Journal Vouchers"], coa: ["Chart of Accounts"],
   partners: ["Partners", "Partner Shares", "Partner Transactions"], taxcodes: ["Tax Codes"], products: ["Products"],
   loans: ["Loans", "Loan Transactions"], custody: ["Cash Custody", "Custody Expenses"], rentfleet: ["Rental Equipment", "Rental Stock Lots"],
-  rentals: ["Rental Contracts"], sales: ["Sales Contracts"], bankrec: ["Bank Statement Lines"], recurring: ["Recurring Entries"] };
+  rentals: ["Rental Contracts"], sales: ["Sales Contracts"], bankrec: ["Bank Statement Lines"], recurring: ["Recurring Entries"], budgets: ["Budgets"] };
 const sheetLabel = n => { const s = (S.cache.impSheets || []).find(x => x.name === n); return s && S.lang === "ar" && s.ar ? s.ar : n; };
 const canImportSheet = n => { const s = (S.cache.impSheets || []).find(x => x.name === n); return can("import_export.import", "edit") || (s && s.perm && can(s.perm, "add")); };
 const tplUrl = (n, fmt, demo) => "/api/templates/sheet?" + qs({ sheet: n, format: fmt, lang: S.lang, demo: demo ? 1 : "" });

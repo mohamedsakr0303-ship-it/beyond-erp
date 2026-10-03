@@ -130,6 +130,8 @@ window.I18N = {
   run: ["Run report", "عرض التقرير"], as_of: ["As of", "في تاريخ"],
   // ---- data
   imp_title: ["Import data", "استيراد البيانات"], exp_title: ["Export data", "تصدير البيانات"], full_wb: ["Full workbook (Excel, with live statements)", "المصنف الكامل (Excel بقوائم حية)"],
+  m_budgets: ["Budgets", "الموازنات"], m_budget_rep: ["Budget vs actual", "الموازنة مقابل الفعلي"],
+  m_aging: ["Aging (who owes what, how old)", "أعمار الديون"], m_statement: ["Statement of account", "كشف حساب"],
   empty_tpl: ["Empty import template (Excel)", "قالب استيراد فارغ (Excel)"], json_backup: ["Everything as JSON", "كل البيانات بصيغة JSON"],
   csv_sheet: ["One sheet as CSV", "ورقة واحدة CSV"], csv_tpl: ["CSV template", "قالب CSV"], db_backup: ["Database backup file", "نسخة احتياطية من قاعدة البيانات"],
   file: ["File", "الملف"], format: ["Format", "الصيغة"], mode: ["Mode", "الطريقة"], append: ["Add to existing data", "إضافة للبيانات الحالية"],
@@ -203,9 +205,10 @@ window.MENU = [
   ["g_fin", [["m_loans", "loans", "accounting.loans", "⇋"], ["m_custody", "custody", "purchasing.custody", "◈"]]],
   ["g_equity", [["m_partners", "partners", "partners", "◑"]]],
   ["g_tax", [["m_parties", "parties", "sales.parties", "☏"], ["m_taxcodes", "taxcodes", "tax.codes", "%"], ["m_taxrep", "report/tax", "tax.report", "◵"], ["m_einv", "einvoice", "tax.einvoice", "⎙"]]],
-  ["g_acc", [["m_journal", "journal", "accounting.journal", "✎"], ["m_ledger", "ledger", "accounting.ledger", "≣"], ["m_coa", "coa", "accounting.coa", "⌗"], ["m_bankrec", "bankrec", "accounting.bankrec", "⇌"], ["m_recurring", "recurring", "accounting.recurring", "↻"]]],
+  ["g_acc", [["m_journal", "journal", "accounting.journal", "✎"], ["m_ledger", "ledger", "accounting.ledger", "≣"], ["m_coa", "coa", "accounting.coa", "⌗"], ["m_bankrec", "bankrec", "accounting.bankrec", "⇌"], ["m_recurring", "recurring", "accounting.recurring", "↻"], ["m_budgets", "budgets", "accounting.budgets", "◎"]]],
   ["g_rep", [["m_is", "report/income_statement", "reports.income_statement", "◰"], ["m_bs", "report/balance_sheet", "reports.balance_sheet", "◱"], ["m_cf", "report/cash_flow", "reports.cash_flow", "◲"],
-             ["m_tb", "report/trial_balance", "reports.trial_balance", "◳"], ["m_bup", "report/bu_pnl", "business_units.profitability", "◴"]]],
+             ["m_tb", "report/trial_balance", "reports.trial_balance", "◳"], ["m_bup", "report/bu_pnl", "business_units.profitability", "◴"],
+             ["m_budget_rep", "budget-report", "accounting.budgets", "◎"], ["m_aging", "aging", "sales.receivables", "⏳"], ["m_statement", "statement", "sales.parties", "☰"]]],
   ["g_sys", [["m_data", "data", "import_export", "⇅"], ["m_settings", "settings", "settings", "⚙"], ["m_users", "users", "users.users", "☷"], ["m_audit", "audit", "users.audit", "⌚"]]],
 ];
 // labels for screen-level permissions (section.screen)
@@ -213,7 +216,7 @@ window.SUBPERM = {
   "business_units.units": "m_bus", "business_units.allocation": "p_alloc", "business_units.profitability": "m_bup",
   "sales.offers": "m_offers", "sales.receipts": "m_receipts", "sales.invoices": "m_invoices", "sales.receivables": "m_receivables", "sales.parties": "m_parties", "shop.products": "m_products", "shop.orders": "m_sales_orders", "shop.installments": "m_installments",
   "estimating.boqs": "m_boqs", "estimating.prices": "m_prices",
-  "purchasing.costs": "m_costs", "purchasing.expenses": "m_expenses", "purchasing.payments": "m_payments", "purchasing.payables": "m_payables", "purchasing.contacts": "m_contacts", "purchasing.negotiations": "m_nego", "rentals.contracts": "m_rentals", "rentals.fleet": "m_rentfleet", "rentals.calculator": "m_rentcalc", "purchasing.custody": "m_custody", "accounting.loans": "m_loans", "accounting.bankrec": "m_bankrec", "accounting.recurring": "m_recurring",
+  "purchasing.costs": "m_costs", "purchasing.expenses": "m_expenses", "purchasing.payments": "m_payments", "purchasing.payables": "m_payables", "purchasing.contacts": "m_contacts", "purchasing.negotiations": "m_nego", "rentals.contracts": "m_rentals", "rentals.fleet": "m_rentfleet", "rentals.calculator": "m_rentcalc", "purchasing.custody": "m_custody", "accounting.loans": "m_loans", "accounting.bankrec": "m_bankrec", "accounting.recurring": "m_recurring", "accounting.budgets": "m_budgets",
   "stock.balances": "m_stock", "stock.moves": "m_moves", "stock.warehouses": "m_warehouses",
   "accounting.journal": "m_journal", "accounting.ledger": "m_ledger", "accounting.coa": "m_coa",
   "partners.equity": "p_equity", "partners.transactions": "p_ptx", "partners.ownership": "p_ownership",

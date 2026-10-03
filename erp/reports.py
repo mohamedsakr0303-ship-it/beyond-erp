@@ -705,6 +705,93 @@ def bankrec_table(db, sid, lang="en"):
     return {"title": title, "subtitle": f"{st['date_from']} → {st['date_to']} · {status} · {db.setting('currency')}", "columns": cols, "rows": rows, "lang": lang}
 
 
+def party_statement_table(db, party, date_from=None, date_to=None, lang="en"):
+    from . import statements
+    ar = lang == "ar"
+    d = statements.statement(db, party, date_from, date_to)
+    cols = _mkcols([("Date", "التاريخ", "left"), ("Voucher", "المستند", "left"), ("Ref", "المرجع", "left"),
+                    ("Description", "البيان", "left"), ("Debit", "مدين", "right"),
+                    ("Credit", "دائن", "right"), ("Balance", "الرصيد", "right")], lang)
+    rows = [{"cells": ["", "", "", "رصيد أول المدة" if ar else "Opening balance", "", "", d["opening"]], "style": "subtotal", "indent": 0}]
+    rows += [{"cells": [r["date"], f"#{r['id']} {r['kind']}", r["ref"], r["memo"], r["debit"] or "", r["credit"] or "", r["balance"]],
+              "style": "item", "indent": 0} for r in d["rows"]]
+    rows.append({"cells": [L("total", lang), "", "", "", d["debits"], d["credits"], d["closing"]], "style": "grand", "indent": 0})
+    c = d["closing"]
+    say = (("له علينا" if c < 0 else "عليه لنا") if ar else ("we owe them" if c < 0 else "they owe us")) if c else ("لا رصيد" if ar else "settled")
+    rows.append({"cells": ["", "", "", ("الرصيد الختامي: " if ar else "Closing balance: ") + say, "", "", abs(c)], "style": "subtotal", "indent": 0})
+    if c:
+        rows.append({"cells": ["", "", "", "أعمار الرصيد" if ar else "AGE OF THE OPEN BALANCE", "", "", ""], "style": "section", "indent": 0})
+        for b, v in zip(d["buckets_ar"] if ar else [x + " days" for x in d["buckets"]], d["aging"]):
+            if v:
+                rows.append({"cells": ["", "", "", b, "", "", abs(v)], "style": "item", "indent": 1})
+    per = f"{d['date_from'] or '…'} → {d['date_to']}"
+    return {"title": (f"كشف حساب — {d['party']}" if ar else f"Statement of account — {d['party']}"),
+            "subtitle": f"{per} · {db.setting('currency')} · " + ("+ مدين = مستحق لنا، − = مستحق له" if ar else
+                                                               "+ = they owe us, − = we owe them"),
+            "columns": cols, "rows": rows, "lang": lang}
+
+
+def aging_table(db, date_to=None, side="all", lang="en"):
+    from . import statements
+    ar = lang == "ar"
+    d = statements.aging(db, date_to, side or "all")
+    labels = d["buckets_ar"] if ar else [b + " days" for b in d["buckets"]]
+    cols = _mkcols([("Contact", "الجهة", "left"), ("Last activity", "آخر حركة", "left")] +
+                   [(b, b, "right") for b in labels] + [("Balance", "الرصيد", "right")], lang)
+    rows = []
+    for key, title in (("receivable", ("THEY OWE US", "مستحق لنا")), ("payable", ("WE OWE THEM", "مستحق علينا"))):
+        rs = [r for r in d["rows"] if (r["balance"] > 0) == (key == "receivable")]
+        if not rs:
+            continue
+        rows.append({"cells": [title[1] if ar else title[0]] + [""] * (len(labels) + 2), "style": "section", "indent": 0})
+        for r in rs:
+            rows.append({"cells": [r["party"], r["last"]] + [abs(v) or "" for v in r["aging"]] + [abs(r["balance"])],
+                         "style": "item", "indent": 1})
+        t = d[key]
+        rows.append({"cells": [L("total", lang), ""] + [abs(v) for v in t["aging"]] + [abs(t["balance"])], "style": "subtotal", "indent": 0})
+    return {"title": "أعمار الديون (العملاء والموردين)" if ar else "Aging — receivables & payables",
+            "subtitle": f"{L('as_of', lang)} {d['date_to']} · {db.setting('currency')}", "columns": cols, "rows": rows, "lang": lang}
+
+
+MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+MONTHS_AR = ["يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو", "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"]
+
+
+def budget_table(db, year=None, bu=None, through=None, lang="en"):
+    from . import budgets
+    ar = lang == "ar"
+    d = budgets.report(db, year, bu, through)
+    cols = _mkcols([("Account", "الحساب", "left"), ("Budget to date", "الموازنة حتى تاريخه", "right"), ("Actual to date", "الفعلي حتى تاريخه", "right"),
+                    ("Variance (+ good)", "الانحراف (+ لصالحنا)", "right"), ("Variance %", "الانحراف %", "right", "num"),
+                    ("Used %", "نسبة الاستهلاك %", "right", "num"), ("Full-year budget", "موازنة السنة", "right")], lang)
+    rows = []
+    for sec in d["sections"]:
+        if not sec["rows"]:
+            continue
+        rows.append({"cells": [sec["label_ar"] if ar else sec["label"]] + [""] * 6, "style": "section", "indent": 0})
+        for r in sec["rows"]:
+            rows.append({"cells": [f"{r['account']} {r['name_ar'] if ar and r['name_ar'] else r['name']}", r["budget"], r["actual"],
+                                   r["variance"], "" if r["pct"] is None else r["pct"], "" if r["used_pct"] is None else r["used_pct"],
+                                   r["year_budget"]], "style": "item", "indent": 1})
+        t = sec["total"]
+        rows.append({"cells": [("إجمالي " + sec["label_ar"]) if ar else ("Total " + sec["label"].lower()), t["budget"], t["actual"],
+                               t["variance"], "", "", t["year_budget"]], "style": "subtotal", "indent": 0})
+    pr = d["profit"]
+    rows.append({"cells": ["صافي الربح" if ar else "Net profit", pr["budget"], pr["actual"], pr["variance"], "", "", pr["year_budget"]],
+                 "style": "grand", "indent": 0})
+    bu_name = ""
+    if d["bu_id"]:
+        u = db.one("SELECT code, name FROM business_units WHERE id=?", (d["bu_id"],))
+        bu_name = f" · {u['code']} {u['name']}"
+    elif d["bu_id"] == 0:
+        bu_name = " · " + ("المستوى العام للشركة" if ar else "company level (no business unit)")
+    m = (MONTHS_AR if ar else MONTHS)[d["through"] - 1]
+    return {"title": (f"الموازنة مقابل الفعلي {d['year']}" if ar else f"Budget vs actual {d['year']}"),
+            "subtitle": (f"يناير – {m}" if ar else f"Jan – {m}") + f"{bu_name} · {db.setting('currency')}" +
+                        ("" if d["has_budget"] else (" · لا توجد موازنة لهذه السنة بعد" if ar else " · no budget entered for this year yet")),
+            "columns": cols, "rows": rows, "lang": lang}
+
+
 def tax_table(db, date_from=None, date_to=None, lang="en"):
     t = acc.tax_summary(db, date_from, date_to)
     ar = lang == "ar"
@@ -787,6 +874,12 @@ def build(db, name, p):
         return custody_statement_table(db, p.get("code") or p.get("id"), lang)
     if name == "negotiations":
         return negotiations_table(db, p.get("date_from"), p.get("date_to"), bu, lang)
+    if name == "party_statement":
+        return party_statement_table(db, p.get("party"), p.get("date_from"), p.get("date_to"), lang)
+    if name == "aging":
+        return aging_table(db, p.get("date_to"), p.get("side"), lang)
+    if name == "budget":
+        return budget_table(db, p.get("year"), p.get("bu_id", ""), p.get("through"), lang)
     if name == "fixed_assets":
         return fixed_assets_table(db, p.get("date_to"), p.get("q"), p.get("state"), lang)
     raise acc.ValidationError(f"Unknown report {name!r}")
@@ -800,7 +893,9 @@ REPORT_PERMS = {"income_statement": "reports.income_statement", "balance_sheet":
                 "negotiations": "purchasing.negotiations", "loans": "accounting.loans", "loan_schedule": "accounting.loans",
                 "custody": "purchasing.custody", "custody_statement": "purchasing.custody", "rent_fleet": "rentals.fleet",
                 "rentals": "rentals.contracts", "sales": "shop.orders", "installments": "shop.installments",
-                "products": "shop.products", "bank_reconciliation": "accounting.bankrec"}
+                "products": "shop.products", "bank_reconciliation": "accounting.bankrec",
+                "party_statement": ("sales.parties", "purchasing.contacts", "sales.receivables", "purchasing.payables"),
+                "aging": ("sales.receivables", "purchasing.payables"), "budget": "accounting.budgets"}
 
 
 # ==================================================================== writers

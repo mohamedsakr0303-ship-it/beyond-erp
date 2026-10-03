@@ -578,6 +578,17 @@ CREATE TABLE IF NOT EXISTS bank_rules (
     active INTEGER NOT NULL DEFAULT 1
 );
 
+-- Budgets: twelve monthly amounts per profit-and-loss account, for the whole company (bu_id 0) or one business unit.
+CREATE TABLE IF NOT EXISTS budgets (
+    id INTEGER PRIMARY KEY,
+    year INTEGER NOT NULL,
+    account TEXT NOT NULL REFERENCES accounts(code) ON UPDATE CASCADE ON DELETE CASCADE,
+    bu_id INTEGER NOT NULL DEFAULT 0,
+    months TEXT NOT NULL DEFAULT '[]',          -- 12 amounts in minor units, January first
+    notes TEXT DEFAULT '',
+    UNIQUE(year, account, bu_id)
+);
+
 -- Recurring entries: a voucher template and a schedule; each due date is recorded once (posted or skipped).
 CREATE TABLE IF NOT EXISTS recurring (
     id INTEGER PRIMARY KEY,
@@ -898,7 +909,7 @@ SUBMODULES = {
     "rentals": ["contracts", "fleet", "calculator"],
     "payroll": [],
     "assets": ["register", "depreciation"],
-    "accounting": ["journal", "ledger", "coa", "loans", "bankrec", "recurring"],
+    "accounting": ["journal", "ledger", "coa", "loans", "bankrec", "recurring", "budgets"],
     "partners": ["equity", "transactions", "ownership"],
     "reports": ["income_statement", "balance_sheet", "cash_flow", "trial_balance"],
     "tax": ["codes", "report", "einvoice"],

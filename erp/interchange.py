@@ -398,6 +398,8 @@ def export_data(db):
     for r in db.q("SELECT key, value FROM settings ORDER BY key"):
         if r["key"] not in ("schema_version", "report_from", "report_to", "docs_seeded", "eta_client_secret"):
             out["Settings"].append({"key": r["key"], "value": r["value"]})
+    from . import budgets   # budgets carry no money, so the export can include them (re-import replaces, never doubles)
+    out["Budgets"] = budgets.export_rows(db)
     for t in db.q("SELECT * FROM tax_codes ORDER BY kind, code"):
         out["Tax Codes"].append({k: t[k] for k in ("code", "name", "name_ar", "kind", "rate", "eta_type", "eta_subtype")}
                                 | {"active": "Yes" if t["active"] else "No"})
@@ -871,7 +873,7 @@ def to_csv(db, sheet_name, template=False):
     return ("﻿" + buf.getvalue()).encode("utf-8")
 
 
-WIPE_ORDER = ("bank_lines", "bank_statements", "bank_rules", "recurring_runs", "recurring", "sale_cheques", "sale_installments", "sale_lines", "sales_orders", "product_media", "products", "rent_moves", "rental_invoices", "rental_charges", "rental_handovers", "rental_lines", "rentals", "rent_lots",
+WIPE_ORDER = ("budgets", "bank_lines", "bank_statements", "bank_rules", "recurring_runs", "recurring", "sale_cheques", "sale_installments", "sale_lines", "sales_orders", "product_media", "products", "rent_moves", "rental_invoices", "rental_charges", "rental_handovers", "rental_lines", "rentals", "rent_lots",
               "rent_kit_lines", "rent_kits", "rent_models", "rent_items", "loans", "custodies", "parties", "ownership_changes", "fixed_assets", "stock_moves", "stock_levels", "stock_items", "extract_lines", "extracts", "boq_lines", "boqs",
               "journal_lines", "journal_entries", "partner_shares", "partners", "rates", "business_units")
 

@@ -1040,6 +1040,27 @@ def bank_rule_del(ctx, rid):
 
 
 # ============================================================ recurring entries
+@route("GET", "/api/budgets", "accounting.budgets")
+def budgets_grid(ctx):
+    from . import budgets
+    return ok(budgets.grid(ctx.db, ctx.q.get("year"), ctx.q.get("bu_id", "0") or "0"))
+
+
+@route("PUT", "/api/budgets", "accounting.budgets", "edit")
+def budgets_save(ctx):
+    from . import budgets
+    b = ctx.body
+    return ok({"saved": budgets.save(ctx.db, b.get("year"), b.get("bu_id") or 0, b.get("rows") or [])})
+
+
+@route("POST", "/api/budgets/seed", "accounting.budgets", "edit")
+def budgets_seed(ctx):
+    from . import budgets
+    b = ctx.body
+    return ok({"saved": budgets.seed(ctx.db, b.get("year"), b.get("bu_id") or 0, b.get("from_year"), b.get("growth_pct"),
+                                     bool(b.get("replace")))})
+
+
 @route("GET", "/api/recurring", "accounting.recurring")
 def recurring_list(ctx):
     return ok({"rows": recurring.listing(ctx.db),
@@ -1942,7 +1963,12 @@ def report(ctx, name):
     if name == "vouchers":
         table = _vouchers_report(ctx)
     else:
-        ctx.require(reports.REPORT_PERMS.get(name, "reports"), "view")
+        perm = reports.REPORT_PERMS.get(name, "reports")
+        if isinstance(perm, tuple):
+            if not any(ctx.can(x) for x in perm):
+                raise PermissionError()
+        else:
+            ctx.require(perm, "view")
         table = reports.build(ctx.db, name, ctx.q)
     fmt = ctx.q.get("format") or "json"
     company = ctx.db.setting("company_name", "")
@@ -2337,7 +2363,7 @@ ERASE_TRANSACTIONS = ("bank_lines", "bank_statements", "recurring_runs", "sale_c
                       "rental_handovers", "rental_lines", "rentals", "rent_lots")
 ERASE_ALL = ERASE_TRANSACTIONS + ("parties", "stock_items", "boq_lines", "boqs", "partner_shares", "partners", "rates",
                                   "fixed_assets", "business_units", "offer_types", "tax_codes", "assets", "rent_kit_lines", "rent_kits",
-                                  "rent_items", "rent_models", "product_media", "products", "bank_rules", "recurring")
+                                  "rent_items", "rent_models", "product_media", "products", "bank_rules", "recurring", "budgets")
 
 
 @route("POST", "/api/erase")
