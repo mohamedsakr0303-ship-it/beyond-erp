@@ -29,10 +29,10 @@ class State:
         # paid subscriptions (supabase/migrations/*_billing.sql); days_shift moves the clock for tests
         self.owners = set()
         self.billing = {"enabled": False, "enabled_at": None, "trial_days": 15, "grace_days": 3, "currency": "EGP",
-                        "trial_plan": "business", "yearly_months": 10, "extra_user": 150, "payment_note": "",
-                        "plans": [{"code": "starter", "name": "Starter", "price": 690, "users": 2, "companies": 1, "features": ["Core"]},
-                                  {"code": "business", "name": "Business", "price": 1490, "users": 5, "companies": 1, "features": ["More"]},
-                                  {"code": "pro", "name": "Pro", "price": 2990, "users": 15, "companies": 3, "features": ["All"]}]}
+                        "trial_plan": "business", "yearly_months": 10, "extra_user": 350, "payment_note": "",
+                        "plans": [{"code": "starter", "name": "Essentials", "price": 1900, "users": 3, "companies": 1, "features": ["Core"]},
+                                  {"code": "business", "name": "Business", "price": 4500, "users": 8, "companies": 1, "features": ["More"]},
+                                  {"code": "pro", "name": "Pro", "price": 8900, "users": 20, "companies": 3, "features": ["All"]}]}
         self.co_billing = {}            # company id -> {plan, extra_users, trial_ends, paid_until, comped, cancel_note}
         self.payments = []
         self.days_shift = 0

@@ -46,67 +46,74 @@ Nothing changes for anyone until **you switch billing on**. The app stays free u
 * **Extend a trial, or make a company free** (partner, staff, pilot): use **Trial / free…** on the company.
 * The overview shows monthly recurring revenue and how many companies are in trial, paying, payment due, ended or free.
 
-## Pricing (recommendation, October 2026)
+## Pricing (October 2026)
 
-### What the market charges (per month)
+### Why the first prices were too low
+
+The first list (690 / 1,490 / 2,990 EGP a month, 9,900–45,000 EGP desktop) was set against the wrong products.
+
+* **It was anchored to invoicing apps.** Daftra, Qoyod and Zoho sell invoices plus a ledger to shops and freelancers. BEYOND ERP runs a contractor's projects, BOQs and progress billing, equipment rental, real-estate installments, ETA and the full statements. Its real alternatives are Odoo with a partner, a custom-built system, or a local construction ERP.
+* **It priced the software, not the result.** A contractor running 3–5 projects loses far more than the subscription to one missed variation, one unbilled rental month or one ETA penalty. Prices should be a small share of the value delivered, not of the cost to host it.
+* **It ignored the real competitor's total cost.** In Egypt, Odoo partners quote 125,000–350,000 EGP to implement a small company (more for 20+ users), plus about 710 EGP per user per month. BEYOND ERP needs almost no implementation: it ships with the Egyptian chart of accounts, ETA, the Excel workbook and a demo company. That saving is worth charging for.
+* **It gave away services.** Setup, migration from Excel and training were small optional extras. In this market they are often half the revenue, and the main reason customers succeed and stay.
+* **Low prices read as low quality.** Finance managers and owners buying an ERP for a contracting company distrust a 690 EGP system. A price close to Daftra's puts the product in the same mental box as Daftra.
+
+### What the market charges
 
 | Product | Price | Notes |
 |---|---|---|
-| Daftra | $9.99 / $19.95 / $40 (≈ 520 / 1,045 / 2,090 EGP) | Extra user $6 |
-| Zemam ERP | ≈ 1,500 EGP | 3 users, 1 branch |
-| Wafeq | $26–55 (≈ 1,360–2,880 EGP) | |
-| Qoyod (KSA) | SAR 120–330 (≈ 1,670–4,600 EGP) | Up to 5 users |
-| Odoo (Egypt price list) | Standard ≈ $9 per user (≈ 475 EGP); Custom ≈ $13.6 per user (≈ 710 EGP) | Implementation is extra |
-| QuickBooks Online | ≈ $30 | |
-| Zoho Books | $15–60 | |
-| KashBoss | 100–1,000 EGP | |
+| Daftra | 99–799 EGP / month | Invoicing and accounting |
+| Optify Flex | 414–1,498 EGP / month (launch offer) | SME ERP |
+| Hunt ERP | from 1,000 EGP / month; enterprise on quote | Egyptian ERP |
+| Odoo (Egypt price list) | ≈ 475–710 EGP per user / month | Plus implementation of 125,000–350,000 EGP for a small company, 250,000–400,000 EGP for 20–100 users |
 
-### Where BEYOND ERP fits
+### Cloud plans (new defaults)
 
-BEYOND ERP covers more than a basic invoicing package. It includes:
-* project / business-unit costing, BOQs and progress invoices
-* equipment rental with the scaffold calculator
-* showroom, installments and service subscriptions
-* ETA e-invoicing, budgets, purchase orders, loans, custody and bank reconciliation
-
-It also costs far less than Odoo with an implementation partner.
-
-### Default plans
-
-| Plan | Price per month | Users | Companies | Who it is for |
+| Plan | Per month | Users | Companies | For |
 |---|---|---|---|---|
-| Starter | 690 EGP | 2 | 1 | Small offices: accounting, sales, purchasing, ETA |
-| **Business** (anchor) | **1,490 EGP** | 5 | 1 | Contractors and fit-out firms: projects, BOQs, stock, POs, budgets, assets |
-| Pro | 2,990 EGP | 15 | 3 | Groups, rental and showroom businesses, priority support |
+| Essentials | 1,900 EGP | 3 | 1 | Offices and traders: accounting, sales, purchasing, ETA, statements of account |
+| **Business** (the anchor) | **4,500 EGP** | 8 | 1 | Contractors and fit-out firms: projects, BOQs, progress invoices, stock, POs, budgets, assets, loans, custody, bank reconciliation |
+| Pro | 8,900 EGP | 20 | 3 | Groups, rental, showroom and real-estate businesses; priority support |
+| Enterprise | from 15,000 EGP | 40+ | any | Dedicated onboarding, SLA, custom reports and integrations |
 
-* Extra user: 150 EGP per month.
-* Yearly: pay 10 months, get 12.
-* Larger clients get custom pricing.
+* Extra user: 350 EGP a month.
+* Yearly: pay 10 months, get 12. Push annual contracts: they cut churn and fund growth.
+* Eight Business users cost about 5,700 EGP a month on Odoo before any implementation. 4,500 EGP is still clearly cheaper, with the construction features built in.
+* Launch offer: first 20 companies get 30 % off the first year in exchange for a case study or reference. This keeps the list price intact.
 
-At launch, consider a "founding customer" offer (for example 30 % off the first year for the first 20 companies). It brings in references and feedback.
+The new defaults are applied by `supabase/migrations/20261005000000_billing_prices.sql`. They only replace the old defaults when billing is still off and nobody has edited the prices. Prices you already set yourself are kept, and you can change them any time in Platform billing → Plans & prices.
 
-## Offline (desktop) edition — one-time purchase (recommendation)
+### Offline (desktop) edition — one-time licence
 
-| Product | What buyers pay | Notes |
+| Licence | One-time | Users | Companies |
+|---|---|---|---|
+| Desktop Essentials | 35,000 EGP | 3 | 1 |
+| Desktop Business (office network) | 85,000 EGP | 8 | 1 |
+| Desktop Pro | 160,000 EGP | 20 | 3 |
+| Desktop Enterprise | from 300,000 EGP | 40+ | any |
+
+* **Pricing rule:** a licence costs about 1.5–2 years of the cloud plan, because the customer keeps it for good.
+* **Maintenance:** 20 % of the licence every year, after the first 12 months, which are included. It covers updates, ETA changes and support. Licences carry `updates_until`, so a new version refuses to unlock without maintenance and the old one keeps working. That turns one-time sales into recurring income.
+* **Extra user:** 6,000 EGP, one-time.
+* **Issuing licences:** `python run.py licence-issue --key <private key> --company "…" --edition business --users 8 --updates-months 12 --install XXXX-XXXX-XXXX-XXXX`.
+
+### Services (sold with every deal)
+
+| Package | Price | Includes |
 |---|---|---|
-| DEXEF | 4,000–15,000 EGP | Perpetual licences |
-| Typical Egyptian desktop accounting packages | ≈ 5,000–30,000 EGP | Usually with paid yearly updates |
+| Quick start | 15,000 EGP | Company setup, chart of accounts, opening balances from the Excel workbook, 1 day of training |
+| Standard onboarding | 40,000 EGP | Everything in Quick start + migration of 1 year of history, projects/BOQs, users and permissions, 3 training days, 30 days of hand-holding |
+| Full implementation | 75,000 EGP and up | Several companies or branches, rental and real-estate setup, custom reports and documents, on-site go-live |
+| Training | 5,000 EGP per day | On site or online |
+| Custom work | 1,200 EGP per hour | Reports, integrations, custom documents |
+| Priority support / SLA | 20 % of the subscription | Response within 4 working hours, named contact |
 
-A perpetual licence normally costs about 1.3–1.5 years of the equivalent cloud subscription. Because ETA e-invoicing rules keep changing, desktop buyers need updates, so sell them as a yearly maintenance plan rather than free forever.
+### How to make it worth more
 
-| Licence | One-time | Users | Companies | Includes |
-|---|---|---|---|---|
-| Desktop Starter | 9,900 EGP | 2 | 1 | Core accounting, sales, purchasing, ETA |
-| Desktop Business (office network) | 24,000 EGP | 5 | 1 | Everything in the Business plan |
-| Desktop Pro | 45,000 EGP | 15 | 3 | All modules |
-
-* **Updates and support:** every licence includes 12 months. After that, an optional yearly maintenance plan at 20 % of the licence (≈ 2,000 / 4,800 / 9,000 EGP) covers updates, ETA changes and support. Without it the software keeps working on the last version received.
-* **Extra users:** 1,500 EGP each, one-time.
-* **Services, sold separately (good margin):**
-
-  | Service | Price |
-  |---|---|
-  | Setup and data migration from Excel / another system | 3,000–10,000 EGP |
-  | On-site training | 2,500 EGP per day |
-
-* The desktop app does not check a licence key yet: anyone with the installer can run it. Licence activation (a key tied to the company name and number of users) can be added before you sell desktop copies.
+1. **Sell a vertical.** Market it as "the ERP for contractors, scaffolding / equipment rental and real-estate developers in Egypt", not as accounting software. Lead with the BOQ → progress invoice → project profit flow, the scaffold calculator and installments.
+2. **Sell outcomes, with numbers.** Examples: "know each project's profit every day", "never miss a rental invoice", "ETA-ready from day one". Track before/after figures with the first customers and publish them as case studies.
+3. **Make onboarding part of the product.** The Excel workbook, demo company and import kit make go-live fast. Package them as the paid onboarding service above, instead of giving them away.
+4. **Price add-ons separately once customers depend on them.** For example: rental, showroom & installments, service subscriptions, extra companies, attachments storage, and later bank feeds, WhatsApp reminders or mobile apps for site engineers.
+5. **Offer annual contracts and an SLA.** Larger firms want a phone number and a response time. Support should be a product, not a favour.
+6. **Use partners.** Accountants and audit firms who set it up for their clients should earn 20 % of the first year's subscription. They are the cheapest sales channel in Egypt.
+7. **Raise prices with the product.** Re-price every year for new customers. Existing customers keep their price for 12 months, which is also an argument to sign annually.

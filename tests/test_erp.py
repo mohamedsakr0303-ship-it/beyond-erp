@@ -1142,17 +1142,17 @@ class HostedBilling(unittest.TestCase):
         self.assertEqual(rpc("billing_set_config", {"p": {"enabled": True}}, "ali@x.com")[0], 403)   # customers cannot
         rpc("billing_set_config", {"p": {"enabled": True}}, "boss@x.com")
         s = rpc("billing_status", {"p_company": cid}, "ali@x.com")[1]
-        self.assertEqual((s["status"], s["days_left"], s["users_allowed"]), ("trial", 15, 5))
+        self.assertEqual((s["status"], s["days_left"], s["users_allowed"]), ("trial", 15, 8))
         self.assertEqual(appended(1), 200)
         st.days_shift = 16
         self.assertEqual(rpc("billing_status", {"p_company": cid}, "ali@x.com")[1]["status"], "expired")
         self.assertEqual(appended(2), 400)                                                  # nothing saved once expired
         self.assertEqual(rpc("billing_quote", {"p_company": cid, "p_plan": "business", "p_months": 12, "p_extra_users": 1}, "ali@x.com")[1]["amount"],
-                         (1490 + 150) * 10)
+                         (4500 + 350) * 10)
         rpc("billing_record_payment", {"p_company": cid, "p_plan": "starter", "p_months": 1, "p_extra_users": 0, "p_amount": None,
                                        "p_reference": "INSTAPAY-1", "p_note": ""}, "boss@x.com")
         s = rpc("billing_status", {"p_company": cid}, "ali@x.com")[1]
-        self.assertEqual((s["status"], s["plan"], s["payments"][0]["amount"]), ("active", "starter", 690))
+        self.assertEqual((s["status"], s["plan"], s["payments"][0]["amount"]), ("active", "starter", 1900))
         self.assertEqual(appended(2), 200)
         sb.shutdown()
 
