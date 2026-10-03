@@ -883,6 +883,7 @@ function newItem(key) {
   if (kind === "sale") return id === "collect" ? pickSale(s => collectForm(s)) : saleForm();
   if (kind === "product") return productForm();
   if (kind === "recurring") return recurringForm();
+  if (kind === "po") return poForm();
   if (kind === "bank") return bankImportForm();
   if (kind === "custody") return id === "settle" ? pickThen("custody", c => custodyAction(c, "settle")) : custodyForm();
 }
@@ -4189,17 +4190,122 @@ const rcSched = r => { const u = RC_UNIT_TXT[r.unit] || [[r.unit, r.unit], [r.un
   return `${L2("every", "كل")} ${r.every > 1 ? r.every + " " : ""}${S.lang === "ar" ? u[1][pl] : u[0][pl]}${r.month_end ? ` · ${L2("month end", "آخر الشهر")}` : ""}`; };
 const fillMonth = (v, due) => typeof v === "string" ? v.replace(/\{month\}/g, due.slice(0, 7)).replace(/\{year\}/g, due.slice(0, 4)).replace(/\{date\}/g, due) : v;
 
-// files on the record pages (business unit, offer, loan, custody, rental, sale): appended under the page
-[["bu", "bu", "business_units.units"], ["offer", "offer", "sales.offers"], ["loan", "loan", "accounting.loans"], ["cust", "custody", "purchasing.custody"],
- ["rental", "rental", "rentals.contracts"], ["sale", "sale", "shop.orders"]].forEach(([page, owner, perm]) => {
-  const orig = PAGES[page];
-  PAGES[page] = async (view, parts, q) => {
-    await orig(view, parts, q);
-    if (!parts[1] || parts[1] === "new" || parts[2] || !view.isConnected || !$(".card", view) || $(".attbox", view)) return;   // no card = not found
-    view.insertAdjacentHTML("beforeend", `<div class="card">${attBox(owner, parts[1], can(perm, "add"))}</div>`);
-    mountAttach($(".attbox", view));
-  };
-});
+// ------------------------------------------------------------ purchase orders
+const PO_ST = { draft: ["Draft", "مسودة", "warn"], approved: ["Approved", "معتمد", ""], partial: ["Part received", "استلام جزئي", "warn"], received: ["Received", "تم الاستلام", "ok"], closed: ["Closed", "مغلق", ""], cancelled: ["Cancelled", "ملغى", "bad"] };
+const poChip = st => `<span class="chip ${PO_ST[st][2]}">${esc(L2(PO_ST[st][0], PO_ST[st][1]))}</span>`;
+const optHtml = (opts, v) => opts.map(o => Array.isArray(o) ? o : [o, o]).map(([k, l]) => `<option value="${esc(k)}" ${String(k) === String(v ?? "") ? "selected" : ""}>${esc(l)}</option>`).join("");
+PAGES.pos = async (view, parts, q) => {
+  q = { status: "open", ...q };
+  const d = await api("GET", "/api/purchase-orders?" + qs(q));
+  const add = can("purchasing.orders", "add");
+  S.H.ponew = () => poForm();
+  const lim = +(S.boot.settings.po_self_approve_limit || 0);
+  S.H.polim = async () => { const v = prompt(L2("Orders above this total need a second person to approve them (the one who raised it cannot). 0 = anyone with approval rights may approve any order.", "الأوامر التي يزيد إجماليها عن هذا المبلغ تحتاج شخصاً آخر لاعتمادها (لا يعتمدها من أنشأها). 0 = أي صاحب صلاحية اعتماد."), lim || 0);
+    if (v === null) return; try { await api("PUT", "/api/settings", { po_self_approve_limit: String(+v || 0) }); await refreshBoot(); route(); } catch (e) { fail(e); } };
+  view.innerHTML = `<div class="toolbar">${add ? `<button class="btn pri" data-a="ponew">+ ${L2("Purchase order", "أمر شراء")}</button>` : ""}<span class="spacer"></span>${exportMenu("purchase_orders", q)}</div>
+    <div class="kpis">${kpiBox(L2("Still on order (committed)", "المتبقي تحت الطلب (التزامات)"), d.open_value)}${kpiBox(L2("Waiting for approval", "بانتظار الاعتماد"), numf(d.to_approve), d.to_approve ? "warn" : "")}${kpiBox(L2("Late deliveries", "تأخر التسليم"), numf(d.rows.filter(r => r.overdue).length), d.rows.some(r => r.overdue) ? "neg" : "")}</div>
+    <p class="muted" style="font-size:.85em;margin:-4px 0 10px">${lim ? L2(`Orders above ${money(lim)} need a second approver.`, `الأوامر فوق ${money(lim)} تحتاج معتمداً آخر.`) : L2("Anyone with approval rights can approve any order.", "أي صاحب صلاحية اعتماد يمكنه اعتماد أي أمر.")}
+      ${can("settings.system", "edit") ? `<button class="btn sm" data-a="polim">${L2("Approval rule", "قاعدة الاعتماد")}</button>` : ""}</p>
+    ${filterBar(q, [["select", "status", t("status"), [["open", L2("Open (draft, approved, part received)", "مفتوحة")], ...Object.entries(PO_ST).map(([k, v]) => [k, L2(v[0], v[1])])]], "q"])}
+    <div class="card">${d.rows.length ? `<div class="tbl stack"><table><thead><tr><th>${L2("Order", "الأمر")}</th><th>${t("date")}</th><th>${t("supplier")}</th><th>${t("bu")}</th><th>${L2("Delivery by", "التسليم قبل")}</th><th class="num">${t("total")}</th><th class="num">${L2("Received", "المستلم")}</th><th class="num">${L2("Still on order", "المتبقي")}</th><th>${t("status")}</th></tr></thead><tbody>
+      ${d.rows.map(r => `<tr class="click" data-href="#/po/${encodeURIComponent(r.code)}"><td><b>${esc(r.code)}</b></td><td>${fd(r.date)}</td><td>${esc(r.supplier)}</td><td>${esc(r.bu_code || "")}</td><td class="${r.overdue ? "neg" : ""}">${fd(r.expected)}</td>
+        <td class="num">${money(r.grand_total)}</td><td class="num">${r.received_value ? money(r.received_value) : ""}</td><td class="num">${r.open_value ? money(r.open_value) : ""}</td><td>${poChip(r.status)}</td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="empty">${L2("No purchase orders here. Raise one before buying: it is approved, sent to the supplier, and each delivery is then received against it — the cost voucher is posted for you and the supplier's balance appears in payables.", "لا توجد أوامر شراء. أنشئ أمراً قبل الشراء: يُعتمد ويُرسل للمورد، ثم يُستلم كل توريد عليه — ويُرحّل قيد التكلفة تلقائياً ويظهر رصيد المورد في الدائنين.")}</div>`}</div>`;
+};
+PAGES.po = async (view, parts) => {
+  const po = await api("GET", "/api/purchase-orders/" + encodeURIComponent(parts[1]));
+  $("#ttl").textContent = `${po.code} — ${po.supplier}`;
+  const add = can("purchasing.orders", "add"), ed = can("purchasing.orders", "edit"), open = ["approved", "partial"].includes(po.status);
+  const st = async (status, ask) => { let reason = ""; if (ask) { reason = prompt(ask); if (reason === null) return; }
+    try { await api("POST", `/api/purchase-orders/${po.id}/status`, { status, reason }); toast(t("saved")); route(); } catch (e) { fail(e); } };
+  Object.assign(S.H, {
+    poapp: async () => { try { await api("POST", `/api/purchase-orders/${po.id}/approve`, {}); toast(L2("Approved", "تم الاعتماد")); route(); } catch (e) { fail(e); } },
+    poedit: () => poForm(po), podup: () => poForm({ ...po, id: null, code: "", date: today(), expected: "", status: "draft" }),
+    porec: () => poReceive(po), poclose: () => st("closed", L2("Close the order — the rest is not needed. Reason (optional):", "إغلاق الأمر — الباقي غير مطلوب. السبب (اختياري):")),
+    pocancel: () => st("cancelled", L2("Cancel the order. Reason (optional):", "إلغاء الأمر. السبب (اختياري):")), podraft: () => st("draft"),
+    podel: async () => { if (!confirm(t("confirm_delete"))) return; try { await api("DELETE", "/api/purchase-orders/" + po.id); location.hash = "#/pos"; } catch (e) { fail(e); } },
+    poprint: () => openApi(`/api/reports/purchase_order?` + qs({ id: po.id, lang: S.lang, format: "pdf" }), true) });
+  const nothingIn = !po.receipts.length;
+  view.innerHTML = `<div class="toolbar"><a class="btn" href="#/pos">← ${L2("Purchase orders", "أوامر الشراء")}</a>${poChip(po.status)}<span class="spacer"></span>
+      ${ed && po.status === "draft" ? `<button class="btn pri" data-a="poapp">✓ ${L2("Approve", "اعتماد")}</button>` : ""}
+      ${add && open ? `<button class="btn pri" data-a="porec">⇣ ${L2("Receive delivery", "استلام توريد")}</button>` : ""}
+      <button class="btn" data-a="poprint">${t("pdf_print")}</button>${exportMenu("purchase_order", { id: po.id })}
+      ${add && ["draft", "approved"].includes(po.status) && nothingIn ? `<button class="btn" data-a="poedit">${t("edit")}</button>` : ""}
+      ${add ? `<button class="btn" data-a="podup">${t("duplicate")}</button>` : ""}
+      ${ed && open && !nothingIn ? `<button class="btn" data-a="poclose">${L2("Close (rest not needed)", "إغلاق (الباقي غير مطلوب)")}</button>` : ""}
+      ${ed && po.status === "approved" && nothingIn ? `<button class="btn" data-a="podraft">${L2("Back to draft", "إرجاع لمسودة")}</button>` : ""}
+      ${ed && ["draft", "approved"].includes(po.status) && nothingIn ? `<button class="btn danger" data-a="pocancel">${L2("Cancel order", "إلغاء الأمر")}</button>` : ""}
+      ${ed && nothingIn && ["draft", "cancelled"].includes(po.status) ? `<button class="btn danger" data-a="podel">${t("delete")}</button>` : ""}</div>
+    <div class="kpis">${kpiBox(L2("Order total", "إجمالي الأمر"), po.grand_total, "", po.vat ? `${L2("incl. VAT", "شامل الضريبة")} ${money(po.vat)}` : "")}${kpiBox(L2("Received", "المستلم"), po.received_value)}${kpiBox(L2("Still on order", "المتبقي"), po.open_value)}</div>
+    <div class="card"><div class="tbl"><table><tbody>
+      <tr><th style="width:30%">${t("supplier")}</th><td><a href="#/statement?${qs({ party: po.supplier })}">${esc(po.supplier)}</a></td></tr><tr><th>${t("date")}</th><td>${fd(po.date)}</td></tr>
+      ${po.expected ? `<tr><th>${L2("Delivery by", "التسليم قبل")}</th><td>${fd(po.expected)}</td></tr>` : ""}${po.bu_code ? `<tr><th>${t("bu")}</th><td><a href="#/bu/${po.bu_id}">${esc(po.bu_code)} — ${esc(po.bu_name)}</a></td></tr>` : ""}
+      ${po.warehouse ? `<tr><th>${t("warehouse")}</th><td>${esc(po.warehouse)}</td></tr>` : ""}${po.vat_code || po.wht_code ? `<tr><th>${L2("Taxes", "الضرائب")}</th><td>${esc([po.vat_code, po.wht_code].filter(Boolean).join(" · "))}</td></tr>` : ""}
+      <tr><th>${L2("Raised / approved by", "أنشأه / اعتمده")}</th><td>${esc(po.created_by || "—")} / ${esc(po.approved_by || "—")}</td></tr>
+      ${po.terms ? `<tr><th>${L2("Terms", "الشروط")}</th><td style="white-space:pre-wrap">${esc(po.terms)}</td></tr>` : ""}${po.notes ? `<tr><th>${t("notes")}</th><td style="white-space:pre-wrap">${esc(po.notes)}</td></tr>` : ""}</tbody></table></div></div>
+    <div class="card"><h2>${L2("Lines", "البنود")}</h2><div class="tbl stack"><table><thead><tr><th>${t("description")}</th><th>${t("type")}</th><th class="num">${t("qty")}</th><th class="num">${L2("Unit price", "سعر الوحدة")}</th><th class="num">${t("amount")}</th><th class="num">${L2("Received", "المستلم")}</th><th class="num">${L2("To come", "المتبقي")}</th></tr></thead><tbody>
+      ${po.lines.map(l => `<tr><td><b>${esc(l.description)}</b>${l.account ? ` <span class="muted">${esc(l.account)}</span>` : ""}</td><td>${esc(poKind(l.kind))}</td><td class="num">${numf(l.qty)} ${esc(l.unit)}</td><td class="num">${money(l.rate)}</td><td class="num">${money(l.amount)}</td><td class="num">${l.received ? numf(l.received) : ""}</td><td class="num ${l.left && open ? "warn" : ""}">${l.left ? numf(l.left) : "✓"}</td></tr>`).join("")}</tbody></table></div></div>
+    ${po.receipts.length ? `<div class="card"><h2>${L2("Deliveries received", "التوريدات المستلمة")}</h2><div class="tbl"><table><tbody>${po.receipts.map(r => `<tr class="click ${r.status === "void" ? "void" : ""}" data-a="openv" data-id="${r.entry_id}"><td>${fd(r.date)}</td><td>${esc(r.description)}</td><td class="num">${numf(r.qty)}</td><td>${esc(tl(r.kind))} #${r.entry_id}${r.status === "void" ? ` <span class="chip bad">${t("void")}</span>` : ""}</td></tr>`).join("")}</tbody></table></div></div>` : ""}`;
+};
+const poKind = k => ({ cost: L2("Project cost", "تكلفة مشروع"), expense: L2("Expense", "مصروف"), stock: L2("Stock item", "صنف مخزني") })[k] || k;
+function poForm(po) {
+  const isNew = !po || !po.id;
+  po = po || { date: today(), lines: [{ kind: S.boot.bus.length ? "cost" : "expense", qty: 1 }] };
+  const lineRow = (l = {}) => `<tr class="pol">
+    <td><select data-f="kind">${optHtml([["cost", poKind("cost")], ["expense", poKind("expense")], ["stock", poKind("stock")]], l.kind || "cost")}</select></td>
+    <td><input data-f="description" value="${esc(l.description || l.item || "")}" list="poitems" placeholder="${esc(t("description"))}" style="min-width:180px"></td>
+    <td><select data-f="account" data-v="${esc(l.account || "")}"></select></td>
+    <td><input data-f="qty" type="number" step="any" value="${l.qty ?? 1}" style="width:80px"></td><td><input data-f="unit" value="${esc(l.unit || "")}" style="width:70px" list="units"></td>
+    <td><input data-f="rate" type="number" step="any" value="${l.rate ?? ""}" style="width:100px"></td><td class="num pamt"></td><td><button type="button" class="btn sm danger" data-k="rm">✕</button></td></tr>`;
+  const html = `<div class="grid g2">
+      <label class="f">${t("supplier")} *<input name="supplier" required value="${esc(po.supplier || "")}" list="pos-sup">${partyList("pos-sup")}</label>
+      <label class="f">${t("date")}<input type="date" name="date" value="${esc(po.date || today())}"></label>
+      <label class="f">${t("bu")}<select name="bu_id">${optHtml(buOpts("— " + L2("none (overhead / stock)", "بدون (مصروف عام / مخزون)")), po.bu_id || "")}</select></label>
+      <label class="f">${L2("Delivery by", "التسليم قبل")}<input type="date" name="expected" value="${esc(po.expected || "")}"></label>
+      <label class="f">${L2("Receive stock into", "استلام المخزون في")}<select name="warehouse_id"><option value="">—</option>${optHtml(whOpts(), po.warehouse_id || "")}</select></label>
+      <label class="f">${t("vat_code")}<select name="vat_code">${optHtml(taxOpts("vat"), po.vat_code || "")}</select></label>
+      <label class="f">${t("wht_code")}<select name="wht_code">${optHtml(taxOpts("wht"), po.wht_code || "")}</select></label></div>
+    <h4 class="fsec">${L2("Lines", "البنود")}</h4><datalist id="poitems"></datalist>
+    <div class="tbl"><table class="potbl"><thead><tr><th>${t("type")}</th><th>${t("description")}</th><th>${t("account")}</th><th>${t("qty")}</th><th>${t("unit")}</th><th>${L2("Unit price", "سعر الوحدة")}</th><th class="num">${t("amount")}</th><th></th></tr></thead><tbody>${po.lines.map(lineRow).join("")}</tbody></table></div>
+    <div class="row" style="justify-content:space-between;margin:6px 0"><button type="button" class="btn sm" data-k="addl">+ ${L2("Line", "بند")}</button><b id="potot"></b></div>
+    <label class="f">${L2("Terms (delivery, payment, warranty…)", "الشروط (التسليم، الدفع، الضمان…)")}<textarea name="terms" rows="2">${esc(po.terms || "")}</textarea></label>
+    <label class="f">${t("notes")}<textarea name="notes" rows="2">${esc(po.notes || "")}</textarea></label>
+    <p class="muted" style="font-size:.85em">${L2("Saving keeps the order as a draft; someone with approval rights approves it. Nothing is booked until a delivery is received.", "الحفظ يبقي الأمر مسودة حتى يعتمده صاحب الصلاحية. لا يُسجّل أي قيد إلا عند استلام التوريد.")}</p>`;
+  const f = drawer(isNew ? L2("New purchase order", "أمر شراء جديد") : `${po.code} — ${t("edit")}`, html, async v => {
+    const lines = $$("tr.pol", f).map(tr => { const g = k => $(`[data-f=${k}]`, tr).value; const kind = g("kind");
+      return { kind, description: g("description"), item: kind === "stock" ? g("description") : "", account: kind === "stock" ? "" : g("account"), qty: g("qty"), unit: g("unit"), rate: g("rate") }; }).filter(l => l.description.trim());
+    const body = { ...v, lines };
+    const r = isNew ? await api("POST", "/api/purchase-orders", body) : await api("PUT", "/api/purchase-orders/" + po.id, body);
+    toast(t("saved")); closeDrawer(); location.hash = "#/po/" + encodeURIComponent(isNew ? r.code : po.code); return false;
+  }, { wide: true });
+  const fill = tr => { const kind = $("[data-f=kind]", tr).value, sel = $("[data-f=account]", tr);
+    const opts = kind === "cost" ? accts(["COGS"]) : kind === "expense" ? accts(["Expense"]) : [];
+    const want = sel.value || sel.dataset.v || (kind === "cost" ? accByRole("materials") : kind === "expense" ? accByRole("other_overhead") : "");
+    sel.innerHTML = opts.length ? optHtml(opts, want) : `<option value="">${esc(L2("stock account of the warehouse", "حساب مخزون المخزن"))}</option>`; sel.disabled = !opts.length; };
+  const calc = () => { let tot = 0; $$("tr.pol", f).forEach(tr => { const a = (+$("[data-f=qty]", tr).value || 0) * (+$("[data-f=rate]", tr).value || 0); tot += a; $(".pamt", tr).textContent = a ? money(a) : ""; });
+    const vat = tot * rateOf($("[name=vat_code]", f).value); $("#potot", f).textContent = `${t("total")}: ${money(tot + vat)}${vat ? ` (${L2("VAT", "ض.ق.م")} ${money(vat)})` : ""}`; };
+  $$("tr.pol", f).forEach(fill); calc();
+  api("GET", "/api/stock").then(r => { $("#poitems", f).innerHTML = r.items.map(i => `<option value="${esc(i.name)}">`).join(""); }).catch(() => {});
+  f.addEventListener("input", calc); f.addEventListener("change", e => { if (e.target.dataset.f === "kind") { e.target.closest("tr").querySelector("[data-f=account]").dataset.v = ""; $("[data-f=account]", e.target.closest("tr")).value = ""; fill(e.target.closest("tr")); } calc(); });
+  f.addEventListener("click", e => { const k = e.target.dataset.k; if (k === "addl") { $(".potbl tbody", f).insertAdjacentHTML("beforeend", lineRow({ kind: $("[name=bu_id]", f).value ? "cost" : "expense" })); fill($(".potbl tbody tr:last-child", f)); }
+    if (k === "rm" && $$("tr.pol", f).length > 1) { e.target.closest("tr").remove(); calc(); } });
+}
+function poReceive(po) {
+  const open = po.lines.filter(l => l.left > 0);
+  const html = `<div class="grid g2"><label class="f">${t("date")}<input type="date" name="date" value="${today()}"></label>
+      <label class="f">${L2("Supplier's invoice / delivery note no.", "رقم فاتورة / إذن تسليم المورد")}<input name="supplier_ref"></label></div>
+    <div class="tbl"><table><thead><tr><th>${t("description")}</th><th class="num">${L2("To come", "المتبقي")}</th><th>${L2("Received now", "المستلم الآن")}</th></tr></thead><tbody>
+      ${open.map(l => `<tr><td>${esc(l.description)}<div class="muted" style="font-size:.85em">${esc(poKind(l.kind))} · ${money(l.rate)} / ${esc(l.unit || t("unit"))}</div></td><td class="num">${numf(l.left)}</td><td><input type="number" step="any" min="0" max="${l.left}" data-line="${l.id}" value="${l.left}" style="width:100px"></td></tr>`).join("")}</tbody></table></div>
+    <div class="grid g2"><label class="f">${L2("Paid now (optional)", "المدفوع الآن (اختياري)")}<input type="number" step="any" name="paid" value="0"></label>
+      <label class="f">${t("method")}<select name="method">${optHtml(methodOpts(), "")}</select></label></div>
+    <p class="muted" style="font-size:.85em">${L2("Each line posts its voucher (project cost, expense or goods receipt) with this order's code as reference. Anything not paid now is owed to the supplier in payables.", "كل بند يُرحّل قيده (تكلفة مشروع أو مصروف أو استلام مخزون) بمرجع هذا الأمر. وغير المدفوع يُسجّل على حساب المورد في الدائنين.")}</p>`;
+  const f = drawer(`${po.code} — ${L2("Receive delivery", "استلام توريد")}`, html, async v => {
+    const lines = $$("[data-line]", f).map(i => ({ line_id: +i.dataset.line, qty: +i.value || 0 })).filter(x => x.qty > 0);
+    const r = await api("POST", `/api/purchase-orders/${po.id}/receive`, { ...v, lines });
+    toast(`${r.entries.length} ${L2("vouchers posted", "قيد")}`);
+  }, { wide: true, submitLabel: L2("Post receipt", "ترحيل الاستلام") });
+  return f;
+}
 // ------------------------------------------------------------ budgets
 const MONTHS_L = () => S.lang === "ar" ? ["يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو", "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"] : ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const budgetYears = (have = []) => { const y = new Date().getFullYear(); return [...new Set([y - 1, y, y + 1, ...have])].sort(); };
@@ -4364,7 +4470,7 @@ const SCREEN_SHEETS = { costs: ["Direct Costs"], expenses: ["Operating Expenses"
   moves: ["Stock Moves"], warehouses: ["Warehouses"], journal: ["Journal Vouchers"], coa: ["Chart of Accounts"],
   partners: ["Partners", "Partner Shares", "Partner Transactions"], taxcodes: ["Tax Codes"], products: ["Products"],
   loans: ["Loans", "Loan Transactions"], custody: ["Cash Custody", "Custody Expenses"], rentfleet: ["Rental Equipment", "Rental Stock Lots"],
-  rentals: ["Rental Contracts"], sales: ["Sales Contracts"], bankrec: ["Bank Statement Lines"], recurring: ["Recurring Entries"], budgets: ["Budgets"] };
+  rentals: ["Rental Contracts"], sales: ["Sales Contracts"], bankrec: ["Bank Statement Lines"], recurring: ["Recurring Entries"], budgets: ["Budgets"], pos: ["Purchase Orders"] };
 const sheetLabel = n => { const s = (S.cache.impSheets || []).find(x => x.name === n); return s && S.lang === "ar" && s.ar ? s.ar : n; };
 const canImportSheet = n => { const s = (S.cache.impSheets || []).find(x => x.name === n); return can("import_export.import", "edit") || (s && s.perm && can(s.perm, "add")); };
 const tplUrl = (n, fmt, demo) => "/api/templates/sheet?" + qs({ sheet: n, format: fmt, lang: S.lang, demo: demo ? 1 : "" });
@@ -4549,5 +4655,16 @@ PAGES.download = async view => {
   $("#ttl").textContent = L2("Get the app", "تحميل التطبيق");
 };
 
+// files on the record pages (business unit, offer, loan, custody, rental, sale): appended under the page
+[["bu", "bu", "business_units.units"], ["offer", "offer", "sales.offers"], ["po", "po", "purchasing.orders"], ["loan", "loan", "accounting.loans"], ["cust", "custody", "purchasing.custody"],
+ ["rental", "rental", "rentals.contracts"], ["sale", "sale", "shop.orders"]].forEach(([page, owner, perm]) => {
+  const orig = PAGES[page];
+  PAGES[page] = async (view, parts, q) => {
+    await orig(view, parts, q);
+    if (!parts[1] || parts[1] === "new" || parts[2] || !view.isConnected || !$(".card", view) || $(".attbox", view)) return;   // no card = not found
+    view.insertAdjacentHTML("beforeend", `<div class="card">${attBox(owner, parts[1], can(perm, "add"))}</div>`);
+    mountAttach($(".attbox", view));
+  };
+});
 (window.__beyondReady || Promise.resolve()).then(boot, () => {});
 })();

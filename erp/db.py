@@ -578,6 +578,45 @@ CREATE TABLE IF NOT EXISTS bank_rules (
     active INTEGER NOT NULL DEFAULT 1
 );
 
+-- Purchase orders: a commitment until goods / work arrive; each receipt posts a normal voucher (po_receipts links them)
+CREATE TABLE IF NOT EXISTS purchase_orders (
+    id INTEGER PRIMARY KEY,
+    code TEXT NOT NULL UNIQUE,
+    date TEXT NOT NULL,
+    supplier TEXT NOT NULL,
+    bu_id INTEGER REFERENCES business_units(id) ON DELETE SET NULL,
+    warehouse_id INTEGER REFERENCES warehouses(id) ON DELETE SET NULL,
+    expected TEXT DEFAULT '',
+    vat_code TEXT DEFAULT '',
+    wht_code TEXT DEFAULT '',
+    terms TEXT DEFAULT '',
+    notes TEXT DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'draft',       -- draft, approved, partial, received, closed, cancelled
+    created_by TEXT DEFAULT '',
+    approved_by TEXT DEFAULT '',
+    approved_at TEXT DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS po_lines (
+    id INTEGER PRIMARY KEY,
+    po_id INTEGER NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE,
+    seq INTEGER DEFAULT 0,
+    kind TEXT NOT NULL DEFAULT 'cost',          -- cost (business unit), expense, stock
+    description TEXT DEFAULT '',
+    item TEXT DEFAULT '',
+    account TEXT DEFAULT '',
+    qty REAL NOT NULL DEFAULT 1,
+    unit TEXT DEFAULT '',
+    rate INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS po_receipts (
+    id INTEGER PRIMARY KEY,
+    po_id INTEGER NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE,
+    line_id INTEGER NOT NULL REFERENCES po_lines(id) ON DELETE CASCADE,
+    date TEXT NOT NULL,
+    qty REAL NOT NULL,
+    entry_id INTEGER NOT NULL REFERENCES journal_entries(id) ON DELETE CASCADE
+);
+
 -- Files kept with a record (owner = entry, party, bu, rental, sale, loan, custody, asset, offer)
 CREATE TABLE IF NOT EXISTS attachments (
     id INTEGER PRIMARY KEY,
@@ -919,7 +958,7 @@ SUBMODULES = {
     "business_units": ["units", "allocation", "profitability"],
     "sales": ["offers", "receipts", "invoices", "receivables", "parties"],
     "estimating": ["boqs", "prices"],
-    "purchasing": ["costs", "expenses", "payments", "payables", "contacts", "negotiations", "custody"],
+    "purchasing": ["orders", "costs", "expenses", "payments", "payables", "contacts", "negotiations", "custody"],
     "shop": ["products", "orders", "installments"],
     "stock": ["balances", "moves", "warehouses"],
     "rentals": ["contracts", "fleet", "calculator"],

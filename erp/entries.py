@@ -177,6 +177,7 @@ MENU_ITEMS = [
     ("eq:exit", "Partner exit / buy-out", "خروج شريك", "partners.ownership"),
     ("asset:new", "New fixed asset", "أصل ثابت جديد", "assets.register"),
     ("asset:depr", "Run depreciation", "احتساب الإهلاك", "assets.depreciation"),
+    ("po:new", "New purchase order", "أمر شراء جديد", "purchasing.orders"),
     ("loan:new", "New loan (taken or given)", "قرض جديد (مأخوذ أو ممنوح)", "accounting.loans"),
     ("loan:pay", "Loan payment / collection", "سداد / تحصيل قسط قرض", "accounting.loans"),
     ("custody:new", "Give cash custody", "صرف عهدة نقدية", "purchasing.custody"),
@@ -188,7 +189,7 @@ MENU_ITEMS = [
     ("contact:new", "New contact (supplier, subcontractor, driver…)", "جهة اتصال جديدة (مورد، مقاول، سائق…)", "purchasing.contacts"),
     ("custody:settle", "Custody expense report (settlement)", "تسوية عهدة (تقرير مصروفات)", "purchasing.custody"),
 ]
-DEFAULT_MENU = ["doc:direct_cost", "doc:expense", "doc:payment", "doc:receipt", "doc:invoice", "doc:payroll",
+DEFAULT_MENU = ["po:new", "doc:direct_cost", "doc:expense", "doc:payment", "doc:receipt", "doc:invoice", "doc:payroll",
                 "doc:stock_move", "doc:journal", "eq:contribute", "eq:distribute", "asset:new", "asset:depr", "loan:new", "loan:pay",
                 "custody:new", "custody:settle", "contact:new", "sale:new", "sale:collect", "doc:bu", "doc:offer"]
 

@@ -792,6 +792,49 @@ def budget_table(db, year=None, bu=None, through=None, lang="en"):
             "columns": cols, "rows": rows, "lang": lang}
 
 
+PO_STATUS = {"draft": ("Draft — awaiting approval", "مسودة — بانتظار الاعتماد"), "approved": ("Approved", "معتمد"),
+             "partial": ("Partly received", "استلام جزئي"), "received": ("Received", "تم الاستلام"),
+             "closed": ("Closed", "مغلق"), "cancelled": ("Cancelled", "ملغى")}
+
+
+def purchase_order_table(db, pid, lang="en"):
+    from . import purchasing
+    ar = lang == "ar"
+    po = purchasing.get(db, pid)
+    cols = _mkcols([("No.", "م", "left"), ("Description", "البيان", "left"), ("Unit", "الوحدة", "left"), ("Qty", "الكمية", "right", "num"),
+                    ("Unit price", "سعر الوحدة", "right"), ("Amount", "القيمة", "right"), ("Received", "المستلم", "right", "num")], lang)
+    rows = [{"cells": [i, ln["description"], ln["unit"], ln["qty"], ln["rate"], ln["amount"], ln["received"] or ""], "style": "item", "indent": 0}
+            for i, ln in enumerate(po["lines"], start=1)]
+    rows.append({"cells": ["", "الإجمالي قبل الضريبة" if ar else "Total before tax", "", "", "", po["total"], ""], "style": "subtotal", "indent": 0})
+    if po["vat"]:
+        rows.append({"cells": ["", f"{'ضريبة القيمة المضافة' if ar else 'VAT'} ({po['vat_code']})", "", "", "", po["vat"], ""], "style": "item", "indent": 0})
+    rows.append({"cells": ["", "الإجمالي" if ar else "Order total", "", "", "", po["grand_total"], ""], "style": "grand", "indent": 0})
+    info = [("Supplier", "المورد", po["supplier"]), ("Date", "التاريخ", po["date"]), ("Delivery by", "التسليم قبل", po["expected"]),
+            ("Project", "المشروع", f"{po['bu_code']} {po['bu_name']}" if po["bu_code"] else ""), ("Deliver to", "التسليم إلى", po["warehouse"] or ""),
+            ("Status", "الحالة", PO_STATUS[po["status"]][1 if ar else 0]), ("Approved by", "اعتمده", po["approved_by"]),
+            ("Terms", "الشروط", po["terms"])]
+    for en, a, v in info:
+        if v:
+            rows.append({"cells": ["", f"{a if ar else en}: {v}", "", "", "", "", ""], "style": "note", "indent": 0})
+    return {"title": (f"أمر شراء {po['code']}" if ar else f"Purchase order {po['code']}"),
+            "subtitle": f"{po['supplier']} · {po['date']} · {db.setting('currency')}", "columns": cols, "rows": rows, "lang": lang}
+
+
+def purchase_orders_table(db, p, lang="en"):
+    from . import purchasing
+    ar = lang == "ar"
+    d = purchasing.listing(db, p.get("q"), p.get("status"), p.get("supplier"), p.get("bu_id"))
+    cols = _mkcols([("Order", "الأمر", "left"), ("Date", "التاريخ", "left"), ("Supplier", "المورد", "left"), ("Project", "المشروع", "left"),
+                    ("Delivery by", "التسليم", "left"), ("Total", "الإجمالي", "right"), ("Received", "المستلم", "right"),
+                    ("Still on order", "المتبقي", "right"), ("Status", "الحالة", "left")], lang)
+    rows = [{"cells": [r["code"], r["date"], r["supplier"], r["bu_code"] or "", r["expected"], r["grand_total"], r["received_value"],
+                       r["open_value"] or "", PO_STATUS[r["status"]][1 if ar else 0]], "style": "item", "indent": 0} for r in d["rows"]]
+    rows.append({"cells": [L("total", lang), "", "", "", "", round(sum(r["grand_total"] for r in d["rows"]), 2),
+                           round(sum(r["received_value"] for r in d["rows"]), 2), d["open_value"], ""], "style": "grand", "indent": 0})
+    return {"title": "أوامر الشراء" if ar else "Purchase orders", "subtitle": f"{L('as_of', lang)} {acc.today()} · {db.setting('currency')}",
+            "columns": cols, "rows": rows, "lang": lang}
+
+
 def tax_table(db, date_from=None, date_to=None, lang="en"):
     t = acc.tax_summary(db, date_from, date_to)
     ar = lang == "ar"
@@ -880,6 +923,10 @@ def build(db, name, p):
         return aging_table(db, p.get("date_to"), p.get("side"), lang)
     if name == "budget":
         return budget_table(db, p.get("year"), p.get("bu_id", ""), p.get("through"), lang)
+    if name == "purchase_order":
+        return purchase_order_table(db, p.get("id") or p.get("code"), lang)
+    if name == "purchase_orders":
+        return purchase_orders_table(db, p, lang)
     if name == "fixed_assets":
         return fixed_assets_table(db, p.get("date_to"), p.get("q"), p.get("state"), lang)
     raise acc.ValidationError(f"Unknown report {name!r}")
@@ -895,7 +942,8 @@ REPORT_PERMS = {"income_statement": "reports.income_statement", "balance_sheet":
                 "rentals": "rentals.contracts", "sales": "shop.orders", "installments": "shop.installments",
                 "products": "shop.products", "bank_reconciliation": "accounting.bankrec",
                 "party_statement": ("sales.parties", "purchasing.contacts", "sales.receivables", "purchasing.payables"),
-                "aging": ("sales.receivables", "purchasing.payables"), "budget": "accounting.budgets"}
+                "aging": ("sales.receivables", "purchasing.payables"), "budget": "accounting.budgets",
+                "purchase_order": "purchasing.orders", "purchase_orders": "purchasing.orders"}
 
 
 # ==================================================================== writers

@@ -1030,6 +1030,49 @@ class Attachments(unittest.TestCase):
         attachments.delete(db, a1)
         self.assertEqual(a.get_entry(db, eid)["files"], 0)
 
+class PurchaseOrders(unittest.TestCase):
+    """Order -> approve -> receive in parts (vouchers posted) -> close; restore from a JSON backup."""
+
+    def test_po_flow(self):
+        import json as _json
+        from erp import demo, interchange, purchasing as P
+        db = Database(":memory:")
+        demo.load(db)
+        self.assertEqual(db.one("SELECT status FROM purchase_orders WHERE code='PO-D100'")["status"], "approved")
+        db.set_setting("po_self_approve_limit", "10000")
+        pid = P.save(db, {"supplier": "Spark Electric", "bu_code": "PRJ-D01", "vat_code": "VAT14",
+                          "lines": [{"kind": "cost", "description": "Cable 4 mm", "qty": 10, "unit": "roll", "rate": 1500},
+                                    {"kind": "expense", "description": "Site lighting", "qty": 1, "rate": 800}]}, "clerk")
+        with self.assertRaises(a.ValidationError):
+            P.receive(db, pid, {"lines": [{"line_id": 1, "qty": 1}]})          # not approved yet
+        with self.assertRaises(a.ValidationError):
+            P.approve(db, pid, "clerk")                                        # above the self-approval limit
+        P.approve(db, pid, "boss")
+        ln = P.get(db, pid)["lines"]
+        with self.assertRaises(a.ValidationError):
+            P.receive(db, pid, {"lines": [{"line_id": ln[0]["id"], "qty": 11}]})
+        before = a.party_balance(db, db.acct("ap"), "Spark Electric")
+        ids = P.receive(db, pid, {"lines": [{"line_id": ln[0]["id"], "qty": 4}]}, "clerk")
+        e = a.get_entry(db, ids[0])
+        self.assertEqual((e["kind"], e["ref"], e["amount"]), ("Direct Cost", P.get(db, pid)["code"], 6840.0))
+        self.assertAlmostEqual(a.party_balance(db, db.acct("ap"), "Spark Electric") - before, 6840.0)
+        po = P.get(db, pid)
+        self.assertEqual((po["status"], po["open_value"]), ("partial", 9800.0))
+        a.void_entry(db, ids[0], "wrong", "boss")                              # a voided receipt is on order again
+        self.assertEqual(P.get(db, pid)["open_value"], 15800.0)
+        P.set_status(db, pid, "closed", "rest not needed")
+        self.assertEqual(P.get(db, pid)["open_value"], 0)
+        with self.assertRaises(a.ValidationError):
+            P.set_status(db, pid, "cancelled")
+        self.assertEqual([c["check"] for c in a.audit(db) if not c["ok"]], [])
+        db2 = Database(":memory:")
+        interchange.import_data(db2, interchange.read_json(interchange.to_json(db).encode()))
+        self.assertEqual(sorted((r["code"], r["status"]) for r in db2.q("SELECT code, status FROM purchase_orders")),
+                         sorted((r["code"], r["status"]) for r in db.q("SELECT code, status FROM purchase_orders")))
+        live = "SELECT COUNT(*) n FROM po_receipts r JOIN journal_entries e ON e.id=r.entry_id WHERE e.status='posted'"
+        self.assertEqual(db2.one(live)["n"], db.one(live)["n"])
+        self.assertEqual({r["code"]: r["open_value"] for r in P.listing(db2)["rows"]}, {r["code"]: r["open_value"] for r in P.listing(db)["rows"]})
+
 class ImportKit(unittest.TestCase):
     """Per-screen templates, and importing a user's own layout with column matching."""
 

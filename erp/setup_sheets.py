@@ -139,6 +139,18 @@ def specs(C):
                   C("account", "Account (expense / debit)", "الحساب (المصروف / المدين)", kind="acct"),
                   C("credit_account", "Credit Account (journal / receipt)", "الحساب الدائن", kind="acct"),
                   C("party", "Supplier / Party", "المورد / الطرف", width=16), C("bu_code", "Business Unit", "وحدة الأعمال", kind="bu")]},
+        {"name": "Purchase Orders", "ar": "أوامر الشراء", "module": "purchasing", "setup": True,
+         "title": "One row per order line; rows with the same order code form one order. Approved = Yes approves it "
+                  "(nothing is booked until a delivery is received on its screen)",
+         "cols": [C("code", "Order Code", "كود الأمر", width=10, required=True, note="e.g. PO-0101"),
+                  C("date", "Date", "التاريخ", kind="date", required=True), C("supplier", "Supplier", "المورد", width=22, required=True),
+                  C("bu_code", "Business Unit", "وحدة الأعمال", kind="bu"), C("warehouse", "Receive Stock Into", "المخزن", width=14),
+                  C("expected", "Delivery By", "التسليم قبل", kind="date"), C("vat_code", "VAT Code", "كود الضريبة", width=8),
+                  C("kind", "Line Type", "نوع البند", width=9, choices=["cost", "expense", "stock"], note="cost needs a business unit; stock a warehouse"),
+                  C("description", "Description / Stock Item", "البيان / الصنف", width=28, required=True),
+                  C("account", "Account", "الحساب", kind="acct"), C("qty", "Qty", "الكمية", kind="num", width=8, required=True),
+                  C("unit", "Unit", "الوحدة", width=7), C("rate", "Unit Price", "سعر الوحدة", kind="money", required=True),
+                  C("terms", "Terms", "الشروط", width=20), C("approved", "Approved", "معتمد", width=8, choices=["Yes", "No"])]},
         {"name": "Budgets", "ar": "الموازنات", "module": "accounting", "setup": True,
          "title": "Monthly budget per income / cost / expense account (blank business unit = company level). Fill the months, or "
                   "only the Year Total to spread it evenly. Re-importing a row replaces that account's budget",
@@ -316,12 +328,26 @@ def budget_row(db, r, user):
     budgets.import_row(db, r)
 
 
+def purchase_order(db, items, user):
+    from . import purchasing
+    h = items[0][1]
+    lines = [{"kind": r.get("kind") or ("cost" if h.get("bu_code") else "expense"), "description": r.get("description"),
+              "item": r.get("description") if r.get("kind") == "stock" else "", "account": r.get("account"), "qty": r.get("qty"),
+              "unit": r.get("unit"), "rate": r.get("rate")} for _, r in items]
+    pid = purchasing.save(db, {"code": h.get("code"), "date": h.get("date"), "supplier": h.get("supplier"), "bu_code": h.get("bu_code"),
+                               "warehouse": h.get("warehouse") or None, "expected": h.get("expected"), "vat_code": h.get("vat_code"),
+                               "terms": h.get("terms"), "lines": lines}, user)
+    if _yes(h.get("approved")):
+        purchasing.approve(db, pid, user)
+
+
 ROW_IMPORTERS = [("Loans", loan), ("Loan Transactions", loan_tx), ("Cash Custody", custody_row),
                  ("Rental Equipment", rent_item), ("Rental Stock Lots", rent_lot), ("Recurring Entries", recurring_row),
                  ("Budgets", budget_row)]
 GROUP_IMPORTERS = [("Custody Expenses", lambda r: (str(r.get("custody")), str(r.get("report") or r.get("date"))), custody_reports),
                    ("Rental Contracts", lambda r: str(r.get("ref")), rent_contract),
                    ("Sales Contracts", lambda r: str(r.get("code")), sale_contract),
+                   ("Purchase Orders", lambda r: str(r.get("code")), purchase_order),
                    ("Bank Statement Lines", lambda r: (str(r.get("account")), str(r.get("statement") or "")), bank_statement)]
 ORDER = ["Loans", "Loan Transactions", "Cash Custody", "Custody Expenses", "Rental Equipment", "Rental Stock Lots",
-         "Rental Contracts", "Sales Contracts", "Recurring Entries", "Bank Statement Lines", "Budgets"]
+         "Rental Contracts", "Sales Contracts", "Recurring Entries", "Bank Statement Lines", "Purchase Orders", "Budgets"]

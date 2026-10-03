@@ -70,7 +70,7 @@ COMPANY_KEYS = ("company_name", "company_tagline", "company_address", "company_t
                 "bank_holder", "bank_swift", "bank_iban", "offer_validity_days", "offer_prefix", "offer_digits", "regional",
                 "banks", "bank_default")
 PUBLIC_SETTINGS = COMPANY_KEYS + ("demo_loaded", "menu_labels", "reserve_pct", "report_from", "report_to", "lock_date", "hidden_modules",
-                                  "appearance")
+                                  "appearance", "po_self_approve_limit")
 JSON_SETTINGS = {"menu_labels": {}, "units": [], "hidden_modules": [], "appearance": {}, "regional": {}, "banks": []}
 
 
@@ -205,7 +205,7 @@ def put_settings(ctx):
         ctx.require("settings.branding", "edit")
     if "reserve_pct" in keys and not ctx.can("partners.equity", "edit"):
         ctx.require("settings.company", "edit")
-    if keys & {"backup_keep", "lock_date"}:
+    if keys & {"backup_keep", "lock_date", "po_self_approve_limit"}:
         ctx.require("settings.system", "edit")
     if "hidden_modules" in keys:
         ctx.require("settings.menus", "edit")
@@ -1041,6 +1041,68 @@ def bank_rule_del(ctx, rid):
 
 
 # ============================================================ recurring entries
+# ============================================================ purchase orders
+@route("GET", "/api/purchase-orders", "purchasing.orders")
+def po_list(ctx):
+    from . import purchasing
+    return ok(purchasing.listing(ctx.db, ctx.q.get("q"), ctx.q.get("status"), ctx.q.get("supplier"), ctx.q.get("bu_id")))
+
+
+@route("GET", "/api/purchase-orders/<pid>", "purchasing.orders")
+def po_get(ctx, pid):
+    from . import purchasing
+    return ok(purchasing.get(ctx.db, pid))
+
+
+@route("POST", "/api/purchase-orders", "purchasing.orders", "add")
+def po_add(ctx):
+    from . import purchasing
+    pid = purchasing.save(ctx.db, ctx.body, ctx.user["username"])
+    ctx.log("po.add", pid)
+    return ok({"id": pid, "code": purchasing.get(ctx.db, pid)["code"]})
+
+
+@route("PUT", "/api/purchase-orders/<pid>", "purchasing.orders", "add")
+def po_edit(ctx, pid):
+    from . import purchasing
+    purchasing.save(ctx.db, ctx.body, ctx.user["username"], pid)
+    return ok({})
+
+
+@route("POST", "/api/purchase-orders/<pid>/approve", "purchasing.orders", "edit")
+def po_approve(ctx, pid):
+    from . import purchasing
+    purchasing.approve(ctx.db, pid, ctx.user["username"])
+    ctx.log("po.approve", pid)
+    return ok({})
+
+
+@route("POST", "/api/purchase-orders/<pid>/status", "purchasing.orders", "edit")
+def po_status(ctx, pid):
+    from . import purchasing
+    purchasing.set_status(ctx.db, pid, ctx.body.get("status"), ctx.body.get("reason") or "")
+    ctx.log("po." + str(ctx.body.get("status")), pid)
+    return ok({})
+
+
+@route("POST", "/api/purchase-orders/<pid>/receive", "purchasing.orders", "add")
+def po_receive(ctx, pid):
+    from . import purchasing
+    ids = purchasing.receive(ctx.db, pid, ctx.body, ctx.user["username"])
+    ctx.log("po.receive", pid)
+    return ok({"entries": ids})
+
+
+@route("DELETE", "/api/purchase-orders/<pid>", "purchasing.orders", "edit")
+def po_delete(ctx, pid):
+    from . import purchasing
+    po = purchasing.get(ctx.db, pid)
+    if po["receipts"]:
+        raise acc.ValidationError("Vouchers were posted against this order — cancel or close it instead")
+    ctx.db.x("DELETE FROM purchase_orders WHERE id=?", (po["id"],))
+    return ok({})
+
+
 def _att_access(ctx, owner, oid, edit=False):
     """Who may see / change the files of a record: the people who may see / change that record."""
     from . import attachments
@@ -2430,7 +2492,7 @@ def offer_type_del(ctx, tid):
 
 
 # ============================================================ erase all data
-ERASE_TRANSACTIONS = ("bank_lines", "bank_statements", "recurring_runs", "sale_cheques", "sale_installments", "sale_lines", "sales_orders", "stock_moves", "stock_levels", "extract_lines", "extracts", "ownership_changes", "journal_lines",
+ERASE_TRANSACTIONS = ("po_receipts", "po_lines", "purchase_orders", "bank_lines", "bank_statements", "recurring_runs", "sale_cheques", "sale_installments", "sale_lines", "sales_orders", "stock_moves", "stock_levels", "extract_lines", "extracts", "ownership_changes", "journal_lines",
                       "journal_entries", "offers", "loans", "custodies", "rent_moves", "rental_invoices", "rental_charges",
                       "rental_handovers", "rental_lines", "rentals", "rent_lots")
 ERASE_ALL = ERASE_TRANSACTIONS + ("parties", "stock_items", "boq_lines", "boqs", "partner_shares", "partners", "rates",

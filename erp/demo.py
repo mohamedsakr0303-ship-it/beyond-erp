@@ -326,6 +326,10 @@ def sheets():
          "confirm": "Yes", "collected": 397500},
         {"code": "SO-D004", "date": d(4, 22), "customer": "Karim Fahmy", "bu_code": "SALES-01", "product": "S-DES", "qty": 2,
          "vat_code": "VAT14", "plan": "deferred", "first_due": d(5, 28), "confirm": "Yes"}]
+    S["Purchase Orders"] = [{"code": "PO-D100", "date": d(4, 2), "supplier": "Cleopatra Tiles Trading", "bu_code": "PRJ-D01",
+                             "expected": d(4, 20), "vat_code": "VAT14", "kind": "cost", "description": desc, "account": "5010",
+                             "qty": q, "unit": u, "rate": r, "terms": "Ex-works, 50 % advance", "approved": "Yes"}
+                            for desc, q, u, r in (("Porcelain tiles 60×60", 320, "m2", 410), ("Tile skirting", 140, "m", 85))]
     S["Budgets"] = [{"year": today.year, "account": acct, "total": tot, "notes": note} for acct, tot, note in (
         ("4010", 4200000, "Contract revenue target"), ("4025", 3000000, "Unit sales"), ("5005", 2200000, ""),
         ("5010", 900000, ""), ("6010", 300000, "Salaries"), ("6020", 24000, "Internet & phones"), ("6040", 30000, "Electricity"))] + [
@@ -435,6 +439,28 @@ def load(db, user="", replace=False):
             documents.save_offer(db, {**{k: v for k, v in ty.items() if k not in ("id", "name")}, "type_id": ty["id"],
                                       "client": "Laila Samir", "project": "Apartment 14 — design package", "date": S["BOQ Lines"][0]["date"],
                                       "status": "Sent"})
+        # purchase orders: one part received (vouchers posted on credit), one approved and waiting, one draft to approve
+        from . import purchasing
+        bu = db.one("SELECT code FROM business_units ORDER BY id LIMIT 1")["code"]
+        wh = db.one("SELECT name FROM warehouses ORDER BY id LIMIT 1")["name"]
+        mid = (today.replace(day=1) - _dt.timedelta(days=20)).isoformat()
+        p1 = purchasing.save(db, {"supplier": "El-Nour Building Materials", "date": mid, "bu_code": bu, "warehouse": wh, "vat_code": "VAT14",
+                                  "expected": mid, "terms": "Delivery to site within 7 days. Payment 30 days from invoice.",
+                                  "lines": [{"kind": "cost", "description": "Cement 50 kg bags", "qty": 200, "unit": "bag", "rate": 115, "account": "5010"},
+                                            {"kind": "cost", "description": "Steel rebar 12 mm", "qty": 2, "unit": "ton", "rate": 38500, "account": "5010"},
+                                            {"kind": "stock", "description": "Tile adhesive", "qty": 40, "unit": "bag", "rate": 95}]}, "Sara Kamal")
+        purchasing.approve(db, p1, "admin")
+        l1 = purchasing.get(db, p1)["lines"]
+        purchasing.receive(db, p1, {"date": mid, "supplier_ref": "DN-4471", "lines": [{"line_id": l1[0]["id"], "qty": 120},
+                                                                                     {"line_id": l1[2]["id"], "qty": 40}]}, "Sara Kamal")
+        p2 = purchasing.save(db, {"supplier": "Hassan Aluminium", "date": acc.today(), "bu_code": bu,
+                                  "expected": (today + _dt.timedelta(days=14)).isoformat(),
+                                  "lines": [{"kind": "cost", "description": "Aluminium windows — supply & install", "qty": 18, "unit": "m2",
+                                             "rate": 3200, "account": "5020"}]}, "Sara Kamal")
+        purchasing.approve(db, p2, "admin")
+        purchasing.save(db, {"supplier": "Spark Electric", "date": acc.today(), "terms": "Quotation SE-221",
+                             "lines": [{"kind": "expense", "description": "Office UPS replacement", "qty": 1, "rate": 14500, "account": "6090"}]},
+                        "Sara Kamal")
         # recurring entries due by now
         recurring.run(db, acc.today(), user)
         # bank: last month reconciled, this month open
