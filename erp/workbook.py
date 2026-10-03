@@ -27,7 +27,9 @@ DATE = "yyyy-mm-dd"
 # legs' party column per sheet (for the Payables sheet)
 PARTY_COL = {"Direct Costs": "vendor", "Operating Expenses": "vendor", "Payroll": "worker",
              "Payment Vouchers": "party", "Stock Moves": "vendor", "Journal Vouchers": "party",
-             "Receipt Vouchers": "party", "Partner Transactions": "partner", "Sales Invoices": "customer"}
+             "Receipt Vouchers": "party", "Partner Transactions": "partner", "Sales Invoices": "customer",
+             "Loans": "party", "Cash Custody": "holder", "Custody Expenses": "supplier", "Rental Stock Lots": "supplier",
+             "Sales Contracts": "customer", "Recurring Entries": "party", "Service Subscriptions": "customer"}
 
 EXAMPLES = {
     "Settings": {"key": "company_name", "value": "BEYOND DESIGN"},
@@ -101,9 +103,13 @@ def build_workbook(db, template=False, data=None):
     from openpyxl.worksheet.datavalidation import DataValidation
 
     given = data
-    data = export_data(db)
+    data = base = export_data(db)
     if given is not None:   # a ready-made set of rows (e.g. the demo company) in the import layout
         data = {k: given.get(k, v if k in ("Chart of Accounts", "Tax Codes") else []) for k, v in data.items()}
+        # the statements read the report period from Settings: keep it (on top) when the given rows leave it out
+        have = {r.get("key") for r in data["Settings"]}
+        period = [r for r in base["Settings"] if r["key"] in ("report_from", "report_to") and r["key"] not in have]
+        data["Settings"] = period + list(data["Settings"])
     elif template:
         keep = {"Settings", "Chart of Accounts", "Warehouses", "Tax Codes"}
         data = {k: (v if k in keep else []) for k, v in data.items()}
@@ -164,6 +170,9 @@ def build_workbook(db, template=False, data=None):
     # ---------------------------------------------------------- data sheets
     maxrow = {}
     colmap = {}
+    # [[Sheet.col]] in a formula column: that column of another sheet, over its data rows
+    xref = {f"[[{sh['name']}.{c['key']}]]": f"{q(sh['name'])}!${L(i + 1)}${FIRST_DATA_ROW}:${L(i + 1)}$20000"
+            for sh in SHEETS for i, c in enumerate(sh["cols"])}
     for s in SHEETS:
         ws = wb.create_sheet(s["name"])
         ws.sheet_view.showGridLines = False
@@ -203,6 +212,10 @@ def build_workbook(db, template=False, data=None):
                 cell = ws.cell(ri, i)
                 if c["kind"] == "calc":
                     f = c["calc"]
+                    if "[[" in f:
+                        for tok in set(re.findall(r"\[\[[^\]]+\]\]", f)):
+                            f = f.replace(tok, xref[tok])
+                    f = f.replace("{row}", str(ri))
                     for k, letter in letters.items():
                         f = f.replace("{" + k + "}", f"{letter}{ri}")
                     cell.value = f
@@ -333,6 +346,8 @@ def build_workbook(db, template=False, data=None):
             ("_expop", "operating expenses", lambda r: metric(r, lambda t: f"ISNUMBER(MATCH({t},{OPEX},0))", True)),
             ("_ap", "payables", lambda r: metric(r, lambda t: f'{t}="Liability|payable"', False)),
             ("_accr", "accruals", lambda r: metric(r, lambda t: f'{t}="Liability|accrued"', False)),
+            ("_ar", "receivables", lambda r: metric(r, lambda t: f'{t}="Asset|receivable"', True)),
+            ("_adv", "client advances", lambda r: metric(r, lambda t: f'{t}="Liability|deferred_revenue"', False)),
             ("_bad", "unknown account", lambda r: "=" + "+".join(
                 f'IF(AND(N({letters[amt]}{r})<>0,{letters["_t" + str(li)]}{r}=""),1,0)'
                 for li, (amt, acct, side) in enumerate(s["legs"]))),
@@ -750,6 +765,34 @@ def build_workbook(db, template=False, data=None):
         pay.cell(r, 3, f'=IF(A{r}="",0,{party_sum(f"$A{r}", "_accr")})').number_format = MONEY
         pay.cell(r, 4, f"=B{r}+C{r}").number_format = MONEY
 
+    # ------------------------------------------------------------------ receivables
+    rcv = wb.create_sheet("Receivables")
+    rcv.sheet_view.showGridLines = False
+    rcv["A1"] = "Balances owed to us by party (customers)  |  أرصدة العملاء"
+    rcv["A1"].font = F(bold=True, size=14, color=NAVY)
+    rcv["A2"] = ("Every name on the Parties sheet is listed here." if template else
+                 "Names come from the data at export time — add a name in column A to track a new customer.")
+    rcv["A2"].font = F(size=8, color="555555")
+    for i, h in enumerate(["Party", "Receivable (invoices, installments)", "Advances & billed not earned", "Net owed to us"], start=1):
+        c = rcv.cell(4, i, h)
+        c.font = F(bold=True, color="FFFFFF", size=9)
+        c.fill = fill(NAVY)
+        rcv.column_dimensions[L(i)].width = [34, 20, 20, 18][i - 1]
+    from . import statements
+    custs = [] if template else sorted({r["party"] for r in statements.aging(db)["rows"] if r["balance"] > 0})
+    for k in range(len(custs) + 25 if not template else 200):
+        r = 5 + k
+        if template:
+            rcv.cell(r, 1, f"=IF(Parties!A{pr + k}=\"\",\"\",Parties!A{pr + k})")
+        elif k < len(custs):
+            rcv.cell(r, 1, custs[k]).font = F(color=BLUE)
+        rcv.cell(r, 2, f'=IF(A{r}="",0,{party_sum(f"$A{r}", "_ar")})').number_format = MONEY
+        rcv.cell(r, 3, f'=IF(A{r}="",0,{party_sum(f"$A{r}", "_adv")})').number_format = MONEY
+        rcv.cell(r, 4, f"=B{r}-C{r}").number_format = MONEY
+
+    # ------------------------------------------------------------ budget vs actual
+    _budget_sheet(wb, colmap, F, fill, NAVY, BLUE, MONEY, PCT, L)
+
     # ------------------------------------------------------------ quick estimator
     qe = wb.create_sheet("Quick Estimator")
     qe.sheet_view.showGridLines = False
@@ -852,7 +895,7 @@ def build_workbook(db, template=False, data=None):
              "Stock Items", "Price List", "BOQ Lines", "Direct Costs", "Operating Expenses", "Payroll",
              "Receipt Vouchers", "Sales Invoices", "Invoice Lines", "Payment Vouchers", "Partner Transactions",
              "Stock Moves", "Journal Vouchers", "Trial Balance", "Income Statement", "Balance Sheet", "Cash Flow",
-             "Tax Summary", "BU Profitability", "Partner Equity", "Payables", "Quick Estimator", "Scaffold Calculator",
+             "Tax Summary", "BU Profitability", "Partner Equity", "Payables", "Receivables", "Budget vs Actual", "Quick Estimator", "Scaffold Calculator",
              "Model Audit"]
     order[order.index("Trial Balance"):order.index("Trial Balance")] = [s["name"] for s in SHEETS if s["name"] not in order]
     descs = {s["name"]: s["title"] for s in SHEETS}
@@ -864,6 +907,8 @@ def build_workbook(db, template=False, data=None):
                   "Tax Summary": "ملخص الضرائب — output / input VAT, net VAT due, withholding balances",
                   "Partner Equity": "حقوق الشركاء — profit share, reserve, drawings, balance",
                   "Payables": "أرصدة الدائنين — what is owed to each supplier / worker",
+                  "Receivables": "أرصدة العملاء — what each customer owes, less advances",
+                  "Budget vs Actual": "الموازنة مقابل الفعلي — budget for the report period against the books",
                   "Quick Estimator": "التسعير السريع — price a scope from the price list",
                   "Scaffold Calculator": "حاسبة السقالات — pieces, weight and monthly rent from a façade's length × height",
                   "Model Audit": "مراجعة النموذج — integrity checks (must all be OK)"})
@@ -883,13 +928,13 @@ def build_workbook(db, template=False, data=None):
     for ws in wb.worksheets:
         ws.sheet_properties.tabColor = (NAVY if ws.title in ("Trial Balance", "Income Statement", "Balance Sheet",
                                                               "Cash Flow", "Tax Summary", "BU Profitability", "Partner Equity",
-                                                              "Payables", "Model Audit")
+                                                              "Payables", "Receivables", "Budget vs Actual", "Model Audit")
                                         else ("C9A227" if ws.title in ("Cover", "Quick Estimator", "Scaffold Calculator") else None))
     for name in ("Trial Balance", "Income Statement", "Balance Sheet", "Cash Flow", "Tax Summary", "BU Profitability",
                  "Partner Equity",
-                 "Payables", "Quick Estimator", "Scaffold Calculator", "Model Audit", "Cover"):
+                 "Payables", "Receivables", "Budget vs Actual", "Quick Estimator", "Scaffold Calculator", "Model Audit", "Cover"):
         ws = wb[name]
-        ws.page_setup.orientation = "landscape" if name in ("Trial Balance", "BU Profitability", "Quick Estimator",
+        ws.page_setup.orientation = "landscape" if name in ("Trial Balance", "BU Profitability", "Quick Estimator", "Budget vs Actual",
                                                                 "Scaffold Calculator") \
             else "portrait"
         ws.page_setup.paperSize = ws.PAPERSIZE_A4
@@ -1128,5 +1173,126 @@ def _scaffold_calculator(wb, db, colmap, F, fill, NAVY, BLUE, MONEY, L):
         c = ws.cell(sm + i, 2, f)
         c.number_format, c.font = fmt, F(bold=i == 1)
         ws.cell(sm + i, 4, ar)
+
+    # ---- installation / dismantling / transport: what the client pays vs what it costs us (Settings → rental services)
+    try:
+        rates = rentals.service_rates(db)
+    except Exception:  # noqa: BLE001
+        rates = rentals.SERVICE_DEFAULTS
+    sv = sm + len(summary) + 2
+    ws.cell(sv, 1, "Installation, dismantling & transport  |  التركيب والفك والنقل").font = F(bold=True, size=12, color=NAVY)
+    ws.cell(sv + 1, 1, "Client price by months of rent, m², trip, ton or lump sum; our cost by m², trip, ton or lump sum. "
+                       "Scope: both / install / dismantle / none (the client installs). Change the blue cells.").font = F(size=8, color="555555")
+    ins = sv + 2
+    inputs = [("Scope", "both", "both / install / dismantle / none", "نطاق الخدمة"),
+              ("Monthly rent used", f"=B{sm + 1}", "EGP", "الإيجار الشهري"),
+              ("Area (m²)", f"={area}", "m²", "المساحة"),
+              ("Weight (kg)", f"=D{tot}", "kg", "الوزن"),
+              ("Truck capacity", rates.get("truck_tons") or 10, "tons", "حمولة الشاحنة"),
+              ("Trips", None, "trips", "عدد النقلات"),
+              ("Tons", None, "tons", "الأطنان")]
+    at = {}
+    for i, (en, v, unit, ar) in enumerate(inputs):
+        row = ins + i
+        ws.cell(row, 1, en)
+        c = ws.cell(row, 2, v)
+        c.font = F(color=BLUE)
+        c.number_format = "#,##0.##"
+        ws.cell(row, 3, unit)
+        ws.cell(row, 4, ar)
+        at[en] = f"$B${row}"
+    from openpyxl.worksheet.datavalidation import DataValidation
+    dv = DataValidation(type="list", formula1='"both,install,dismantle,none"', allow_blank=False)
+    ws.add_data_validation(dv)
+    dv.add(at["Scope"])
+    ws[at["Trips"].replace("$", "")] = f'=IF(N({at["Weight (kg)"]})>0,MAX(1,ROUNDUP({at["Weight (kg)"]}/(MAX(N({at["Truck capacity"]}),0.001)*1000),0)),1)'
+    ws[at["Tons"].replace("$", "")] = f'=N({at["Weight (kg)"]})/1000'
+    ws[at["Trips"].replace("$", "")].font = ws[at["Tons"].replace("$", "")].font = F()
+    measure = {"m2": at["Area (m²)"], "trip": at["Trips"], "ton": at["Tons"], "lump": "1"}
+    hr = ins + len(inputs) + 1
+    head(hr, 1, ["Service", "Include?", "Price basis", "Unit price / × rent", "", "Client pays", "Min. charge", "Unit cost", "Our cost", "Profit"])
+    ws.cell(hr, 5, "Qty").font = F(bold=True, color="FFFFFF", size=9)
+    labels = {"rent_months": "× monthly rent", "m2": "per m²", "trip": "per trip", "ton": "per ton", "lump": "lump sum"}
+    first_s = hr + 1
+    for i, r_ in enumerate(rates["services"]):
+        row = first_s + i
+        ws.cell(row, 1, f'{r_["name"]} / {r_.get("name_ar", "")}')
+        ct = r_["charge_type"]
+        if ct in ("install", "dismantle"):
+            ws.cell(row, 2, f'=IF(OR({at["Scope"]}="both",{at["Scope"]}="{ct}"),"Yes","No")')
+        else:
+            ws.cell(row, 2, "Yes").font = F(color=BLUE)
+        ws.cell(row, 3, labels.get(r_["basis"], r_["basis"]) + f'  (cost {labels.get(r_.get("cost_basis") or "m2")})')
+        c = ws.cell(row, 4, r_["price"])
+        c.font, c.number_format = F(color=BLUE), "#,##0.##"
+        qty = "1" if r_["basis"] == "rent_months" else measure.get(r_["basis"], "1")
+        ws.cell(row, 5, f"={qty}").number_format = "#,##0.##"
+        gross = f"N({at['Monthly rent used']})*D{row}" if r_["basis"] == "rent_months" else f"E{row}*D{row}"
+        ws.cell(row, 6, f'=IF(B{row}="Yes",MAX({gross},N(G{row})),0)').number_format = MONEY
+        c = ws.cell(row, 7, r_.get("min_charge") or 0)
+        c.font, c.number_format = F(color=BLUE), MONEY
+        c = ws.cell(row, 8, r_["cost"])
+        c.font, c.number_format = F(color=BLUE), MONEY
+        ws.cell(row, 9, f'=IF(B{row}="Yes",{measure.get(r_.get("cost_basis") or "m2", "1")}*H{row},0)').number_format = MONEY
+        ws.cell(row, 10, f"=F{row}-I{row}").number_format = MONEY
+    last_s = first_s + len(rates["services"]) - 1
+    st = last_s + 1
+    ws.cell(st, 1, "SERVICES TOTAL  |  إجمالي الخدمات").font = F(bold=True)
+    for col in (6, 9, 10):
+        c = ws.cell(st, col, f"=SUM({L(col)}{first_s}:{L(col)}{last_s})")
+        c.number_format, c.font = MONEY, F(bold=True)
+    ws.cell(st + 1, 1, "Margin on services / per m²")
+    ws.cell(st + 1, 6, f"=IFERROR(J{st}/F{st},0)").number_format = "0.0%"
+    ws.cell(st + 1, 9, f"=IFERROR(F{st}/{at['Area (m²)']},0)").number_format = MONEY
+    ws.cell(st + 2, 1, "First invoice (first month's rent + services at delivery)").font = F(bold=True)
+    deliv = [first_s + i for i, r_ in enumerate(rates["services"]) if r_.get("when") != "return"]
+    c = ws.cell(st + 2, 6, f"=N({at['Monthly rent used']})" + "".join(f"+F{x}" for x in deliv))
+    c.number_format, c.font = MONEY, F(bold=True)
     ws.freeze_panes = "A5"
+
+
+def _budget_sheet(wb, colmap, F, fill, NAVY, BLUE, MONEY, PCT, L):
+    """Budget vs actual for the report period (Settings: report_from / report_to): each Budgets row against the
+    account's movement on the Trial Balance (company-wide). A positive variance is good for profit."""
+    ws = wb.create_sheet("Budget vs Actual")
+    ws.sheet_view.showGridLines = False
+    ws["A1"] = "Budget vs Actual  |  الموازنة مقابل الفعلي"
+    ws["A1"].font = F(bold=True, size=14, color=NAVY)
+    ws["A2"] = '="Period "&TEXT(ReportFrom,"yyyy-mm-dd")&" to "&TEXT(ReportTo,"yyyy-mm-dd")&" — actuals are company-wide; months of the budget inside the period are counted"'
+    ws["A2"].font = F(size=9, color="555555")
+    heads = ["Year", "Account", "Account name", "Business unit", "Budget (period)", "Actual (period)", "Variance (+ good)", "Used %", "Full-year budget"]
+    for i, h in enumerate(heads, start=1):
+        c = ws.cell(4, i, h)
+        c.font = F(bold=True, color="FFFFFF", size=9)
+        c.fill = fill(NAVY)
+        ws.column_dimensions[L(i)].width = [8, 10, 34, 12, 16, 16, 16, 10, 16][i - 1]
+    b, bl = "Budgets", colmap["Budgets"]
+    coa = "'Chart of Accounts'"
+    for k in range(400):
+        r, src = 5 + k, FIRST_DATA_ROW + k
+        cell = lambda key: f"{b}!${bl[key]}${src}"  # noqa: E731
+        ws.cell(r, 1, f'=IF({cell("account")}="","",{cell("year")})')
+        ws.cell(r, 2, f'=IF(A{r}="","",{cell("account")}&"")')
+        ws.cell(r, 3, f'=IF(A{r}="","",IFERROR(INDEX({coa}!$B${FIRST_DATA_ROW}:$B$3000,MATCH(B{r},{coa}!$A${FIRST_DATA_ROW}:$A$3000,0)),"?"))')
+        ws.cell(r, 4, f'=IF(A{r}="","",{cell("bu_code")}&"")')
+        months = [f"m{i}" for i in range(1, 13)]
+        anym = "OR(" + ",".join(f'{cell(m)}<>""' for m in months) + ")"
+        per_month = lambda i: (f'IF(AND(DATE(A{r},{i},1)>=DATE(YEAR(ReportFrom),MONTH(ReportFrom),1),DATE(A{r},{i},1)<=ReportTo),'  # noqa: E731
+                               f'IF({anym},N({cell(months[i - 1])}),N({cell("total")})/12),0)')
+        ws.cell(r, 5, f'=IF(A{r}="",0,' + "+".join(per_month(i) for i in range(1, 13)) + ")").number_format = MONEY
+        typ = f'IFERROR(INDEX({coa}!$E${FIRST_DATA_ROW}:$E$3000,MATCH(B{r},{coa}!$A${FIRST_DATA_ROW}:$A$3000,0)),"")'  # normal side
+        mv = f"IFERROR(INDEX('Trial Balance'!$F$5:$F$3000,MATCH(B{r},'Trial Balance'!$A$5:$A$3000,0))-INDEX('Trial Balance'!$G$5:$G$3000,MATCH(B{r},'Trial Balance'!$A$5:$A$3000,0)),0)"
+        ws.cell(r, 6, f'=IF(A{r}="",0,IF({typ}="Credit",-1,1)*{mv})').number_format = MONEY
+        ws.cell(r, 7, f'=IF(A{r}="",0,IF({typ}="Credit",F{r}-E{r},E{r}-F{r}))').number_format = MONEY
+        ws.cell(r, 8, f'=IF(OR(A{r}="",E{r}=0),"",F{r}/E{r})').number_format = PCT
+        ws.cell(r, 9, f'=IF(A{r}="",0,IF({anym},' + "+".join(f"N({cell(m)})" for m in months) + f',N({cell("total")})))').number_format = MONEY
+        for ci in range(1, 10):
+            ws.cell(r, ci).font = F(size=9)
+    ws["K4"] = "Totals"
+    ws["K4"].font = F(bold=True)
+    for i, (lab, f) in enumerate((("Budget (period)", "=SUM(E5:E404)"), ("Actual (period)", "=SUM(F5:F404)"), ("Variance (+ good)", "=SUM(G5:G404)")), start=5):
+        ws.cell(i, 11, lab).font = F(size=9)
+        c = ws.cell(i, 12, f)
+        c.number_format, c.font = MONEY, F(bold=True)
+    ws.column_dimensions["K"].width, ws.column_dimensions["L"].width = 18, 16
 

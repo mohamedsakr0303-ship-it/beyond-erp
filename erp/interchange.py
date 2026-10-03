@@ -55,6 +55,12 @@ def eff(key, role):
              calc=f'=IF({{{key}}}="",{ROLE(role)},{{{key}}}&"")')
 
 
+def eff_money(key, method="method"):
+    """Helper column: the entered cash / bank account, else cash for the Cash method and the bank for any other."""
+    return C(f"{key}__eff", f"{key} (effective)", "الحساب الفعلي", kind="calc", width=10,
+             calc=f'=IF({{{key}}}="",IF(TRIM({{{method}}})="Cash",{ROLE("cash")},{ROLE("bank")}),{{{key}}}&"")')
+
+
 YES_NO = ["Posted", "Draft"]
 METHODS = acc.PAYMENT_METHODS
 PAYROLL = list(acc.PAYROLL_TYPES)
@@ -142,16 +148,40 @@ SHEETS = [
               C("depr_method", "Depreciation Method", "طريقة الإهلاك", width=12, choices=["", "straight_line", "declining"],
                 note="blank = the company's depreciation policy"),
               C("depr_factor", "Declining Factor", "معامل التناقص", kind="num", width=8, note="2 = double declining"),
+              C("book_depr", "Depreciate in this workbook", "احتساب الإهلاك في هذا الملف", width=10, choices=["Yes", "No"],
+                note="Yes (blank) = the statements here include depreciation up to the report end, like the app's depreciation "
+                     "run. No = it is already in the Journal Vouchers (books exported from the app)"),
               C("dep_monthly", "Monthly Depreciation (straight line)", "الإهلاك الشهري (قسط ثابت)", kind="calc", width=14,
-                note="Worked out here for reference — book it with a Journal Voucher (Depreciation) so the statements include it",
                 calc='=IF(OR({code}="",N({life_months})=0),0,ROUND((N({cost})-N({salvage}))/N({life_months}),2))'),
+              C("x_run", "depreciated up to", "الإهلاك حتى", kind="calc", width=10,
+                note="The last full month by the report end (Settings → report_to)",
+                calc='=IF(ReportTo=EOMONTH(ReportTo,0),ReportTo,EOMONTH(ReportTo,-1))'),
+              C("x_mb", "months before", "شهور سابقة", kind="calc", width=8,
+                calc='=IF({dep_monthly}>0,ROUND(N({opening_depr})/{dep_monthly},0),0)'),
+              C("x_left", "months left", "الشهور المتبقية", kind="calc", width=8, calc='=MAX(0,N({life_months})-{x_mb})'),
+              C("x_start", "first month depreciated", "أول شهر إهلاك", kind="calc", width=10,
+                calc='=IF({acquired}="","",IF({depr_start}<>"",DATE(LEFT({depr_start},4),MID({depr_start},6,2),1),DATE(YEAR({acquired}),MONTH({acquired}),1)))'),
+              C("x_k", "months now", "شهور الإهلاك", kind="calc", width=8,
+                calc='=IF(OR({code}="",{acquired}="",N({life_months})=0),0,IFERROR(MAX(0,MIN({x_left},(YEAR({x_run})-YEAR({x_start}))*12'
+                     '+MONTH({x_run})-MONTH({x_start})+1-{x_mb})),0))'),
+              C("x_f", "declining factor", "معامل التناقص", kind="calc", width=8,
+                calc='=IF({depr_method}="declining",IF(N({depr_factor})>0,N({depr_factor}),2),0)'),
+              C("x_dd", "declining months", "شهور التناقص", kind="calc", width=8,
+                calc='=IF({x_f}=0,0,MIN({x_k},MAX(0,INT({x_left}-N({life_months})/{x_f})+1)))'),
+              C("x_dep", "depreciation booked here", "الإهلاك المحتسب", kind="calc", width=10,
+                calc='=IF(OR({x_k}=0,{x_left}=0),0,ROUND(IF({x_f}=0,IF({x_k}>={x_left},1,{x_k}/{x_left})*(N({cost})-N({salvage})-N({opening_depr})),'
+                     '(N({cost})-N({salvage})-N({opening_depr}))*(1-(1-{x_f}/N({life_months}))^{x_dd}'
+                     '*IF({x_k}>={x_left},0,1-({x_k}-{x_dd})/({x_left}-{x_dd})))),2))'),
               C("dep_to_date", "Depreciation to Report End", "الإهلاك حتى نهاية الفترة", kind="calc", width=14,
-                note="Straight line from the first month depreciated to ReportTo (Settings); never more than cost − residual",
-                calc='=IF({code}="","",IFERROR(MIN(N({cost})-N({salvage}),MAX(N({opening_depr}),{dep_monthly}*MAX(0,'
-                     '(YEAR(ReportTo)-YEAR(IF({depr_start}<>"",DATE(LEFT({depr_start},4),MID({depr_start},6,2),1),{acquired})))*12'
-                     '+MONTH(ReportTo)-MONTH(IF({depr_start}<>"",DATE(LEFT({depr_start},4),MID({depr_start},6,2),1),{acquired}))+1))),""))'),
+                note="Accumulated: before registering + every full month up to the report end (the app's method: straight line "
+                     "on what is left, or declining balance switching to straight line); never more than cost − residual",
+                calc='=IF({code}="","",N({opening_depr})+{x_dep})'),
               C("dep_book_value", "Book Value at Report End", "القيمة الدفترية في نهاية الفترة", kind="calc", width=14,
-                calc='=IF({code}="","",IFERROR(N({cost})-N({dep_to_date}),""))')]},
+                calc='=IF({code}="","",IFERROR(N({cost})-N({dep_to_date}),""))'),
+              C("x_book", "booked here", "المحتسب هنا", kind="calc", width=10, calc='=IF({book_depr}="No",0,{x_dep})'),
+              C("date", "depreciation date", "تاريخ الإهلاك", kind="calc", width=10, calc='=IF({x_book}=0,"",{x_run})'),
+              eff("expense_account", "depreciation"), eff("accum_account", "accum_depreciation")],
+     "legs": [("x_book", "expense_account__eff", "D"), ("x_book", "accum_account__eff", "C")]},
     {"name": "Warehouses", "ar": "المخازن", "module": "stock", "title": "Warehouses / stores and their inventory account",
      "cols": [C("name", "Warehouse", "المخزن", width=22, required=True), C("location", "Location", "الموقع", width=20),
               C("account", "Inventory Account", "حساب المخزون", kind="acct", width=12)]},
@@ -209,7 +239,7 @@ SHEETS = [
               C("vat_amt", "Input VAT", "ض.ق.م المدخلات", kind="calc", calc="=ROUND({total}*" + TAXRATE("{vat_code}") + ",2)"),
               C("wht_amt", "WHT Withheld", "الخصم والتحصيل", kind="calc", calc="=ROUND({total}*" + TAXRATE("{wht_code}") + ",2)"),
               C("unpaid", "Unpaid", "المتبقي", kind="calc", calc="={total}+{vat_amt}-{wht_amt}-N({paid})"),
-              eff("account", "materials"), eff("paid_from", "bank"), eff("payable_account", "ap"),
+              eff("account", "materials"), eff_money("paid_from"), eff("payable_account", "ap"),
               ROLECOL("vat_acct", "vat_input"), ROLECOL("wht_acct", "wht_payable")],
      "legs": [("total", "account__eff", "D"), ("vat_amt", "vat_acct", "D"), ("paid", "paid_from__eff", "C"),
               ("unpaid", "payable_account__eff", "C"), ("wht_amt", "wht_acct", "C")]},
@@ -229,7 +259,7 @@ SHEETS = [
               C("paid_eff", "Paid (effective)", "المدفوع الفعلي", kind="calc",
                 calc='=IF({paid}="",N({amount})+{vat_amt}-{wht_amt},N({paid}))'),
               C("unpaid", "Unpaid", "المتبقي", kind="calc", calc="=N({amount})+{vat_amt}-{wht_amt}-{paid_eff}"),
-              eff("account", "other_overhead"), eff("paid_from", "bank"), eff("payable_account", "ap"),
+              eff("account", "other_overhead"), eff_money("paid_from"), eff("payable_account", "ap"),
               ROLECOL("vat_acct", "vat_input"), ROLECOL("wht_acct", "wht_payable")],
      "legs": [("amount", "account__eff", "D"), ("vat_amt", "vat_acct", "D"), ("paid_eff", "paid_from__eff", "C"),
               ("unpaid", "payable_account__eff", "C"), ("wht_amt", "wht_acct", "C")]},
@@ -250,7 +280,7 @@ SHEETS = [
               C("account__eff", "account (effective)", "الحساب الفعلي", kind="calc", width=10,
                 calc='=IF({account}<>"",{account}&"",IF(LEFT({cost_type},6)="Indire",' + ROLE("project_overhead") +
                      ',IF(LEFT({cost_type},6)="Admini",' + ROLE("admin_salaries") + ',' + ROLE("direct_labour") + ')))'),
-              eff("paid_from", "bank"), eff("payable_account", "accrued_payroll")],
+              eff_money("paid_from"), eff("payable_account", "accrued_payroll")],
      "legs": [("total", "account__eff", "D"), ("paid", "paid_from__eff", "C"), ("unpaid", "payable_account__eff", "C")]},
     {"name": "Receipt Vouchers", "ar": "سندات القبض", "module": "sales", "kind": "Receipt Voucher",
      "title": "Money received from clients. Credit Account: revenue (cash basis), receivables (against an invoice) "
@@ -268,7 +298,7 @@ SHEETS = [
               C("vat_amt", "Output VAT", "ض.ق.م المخرجات", kind="calc",
                 calc='=IF({vat_code}="",0,{gross}-ROUND({gross}/(1+' + TAXRATE("{vat_code}") + '),2))'),
               C("net_credit", "Net Credit", "صافي الدائن", kind="calc", calc="={gross}-{vat_amt}"),
-              eff("received_into", "bank"), eff("credit_account", "revenue"),
+              eff_money("received_into"), eff("credit_account", "revenue"),
               ROLECOL("whtr_acct", "wht_receivable"), ROLECOL("vato_acct", "vat_output")],
      "legs": [("amount", "received_into__eff", "D"), ("withheld", "whtr_acct", "D"),
               ("net_credit", "credit_account__eff", "C"), ("vat_amt", "vato_acct", "C")]},
@@ -284,20 +314,29 @@ SHEETS = [
               C("amount", "Net Amount", "صافي المبلغ", kind="calc",
                 calc="=SUMIFS('Invoice Lines'!$I:$I,'Invoice Lines'!$A:$A,{number})"),
               C("posted_amount", "Posted Amount", "المبلغ المرحّل", kind="calc", calc='=IF({status}="Draft",0,{amount})'),
+              C("x_rest", "to the invoice's revenue account", "لحساب إيراد الفاتورة", kind="calc", width=10,
+                calc="={posted_amount}-SUMIFS([[Invoice Lines.x_own]],[[Invoice Lines.number]],{number})"),
               C("vat_amt", "Output VAT", "ض.ق.م المخرجات", kind="calc", calc="=ROUND({posted_amount}*" + TAXRATE("{vat_code}") + ",2)"),
               C("wht_amt", "WHT by Client", "خصم وتحصيل العميل", kind="calc", calc="=ROUND({posted_amount}*" + TAXRATE("{wht_code}") + ",2)"),
               C("ar_amt", "Receivable", "المستحق من العميل", kind="calc", calc="={posted_amount}+{vat_amt}-{wht_amt}"),
               eff("ar_account", "ar"), eff("revenue_account", "revenue"),
               ROLECOL("whtr_acct", "wht_receivable"), ROLECOL("vato_acct", "vat_output")],
      "legs": [("ar_amt", "ar_account__eff", "D"), ("wht_amt", "whtr_acct", "D"),
-              ("posted_amount", "revenue_account__eff", "C"), ("vat_amt", "vato_acct", "C")]},
+              ("x_rest", "revenue_account__eff", "C"), ("vat_amt", "vato_acct", "C")]},
     {"name": "Invoice Lines", "ar": "بنود الفواتير", "module": "sales", "title": "Lines of each sales invoice",
      "cols": [C("number", "Invoice No.", "رقم الفاتورة", width=14, required=True), C("category", "Category", "الباب", width=20),
               C("sub", "Sub-category", "البند الفرعي", width=12), C("item_no", "Item No.", "رقم البند", width=8),
               C("description", "Description", "الوصف", width=50, required=True), C("unit", "Unit", "الوحدة", width=8),
               C("qty", "Qty Executed", "الكمية المنفذة", kind="num", width=9), C("price", "Unit Price", "سعر الوحدة", kind="money"),
               C("amount", "Amount", "الإجمالي", kind="calc", calc="=ROUND(N({qty})*N({price}),2)"),
-              C("account", "Line Revenue Account", "حساب إيراد البند", kind="acct", note="blank = the invoice's revenue account")]},
+              C("account", "Line Revenue Account", "حساب إيراد البند", kind="acct", note="blank = the invoice's revenue account"),
+              # a line with its own revenue account is credited there (the invoice credits the rest)
+              C("date", "invoice date", "تاريخ الفاتورة", kind="calc", width=10, calc='=IFERROR(INDEX([[Sales Invoices.date]],MATCH({number},[[Sales Invoices.number]],0)),"")'),
+              C("bu_code", "invoice business unit", "وحدة الأعمال", kind="calc", width=10, calc='=IFERROR(INDEX([[Sales Invoices.bu_code]],MATCH({number},[[Sales Invoices.number]],0))&"","")'),
+              C("x_acct", "own revenue account", "حساب البند", kind="calc", width=8, calc='={account}&""'),
+              C("x_own", "booked to its own account", "المرحل لحساب البند", kind="calc", width=10,
+                calc='=IF(OR({account}="",{date}=""),0,IF(IFERROR(INDEX([[Sales Invoices.status]],MATCH({number},[[Sales Invoices.number]],0))&"","")="Draft",0,{amount}))')],
+     "legs": [("x_own", "x_acct", "C")]},
     {"name": "Payment Vouchers", "ar": "سندات الصرف", "module": "purchasing", "kind": "Payment Voucher",
      "title": "Payments settling what we owe suppliers, subcontractors and workers",
      "cols": [C("date", "Date", "التاريخ", kind="date", required=True), C("party", "Payee", "المستفيد", width=22, required=True),
@@ -305,7 +344,7 @@ SHEETS = [
               C("amount", "Amount", "المبلغ", kind="money", required=True), C("method", "Payment Method", "طريقة الدفع", choices=METHODS),
               C("paid_from", "Paid From", "دفع من حساب", kind="acct", role="bank"), C("bu_code", "Business Unit", "وحدة الأعمال", kind="bu"),
               C("ref", "Voucher No.", "رقم السند", width=10), C("memo", "Description", "البيان", width=26),
-              eff("against", "ap"), eff("paid_from", "bank")],
+              eff("against", "ap"), eff_money("paid_from")],
      "legs": [("amount", "against__eff", "D"), ("amount", "paid_from__eff", "C")]},
     {"name": "Partner Transactions", "ar": "حركات الشركاء", "module": "partners",
      "title": "Capital contributions and owner drawings / dividends",
@@ -338,13 +377,18 @@ SHEETS = [
               C("payable_account", "Payable Account", "حساب الدائنين", kind="acct", role="ap"),
               C("account", "Cost Account (issues)", "حساب التكلفة", kind="acct", role="materials"),
               C("note", "Note", "ملاحظة", width=16), C("vat_code", "VAT Code", "كود ض.ق.م", kind="tax", width=10), C("wht_code", "WHT Code", "كود خصم وتحصيل", kind="tax", width=10),
-              C("value", "Value", "القيمة", kind="calc", calc="=ROUND(ABS(N({qty}))*N({rate}),2)"),
+              C("x_rqty", "received qty", "الكمية المستلمة", kind="calc", width=8, calc='=IF({type}="Receipt",N({qty}),0)'),
+              C("x_rval", "received value", "قيمة الاستلام", kind="calc", width=8, calc='=IF({type}="Receipt",ROUND(N({qty})*N({rate}),2),0)'),
+              C("value", "Value", "القيمة", kind="calc",
+                note="Qty × unit cost; with no unit cost (issues, transfers, counts) the item's average cost of receipts up to this date",
+                calc='=ROUND(ABS(N({qty}))*IF({rate}<>"",N({rate}),IFERROR(SUMIFS([[Stock Moves.x_rval]],[[Stock Moves.item]],{item},'
+                     '[[Stock Moves.date]],"<="&{date})/SUMIFS([[Stock Moves.x_rqty]],[[Stock Moves.item]],{item},[[Stock Moves.date]],"<="&{date}),0)),2)'),
               C("vat_amt", "Input VAT", "ض.ق.م المدخلات", kind="calc",
                 calc='=IF({type}="Receipt",ROUND({value}*' + TAXRATE("{vat_code}") + ',2),0)'),
               C("wht_amt", "WHT Withheld", "الخصم والتحصيل", kind="calc",
                 calc='=IF({type}="Receipt",ROUND({value}*' + TAXRATE("{wht_code}") + ',2),0)'),
               ROLECOL("vat_acct", "vat_input"), ROLECOL("wht_acct", "wht_payable"),
-              eff("paid_from", "bank"), eff("payable_account", "ap"), eff("account", "materials"),
+              eff_money("paid_from"), eff("payable_account", "ap"), eff("account", "materials"),
               C("wh_acct", "Warehouse Account", "حساب المخزن", kind="calc", width=10,
                 calc='=IF(' + WH_ACCT("{warehouse}") + '="",' + ROLE("inventory") + ',' + WH_ACCT("{warehouse}") + ')'),
               C("to_acct", "To-Warehouse Account", "حساب المخزن المستلم", kind="calc", width=10,
@@ -430,7 +474,8 @@ def export_data(db):
                                                       "life_months", "depr_start", "location", "serial", "notes")}
                                    | {"depr_method": a["method"] or "", "depr_factor": a["factor"] or ""}
                                    | {"cost": to_major(a["cost"]), "salvage": to_major(a["salvage"]) or "",
-                                      "opening_depr": to_major(a["opening_depr"]) or "", "bu_code": code(a["bu_id"])})
+                                      "opening_depr": to_major(a["opening_depr"]) or "", "bu_code": code(a["bu_id"]),
+                                      "book_depr": "No"})
     whs = {w["id"]: w for w in db.q("SELECT * FROM warehouses ORDER BY id")}
     for w in whs.values():
         out["Warehouses"].append({"name": w["name"], "location": w["location"], "account": w["account"] or ""})

@@ -14,7 +14,12 @@ MONEY_NOTE = "Rows here create NEW records with their money entries; the full ex
 
 
 def specs(C):
-    """Sheet definitions (C is interchange.C). No posting legs: the workbook does not compute them."""
+    """Sheet definitions (C is interchange.C), with the formula columns and posting legs that let the Excel workbook
+    book the same money as the app when it is used on its own (see _standalone)."""
+    return _standalone(_specs(C), C)
+
+
+def _specs(C):
     return [
         {"name": "Loans", "ar": "القروض", "module": "accounting", "setup": True,
          "title": "Loans the company took or gave. Booking: money = the drawdown is booked now; opening = already in the "
@@ -186,6 +191,175 @@ def specs(C):
     ]
 
 
+# ------------------------------------------------------------------ the workbook on its own
+# Formula columns (grey) and posting legs: the same entries the app makes when these rows are imported, so the
+# statements in Excel include loans, custody, rental purchases, installment sales, recurring entries and subscriptions.
+# Recurring entries and subscriptions count every period started by the report end date (Settings → report_to).
+# {col} = this row's cell, {row} = this row's number, [[Sheet.col]] = that column of another sheet (data rows).
+def _standalone(sheets, C):
+    from .interchange import ROLE, TAXRATE
+    by = {s["name"]: s for s in sheets}
+
+    def calc(key, label, f, width=10):
+        return C(key, label, label, kind="calc", width=width, calc=f)
+
+    def role(key, r):
+        return calc(key, f"{r} account", "=" + ROLE(r), 9)
+
+    money = lambda m: f'IF({{{m}}}="Cash",{ROLE("cash")},{ROLE("bank")})'  # noqa: E731
+
+    # Loans: the drawdown (money paid out / received); "opening" loans are already in the books
+    by["Loans"]["cols"] += [
+        calc("date", "Date (start)", '=IF({start_date}="","",{start_date})'),
+        calc("x_amt", "booked amount", '=IF(OR({start_date}="",{booking}="opening"),0,N({principal}))'),
+        calc("x_cash", "money account", "=" + money("method")),
+        calc("x_lacct", "loan account", f'=IF({{direction}}="lent",IF(N({{term_months}})>12,{ROLE("loans_receivable_lt")},{ROLE("loans_receivable")}),'
+                                       f'IF(N({{term_months}})>12,{ROLE("long_term_debt")},{ROLE("short_term_debt")}))'),
+        calc("x_dr", "debit", '=IF({direction}="lent",{x_lacct},{x_cash})'),
+        calc("x_cr", "credit", '=IF({direction}="lent",{x_cash},{x_lacct})')]
+    by["Loans"]["legs"] = [("x_amt", "x_dr", "D"), ("x_amt", "x_cr", "C")]
+
+    # Loan transactions: installment (principal + interest), accrued interest, fees, further drawdowns
+    look = lambda col, dflt: f'IFERROR(INDEX([[Loans.{col}]],MATCH({{loan}},[[Loans.code]],0)),{dflt})'  # noqa: E731
+    lt = '{x_dir}="lent"'
+    by["Loan Transactions"]["cols"] += [
+        calc("x_dir", "direction", "=" + look("direction", '"borrowed"')),
+        calc("x_lacct", "loan account", "=" + look("x_lacct", ROLE("short_term_debt"))),
+        calc("x_cash", "money account", "=" + money("method")),
+        calc("x_d1a", "debit 1", f'=IF({{action}}="pay",IF({lt},N({{principal}})+N({{interest}}),N({{principal}})),'
+                                 'IF(OR({action}="interest",{action}="fee",{action}="draw"),N({amount}),0))'),
+        calc("x_d1", "debit 1 account", f'=IF({{action}}="pay",IF({lt},{{x_cash}},{{x_lacct}}),IF({{action}}="interest",'
+                                         f'IF({lt},{ROLE("interest_receivable")},{ROLE("interest")}),IF({{action}}="fee",'
+                                         f'IF({lt},{{x_cash}},{ROLE("bank_charges")}),IF({lt},{{x_lacct}},{{x_cash}}))))'),
+        calc("x_d2a", "debit 2", f'=IF(AND({{action}}="pay",NOT({lt})),N({{interest}}),0)'),
+        role("x_d2", "interest"),
+        calc("x_c1a", "credit 1", f'=IF({{action}}="pay",IF({lt},N({{principal}}),N({{principal}})+N({{interest}})),{{x_d1a}})'),
+        calc("x_c1", "credit 1 account", f'=IF({{action}}="pay",IF({lt},{{x_lacct}},{{x_cash}}),IF({{action}}="interest",'
+                                          f'IF({lt},{ROLE("interest_income")},{ROLE("accrued_interest")}),IF({{action}}="fee",'
+                                          f'IF({lt},{ROLE("other_income")},{{x_cash}}),IF({lt},{{x_cash}},{{x_lacct}}))))'),
+        calc("x_c2a", "credit 2", f'=IF(AND({{action}}="pay",{lt}),N({{interest}}),0)'),
+        role("x_c2", "interest_income")]
+    by["Loan Transactions"]["legs"] = [("x_d1a", "x_d1", "D"), ("x_d2a", "x_d2", "D"), ("x_c1a", "x_c1", "C"), ("x_c2a", "x_c2", "C")]
+
+    # Cash custody given to an employee
+    by["Cash Custody"]["cols"] += [
+        calc("date", "Date (given)", '=IF({issued_on}="","",{issued_on})'),
+        calc("x_amt", "booked amount", '=IF(OR({issued_on}="",{booking}="opening"),0,N({amount}))'),
+        role("x_cust", "custody"), calc("x_cash", "money account", "=" + money("method"))]
+    by["Cash Custody"]["legs"] = [("x_amt", "x_cust", "D"), ("x_amt", "x_cash", "C")]
+
+    # Custody expense reports: the expense (net) and its VAT, out of the custody
+    by["Custody Expenses"]["cols"] += [
+        calc("x_net", "net", f'=IF({{amount}}="",0,ROUND(N({{amount}})/(1+{TAXRATE("{vat_code}")}),2))'),
+        calc("x_vat", "VAT", "=N({amount})-{x_net}"),
+        calc("x_acct", "expense account", f'=IF({{account}}="",{ROLE("other_overhead")},{{account}}&"")'),
+        role("x_vin", "vat_input"), role("x_cust", "custody")]
+    by["Custody Expenses"]["legs"] = [("x_net", "x_acct", "D"), ("x_vat", "x_vin", "D"), ("amount", "x_cust", "C")]
+
+    # Rental pieces bought: to the fleet, paid now from the bank, the rest owed to the supplier
+    by["Rental Stock Lots"]["cols"] += [
+        calc("x_total", "cost", '=IF({source}="opening",0,N({qty})*N({unit_cost}))'),
+        calc("x_paid", "paid", '=IF({paid}="",{x_total},MIN(N({paid}),{x_total}))'),
+        calc("x_unpaid", "owed", "={x_total}-{x_paid}"),
+        role("x_fleet", "rental_fleet"), role("x_bank", "bank"), role("x_ap", "ap")]
+    by["Rental Stock Lots"]["legs"] = [("x_total", "x_fleet", "D"), ("x_paid", "x_bank", "C"), ("x_unpaid", "x_ap", "C")]
+
+    # Rental contracts: our cost of one-time services (installation, transport) for their profit
+    by["Rental Contracts"]["cols"].insert(next(i for i, c in enumerate(by["Rental Contracts"]["cols"]) if c["key"] == "charge_type") + 1,
+                                          C("cost", "Our Cost (charge lines)", "تكلفتنا (للمبالغ)", kind="money",
+                                            note="what the crew / truck costs us — for the services profit"))
+
+    # Sales contracts (one row per line; sale-level amounts on the sale's first row)
+    sc = "Sales Contracts"
+    first = "{x_first}=1"
+    by[sc]["cols"] += [
+        calc("x_price", "unit price", '=IF({price}<>"",N({price}),IFERROR(INDEX([[Products.price]],MATCH({product},[[Products.code]],0)),0))'),
+        calc("x_net", "line net", '=IF({code}="",0,N(IF({qty}="",1,{qty}))*{x_price}-N({discount}))'),
+        calc("x_first", "first row of the sale", f'=IF({{code}}="",0,IF(MATCH({{code}},[[{sc}.code]],0)={{row}}-4,1,0))'),
+        calc("x_on", "booked", f'=IF(AND({first},OR({{confirm}}="Yes",N({{collected}})>0)),1,0)'),
+        calc("x_tnet", "sale net", f'=IF({{x_on}}=1,SUMIFS([[{sc}.x_net]],[[{sc}.code]],{{code}}),0)'),
+        calc("x_vat", "sale VAT", f'=ROUND({{x_tnet}}*{TAXRATE("{vat_code}")},2)'),
+        calc("x_total", "sale total", "={x_tnet}+{x_vat}"),
+        calc("x_sale", "revenue now", '=IF({revenue_on}="delivery",0,1)'),
+        calc("x_every", "months between", '=IF({frequency}="quarterly",3,IF({frequency}="semiannual",6,IF({frequency}="annual",12,1)))'),
+        calc("x_markup", "installment interest", '=IF(AND({x_sale}=1,{plan}="installments"),ROUND(({x_total}-ROUND({x_total}*N({down_pct})/100,2))'
+                                                 '*N({interest})/100*N(IF({n}="",12,{n}))*{x_every}/12,2),0)'),
+        calc("x_ar", "invoiced", "={x_total}*{x_sale}"), calc("x_rev", "revenue", "={x_tnet}*{x_sale}"),
+        calc("x_vatp", "output VAT", "={x_vat}*{x_sale}"), calc("x_col", "collected", "=IF({x_on}=1,N({collected}),0)"),
+        calc("x_colacct", "collected into", f'=IF({{x_sale}}=1,{ROLE("ar")},{ROLE("client_advances")})'),
+        calc("x_earn", "interest earned", "=IF({x_markup}>0,ROUND({x_markup}*MIN(1,{x_col}/({x_total}+{x_markup})),2),0)"),
+        role("x_arac", "ar"), role("x_sales", "product_sales"), role("x_vo", "vat_output"), role("x_idef", "installment_deferred"),
+        role("x_iinc", "installment_income"), calc("x_money", "money account", "=" + money("method")),
+        # cost of sales when the revenue is booked: stock items at their average cost, units / goods at the product's cost
+        calc("x_stk", "stock item", '=IF({product}="","",IFERROR(INDEX([[Products.stock_item]],MATCH({product},[[Products.code]],0))&"",""))'),
+        calc("x_pinv", "inventory account", '=IF({product}="","",IFERROR(INDEX([[Products.inventory_account]],MATCH({product},[[Products.code]],0))&"",""))'),
+        calc("x_cu", "unit cost", '=IF({x_stk}<>"",IFERROR(SUMIFS([[Stock Moves.x_rval]],[[Stock Moves.item]],{x_stk},[[Stock Moves.date]],"<="&{date})'
+                                  '/SUMIFS([[Stock Moves.x_rqty]],[[Stock Moves.item]],{x_stk},[[Stock Moves.date]],"<="&{date}),0),'
+                                  'IF({x_pinv}<>"",N(IFERROR(INDEX([[Products.cost]],MATCH({product},[[Products.code]],0)),0)),0))'),
+        calc("x_cogs", "cost of sales", f'=IF({{code}}="",0,ROUND(N(IF({{qty}}="",1,{{qty}}))*{{x_cu}},2)'
+                                        f'*IFERROR(INDEX([[{sc}.x_on]],MATCH({{code}},[[{sc}.code]],0))*INDEX([[{sc}.x_sale]],MATCH({{code}},[[{sc}.code]],0)),0))'),
+        role("x_cos", "cost_of_sales"),
+        calc("x_cinv", "stock / units account", f'=IF({{x_stk}}<>"",{ROLE("inventory")},IF({{x_pinv}}<>"",{{x_pinv}},{ROLE("goods_inventory")}))')]
+    by[sc]["legs"] = [("x_ar", "x_arac", "D"), ("x_rev", "x_sales", "C"), ("x_vatp", "x_vo", "C"), ("x_markup", "x_arac", "D"),
+                      ("x_markup", "x_idef", "C"), ("x_col", "x_money", "D"), ("x_col", "x_colacct", "C"), ("x_earn", "x_idef", "D"),
+                      ("x_earn", "x_iinc", "C"), ("x_cogs", "x_cos", "D"), ("x_cogs", "x_cinv", "C")]
+
+    # Recurring entries: every period started by the report end date (automatic ones post by themselves in the app)
+    re_ = "Recurring Entries"
+    lim = '{x_lim}'
+    by[re_]["cols"] += [
+        calc("date", "Date (first)", '=IF({start}="","",{start})'),
+        calc("x_lim", "counted until", '=MIN(ReportTo,IF({end_date}="",ReportTo,{end_date}))'),
+        calc("x_n", "times so far", f'=IF(OR({{start}}="",{{start}}>{lim}),0,MIN(IF(N({{max_count}})>0,N({{max_count}}),99999),'
+                                    f'INT(IF({{unit}}="day",{lim}-{{start}},IF({{unit}}="week",({lim}-{{start}})/7,IF({{unit}}="year",'
+                                    f'DATEDIF({{start}},{lim},"y"),DATEDIF({{start}},{lim},"m"))))/MAX(1,N({{every}})))+1))'),
+        calc("x_tot", "total so far", '=IF(OR({doc_type}="depreciation",{mode}<>"auto"),0,{x_n}*N({amount}))'),
+        calc("x_dr", "debit", f'=IF({{account}}<>"",{{account}}&"",IF({{doc_type}}="direct_cost",{ROLE("materials")},IF({{doc_type}}="payroll",'
+                              f'{ROLE("direct_labour")},IF({{doc_type}}="payment",{ROLE("ap")},IF({{doc_type}}="receipt",{ROLE("bank")},'
+                              f'{ROLE("other_overhead")})))))'),
+        calc("x_cr", "credit", f'=IF({{doc_type}}="expense",{ROLE("bank")},IF({{doc_type}}="direct_cost",{ROLE("ap")},IF({{doc_type}}="payroll",'
+                               f'{ROLE("accrued_payroll")},IF({{doc_type}}="payment",{ROLE("bank")},IF({{credit_account}}<>"",{{credit_account}}&"",'
+                               f'{ROLE("revenue")})))))')]
+    # a receipt debits the bank whatever "account" says; its credit is the credit account (or revenue)
+    by[re_]["cols"][-2] = calc("x_dr", "debit", f'=IF({{doc_type}}="receipt",{ROLE("bank")},IF({{account}}<>"",{{account}}&"",'
+                                                 f'IF({{doc_type}}="direct_cost",{ROLE("materials")},IF({{doc_type}}="payroll",{ROLE("direct_labour")},'
+                                                 f'IF({{doc_type}}="payment",{ROLE("ap")},{ROLE("other_overhead")})))))')
+    by[re_]["legs"] = [("x_tot", "x_dr", "D"), ("x_tot", "x_cr", "C")]
+
+    # Service subscriptions: invoices for every period started, longer periods earned month by month
+    ss, sp = "Service Subscriptions", "Service Plans"
+    pl = lambda col, dflt: f'IFERROR(INDEX([[{sp}.{col}]],MATCH({{plan}},[[{sp}.code]],0)),{dflt})'  # noqa: E731
+    plan_vat, plan_rev = pl("vat_code", '""'), pl("revenue_account", '""')
+    by[ss]["cols"] += [
+        calc("date", "Date (start)", '=IF({start}="","",{start})'),
+        calc("x_price", "price", f'=IF({{price}}<>"",N({{price}}),N({pl("price", 0)}))'),
+        calc("x_per", "every (months)", f'=MAX(1,IF({{period_months}}<>"",N({{period_months}}),N({pl("period_months", 1)})))'),
+        calc("x_vatc", "VAT code", f'=IF({{vat_code}}<>"",{{vat_code}}&"",{plan_vat}&"")'),
+        calc("x_racc", "revenue account", f'=IF({plan_rev}&""="",{ROLE("service_revenue")},{plan_rev}&"")'),
+        calc("x_m", "months started", '=IF(OR({start}="",{start}>ReportTo),0,DATEDIF({start},ReportTo,"m")+1)'),
+        calc("x_n", "invoices", '=IF({x_m}=0,0,MIN(INT(({x_m}-1)/{x_per})+1,IF(AND(N({term_months})>0,{auto_renew}="No"),'
+                                'ROUNDUP(N({term_months})/{x_per},0),99999)))'),
+        calc("x_billed", "billed", "={x_n}*{x_price}"),
+        calc("x_vat", "VAT", f'=ROUND({{x_billed}}*{TAXRATE("{x_vatc}")},2)'),
+        calc("x_ar", "receivable", "={x_billed}+{x_vat}"),
+        calc("x_earned", "earned", "=IF({x_per}=1,{x_billed},ROUND({x_price}/{x_per}*MIN({x_n}*{x_per},{x_m}),2))"),
+        calc("x_def", "billed, not yet earned", "={x_billed}-{x_earned}"),
+        calc("x_monthly", "monthly value", '=IF({x_price}=0,0,ROUND({x_price}/{x_per},2))'),
+        calc("x_next", "next invoice", '=IF({start}="","",EDATE({start},{x_n}*{x_per}))'),
+        role("x_arac", "ar"), role("x_sdef", "service_deferred"), role("x_vo", "vat_output")]
+    by[ss]["legs"] = [("x_ar", "x_arac", "D"), ("x_earned", "x_racc", "C"), ("x_def", "x_sdef", "C"), ("x_vat", "x_vo", "C")]
+
+    # Purchase orders: commitments (no money until received): line value and the order's open amount
+    po = "Purchase Orders"
+    by[po]["cols"] += [
+        calc("x_amt", "line value", '=N({qty})*N({rate})'),
+        calc("x_first", "first row", f'=IF({{code}}="",0,IF(MATCH({{code}},[[{po}.code]],0)={{row}}-4,1,0))'),
+        calc("x_order", "order total", f'=IF({{x_first}}=1,SUMIFS([[{po}.x_amt]],[[{po}.code]],{{code}}),0)'),
+        calc("x_received", "received (direct costs)", '=IF({x_first}=1,IFERROR(SUMIFS([[Direct Costs.total]],[[Direct Costs.deal_ref]],{code}),0),0)'),
+        calc("x_open", "still on order", '=IF(AND({x_first}=1,{approved}="Yes"),MAX(0,{x_order}-{x_received}),0)')]
+    return sheets
+
+
 def _yes(v):
     return str(v or "").strip().lower() in ("yes", "y", "true", "1", "نعم")
 
@@ -271,7 +445,7 @@ def rent_contract(db, items, user):
     lines = []
     for _, r in items:
         kind = r.get("line_kind") or ("charge" if r.get("charge_type") else "item")
-        ln = {"kind": kind, "qty": r.get("qty"), "rate": r.get("rate"), "description": r.get("description")}
+        ln = {"kind": kind, "qty": r.get("qty"), "rate": r.get("rate"), "description": r.get("description"), "cost": r.get("cost") or 0}
         if kind == "item":
             ln["item"] = r.get("item")
         elif kind == "kit":

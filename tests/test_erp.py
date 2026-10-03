@@ -2181,6 +2181,61 @@ class ExcelSafety(unittest.TestCase):
         self.assertEqual(wb["Direct Costs"].cell(4, 1).value, "Date")
 
 
+class StandaloneWorkbook(unittest.TestCase):
+    """The Excel workbook keeps its own books: every sheet that moves money posts to its Trial Balance."""
+
+    @unittest.skipUnless(HAVE_XL, "openpyxl not installed")
+    def test_new_sheets_and_postings(self):
+        import io as _io
+        import openpyxl
+        from erp import demo, workbook
+        wb = openpyxl.load_workbook(_io.BytesIO(demo.workbook_bytes(lambda: Database(":memory:"))))
+        for name in ("Receivables", "Budget vs Actual", "Scaffold Calculator"):
+            self.assertIn(name, wb.sheetnames)
+        posting = {s["name"] for s in interchange.SHEETS if s.get("legs")}
+        for name in ("Fixed Assets", "Invoice Lines", "Sales Contracts", "Loans", "Custody Expenses", "Service Subscriptions"):
+            self.assertIn(name, posting)
+        # the report period is always there, even when the given rows leave it out
+        keys = [wb["Settings"].cell(r, 1).value for r in range(5, 8)]
+        self.assertIn("report_to", keys)
+        sc = wb["Scaffold Calculator"]
+        self.assertTrue(any(str(c.value or "").startswith("SERVICES TOTAL") for c in sc["A"]))
+
+    def test_app_export_does_not_book_depreciation_twice(self):
+        db = seeded()
+        assets.save(db, {"code": "FA-T1", "name": "Truck", "account": "1420", "acquired": "2026-01-10", "cost": 120000,
+                         "life_months": 60, "pay": "none"})
+        rows = interchange.export_data(db)["Fixed Assets"]
+        self.assertTrue(rows and all(r["book_depr"] == "No" for r in rows))
+
+    @unittest.skipUnless(HAVE_XL and __import__("shutil").which("soffice"), "LibreOffice not installed")
+    def test_demo_workbook_matches_the_app(self):
+        """Recalculate the demo workbook in LibreOffice and compare its Trial Balance with the same rows imported."""
+        import subprocess
+        import openpyxl
+        from erp import demo, recurring, services
+        sheets = demo.all_sheets(lambda: Database(":memory:"))
+        with tempfile.TemporaryDirectory() as d:
+            src = Path(d) / "demo.xlsx"
+            src.write_bytes(demo.workbook_bytes(lambda: Database(":memory:")))
+            subprocess.run(["soffice", "--headless", "--convert-to", "xlsx", "--outdir", str(Path(d) / "out"), str(src)],
+                           capture_output=True, timeout=600)
+            wb = openpyxl.load_workbook(Path(d) / "out" / "demo.xlsx", data_only=True)
+        st = {r[0]: r[1] for r in wb["Settings"].iter_rows(min_row=5, values_only=True) if r[0]}
+        to = str(st["report_to"])[:10]
+        db = Database(":memory:")
+        interchange.import_data(db, sheets)
+        recurring.run(db, to, "t")
+        services.run(db, to, "t")
+        app = {r["account"]: (r["dr"] - r["cr"]) / 100 for r in db.q(
+            "SELECT l.account, SUM(l.debit) dr, SUM(l.credit) cr FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id "
+            "WHERE e.date<=? AND e.status!='void' GROUP BY l.account", (to,))}
+        xl = {str(r[0]): r[7] or 0 for r in wb["Trial Balance"].iter_rows(min_row=5, values_only=True) if r[0]}
+        for k in set(app) | set(xl):
+            self.assertAlmostEqual(app.get(k, 0), xl.get(k, 0), delta=0.05, msg=f"account {k}")
+        self.assertEqual([c.value for c in wb["Model Audit"]["E"] if c.value][-1], "ALL OK")
+
+
 class Legacy(unittest.TestCase):
     SRC = ROOT.parent / "BEYOND_Accounting_System_V0_6_1.xlsx"
 
