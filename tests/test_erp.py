@@ -894,6 +894,56 @@ class LegacyJournalWorkbook(unittest.TestCase):
         self.assertEqual([(x["number"], x["total"]) for x in a.list_extracts(db)], [("INV-1", 500)])
         self.assertEqual([c["check"] for c in a.audit(db) if not c["ok"]], [])
 
+    @unittest.skipUnless(HAVE_XL, "openpyxl not installed")
+    def test_v14_invoice_sheet_new_accounts_and_measured_basis(self):
+        """V1.4: no Invoice Lines sheet (the register points at 'Invoice 1'), new accounts in the chart, Measured basis."""
+        import openpyxl
+        import tempfile
+        from erp import legacy, interchange
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Master Project Register"
+        ws.append(["Project ID", "Client Name", "Project Type", "Location", "Total Area (Sqm)", "Start Date", "Status",
+                   "Total Contract Value", "Billing Basis / Fee Type", "Supervision Fee %"])
+        ws.append(["PRJ-2026-002", "Villa B", "Villa", "Palm Hills", 950, "2026-09-17", "In Progress", 0, "Measured (BOQ rates)", 0.5757])
+        coa = wb.create_sheet("Chart of Accounts")
+        coa.append(["Code", "Account Name", "Type", "Normal", "Income Statement line"])
+        coa.append(["5040", "Site Preparation", "COGS", "Debit", "Cost of sales"])
+        coa.append(["5045", "Site Survey", "COGS", "Debit", "Cost of sales"])
+        gj = wb.create_sheet("General Journal")
+        gj.append(["JE #", "Date", "Source / Type", "Project", "Stage", "Account", "Description", "Vendor / Party",
+                   "Deal Ref", "Qty", "Unit", "Rate", "Debit", "Credit", "Note", "Alloc Rule", "Account name", "Entry check", "dist #"])
+        for r in (["JE-1", "2026-09-23", "Payroll", "PRJ-2026-002", "All", "5045", "Survey", "Eng", None, 1, "LS", 2900, 2900, None],
+                  ["JE-1", "2026-09-23", "Payroll", "PRJ-2026-002", "All", "1020", "Survey", "Eng", None, None, None, None, None, 2900],
+                  ["JE-2", "2026-09-29", "Client advance", "PRJ-2026-002", "All", "1020", "Advance", "Client", None, None, None, None, 50000, None],
+                  ["JE-2", "2026-09-29", "Client advance", "PRJ-2026-002", "All", "2100", "Advance", "Client", None, None, None, None, None, 50000]):
+            gj.append(r)
+        reg = wb.create_sheet("Invoice Register")
+        reg.append(["Invoice No", "Date", "Project", "Client", "Location", "Type", "Status", "Gross this invoice", "Posted to journal?"])
+        reg.append(["Invoice 01", "2026-09-23", "PRJ-2026-002", "Villa B", "Palm Hills", "Interim", "Draft", 3500, "No — draft"])
+        inv = wb.create_sheet("Invoice 1")
+        inv.append(["BEYOND DESIGN", None, "23/9/2026", "التاريخ"])
+        inv.append(["Villa B", "المشروع"])
+        inv.append(["Palm Hills", "الموقع"])
+        inv.append(["Invoice  01", "الاصدار"])
+        inv.append(["1- أعمال الهدم والبناء"])
+        inv.append(["م", "البيان", "الوحدة", "الكميه بالعقد", "المنفذ فعلي", "السعر", "الاجمالي بالعقد", "الإجمالي الفعلي"])
+        inv.append([1.1, "Walls", "م٢", 10, 4, 500, 5000, 2000])
+        inv.append([1.2, "Not started", "م٢", 5, None, 100, 500, None])
+        inv.append([None, "أعمال مستجدة: extra slab", "مقطوعية", 1, 1, 1500, 0, 1500])
+        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+            wb.save(f.name)
+            data = legacy.read_legacy_workbook(f.name)
+        self.assertEqual(data["Business Units"][0]["basis"], "Fixed Price")
+        self.assertEqual([(x["item_no"], x["qty"], x["price"]) for x in data["Invoice Lines"]],
+                         [("1.1", 4, 500), ("V-01", 1, 1500)])
+        db = Database(":memory:")
+        interchange.import_data(db, data, mode="replace")
+        tb = {r["code"]: round(r["debit"] - r["credit"], 2) for r in a.trial_balance(db)["rows"]}
+        self.assertEqual((tb["5045"], tb["2100"]), (2900, -50000))
+        self.assertEqual(db.one("SELECT kind FROM journal_entries WHERE ref='JE-2'")["kind"], "Receipt Voucher")
+        self.assertEqual([(x["number"], x["total"]) for x in a.list_extracts(db)], [("Invoice 01", 3500)])
+
 
 class DemoCompany(unittest.TestCase):
     """The demo company loads in one go through the import sheets and touches every module; its workbook re-imports."""

@@ -30,7 +30,8 @@ V13_ACCOUNTS = {"1150": "1180",            # accrued revenue receivable (unbille
 V13_KINDS = {"project cost": "Direct Cost", "collection": "Receipt Voucher", "payroll": "Payroll Accrual",
              "distribution": "Owner Drawing", "supplier payment": "Payment Voucher", "overhead": "Operating Expense",
              "custody": "Journal Voucher", "adjustment": "Journal Voucher", "accrual (auto)": "Journal Voucher",
-             "partner funding (auto)": "Capital Contribution"}
+             "partner funding (auto)": "Capital Contribution", "client advance": "Receipt Voucher",
+             "invoice (auto)": "Journal Voucher"}
 
 
 def _v(x):
@@ -132,12 +133,16 @@ def read_legacy_workbook(path):
                 status = _v(_get(row, _col(h, "status")))
                 contract = _get(row, _col(h, "contract value"))
                 codes.add(code)
+                if str(basis or "").lower().startswith("measured"):
+                    notes.append(f"{code}: billing basis '{basis}' (V1.4) imported as Fixed Price — revenue comes from its "
+                                 "measured BOQ invoices, exactly like the workbook.")
                 data["Business Units"].append({
                     "code": code, "name": name, "type": "" if _v(_get(row, _col(h, "project type"))) == "TBD"
                     else _v(_get(row, _col(h, "project type"))) or "", "location": _v(_get(row, _col(h, "location"))) or "",
                     "area": _f(_get(row, _col(h, "area"))), "start_date": _date(_get(row, _col(h, "start date"))),
                     "status": "In Progress" if status in (None, "TBD") else status,
-                    "basis": basis if basis in acc.BILLING_BASES else "Cost-Plus %",
+                    "basis": basis if basis in acc.BILLING_BASES else
+                    "Fixed Price" if str(basis or "").lower().startswith("measured") else "Cost-Plus %",
                     "fee_pct": _f(_get(row, _col(h, "fee %"))),
                     "contract_value": contract if isinstance(contract, (int, float)) else ""})
             break
@@ -322,6 +327,7 @@ def read_legacy_workbook(path):
             break
 
     if journal_mode:
+        _read_new_accounts(sheet("chart of accounts"), data, notes)
         _read_journal(wb, gj, data, notes, codes)
         _read_invoice_register(wb, data, notes)
     _read_boq_and_invoices(wb, data, notes, register=journal_mode)
@@ -388,6 +394,35 @@ def _account_v13(code, roles):
     return roles.get(m[5:], code) if m.startswith("role:") else m
 
 
+_COA_SUBTYPE = {"Asset": "other_current_asset", "Liability": "other_current_liability", "Equity": "other_equity",
+                "Revenue": "operating_revenue", "COGS": "cogs", "Expense": "other_operating"}
+
+
+def _read_new_accounts(ws, data, notes):
+    """Accounts the workbook added (e.g. V1.4's 5045 Site Survey) that the app's chart does not have yet."""
+    if ws is None:
+        return
+    from .db import DEFAULT_ACCOUNTS
+    known = {c for c, *_ in DEFAULT_ACCOUNTS} | set(V13_ACCOUNTS)
+    added = []
+    for hr, h in _headers(ws, ["code", "account name", "type"], scan=10):
+        for row in ws.iter_rows(min_row=hr + 1, values_only=True):
+            code, name, typ = (_v(_get(row, _col(h, k))) for k in ("code", "account name", "type"))
+            code = str(code or "").strip()
+            if not code.isdigit() or not name or code in known or typ not in _COA_SUBTYPE:
+                continue
+            line = str(_v(_get(row, _col(h, "income statement"))) or "").lower()
+            sub = _COA_SUBTYPE[typ]
+            if typ == "Expense":
+                sub = ("employee" if "employee" in line else "general_admin" if "g&a" in line else
+                       "depreciation" if "depreciation" in line else "interest" if "interest" in line else sub)
+            data.setdefault("Chart of Accounts", []).append({"code": code, "name": name, "type": typ, "subtype": sub})
+            added.append(f"{code} {name}")
+        break
+    if added:
+        notes.append("Accounts added from the workbook's chart of accounts: " + ", ".join(added) + ".")
+
+
 def _read_journal(wb, ws, data, notes, codes):
     """V1.3+: the General Journal is the single source of truth — every JE becomes one voucher, line for line."""
     from .db import DEFAULT_ACCOUNTS
@@ -450,7 +485,7 @@ def _read_invoice_register(wb, data, notes):
     data.setdefault("Invoice Lines", [])
     reg = next((ws for ws in wb.worksheets if ws.title.lower() == "invoice register"), None)
     lines = next((ws for ws in wb.worksheets if ws.title.lower() == "invoice lines"), None)
-    if reg is None or lines is None:
+    if reg is None:
         return
     codes = {b["code"]: b for b in data["Business Units"]}
     for hr, h in _headers(reg, ["invoice no", "project"], scan=10):
@@ -465,9 +500,14 @@ def _read_invoice_register(wb, data, notes):
             ret = _f(_get(row, _col(h, "retention held")))
             extra = (f" Its advance recovery ({abs(adv):,.2f}) and retention ({abs(ret):,.2f}) are not on the app invoice — "
                      "settle them against client advances / retention with a receipt or journal voucher.") if adv or ret else ""
-            notes.append(f"Invoice '{num}' ({bu}, {status} in the workbook) imported as a DRAFT with all its lines — check it "
-                         f"under Sales Invoices and press 'Save & post' when it is issued.{extra}")
+            posted = str(_v(_get(row, _col(h, "posted to journal"))) or "").lower().startswith("yes")
+            tail = (" It is already in the General Journal (the workbook posted it), so do NOT post it again — keep it as "
+                    "the invoice document only.") if posted else " Check it under Sales Invoices and press 'Save & post' when it is issued."
+            notes.append(f"Invoice '{num}' ({bu}, {status} in the workbook) imported as a DRAFT with all its lines.{tail}{extra}")
         break
+    if lines is None:   # V1.4: no Invoice Lines sheet — each invoice's lines are on its own 'Invoice N' sheet
+        _invoice_sheet_lines(wb, data, notes)
+        return
     for hr, h in _headers(lines, ["invoice no", "description", "qty this invoice"], scan=10):
         for row in lines.iter_rows(min_row=hr + 1, values_only=True):
             num = _v(_get(row, _col(h, "invoice no")))
@@ -481,6 +521,53 @@ def _read_invoice_register(wb, data, notes):
                                           "unit": _v(_get(row, _col(h, "unit"))) or "", "qty": qty,
                                           "price": _f(_get(row, _col(h, "rate")))})
         break
+
+
+def _norm_invoice(v):
+    """'Invoice 01', 'Invoice  1', sheet 'Invoice 1' -> 'invoice1'."""
+    t = re.sub(r"\s+", "", str(v or "")).lower()
+    return re.sub(r"0+(\d)", r"\1", t)
+
+
+def _invoice_sheet_lines(wb, data, notes):
+    """V1.4: the register's invoice No. points at its sheet ('Invoice 01' = the 'Invoice 1' sheet); the executed
+    quantities on that sheet are the invoice's lines."""
+    sheets = {}
+    for ws in wb.worksheets:
+        if ws.title.lower().startswith("invoice") and ws.title.lower() not in ("invoice register", "invoice lines", "invoice print"):
+            sheets[_norm_invoice(ws.title)] = ws
+            sheets.setdefault(_norm_invoice(_meta_value(ws, ["الاصدار", "الإصدار", "Revision"])), ws)
+    for inv in data["Sales Invoices"]:
+        ws = sheets.get(_norm_invoice(inv["number"]))
+        if ws is None:
+            notes.append(f"Invoice '{inv['number']}': no sheet with its lines was found — add the lines in the app.")
+            continue
+        inv["boq_title"] = f"Contract BOQ — {inv['number']}"
+        n, var, category, started = 0, 0, "", False
+        for row in ws.iter_rows(values_only=True):
+            first = str(_v(row[0]) or "")
+            if first == "م":
+                started = True
+                continue
+            m = _SECTION.match(first)
+            if m and not _v(row[1] if len(row) > 1 else None):
+                category = m.group(1).strip()
+                continue
+            if not started or len(row) < 6 or not _v(row[1]):
+                continue
+            ex, price = _f(row[4]), _f(row[5])
+            if not ex or not price:
+                continue
+            item = first.replace(" ", "")
+            if not _ITEM.match(item):          # a variation: work that was never in the BOQ (no item number)
+                var += 1
+                item = f"V-{var:02d}"
+            data["Invoice Lines"].append({"number": inv["number"], "category": category, "item_no": item,
+                                          "description": str(_v(row[1])).strip(), "unit": _v(row[2]) or "", "qty": ex,
+                                          "price": price})
+            n += 1
+        notes.append(f"Invoice '{inv['number']}': {n} executed lines read from the '{ws.title}' sheet"
+                     + (f", {var} of them variations outside the BOQ (numbered V-01…)." if var else "."))
 
 
 def _read_boq_and_invoices(wb, data, notes, register=False):

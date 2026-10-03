@@ -570,6 +570,10 @@ def export_data(db):
 
     # journal-based documents
     accounts = {a["code"]: a for a in db.q("SELECT * FROM accounts")}
+    # keep the company's own voucher numbers (e.g. JE-0001) when each belongs to one entry only
+    refs = {}
+    for r in db.q("SELECT ref, COUNT(*) n FROM journal_entries WHERE status='posted' AND ref<>'' GROUP BY ref"):
+        refs[r["ref"]] = r["n"]
     for e in (acc.get_entry(db, r["id"]) for r in
               db.q("SELECT id FROM journal_entries WHERE status='posted' ORDER BY date, id")):
         if e["id"] in invoice_entries or e["id"] in stock_entries:
@@ -580,7 +584,8 @@ def export_data(db):
             out[sheet].append(data)
         else:
             for ln in e["lines"]:
-                out["Journal Vouchers"].append({"voucher": f"JV-{e['id']}", "date": e["date"], "kind": e["kind"],
+                vno = e["ref"] if e["ref"] and refs.get(e["ref"]) == 1 and len(e["ref"]) <= 30 else f"JV-{e['id']}"
+                out["Journal Vouchers"].append({"voucher": vno, "date": e["date"], "kind": e["kind"],
                                                 "bu_code": e["bu_code"] or "", "party": e["party"], "ref": e["ref"],
                                                 "memo": e["memo"], "account": ln["account"],
                                                 "debit": ln["debit"] or "", "credit": ln["credit"] or "",

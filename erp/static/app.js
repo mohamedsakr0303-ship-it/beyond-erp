@@ -133,6 +133,15 @@ function applyLook() {
   de.dataset.sidebar = ap.sidebar || "light"; de.dataset.density = ap.density || "comfortable"; de.dataset.corners = ap.corners || "rounded";
   document.title = (ap.app_name || ((st.company_name || "Beyond") + " ERP"));
 }
+// Settings → Menus presets: the sections a kind of business usually does not use (ticks only; nothing is saved until Save)
+const HIDE_PRESETS = {
+  all: { en: "Everything (show all sections)", ar: "كل الأقسام", hide: [] },
+  interior: { en: "Interior design & contracting", ar: "تصميم داخلي ومقاولات",
+    hide: ["rentals", "shop", "stock", "assets", "accounting.loans", "accounting.bankrec", "accounting.recurring", "accounting.budgets", "purchasing.orders"] },
+  rental: { en: "Equipment & scaffolding rental", ar: "تأجير المعدات والسقالات", hide: ["shop", "estimating"] },
+  realestate: { en: "Real estate & showroom sales", ar: "عقارات ومعارض بيع", hide: ["rentals", "estimating", "business_units.allocation"] },
+  trading: { en: "Trading / distribution", ar: "تجارة وتوزيع", hide: ["rentals", "estimating", "business_units", "shop.subscriptions"] },
+};
 const hiddenMods = () => (S.boot && S.boot.settings && S.boot.settings.hidden_modules) || [];
 // hidden for everyone in Settings → Menus: a whole section ("sales") or one screen ("sales.offers")
 const shown = key => !hiddenMods().includes(String(key).split(".")[0]) && !hiddenMods().includes(String(key));
@@ -4986,7 +4995,10 @@ function entryOptionCards() {
   const hideCard = `<div class="card"><h2>${L2("Show or hide sections and screens", "إظهار أو إخفاء الأقسام والشاشات")}</h2><p class="muted">${t("hidden_note")}</p><div class="grid g4">
     ${secs.map(m => `<div><label class="f chk"><input type="checkbox" class="hidmod" value="${m}" ${hid.includes(m) ? "" : "checked"} ${ed ? "" : "disabled"}><b>${t("mod_" + m)}</b></label>
       ${(subs[m] || []).map(sc => `<label class="f chk" style="margin-inline-start:22px"><input type="checkbox" class="hidmod" value="${m}.${sc}" ${hid.includes(m + "." + sc) ? "" : "checked"} ${ed ? "" : "disabled"}>${esc(t(window.SUBPERM[m + "." + sc] || sc))}</label>`).join("")}</div>`).join("")}</div>
-    ${ed ? `<div class="row" style="margin-top:10px"><button class="btn" data-a="hidsave">${t("save")}</button></div>` : ""}</div>`;
+    ${ed ? `<div class="row" style="margin-top:10px"><select id="hidpreset" class="in" style="max-width:280px"><option value="">${L2("Start from a business type…", "ابدأ من نوع النشاط…")}</option>
+      ${Object.keys(HIDE_PRESETS).map(k => `<option value="${k}">${esc(L2(HIDE_PRESETS[k].en, HIDE_PRESETS[k].ar))}</option>`).join("")}</select>
+      <button class="btn" data-a="hidsave">${t("save")}</button></div>
+      <p class="muted" style="margin-top:6px">${L2("The Excel workbook and import template follow these switches: sheets of hidden sections are hidden there too.", "ملف الإكسل وقالب الاستيراد يتبعان هذه الاختيارات: أوراق الأقسام المخفية تُخفى أيضاً.")}</p>` : ""}</div>`;
   const items = newMenuItems();
   const menuCard = `<div class="card"><h2>${L2("“+ New” menu", "قائمة «+ جديد»")}</h2><p class="muted">${L2("Tick what appears under “+ New” and put it in order. Entry types you add below can be put here too. People only see what their permissions allow.", "اختر ما يظهر تحت «+ جديد» ورتّبه. يمكن إضافة أنواع القيود التي تنشئها بالأسفل أيضاً. كل مستخدم يرى ما تسمح به صلاحياته فقط.")}</p>
     <div class="tbl"><table id="nmtab"><tbody>${items.map(i => `<tr data-key="${esc(i.key)}"><td style="width:36px"><input type="checkbox" class="nm-show" ${i.show ? "checked" : ""} ${ed ? "" : "disabled"}></td><td>${esc(i.label)}${i.entry ? ` <span class="chip">${L2("entry type", "نوع قيد")}</span>` : ""}</td>
@@ -5001,6 +5013,9 @@ function entryOptionCards() {
 }
 function entryOptionWire(view) {
   const after = async () => { await refreshBoot(); renderShell(); route(); toast(t("saved")); };
+  const pre = $("#hidpreset", view);
+  if (pre) pre.onchange = () => { const p = HIDE_PRESETS[pre.value]; if (!p) return;
+    $$(".hidmod", view).forEach(i => { i.checked = !p.hide.includes(i.value); }); };
   S.H.hidsave = async () => { try { await api("PUT", "/api/settings", { hidden_modules: $$(".hidmod", view).filter(i => !i.checked).map(i => i.value) }); await after(); } catch (e) { fail(e); } };
   S.H.nmup = el => { const tr = el.closest("tr"); if (tr.previousElementSibling) tr.parentNode.insertBefore(tr, tr.previousElementSibling); };
   S.H.nmdown = el => { const tr = el.closest("tr"); if (tr.nextElementSibling) tr.parentNode.insertBefore(tr.nextElementSibling, tr); };

@@ -11,11 +11,12 @@ formulas (grouped/collapsed), Arial throughout.
 """
 import datetime as _dt
 import io
+import json
 import re
 
 from . import accounting as acc
 from .db import SUBTYPES, to_major
-from .interchange import FIRST_DATA_ROW, HEADER_ROW, POSTING_SHEETS, ROLE, SHEETS, export_data, input_cols
+from .interchange import FIRST_DATA_ROW, HEADER_ROW, POSTING_SHEETS, ROLE, SHEET_BY_NAME, SHEETS, export_data, input_cols
 
 # the original BEYOND workbook palette (V0.6.1): navy headers, light-blue bands, brown cover
 NAVY, BAND, LIGHT, GREY, BLUE = "1F2A44", "DCE6F1", "F2F2F2", "EDEDED", "0000FF"
@@ -93,7 +94,7 @@ def q(name):
     return f"'{name}'"
 
 
-def build_workbook(db, template=False, data=None):
+def build_workbook(db, template=False, data=None, hide=None):
     _need()
     from openpyxl import Workbook
     from openpyxl.comments import Comment
@@ -127,33 +128,6 @@ def build_workbook(db, template=False, data=None):
     cover.column_dimensions["A"].width = 3
     cover.column_dimensions["B"].width = 34
     cover.column_dimensions["C"].width = 70
-    cover["B2"] = company
-    cover["B2"].font = F(bold=True, size=22, color=NAVY)
-    cover["B3"] = db.setting("company_tagline", "")
-    cover["B3"].font = F(size=12, color="555555")
-    cover["B4"] = "ERP workbook — books, statements and import template  |  دفتر الحسابات والقوائم المالية وقالب الاستيراد"
-    cover["B4"].font = F(size=11, bold=True)
-    cover["B5"] = f"Generated {_dt.datetime.now():%Y-%m-%d %H:%M} · all amounts in {currency}" + \
-                  (" · EMPTY TEMPLATE" if template else "")
-    cover["B5"].font = F(size=9, color="777777")
-    legend = [("How to use", "Enter data only in the data sheets (blue text). Statements recalculate automatically. "
-                             "Import the whole file back into the app from Import & Export (same sheet and column names)."),
-              ("Report period", "Change report_from / report_to on the Settings sheet (rows 5–6)."),
-              ("Blue text", "Input cells — safe to edit."), ("Black text", "Formulas — do not overwrite."),
-              ("Grey columns", "Helper formulas (collapsed with [+]); copy them down if you add rows beyond the prepared ones."),
-              ("Row 3 (grey italic)", "An example of the expected format in every data sheet — not imported."),
-              ("Accounts", "Leave account columns blank to use the defaults (by system role), or pick a code."),
-              ("Model Audit", "Must show OK on every line before you rely on the statements.")]
-    r = 7
-    for k, v in legend:
-        cover.cell(r, 2, k).font = F(bold=True)
-        cover.cell(r, 3, v).font = F(color=BLUE if k == "Blue text" else "111111")
-        cover.cell(r, 3).alignment = Alignment(wrap_text=True, vertical="top", horizontal="left", readingOrder=1)
-        r += 1
-    r += 1
-    cover.cell(r, 2, "Sheets / الأوراق").font = F(bold=True, size=12, color=NAVY)
-    r += 1
-    index_row = r
 
     # hidden list sheet for validations
     lists = wb.create_sheet("Lists")
@@ -888,41 +862,15 @@ def build_workbook(db, template=False, data=None):
     au.cell(4 + len(checks) + 1, 5, f'=IF(COUNTIF(E4:E{3 + len(checks)},"OK")={len(checks)},"ALL OK","REVIEW")')
     au.cell(4 + len(checks) + 1, 5).font = F(bold=True, color=NAVY)
 
-    # ---------------------------------------------------------- cover index
-    r = index_row
-    order = ["Settings", "Chart of Accounts", "Tax Codes", "Business Units", "Parties", "Partners", "Partner Shares",
-             "Fixed Assets", "Warehouses", "Products",
-             "Stock Items", "Price List", "BOQ Lines", "Direct Costs", "Operating Expenses", "Payroll",
-             "Receipt Vouchers", "Sales Invoices", "Invoice Lines", "Payment Vouchers", "Partner Transactions",
-             "Stock Moves", "Journal Vouchers", "Trial Balance", "Income Statement", "Balance Sheet", "Cash Flow",
-             "Tax Summary", "BU Profitability", "Partner Equity", "Payables", "Receivables", "Budget vs Actual", "Quick Estimator", "Scaffold Calculator",
-             "Model Audit"]
-    order[order.index("Trial Balance"):order.index("Trial Balance")] = [s["name"] for s in SHEETS if s["name"] not in order]
-    descs = {s["name"]: s["title"] for s in SHEETS}
-    descs.update({"Trial Balance": "ميزان المراجعة — opening, period movement, closing per account",
-                  "Income Statement": "قائمة الدخل — Net sales → Gross profit → EBITDA → EBIT → EBT → Net profit",
-                  "Balance Sheet": "الميزانية العمومية — as of the report end date",
-                  "Cash Flow": "قائمة التدفقات النقدية — indirect method, reconciled to cash",
-                  "BU Profitability": "ربحية وحدات الأعمال — incl. allocated shared overhead",
-                  "Tax Summary": "ملخص الضرائب — output / input VAT, net VAT due, withholding balances",
-                  "Partner Equity": "حقوق الشركاء — profit share, reserve, drawings, balance",
-                  "Payables": "أرصدة الدائنين — what is owed to each supplier / worker",
-                  "Receivables": "أرصدة العملاء — what each customer owes, less advances",
-                  "Budget vs Actual": "الموازنة مقابل الفعلي — budget for the report period against the books",
-                  "Quick Estimator": "التسعير السريع — price a scope from the price list",
-                  "Scaffold Calculator": "حاسبة السقالات — pieces, weight and monthly rent from a façade's length × height",
-                  "Model Audit": "مراجعة النموذج — integrity checks (must all be OK)"})
-    for name in order:
-        c = cover.cell(r, 2, name)
-        c.hyperlink = f"#'{name}'!A1"
-        c.font = F(color="1155CC", underline="single")
-        cover.cell(r, 3, descs.get(name, "")).font = F(size=9)
-        cover.cell(r, 3).alignment = Alignment(horizontal="left", readingOrder=1)
-        r += 1
-    r += 1
-    cover.cell(r, 2, "Audit status / حالة المراجعة").font = F(bold=True)
-    cover.cell(r, 3, f"='Model Audit'!E{4 + len(checks) + 1}").font = F(bold=True, color=NAVY)
-
+    audit_ref = f"'Model Audit'!$E${4 + len(checks) + 1}"
+    # ---------------------------------------------------------- dashboard
+    # sheets of sections this company switched off (Settings → Menus) are hidden — unless they hold data
+    hide = _hide_list(db, hide)
+    hidden = _hidden_sheets(db, wb, data, hide)
+    _dashboard(wb, data, colmap, POSTING_SHEETS, rng, pl_refs, bs_refs, n_bu, audit_ref, currency, F, fill, L, hide)
+    wb.move_sheet("Dashboard", offset=-(len(wb.sheetnames) - 2))
+    for name in hidden:
+        wb[name].sheet_state = "hidden"
     # sheet order: put statements after data
     wb.move_sheet("Lists", offset=len(wb.sheetnames))
     for ws in wb.worksheets:
@@ -948,13 +896,15 @@ def build_workbook(db, template=False, data=None):
         wb[name].print_area = f"A1:{'J' if name == 'Trial Balance' else 'C'}{wb[name].max_row}"
     english_labels(wb)
     classic_style(wb, company)
+    _cover(wb, cover, company, db.setting("company_tagline", ""), template, currency, audit_ref, hidden, F, fill)
+    _polish(wb, data, fill)
     wb.calculation.fullCalcOnLoad = True
     check_formula_limits(wb)
     buf = io.BytesIO()
     wb.save(buf)
     from . import branding, documents
     return documents.inject_xlsx_images(buf.getvalue(), branding.logo_for(db, "workbook"),
-                                        branding.watermark_for(db, "workbook"), sheet_name="Cover", col=6, row=1, px=90)
+                                        branding.watermark_for(db, "workbook"), sheet_name="Cover", col=4, row=2, px=110)
 
 
 _AR_SEGMENT = re.compile(r"\s*[/|—]\s*[^/|A-Za-z]*[\u0600-\u06FF][^/|]*")
@@ -1009,6 +959,9 @@ def classic_style(wb, company):
     brand = (company or "BEYOND DESIGN").upper()
     for ws in wb.worksheets:
         if ws.title == "Lists":
+            continue
+        if ws.title == "Dashboard":
+            ws["A1"].value = f"{brand}  |  DASHBOARD"
             continue
         if ws.title == "Cover":
             ws.sheet_properties.tabColor = BROWN
@@ -1296,3 +1249,351 @@ def _budget_sheet(wb, colmap, F, fill, NAVY, BLUE, MONEY, PCT, L):
         c.number_format, c.font = MONEY, F(bold=True)
     ws.column_dimensions["K"].width, ws.column_dimensions["L"].width = 18, 16
 
+
+
+# ------------------------------------------------------------------ sections a company does not use
+# report / tool sheets that belong to one section of the app (data sheets carry their own "module")
+EXTRA_SHEET_MODULE = {"Scaffold Calculator": "rentals.calculator", "Quick Estimator": "estimating", "Budget vs Actual": "accounting.budgets",
+                      "Receivables": "sales.receivables", "Payables": "purchasing.payables", "Partner Equity": "partners",
+                      "Tax Summary": "tax", "BU Profitability": "business_units.profitability"}
+NEVER_HIDDEN = {"Cover", "Dashboard", "Settings", "Chart of Accounts", "Journal Vouchers", "Trial Balance", "Income Statement",
+                "Balance Sheet", "Cash Flow", "Model Audit"}
+
+
+def _hide_list(db, hide=None):
+    if hide is None:
+        try:
+            hide = json.loads(db.setting("hidden_modules") or "[]")
+        except ValueError:
+            hide = []
+    return set(hide or [])
+
+
+def _hidden_sheets(db, wb, data, hide=None):
+    """Sheets of the sections switched off in Settings → Menus (or `hide`, a list of 'module' / 'module.screen').
+    A sheet that holds rows is never hidden, so nothing in the books disappears from view."""
+    from .importkit import SHEET_PERM as SHEET_MODULE
+    hide = _hide_list(db, hide)
+    if not hide:
+        return []
+    out = []
+    for ws in wb.worksheets:
+        name = ws.title
+        rows = data.get(name) or []
+        if name == "Warehouses" and len(rows) <= 1:   # only the default store: not data anyone typed
+            rows = []
+        if name in NEVER_HIDDEN or ws.sheet_state != "visible" or rows:
+            continue
+        sheet = SHEET_BY_NAME.get(name)
+        key = EXTRA_SHEET_MODULE.get(name) or SHEET_MODULE.get(name) or (sheet or {}).get("module") or ""
+        if not key:
+            continue
+        if key in hide or key.split(".")[0] in hide or ((sheet or {}).get("module") in hide):
+            out.append(name)
+    return out
+
+
+# ------------------------------------------------------------------ dashboard
+DASH_BAR, DASH_TILE, DASH_LINE = "2E4A6B", "F3F6FA", "D5DDE8"
+
+
+def _dashboard(wb, data, colmap, posting, rng, pl_refs, bs_refs, n_bu, audit_ref, currency, F, fill, L, hide=()):
+    """One page with the position, the period's results, each business unit, the months and where the money went —
+    all formulas over the statements, so it follows every change."""
+    from openpyxl.chart import BarChart, Reference
+    from openpyxl.formatting.rule import FormulaRule
+    from openpyxl.styles import Alignment, Border, Side
+    ws = wb.create_sheet("Dashboard")
+    ws.sheet_view.showGridLines = False
+    ws.sheet_properties.tabColor = "C9A227"
+    ws.column_dimensions["A"].width = 2
+    for i in range(2, 14):
+        ws.column_dimensions[L(i)].width = 11.5
+    ws["A1"] = "Dashboard"
+    ws["A1"].font = F(bold=True, size=16, color=NAVY)
+    ws["A2"] = ('="Live from the books for "&TEXT(ReportFrom,"dd mmm yyyy")&" – "&TEXT(ReportTo,"dd mmm yyyy")&'
+                f'"  ·  {currency}  ·  change the period on the Settings sheet"')
+    ws["A2"].font = F(size=9, italic=True, color="666666")
+    line = Side(style="thin", color=DASH_LINE)
+    center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    def bar(r, text):
+        for c in range(2, 14):
+            ws.cell(r, c).fill = fill(DASH_BAR)
+        ws.cell(r, 2, text).font = F(bold=True, size=10, color="FFFFFF")
+        ws.row_dimensions[r].height = 20
+
+    def span(r, c1, c2, value=None, fmt=None, font=None, bg=None, align=None):
+        if c2 > c1:
+            ws.merge_cells(start_row=r, start_column=c1, end_row=r, end_column=c2)
+        cell = ws.cell(r, c1, value)
+        if fmt:
+            cell.number_format = fmt
+        if font:
+            cell.font = font
+        for c in range(c1, c2 + 1):
+            if bg:
+                ws.cell(r, c).fill = fill(bg)
+            ws.cell(r, c).border = Border(bottom=line)
+        cell.alignment = align or Alignment(vertical="center")
+        return cell
+
+    def tiles(r, items):
+        for i, (label, formula, fmt) in enumerate(items):
+            c1 = 2 + 2 * i
+            span(r, c1, c1 + 1, label.upper(), font=F(bold=True, size=8, color="FFFFFF"), bg=NAVY, align=center)
+            span(r + 1, c1, c1 + 1, formula, fmt, F(bold=True, size=15, color=NAVY), DASH_TILE, center)
+        ws.row_dimensions[r].height = 26
+        ws.row_dimensions[r + 1].height = 34
+
+    tb = "'Trial Balance'"
+    bal = lambda sub, sign=1: f"={'-' if sign < 0 else ''}SUMIFS({tb}!$H:$H,{tb}!$D:$D,\"{sub}\")"  # noqa: E731
+    IS = lambda k: f"='Income Statement'!$B${pl_refs[k]}"  # noqa: E731
+    bar(4, '="POSITION ON "&UPPER(TEXT(ReportTo,"dd mmm yyyy"))')
+    tiles(5, [("Cash & bank", bal("cash"), MONEY), ("Clients owe us", bal("receivable"), MONEY),
+              ("Work done, not invoiced", f"=SUMIFS({tb}!$H:$H,{tb}!$A:$A,\"1180\")", MONEY),
+              ("We owe suppliers", bal("payable", -1), MONEY), ("Client advances held", bal("deferred_revenue", -1), MONEY),
+              ("Stock & goods", bal("inventory"), MONEY)])
+    bar(8, "RESULTS FOR THE PERIOD")
+    tiles(9, [("Net sales", IS("net_sales"), MONEY), ("Gross profit", IS("gp"), MONEY), ("EBITDA", IS("ebitda"), MONEY),
+              ("Net profit", IS("net"), MONEY),
+              ("Gross margin", f"=IFERROR('Income Statement'!$B${pl_refs['gp']}/'Income Statement'!$B${pl_refs['net_sales']},0)", PCT),
+              ("Net margin", f"=IFERROR('Income Statement'!$B${pl_refs['net']}/'Income Statement'!$B${pl_refs['net_sales']},0)", PCT)])
+    st = span(12, 2, 13, f'="Books integrity (Model Audit):  "&{audit_ref}&"     ·     open the Model Audit sheet for the detail"',
+              font=F(bold=True, size=10), align=center)
+    st.hyperlink = "#'Model Audit'!A1"
+    ws.row_dimensions[12].height = 22
+    ws.conditional_formatting.add("B12:M12", FormulaRule(formula=[f'ISNUMBER(SEARCH("ALL OK",{audit_ref}))'], fill=fill("E3F4E8"),
+                                                         font=F(bold=True, color="1E7B34")))
+    ws.conditional_formatting.add("B12:M12", FormulaRule(formula=[f'NOT(ISNUMBER(SEARCH("ALL OK",{audit_ref})))'],
+                                                         fill=fill("FDE7E7"), font=F(bold=True, color="B42318")))
+
+    # ---- business units
+    r = 14
+    bar(r, "PROJECTS / BUSINESS UNITS  (period results, after shared overhead)")
+    heads = [("Code", 2, 2), ("Name", 3, 5), ("Revenue", 6, 7), ("Direct costs", 8, 9), ("Overhead", 10, 11), ("Net profit", 12, 12),
+             ("Margin", 13, 13)]
+    for h, c1, c2 in heads:
+        span(r + 1, c1, c2, h, font=F(bold=True, size=9, color=NAVY), bg="E6ECF4", align=center)
+    n_rows = max(len(data.get("Business Units") or []) + 2, 5)
+    bu = "'BU Profitability'"
+    for k in range(n_rows):
+        rr, src = r + 2 + k, 5 + k
+        span(rr, 2, 2, f'={bu}!A{src}', font=F(size=9, bold=True))
+        span(rr, 3, 5, f'={bu}!B{src}', font=F(size=9))
+        span(rr, 6, 7, f'=IF($B{rr}="","",{bu}!C{src})', MONEY, F(size=9))
+        span(rr, 8, 9, f'=IF($B{rr}="","",{bu}!D{src})', MONEY, F(size=9))
+        span(rr, 10, 11, f'=IF($B{rr}="","",{bu}!E{src}+{bu}!G{src})', MONEY, F(size=9))
+        span(rr, 12, 12, f'=IF($B{rr}="","",{bu}!H{src})', MONEY, F(size=9, bold=True))
+        span(rr, 13, 13, f'=IF($B{rr}="","",{bu}!I{src})', PCT, F(size=9))
+    tr = r + 2 + n_rows
+    span(tr, 2, 5, "TOTAL", font=F(bold=True, size=9), bg="E6ECF4")
+    for c1, c2, col in ((6, 7, "C"), (8, 9, "D"), (10, 11, None), (12, 12, "H")):
+        f = f"={bu}!E{5 + n_bu}+{bu}!G{5 + n_bu}" if col is None else f"={bu}!{col}{5 + n_bu}"
+        span(tr, c1, c2, f, MONEY, F(bold=True, size=9), "E6ECF4")
+    span(tr, 13, 13, f"=IFERROR(L{tr}/F{tr},0)", PCT, F(bold=True, size=9), "E6ECF4")
+
+    # ---- months of the report year (helpers in hidden columns V:Z keep each formula short)
+    r = tr + 2
+    bar(r, '="REVENUE AND COSTS BY MONTH — "&YEAR(ReportTo)')
+    for h, c1, c2 in (("Month", 2, 3), ("Revenue", 4, 5), ("Costs", 6, 7), ("Net", 8, 9), ("", 10, 13)):
+        span(r + 1, c1, c2, h, font=F(bold=True, size=9, color=NAVY), bg="E6ECF4", align=center)
+
+    def month_sum(key, a, b):
+        return "+".join(f'SUMIFS({rng(sh["name"], key)},{rng(sh["name"], "date")},">="&{a},{rng(sh["name"], "date")},"<="&{b})'
+                        for sh in posting if key in colmap[sh["name"]]) or "0"
+    m0 = r + 2
+    for m in range(12):
+        rr = m0 + m
+        ws.cell(rr, 22, f"=DATE(YEAR(ReportTo),{m + 1},1)").number_format = DATE
+        ws.cell(rr, 23, f"=EOMONTH(V{rr},0)").number_format = DATE
+        ws.cell(rr, 24, "=" + month_sum("_rev", f"$V{rr}", f"$W{rr}"))
+        ws.cell(rr, 25, "=" + month_sum("_cogs", f"$V{rr}", f"$W{rr}"))
+        ws.cell(rr, 26, "=" + month_sum("_exp", f"$V{rr}", f"$W{rr}"))
+        span(rr, 2, 3, f"=V{rr}", "mmm yyyy", F(size=9), align=Alignment(horizontal="left", indent=1))
+        span(rr, 4, 5, f"=X{rr}", MONEY, F(size=9))
+        span(rr, 6, 7, f"=Y{rr}+Z{rr}", MONEY, F(size=9))
+        span(rr, 8, 9, f"=D{rr}-F{rr}", MONEY, F(size=9, bold=True))
+        span(rr, 10, 13, f'=REPT("█",ROUND(10*MAX(0,D{rr})/MAX(1,MAX($D${m0}:$D${m0 + 11},$F${m0}:$F${m0 + 11})),0))&"  "',
+             font=F(size=9, color="2E4A6B"))
+    for col in "VWXYZ":
+        ws.column_dimensions[col].hidden = True
+    ch = BarChart()
+    ch.type, ch.grouping, ch.overlap = "col", "clustered", -10
+    ch.title, ch.height, ch.width, ch.legend.position = "Revenue vs costs", 7.5, 16, "b"
+    ch.y_axis.numFmt, ch.y_axis.majorGridlines = "#,##0", None
+    ch.add_data(Reference(ws, min_col=4, max_col=4, min_row=m0, max_row=m0 + 11), titles_from_data=False)
+    ch.add_data(Reference(ws, min_col=6, max_col=6, min_row=m0, max_row=m0 + 11), titles_from_data=False)
+    from openpyxl.chart.series import SeriesLabel
+    ch.series[0].tx, ch.series[1].tx = SeriesLabel(v="Revenue"), SeriesLabel(v="Costs")
+    ch.series[0].graphicalProperties.solidFill, ch.series[1].graphicalProperties.solidFill = "2E4A6B", "C9A227"
+    ch.set_categories(Reference(ws, min_col=2, min_row=m0, max_row=m0 + 11))
+    ws.add_chart(ch, f"O{r}")
+
+    # ---- where the money went: each cost-of-sales account, then expenses by statement line
+    r = m0 + 13
+    bar(r, "WHERE THE MONEY WENT  (period)")
+    for h, c1, c2 in (("Cost", 2, 5), ("Amount", 6, 7), ("Share", 8, 8), ("", 9, 13)):
+        span(r + 1, c1, c2, h, font=F(bold=True, size=9, color=NAVY), bg="E6ECF4", align=center)
+    lines = [(a["name"], f'SUMIFS({tb}!$F:$F,{tb}!$A:$A,"{a["code"]}")-SUMIFS({tb}!$G:$G,{tb}!$A:$A,"{a["code"]}")')
+             for a in (data.get("Chart of Accounts") or []) if a.get("type") == "COGS"
+             and not (a.get("role") == "cost_of_sales" and "shop" in hide) and not (a.get("role") == "stock_adjust" and "stock" in hide)]
+    sub = lambda *subs: "+".join(f'SUMIFS({tb}!$F:$F,{tb}!$D:$D,"{x}")-SUMIFS({tb}!$G:$G,{tb}!$D:$D,"{x}")' for x in subs)  # noqa: E731
+    lines += [("Staff (office)", sub("employee")), ("General & administrative", sub("general_admin")),
+              ("Marketing", sub("marketing")), ("Utilities", sub("utilities")), ("Other operating", sub("other_operating")),
+              ("Depreciation & amortisation", sub("depreciation", "amortization")), ("Interest & non-operating", sub("interest", "other_nonoperating")),
+              ("Income tax", sub("income_tax"))]
+    c0 = r + 2
+    cend = c0 + len(lines) - 1
+    for i, (name, f) in enumerate(lines):
+        rr = c0 + i
+        span(rr, 2, 5, name, font=F(size=9))
+        span(rr, 6, 7, "=" + f, MONEY, F(size=9))
+        span(rr, 8, 8, f"=IFERROR(F{rr}/$F${cend + 1},0)", PCT, F(size=9))
+        span(rr, 9, 13, f'=REPT("█",ROUND(20*MAX(0,H{rr}),0))', font=F(size=9, color="C9A227"))
+    span(cend + 1, 2, 5, "TOTAL", font=F(bold=True, size=9), bg="E6ECF4")
+    span(cend + 1, 6, 7, f"=SUM(F{c0}:F{cend})", MONEY, F(bold=True, size=9), "E6ECF4")
+    span(cend + 1, 8, 8, f"=IFERROR(F{cend + 1}/F{cend + 1},0)", PCT, F(bold=True, size=9), "E6ECF4")
+    mix = BarChart()
+    mix.type, mix.title, mix.height, mix.width, mix.legend = "bar", "Cost mix", 9, 12, None
+    mix.y_axis.numFmt, mix.y_axis.majorGridlines = "#,##0", None
+    mix.x_axis.scaling.orientation = "maxMin"
+    mix.add_data(Reference(ws, min_col=6, min_row=c0, max_row=cend), titles_from_data=False)
+    mix.set_categories(Reference(ws, min_col=2, min_row=c0, max_row=cend))
+    mix.series[0].graphicalProperties.solidFill = "C9A227"
+    ws.add_chart(mix, f"O{r}")
+    ws.freeze_panes = "A4"
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.paperSize = ws.PAPERSIZE_A4
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.page_setup.fitToWidth, ws.page_setup.fitToHeight = 1, 1
+    ws.print_area = f"A1:U{cend + 2}"
+    return ws
+
+
+# ------------------------------------------------------------------ cover
+COVER_SECTIONS = [
+    ("START HERE", [("Dashboard", "Live position: cash, receivables, payables, profit, margins, projects, months"),
+                    ("Settings", "Company details and the report period (report_from / report_to)")]),
+    ("EVERY DAY", [("Journal Vouchers", "Any entry as balanced debit and credit lines"),
+                   ("Direct Costs", "Project costs: materials, subcontractors, site labour"),
+                   ("Operating Expenses", "Office and company overhead"), ("Payroll", "Salaries and wages, by project or office"),
+                   ("Receipt Vouchers", "Money received from clients"), ("Payment Vouchers", "Payments to suppliers and staff"),
+                   ("Sales Invoices", "One row per invoice — header and terms"), ("Invoice Lines", "The lines of each invoice"),
+                   ("Cash Custody", "Cash given to staff (عهدة)"), ("Custody Expenses", "What the custody was spent on"),
+                   ("Partner Transactions", "Capital in, drawings and distributions"),
+                   ("Receivables", "What each client owes, less advances"), ("Payables", "What you owe each supplier and worker")]),
+    ("THE ACCOUNTS", [("Chart of Accounts", "The account list and how each maps to the statements"),
+                      ("Trial Balance", "Every account: opening, period debits and credits, closing"),
+                      ("Income Statement", "Net sales → gross profit → EBITDA → net profit"),
+                      ("Balance Sheet", "What the business owns and owes"), ("Cash Flow", "Where the cash actually went"),
+                      ("BU Profitability", "Each project's own result, after shared overhead"),
+                      ("Partner Equity", "Profit share, reserve, drawings and balances"),
+                      ("Budget vs Actual", "The budget for the period against the books"),
+                      ("Tax Summary", "VAT and withholding balances"), ("Tax Codes", "VAT / withholding rates")]),
+    ("PROJECTS & PRICING", [("Business Units", "Projects: client, billing basis and fee"), ("Parties", "Clients, suppliers, staff"),
+                            ("Partners", "Owners and their default share"), ("Partner Shares", "Each partner's share per project"),
+                            ("BOQ Lines", "Bills of quantities"), ("Price List", "Your priced item library"),
+                            ("Quick Estimator", "A fast budget estimate from the price list")]),
+]
+
+
+def _cover(wb, cover, company, tagline, template, currency, audit_ref, hidden, F, fill):
+    """A cover in the style of the original BEYOND workbook: the name, what the file is, then every visible sheet
+    grouped by what it is for, each a link."""
+    from openpyxl.styles import Alignment, Border, Side
+    for row in cover.iter_rows():
+        for c in row:
+            c.value, c.fill, c.font, c.border, c.hyperlink = None, fill("FFFFFF"), F(), Border(), None
+    cover.sheet_properties.tabColor = BROWN
+    for col, w in (("A", 3), ("B", 30), ("C", 62), ("D", 22)):
+        cover.column_dimensions[col].width = w
+    cover.row_dimensions[1].height = 10
+    cover["B2"] = (company or "BEYOND DESIGN").upper()
+    cover["B2"].font = F(bold=True, size=24, color=NAVY)
+    cover.row_dimensions[2].height = 34
+    cover["B3"] = "   ·   ".join(x.strip().upper() for x in str(tagline or "").split("·") if x.strip())
+    cover["B3"].font = F(bold=True, size=9, color="2E6DA4")
+    cover["B5"] = "Accounting & Project Control System"
+    cover["B5"].font = F(bold=True, size=15, color="1F1F1F")
+    cover["B6"] = (f"Double-entry books with live statements. Type in the data sheets (blue text); every statement, the dashboard "
+                   f"and the checks recalculate by themselves. All values in {currency}. Import this same file back into the app "
+                   f"from Import & Export." + ("  —  EMPTY TEMPLATE" if template else ""))
+    cover["B6"].font = F(italic=True, size=9, color="555555")
+    cover.merge_cells("B6:C7")
+    cover["B6"].alignment = Alignment(wrap_text=True, vertical="top")
+    cover.row_dimensions[6].height = 18
+    for c in range(2, 4):
+        cover.cell(8, c).border = Border(bottom=Side(style="medium", color=BROWN))
+    line = Side(style="thin", color="D5DDE8")
+    visible = {ws.title for ws in wb.worksheets if ws.sheet_state == "visible"}
+    listed = set()
+    sections = [(t, [(n, d) for n, d in items if n in visible]) for t, items in COVER_SECTIONS]
+    others = [ws.title for ws in wb.worksheets if ws.title in visible and ws.title not in ("Cover", "Model Audit")
+              and not any(ws.title == n for _, items in COVER_SECTIONS for n, _ in items)]
+    descs = {s["name"]: s["title"].split(" — ")[0].split(". ")[0] for s in SHEETS}
+    descs.update({"Scaffold Calculator": "Pieces, weight, rent and installation for a façade",
+                  "Quick Estimator": "A fast budget estimate from the price list"})
+    if others:
+        sections.append(("MORE MODULES", [(n, descs.get(n, "")) for n in others]))
+    sections.append(("CHECKS", [("Model Audit", "Every integrity check, live — must read ALL OK")]))
+    r = 10
+    for title, items in sections:
+        if not items:
+            continue
+        for c in range(2, 4):
+            cover.cell(r, c).fill = fill("2E4A6B")
+        cover.cell(r, 2, title).font = F(bold=True, size=10, color="FFFFFF")
+        cover.row_dimensions[r].height = 20
+        r += 1
+        for name, desc in items:
+            c = cover.cell(r, 2, name)
+            c.hyperlink = f"#'{name}'!A1"
+            c.font = F(bold=True, size=10, color="1155CC", underline="single")
+            d = cover.cell(r, 3, desc[:110])
+            d.font = F(size=9, color="333333")
+            d.alignment = Alignment(horizontal="left", vertical="center", readingOrder=1)
+            for cc in (2, 3):
+                cover.cell(r, cc).border = Border(bottom=line)
+            listed.add(name)
+            r += 1
+        r += 1
+    cover.cell(r, 2, "Books integrity").font = F(bold=True, size=10, color=NAVY)
+    cover.cell(r, 3, f"={audit_ref}").font = F(bold=True, size=10, color=NAVY)
+    r += 2
+    note = ("Sheets for sections this company does not use are hidden (" + ", ".join(hidden) + "). Show a section in the app "
+            "(Settings → Menus) and download again, or unhide the sheet in Excel.") if hidden else \
+        "Every section is shown. Sections switched off in the app (Settings → Menus) are hidden from this file."
+    cover.cell(r, 2, note).font = F(italic=True, size=8, color="777777")
+    cover.merge_cells(start_row=r, start_column=2, end_row=r + 1, end_column=3)
+    cover.cell(r, 2).alignment = Alignment(wrap_text=True, vertical="top")
+    cover.freeze_panes = None
+    return cover
+
+
+def _polish(wb, data, fill):
+    """Finishing touches on every sheet: the title links back to the Cover; data sheets get light row banding over
+    the rows in use, their header row repeated on every printed page, and landscape pages one page wide."""
+    from openpyxl.formatting.rule import FormulaRule
+    for ws in wb.worksheets:
+        if ws.title in ("Cover", "Lists"):
+            continue
+        a1 = ws.cell(1, 1)
+        if a1.value and not a1.hyperlink:
+            a1.hyperlink = "#'Cover'!A1"
+        if ws.title not in SHEET_BY_NAME:
+            continue
+        last_col = ws.max_column
+        from openpyxl.utils import get_column_letter as L
+        end = max(ws.max_row, FIRST_DATA_ROW + 50)
+        ws.conditional_formatting.add(f"A{FIRST_DATA_ROW}:{L(last_col)}{end}",
+                                      FormulaRule(formula=[f"AND(MOD(ROW(),2)=0,COUNTA($A{FIRST_DATA_ROW}:$C{FIRST_DATA_ROW})>0)"],
+                                                  fill=fill("F5F8FC")))
+        ws.print_title_rows = f"{HEADER_ROW}:{HEADER_ROW}"
+        ws.page_setup.orientation = "landscape"
+        ws.page_setup.paperSize = ws.PAPERSIZE_A4
+        ws.sheet_properties.pageSetUpPr.fitToPage = True
+        ws.page_setup.fitToWidth, ws.page_setup.fitToHeight = 1, 0
+        ws.sheet_view.zoomScale = 90
+        rows = len(data.get(ws.title) or [])
+        ws.print_area = f"A1:{L(last_col)}{FIRST_DATA_ROW + max(rows, 15) - 1}"
