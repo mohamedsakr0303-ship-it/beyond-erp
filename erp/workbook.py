@@ -939,7 +939,7 @@ def build_workbook(db, template=False, data=None, hide=None):
         wb[name].print_area = f"A1:{'J' if name == 'Trial Balance' else 'C'}{wb[name].max_row}"
     english_labels(wb)
     classic_style(wb, company)
-    _cover(wb, cover, company, db.setting("company_tagline", ""), template, currency, audit_ref, hidden, F, fill)
+    _cover(wb, cover, company, db.setting("company_tagline", ""), template and not any((data or {}).values()), currency, audit_ref, hidden, F, fill)
     _polish(wb, data, fill)
     wb.calculation.fullCalcOnLoad = True
     check_formula_limits(wb)
