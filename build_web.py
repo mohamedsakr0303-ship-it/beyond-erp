@@ -108,8 +108,11 @@ def build(make_zip=False):
     print("App")
     for f in ("app.css", "i18n.js", "app.js"):
         shutil.copy(ROOT / "erp" / "static" / f, OUT / f)
-    for f in (ROOT / "erp" / "static" / "vendor").glob("*"):   # 3D model viewer, loaded only when a model is shown
-        shutil.copy(f, OUT / "vendor" / f.name)
+    for f in (ROOT / "erp" / "static" / "vendor").glob("*"):   # fonts, 3D model viewer (loaded only when a model is shown)
+        if f.is_dir():
+            shutil.copytree(f, OUT / "vendor" / f.name, dirs_exist_ok=True)
+        else:
+            shutil.copy(f, OUT / "vendor" / f.name)
     for f in ("index.html", "bridge.js"):
         shutil.copy(ROOT / "web-src" / f, OUT / f)
     # installable app (manifest, offline service worker, icons) — used by hosted builds, left out of the zip

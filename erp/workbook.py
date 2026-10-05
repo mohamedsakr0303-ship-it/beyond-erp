@@ -32,6 +32,8 @@ PARTY_COL = {"Direct Costs": "vendor", "Operating Expenses": "vendor", "Payroll"
              "Loans": "party", "Cash Custody": "holder", "Custody Expenses": "supplier", "Rental Stock Lots": "supplier",
              "Sales Contracts": "customer", "Recurring Entries": "party", "Service Subscriptions": "customer"}
 
+_PLASTER_AR = {"category": "أعمال البياض", "description": "بياض حوائط", "unit": "م٢"}
+EXAMPLES_AR = {"Price List": _PLASTER_AR, "BOQ Lines": _PLASTER_AR, "Invoice Lines": _PLASTER_AR}
 EXAMPLES = {
     "Settings": {"key": "company_name", "value": "BEYOND DESIGN"},
     "Chart of Accounts": {"code": "6095", "name": "Cleaning & Hospitality", "type": "Expense",
@@ -52,10 +54,10 @@ EXAMPLES = {
     "Stock Items": {"name": "Ceramic tiles 60×60", "unit": "m2", "sku": "CT-6060", "reorder_level": 50},
     "Products": {"code": "P-0001", "name": "Apartment A-301", "kind": "unit", "category": "Apartments", "unit": "unit",
                  "price": 2400000, "status": "available", "specs": "Area: 150 m²; Floor: 3; Bedrooms: 3"},
-    "Price List": {"category": "أعمال البياض", "item_no": "3.1", "description": "بياض حوائط", "unit": "م٢",
+    "Price List": {"category": "Plastering works", "item_no": "3.1", "description": "Wall plaster", "unit": "m²",
                    "cost": 219.23, "markup": "30%", "price": ""},
     "BOQ Lines": {"title": "Interior works", "bu_code": "PRJ-2026-004", "rev": "Rev 01", "date": "2026-10-01",
-                  "category": "أعمال البياض", "item_no": "3.1", "description": "بياض حوائط", "unit": "م٢", "qty": 320,
+                  "category": "Plastering works", "item_no": "3.1", "description": "Wall plaster", "unit": "m²", "qty": 320,
                   "price": 285, "cost": 219.23},
     "Direct Costs": {"date": "2026-10-03", "bu_code": "PRJ-2026-004", "account": "5010", "description": "Cement 50 kg",
                      "vendor": "El-Masry Supplies", "qty": 16, "unit": "bag", "rate": 240, "paid": 2000,
@@ -70,8 +72,8 @@ EXAMPLES = {
     "Sales Invoices": {"number": "INV-2026-001", "date": "2026-10-30", "bu_code": "PRJ-2026-004",
                        "status": "Posted", "customer": "Palm Hills Developments", "vat_code": "VAT14",
                        "wht_code": "WHT1-C"},
-    "Invoice Lines": {"number": "INV-2026-001", "category": "أعمال البياض", "item_no": "3.1",
-                      "description": "بياض حوائط", "unit": "م٢", "qty": 150, "price": 285},
+    "Invoice Lines": {"number": "INV-2026-001", "category": "Plastering works", "item_no": "3.1",
+                      "description": "Wall plaster", "unit": "m²", "qty": 150, "price": 285},
     "Payment Vouchers": {"date": "2026-10-10", "party": "El-Masry Supplies", "against": "2010", "amount": 1840,
                          "method": "Cash", "ref": "PV-001"},
     "Partner Transactions": {"date": "2026-10-01", "partner": "Partner name", "type": "Capital Contribution",
@@ -94,7 +96,10 @@ def q(name):
     return f"'{name}'"
 
 
-def build_workbook(db, template=False, data=None, hide=None):
+def build_workbook(db, template=False, data=None, hide=None, lang="en", extend=None, cover_extra=None):
+    """The Excel workbook. lang="ar": right-to-left with Arabic sheet names and labels (imports back the same).
+    extend(wb) -> [sheet names]: add a company's own sheets before the cover is drawn (they are placed after the
+    Dashboard and listed first on the cover with cover_extra = [(sheet, description), ...])."""
     _need()
     from openpyxl import Workbook
     from openpyxl.comments import Comment
@@ -117,6 +122,7 @@ def build_workbook(db, template=False, data=None, hide=None):
     company = db.setting("company_name", "BEYOND DESIGN")
     currency = db.setting("currency", "EGP")
     wb = Workbook()
+    wb._lang = lang          # builders that hold their own two-language labels write only this language
     F = lambda **k: Font(name="Arial", **k)  # noqa: E731
     fill = lambda c: PatternFill("solid", fgColor=c)  # noqa: E731
     thin = Side(style="thin", color="9CA3AF")
@@ -161,7 +167,7 @@ def build_workbook(db, template=False, data=None, hide=None):
         maxrow[s["name"]] = max(last, FIRST_DATA_ROW + n_rows + 2000)
         ws.cell(1, 1, s["name"]).font = F(bold=True, size=14, color=NAVY)
         ws.cell(2, 1, s["title"]).font = F(size=9, color="555555")
-        ex = EXAMPLES.get(s["name"], {})
+        ex = {**EXAMPLES.get(s["name"], {}), **(EXAMPLES_AR.get(s["name"], {}) if lang == "ar" else {})}
         for i, c in enumerate(cols, start=1):
             h = ws.cell(HEADER_ROW, i, c["en"])
             calc = c["kind"] == "calc"
@@ -879,6 +885,7 @@ def build_workbook(db, template=False, data=None, hide=None):
 
     _scaffold_calculator(wb, db, colmap, F, fill, NAVY, BLUE, MONEY, L)
     _crew_calculator(wb, db, F, fill, NAVY, BLUE, MONEY)
+    _guide(wb, F, fill)
 
     # ----------------------------------------------------------------- audit
     au = wb.create_sheet("Model Audit")
@@ -931,7 +938,12 @@ def build_workbook(db, template=False, data=None, hide=None):
         wb[name].sheet_state = "hidden"
     # sheet order: as in the BEYOND V1.4 workbook — what partners and managers read first, then the books, then the
     # registers and tools, then data entry and setup. The importer finds sheets by name, so the order never matters to it.
+    own = list(extend(wb) or []) if extend else []
     front = [n for n in SHEET_ORDER if n in wb.sheetnames]
+    if own:
+        at = front.index("Dashboard") + 1 if "Dashboard" in front else 0
+        mine = [n for n in own if n in wb.sheetnames]
+        front = front[:at] + mine + [n for n in front[at:] if n not in mine]
     rest = [n for n in wb.sheetnames if n not in front and n != "Lists"]
     wb._sheets = [wb[n] for n in front + rest + ["Lists"]]
     wb.active = 0
@@ -956,17 +968,23 @@ def build_workbook(db, template=False, data=None, hide=None):
         ws.oddFooter.right.text = company
     for name in ("Trial Balance", "Income Statement", "Balance Sheet", "Cash Flow"):
         wb[name].print_area = f"A1:{'J' if name == 'Trial Balance' else 'C'}{wb[name].max_row}"
-    english_labels(wb)
+    if lang != "ar":
+        english_labels(wb)          # the Arabic workbook keeps the Arabic half instead (workbook_ar.localize)
     classic_style(wb, company)
-    _cover(wb, cover, company, db.setting("company_tagline", ""), template and not any((data or {}).values()), currency, audit_ref, hidden, F, fill)
+    _cover(wb, cover, company, db.setting("company_tagline", ""), template and not any((data or {}).values()), currency, audit_ref, hidden, F, fill,
+           extra=cover_extra)
     _polish(wb, data, fill)
+    if lang == "ar":
+        from . import workbook_ar
+        workbook_ar.localize(wb)
     wb.calculation.fullCalcOnLoad = True
     check_formula_limits(wb)
     buf = io.BytesIO()
     wb.save(buf)
     from . import branding, documents
     return documents.inject_xlsx_images(buf.getvalue(), branding.logo_for(db, "workbook"),
-                                        branding.watermark_for(db, "workbook"), sheet_name="Cover", col=4, row=2, px=110)
+                                        branding.watermark_for(db, "workbook"), sheet_name="Cover" if lang != "ar" else "الغلاف",
+                                        col=4, row=2, px=110)
 
 
 _AR_SEGMENT = re.compile(r"\s*[/|—]\s*[^/|A-Za-z]*[\u0600-\u06FF][^/|]*")
@@ -978,11 +996,12 @@ REPORT_SHEETS = ("Cover", "Trial Balance", "Income Statement", "Balance Sheet", 
 def english_labels(wb):
     """The workbook is English (like the original). Remove the Arabic half of every *label* the builder wrote —
     report sheets and data-sheet titles/headers only; data values (Arabic names, descriptions) are untouched."""
+    data_sheets = {s["name"] for s in SHEETS}
     for ws in wb.worksheets:
-        if ws.title in REPORT_SHEETS:
-            rows = ws.iter_rows(max_row=4) if ws.title == "Payables" else ws.iter_rows()
+        if ws.title in data_sheets or ws.title == "Payables":
+            rows = ws.iter_rows(max_row=4)
         else:
-            rows = ws.iter_rows(max_row=2)
+            rows = ws.iter_rows()
         for row in rows:
             for c in row:
                 v = c.value
@@ -1096,33 +1115,32 @@ def _scaffold_calculator(wb, db, colmap, F, fill, NAVY, BLUE, MONEY, L):
             c.font = F(bold=True, color="FFFFFF", size=9)
             c.fill = fill(NAVY)
 
-    head(5, 1, ["Input / Setting", "Value", "Unit", "البيان"])
-    head(5, 6, ["Calculated", "Value", "البيان"])
+    ar = getattr(wb, "_lang", "en") == "ar"
+    lab = lambda en, a: a if ar and a else en  # noqa: E731
+    head(5, 1, ["Input / Setting", "Value", "Unit"])
+    head(5, 6, ["Calculated", "Value"])
     refs, r = {}, 6
     rows = spec["inputs"] + spec["params"] + [{"key": "months", "label": "Rental period", "label_ar": "مدة الإيجار",
                                                "unit": "months", "value": 1}]
     for p in rows:
-        ws.cell(r, 1, p.get("label") or p["key"]).font = F(bold=p in spec["inputs"])
+        ws.cell(r, 1, lab(p.get("label") or p["key"], p.get("label_ar"))).font = F(bold=p in spec["inputs"])
         c = ws.cell(r, 2, p.get("value", 0))
         c.font = F(color=BLUE, bold=p in spec["inputs"])
         ws.cell(r, 3, p.get("unit") or "")
-        ws.cell(r, 4, p.get("label_ar") or "")
         refs[p["key"]] = f"$B${r}"
         r += 1
     last_input = r
     d = 6
     for p in spec["derived"]:
-        ws.cell(d, 6, p.get("label") or p["key"])
+        ws.cell(d, 6, lab(p.get("label") or p["key"], p.get("label_ar")))
         refs[p["key"]] = f"$G${d}"
         ws.cell(d, 7, "=" + rentals.to_excel(p["expr"], refs)).number_format = "#,##0.##"
-        ws.cell(d, 8, p.get("label_ar") or "")
         d += 1
     if spec["area"].strip() in refs:
         area = refs[spec["area"].strip()]
     else:
-        ws.cell(d, 6, "Area (m²)").font = F(bold=True)
+        ws.cell(d, 6, lab("Area (m²)", "المساحة (م²)")).font = F(bold=True)
         ws.cell(d, 7, "=" + rentals.to_excel(spec["area"], refs)).number_format = "#,##0.##"
-        ws.cell(d, 8, "المساحة (م²)")
         area = f"$G${d}"
         d += 1
 
@@ -1182,12 +1200,11 @@ def _scaffold_calculator(wb, db, colmap, F, fill, NAVY, BLUE, MONEY, L):
                ("Pieces", "عدد القطع", f"=C{tot}", "#,##0"),
                ("Total weight (kg)", "الوزن الإجمالي (كجم)", f"=D{tot}", "#,##0"),
                ("Loss value of all pieces", "قيمة فقد كل القطع", f"=I{tot}", MONEY)]
-    head(sm, 1, ["Summary", "Value", "", "الملخص"])
-    for i, (en, ar, f, fmt) in enumerate(summary, start=1):
-        ws.cell(sm + i, 1, en).font = F(bold=i == 1)
+    head(sm, 1, ["Summary", "Value"])
+    for i, (en, a, f, fmt) in enumerate(summary, start=1):
+        ws.cell(sm + i, 1, lab(en, a)).font = F(bold=i == 1)
         c = ws.cell(sm + i, 2, f)
         c.number_format, c.font = fmt, F(bold=i == 1)
-        ws.cell(sm + i, 4, ar)
 
     # ---- installation / dismantling / transport: what the client pays vs what it costs us (Settings → rental services)
     try:
@@ -1207,14 +1224,13 @@ def _scaffold_calculator(wb, db, colmap, F, fill, NAVY, BLUE, MONEY, L):
               ("Trips", None, "trips", "عدد النقلات"),
               ("Tons", None, "tons", "الأطنان")]
     at = {}
-    for i, (en, v, unit, ar) in enumerate(inputs):
+    for i, (en, v, unit, a) in enumerate(inputs):
         row = ins + i
-        ws.cell(row, 1, en)
+        ws.cell(row, 1, lab(en, a))
         c = ws.cell(row, 2, v)
         c.font = F(color=BLUE)
         c.number_format = "#,##0.##"
         ws.cell(row, 3, unit)
-        ws.cell(row, 4, ar)
         at[en] = f"$B${row}"
     from openpyxl.worksheet.datavalidation import DataValidation
     dv = DataValidation(type="list", formula1='"both,install,dismantle,none"', allow_blank=False)
@@ -1373,7 +1389,123 @@ def _budget_sheet(wb, colmap, F, fill, NAVY, BLUE, MONEY, PCT, L):
 
 
 
-SHEET_ORDER = ["Cover", "Partner Pack", "Dashboard", "Journal Vouchers", "Chart of Accounts", "Trial Balance", "Income Statement",
+# what to type where — (task EN, sheet(s), what follows by itself EN, task AR, what follows AR)
+GUIDE = [
+    ("Start renting to a new site / building", "Business Units, Rental Contracts",
+     "One Business Units row (the site, e.g. RNT-2026-003), then one Rental Contracts row per kind of piece, all with the same "
+     "contract ref and business unit. Fill 'Delivered on' when the pieces leave the yard. → Dashboard 'Ongoing rentals', "
+     "stock on hire, BU Profitability.",
+     "بدء تأجير لموقع / عمارة جديدة",
+     "صف في وحدات الأعمال (الموقع)، ثم صف في عقود التأجير لكل نوع قطعة بنفس رقم العقد ونفس وحدة العمل. اكتب تاريخ التسليم عند خروج "
+     "القطع من المخزن ← تظهر تلقائياً في «الإيجارات الجارية» بلوحة المتابعة والمخزون المؤجر وربحية المشروعات."),
+    ("Price by frame (the extract method)", "Rental Contracts",
+     "Frame line: qty = frames, rate = 94.50 a month (3.15 a day) including its accessories; accessories lines at rate 0 (they "
+     "still count as stock out); boards on their own line; installation + dismantling and transport as charge lines with "
+     "their cost. Per-piece pricing stays available — just type a rate on each piece.",
+     "التسعير بالشباك (طريقة المستخلص)",
+     "سطر الشباك: الكمية = عدد الشبابيك والسعر 94.50 شهرياً (3.15 يومياً) شامل المستلزمات، وسطور المستلزمات بسعر صفر (تُحسب "
+     "كمخزون خارج)، واللوح البونط في سطر مستقل، والتركيب والفك والنقل كسطور رسوم مع تكلفتها. التسعير بالقطعة ما زال متاحاً."),
+    ("Issue an extract (progress invoice)", "Sales Invoices, Invoice Lines",
+     "One Sales Invoices row (number, date, client, business unit, Status = Posted) and one Invoice Lines row per extract "
+     "line (rent → 4045, installation / transport → 4046). Keep it Draft until it is issued. → Receivables, Income "
+     "Statement, Dashboard 'Invoiced', Partner Pack.",
+     "إصدار مستخلص / فاتورة",
+     "صف في فواتير المبيعات (الرقم، التاريخ، العميل، وحدة العمل، الحالة = Posted) وصف في بنود الفواتير لكل بند (إيجار ← 4045، "
+     "تركيب / نقل ← 4046). اتركها Draft حتى تصدر ← المدينون وقائمة الدخل ولوحة المتابعة وتقرير الشركاء."),
+    ("Mark how far a rental is billed", "Rental Contracts",
+     "Type the last day billed in 'Invoiced to' on the contract's first row. → Dashboard shows 'still to invoice'; the app "
+     "starts the next extract from the day after.",
+     "تحديد آخر فترة تم إصدار مستخلص عنها",
+     "اكتب آخر يوم تمت فوترته في عمود «مفوتر حتى» في أول صف للعقد ← تظهر «المتبقي للفوترة» ويبدأ المستخلص التالي من اليوم التالي."),
+    ("Client pays", "Receipt Vouchers",
+     "Date, client, amount, method (Cash / InstaPay …), business unit, credit account 1100. → cash balance, Receivables, "
+     "Dashboard 'Collected' and 'Client owes'.",
+     "تحصيل من العميل",
+     "التاريخ والعميل والمبلغ وطريقة الدفع ووحدة العمل والحساب الدائن 1100 ← رصيد النقدية والمدينون و«المحصل» و«المستحق على العميل»."),
+    ("Funding partner pays for equipment", "Loan Transactions, Rental Stock Lots",
+     "Loan Transactions: action 'draw' on the funder's loan (0 % interest). Rental Stock Lots: the pieces, qty and unit cost "
+     "(the company owns them). → Funder account, Loans, Balance Sheet, stock count.",
+     "الشريك الممول يدفع ثمن معدات",
+     "حركات القروض: الحركة draw على قرض الممول (بدون فائدة). دفعات معدات التأجير: القطع والكمية وتكلفة الوحدة (المعدات ملك الشركة) "
+     "← حساب الممول والقروض والميزانية والمخزون."),
+    ("Company buys equipment with its own money", "Rental Stock Lots",
+     "Pieces, qty, unit cost, supplier, 'Paid now' (blank = paid in full). → fleet value, stock count, Payables if not fully paid.",
+     "الشركة تشتري معدات من أموالها",
+     "القطع والكمية وتكلفة الوحدة والمورد والمدفوع (فارغ = مدفوع بالكامل) ← قيمة الأسطول والمخزون والدائنون إن لم يُسدد بالكامل."),
+    ("Repay the funder (50 % of each collection)", "Loan Transactions",
+     "Action 'pay', principal = the amount, method. → Funder account balance, Loans, cash.",
+     "سداد للممول (50% من كل تحصيل)",
+     "الحركة pay وأصل الدين = المبلغ وطريقة الدفع ← رصيد حساب الممول والقروض والنقدية."),
+    ("Pay the installation crew", "Crew Pay Calculator → Direct Costs",
+     "Use the calculator to see what is due (frames × width × height × rate) — it never posts. Book what you really paid "
+     "as a Direct Costs row with the site's business unit. → BU Profitability, Income Statement.",
+     "دفع أجر طاقم التركيب",
+     "استخدم حاسبة أجور الأطقم لمعرفة المستحق (لا تُرحّل شيئاً). سجّل المبلغ المدفوع فعلاً كصف في التكاليف المباشرة بوحدة عمل الموقع "
+     "← ربحية المشروعات وقائمة الدخل."),
+    ("Expenses", "Operating Expenses / Direct Costs",
+     "Office, transport, tips … in Operating Expenses; anything for one site in Direct Costs with its business unit.",
+     "المصروفات", "المصروفات العامة في المصروفات التشغيلية، وما يخص موقعاً واحداً في التكاليف المباشرة بوحدة العمل."),
+    ("Salaries", "Employees, Payroll Run", "One Employees row per person, one Payroll Run row per person a month. Social "
+     "insurance and tax are worked out for you (Payroll Settings).",
+     "الرواتب", "صف لكل موظف في الموظفون والعمال، وصف لكل موظف شهرياً في مسير الرواتب. التأمينات والضريبة تُحسب تلقائياً."),
+    ("Partner puts in / takes out money", "Partner Transactions", "→ Partner Equity, Partner Pack.",
+     "إيداع / سحب شريك", "← حقوق الشركاء وتقرير الشركاء."),
+    ("Anything else", "Journal Vouchers", "Debit and credit rows with the same voucher number; they must balance.",
+     "أي حركة أخرى", "صفوف مدين ودائن بنفس رقم القيد ويجب أن تتوازن."),
+]
+GUIDE_RULES = [
+    ("Type only in the white / blue cells; grey columns are formulas.", "اكتب في الخلايا البيضاء / الزرقاء فقط؛ الأعمدة الرمادية معادلات."),
+    ("Add rows under the last one — never insert rows in the middle of the header.", "أضف الصفوف تحت آخر صف ولا تُدرج صفوفاً داخل العناوين."),
+    ("Pick codes from the drop-downs (Cash, Posted, monthly …) — keep them in English.", "اختر الأكواد من القوائم المنسدلة (Cash, Posted …) واتركها بالإنجليزية."),
+    ("Model Audit must say ALL OK after every batch of entries.", "يجب أن يظهر «ALL OK» في فحص سلامة الدفاتر بعد كل مجموعة قيود."),
+    ("The app imports this file as it is (English or Arabic): Data → Import workbook.", "يقبل البرنامج هذا الملف كما هو (عربي أو إنجليزي): البيانات ← استيراد ملف."),
+]
+
+
+def _guide(wb, F, fill):
+    """How to use this workbook: what to type where, and what updates by itself — in the workbook's language only."""
+    from openpyxl.styles import Alignment
+    ar = getattr(wb, "_lang", "en") == "ar"
+    names = {}
+    if ar:
+        from .workbook_ar import sheet_names
+        names = sheet_names()
+    ws = wb.create_sheet("How to Use")
+    ws.sheet_view.showGridLines = False
+    ws["B2"] = "دليل الاستخدام" if ar else "HOW TO USE THIS WORKBOOK"
+    ws["B2"].font = F(bold=True, size=14, color=NAVY)
+    ws["B3"] = ("كل التقارير ولوحة المتابعة وتقرير الشركاء تقرأ من أوراق الإدخال: أضف صفاً في الورقة الصحيحة وكل ما يرتبط به يتحدث تلقائياً."
+                if ar else "Every report, the dashboard and the Partner Pack read the entry sheets. Add a row in the right sheet and "
+                           "everything related to it updates by itself.")
+    ws["B3"].font = F(size=9, italic=True, color="555555")
+    wrap = Alignment(wrap_text=True, vertical="top")
+    heads = ["أريد أن …", "أضف صفوفاً في", "ماذا أكتب ← ماذا يتحدث"] if ar else ["I want to …", "Add rows on", "What to type → what updates"]
+    for i, t in enumerate(heads):
+        c = ws.cell(5, 2 + i, t)
+        c.font, c.fill = F(bold=True, color="FFFFFF"), fill(NAVY)
+    for r, (task, sheets, how, task_ar, how_ar) in enumerate(GUIDE, start=6):
+        parts = [x.strip() for x in re.split(r"[,→/]", sheets)]
+        shown = sheets
+        if ar:
+            for n in parts:
+                shown = shown.replace(n, names.get(n, n))
+            shown = shown.replace(",", "،").replace("→", "←")
+        for i, v in enumerate((task_ar, shown, how_ar) if ar else (task, shown, how)):
+            c = ws.cell(r, 2 + i, v)
+            c.alignment = wrap
+            c.font = F(bold=i == 0, size=9)
+        if parts[0] in wb.sheetnames:
+            ws.cell(r, 3).hyperlink = f"#'{parts[0]}'!A1"
+            ws.cell(r, 3).font = F(size=9, color="1F4E79")
+    r = 6 + len(GUIDE) + 1
+    ws.cell(r, 2, "قواعد" if ar else "RULES").font = F(bold=True, size=11, color=NAVY)
+    for i, (en, a) in enumerate(GUIDE_RULES, start=1):
+        ws.cell(r + i, 2, f"{i}. {a if ar else en}").font = F(size=9)
+    for col, w in zip("ABCD", (2, 32, 30, 90)):
+        ws.column_dimensions[col].width = w
+
+
+SHEET_ORDER = ["Cover", "How to Use", "Partner Pack", "Dashboard", "Journal Vouchers", "Chart of Accounts", "Trial Balance", "Income Statement",
                "Balance Sheet", "Cash Flow", "BU Profitability", "Payables", "Receivables", "Partner Equity", "Business Units",
                "Sales Invoices", "Invoice Lines", "Rental Contracts", "Rental Equipment", "Rental Stock Lots", "Loans",
                "Loan Transactions", "Employees", "Payroll Run", "Price List", "BOQ Lines", "Quick Estimator", "Scaffold Calculator",
@@ -1594,18 +1726,69 @@ def _dashboard(wb, data, colmap, posting, rng, pl_refs, bs_refs, n_bu, audit_ref
     mix.set_categories(Reference(ws, min_col=2, min_row=c0, max_row=cend))
     mix.series[0].graphicalProperties.solidFill = "C9A227"
     ws.add_chart(mix, f"O{r}")
+    end = cend + 2
+    if "rentals" not in set(hide or ()) and "Rental Contracts" in colmap:
+        end = _ongoing_rents(ws, colmap, cend + 3, F, fill, L)
     ws.freeze_panes = "A4"
     ws.page_setup.orientation = "landscape"
     ws.page_setup.paperSize = ws.PAPERSIZE_A4
     ws.sheet_properties.pageSetUpPr.fitToPage = True
     ws.page_setup.fitToWidth, ws.page_setup.fitToHeight = 1, 1
-    ws.print_area = f"A1:U{cend + 2}"
+    ws.print_area = f"A1:U{end}"
     return ws
+
+
+def _ongoing_rents(ws, colmap, top, F, fill, L, n=10):
+    """Ongoing rentals on the dashboard, live from the Rental Contracts sheet: each contract's rent a month, rent earned
+    since delivery, one-time charges, what its site was invoiced (Sales Invoices) and collected (Receipt Vouchers)."""
+    rc, si, rv = colmap["Rental Contracts"], colmap["Sales Invoices"], colmap["Receipt Vouchers"]
+    R = lambda key: f"'Rental Contracts'!${rc[key]}$5:${rc[key]}$2000"  # noqa: E731
+    ws.cell(top, 2, "ONGOING RENTALS").font = F(bold=True, size=12, color=NAVY)
+    ws.cell(top + 1, 2, "From the Rental Contracts sheet (one block of rows per contract). Rent to date = rent a month ÷ 30 × days since "
+                        "delivery, up to today or the report end. Invoiced and collected are the contract's business unit on Sales "
+                        "Invoices and Receipt Vouchers.").font = F(size=8, italic=True, color="666666")
+    heads = ["Contract", "Client", "Site", "Delivered / start", "Rent / month", "Days on hire", "Rent to date", "One-time charges",
+             "Invoiced", "Collected", "Client owes", "Still to invoice"]
+    h = top + 2
+    for i, t in enumerate(heads):
+        c = ws.cell(h, 2 + i, t)
+        c.font, c.fill = F(bold=True, color="FFFFFF", size=9), fill(NAVY)
+    ws.column_dimensions["W"].hidden = True
+    for k in range(1, n + 1):
+        r = h + k
+        prev = "4" if k == 1 else f"$W{r - 1}"
+        tail = f"'Rental Contracts'!${rc['x_first']}$2000"
+        ws.cell(r, 23, f'=IF(""&{prev}="","",IFERROR(MATCH(1,INDEX({R("x_first")},{prev}-3):{tail},0)+{prev},""))')
+        g = lambda key: f"INDEX('Rental Contracts'!${rc[key]}:${rc[key]},$W{r})"  # noqa: E731
+        ws.cell(r, 2, f'=IF($W{r}="","",{g("ref")}&"")')
+        ws.cell(r, 3, f'=IF($W{r}="","",{g("client")}&"")')
+        ws.cell(r, 4, f'=IF($W{r}="","",{g("site")}&"")')
+        ws.cell(r, 5, f'=IF($W{r}="","",IF({g("delivered_on")}<>"",{g("delivered_on")},{g("start_date")}))').number_format = "dd-mmm-yy"
+        ws.cell(r, 6, f'=IF($W{r}="","",N({g("x_crent")}))').number_format = MONEY
+        ws.cell(r, 7, f'=IF(OR($W{r}="",N(E{r})=0),"",MAX(0,MIN(TODAY(),ReportTo)-E{r}))').number_format = "#,##0"
+        ws.cell(r, 8, f'=IF(G{r}="","",ROUND(F{r}/30*G{r},2))').number_format = MONEY
+        ws.cell(r, 9, f'=IF($W{r}="","",N({g("x_charges")}))').number_format = MONEY
+        bu = g("bu_code")
+        ws.cell(r, 10, f"=IF($W{r}=\"\",\"\",IF({bu}&\"\"=\"\",0,SUMIFS('Sales Invoices'!${si['ar_amt']}$5:${si['ar_amt']}$2000,"
+                       f"'Sales Invoices'!${si['bu_code']}$5:${si['bu_code']}$2000,{bu}&\"\")))").number_format = MONEY
+        ws.cell(r, 11, f"=IF($W{r}=\"\",\"\",IF({bu}&\"\"=\"\",0,SUMIFS('Receipt Vouchers'!${rv['amount']}$5:${rv['amount']}$2000,"
+                       f"'Receipt Vouchers'!${rv['bu_code']}$5:${rv['bu_code']}$2000,{bu}&\"\")))").number_format = MONEY
+        ws.cell(r, 12, f'=IF($W{r}="","",J{r}-K{r})').number_format = MONEY
+        ws.cell(r, 13, f'=IF($W{r}="","",MAX(0,N(H{r})+I{r}-J{r}))').number_format = MONEY
+        for c in range(2, 14):
+            ws.cell(r, c).font = F(size=9)
+    t = h + n + 1
+    ws.cell(t, 2, "TOTAL").font = F(bold=True)
+    for c in (6, 8, 9, 10, 11, 12, 13):
+        x = ws.cell(t, c, f"=SUM({L(c)}{h + 1}:{L(c)}{h + n})")
+        x.font, x.number_format = F(bold=True), MONEY
+    return t + 1
 
 
 # ------------------------------------------------------------------ cover
 COVER_SECTIONS = [
-    ("START HERE", [("Partner Pack", "The partners' management accounts: billed profit, work in progress, statements, each partner's equity"),
+    ("START HERE", [("How to Use", "What to type on which sheet, and what updates by itself"),
+                    ("Partner Pack", "The partners' management accounts: billed profit, work in progress, statements, each partner's equity"),
                     ("Dashboard", "Live position: cash, receivables, payables, profit, margins, projects, months"),
                     ("Settings", "Company details and the report period (report_from / report_to)")]),
     ("EVERY DAY", [("Journal Vouchers", "Any entry as balanced debit and credit lines"),
@@ -1613,7 +1796,7 @@ COVER_SECTIONS = [
                    ("Operating Expenses", "Office and company overhead"), ("Payroll", "Quick wage entries (one line per worker)"),
                    ("Receipt Vouchers", "Money received from clients"), ("Payment Vouchers", "Payments to suppliers and staff"),
                    ("Sales Invoices", "One row per invoice — header and terms"), ("Invoice Lines", "The lines of each invoice"),
-                   ("Cash Custody", "Cash given to staff (عهدة)"), ("Custody Expenses", "What the custody was spent on"),
+                   ("Cash Custody", "Cash given to staff (custody)"), ("Custody Expenses", "What the custody was spent on"),
                    ("Partner Transactions", "Capital in, drawings and distributions"),
                    ("Receivables", "What each client owes, less advances"), ("Payables", "What you owe each supplier and worker")]),
     ("THE ACCOUNTS", [("Chart of Accounts", "The account list and how each maps to the statements"),
@@ -1635,7 +1818,7 @@ COVER_SECTIONS = [
 ]
 
 
-def _cover(wb, cover, company, tagline, template, currency, audit_ref, hidden, F, fill):
+def _cover(wb, cover, company, tagline, template, currency, audit_ref, hidden, F, fill, extra=None):
     """A cover in the style of the original BEYOND workbook: the name, what the file is, then every visible sheet
     grouped by what it is for, each a link."""
     from openpyxl.styles import Alignment, Border, Side
@@ -1665,9 +1848,10 @@ def _cover(wb, cover, company, tagline, template, currency, audit_ref, hidden, F
     line = Side(style="thin", color="D5DDE8")
     visible = {ws.title for ws in wb.worksheets if ws.sheet_state == "visible"}
     listed = set()
-    sections = [(t, [(n, d) for n, d in items if n in visible]) for t, items in COVER_SECTIONS]
+    sections = ([("THIS COMPANY", [(n, d) for n, d in extra if n in visible])] if extra else []) + \
+        [(t, [(n, d) for n, d in items if n in visible]) for t, items in COVER_SECTIONS]
     others = [ws.title for ws in wb.worksheets if ws.title in visible and ws.title not in ("Cover", "Model Audit")
-              and not any(ws.title == n for _, items in COVER_SECTIONS for n, _ in items)]
+              and not any(ws.title == n for _, items in COVER_SECTIONS for n, _ in items) and not any(ws.title == n for n, _ in (extra or []))]
     descs = {s["name"]: s["title"].split(" — ")[0].split(". ")[0] for s in SHEETS}
     descs.update({"Scaffold Calculator": "Pieces, weight, rent and installation for a façade",
                   "Quick Estimator": "A fast budget estimate from the price list"})
@@ -1698,9 +1882,16 @@ def _cover(wb, cover, company, tagline, template, currency, audit_ref, hidden, F
     cover.cell(r, 2, "Books integrity").font = F(bold=True, size=10, color=NAVY)
     cover.cell(r, 3, f"={audit_ref}").font = F(bold=True, size=10, color=NAVY)
     r += 2
-    note = ("Sheets for sections this company does not use are hidden (" + ", ".join(hidden) + "). Show a section in the app "
-            "(Settings → Menus) and download again, or unhide the sheet in Excel.") if hidden else \
-        "Every section is shown. Sections switched off in the app (Settings → Menus) are hidden from this file."
+    if getattr(wb, "_lang", "en") == "ar":
+        from .workbook_ar import sheet_names
+        nm = sheet_names()
+        note = ("أوراق الأقسام التي لا تستخدمها الشركة مخفية (" + "، ".join(nm.get(h, h) for h in hidden) + "). أظهر القسم من البرنامج "
+                "(الإعدادات ← القوائم) ثم حمّل الملف مرة أخرى، أو أظهر الورقة من إكسل.") if hidden else \
+            "كل الأقسام ظاهرة. الأقسام المُغلقة في البرنامج (الإعدادات ← القوائم) تُخفى من هذا الملف."
+    else:
+        note = ("Sheets for sections this company does not use are hidden (" + ", ".join(hidden) + "). Show a section in the app "
+                "(Settings → Menus) and download again, or unhide the sheet in Excel.") if hidden else \
+            "Every section is shown. Sections switched off in the app (Settings → Menus) are hidden from this file."
     cover.cell(r, 2, note).font = F(italic=True, size=8, color="777777")
     cover.merge_cells(start_row=r, start_column=2, end_row=r + 1, end_column=3)
     cover.cell(r, 2).alignment = Alignment(wrap_text=True, vertical="top")
@@ -1957,7 +2148,7 @@ def _partner_pack(wb, data, colmap, posting, rng, within, upto, pl_refs, n_bu, a
          put("Work executed, not yet invoiced (work in progress)", f"={CODE(wipacct)}", indent=1),
          put("Materials inventory", f"={H(('inventory',))}", indent=1),
          put("Advances paid to suppliers", f"={H(('prepaid',))}", indent=1),
-         put("Cash held by staff (custody / عهدة)", f'=IF({custacct}="",0,{CODE(custacct)})', indent=1),
+         put("Cash held by staff (custody)", f'=IF({custacct}="",0,{CODE(custacct)})', indent=1),
          put("Other current assets", f"={H(('other_current_asset',))}-{CODE(wipacct)}-IF({custacct}=\"\",0,{CODE(custacct)})", indent=1)]
     tca = put("Total current assets", f"=SUM(B{a[0]}:B{a[-1]})", style="total")
     n = [put("Equipment at cost", f"={H(('fixed_asset',))}", indent=1),

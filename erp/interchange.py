@@ -749,8 +749,9 @@ def read_xlsx(path):
         raise acc.ValidationError("Excel import needs openpyxl:  python -m pip install openpyxl") from None
     wb = openpyxl.load_workbook(str(path), data_only=True, read_only=True)
     data = {}
+    by_ar = {s["ar"]: s for s in SHEETS}
     for ws in wb.worksheets:
-        sheet = SHEET_BY_NAME.get(ws.title)
+        sheet = SHEET_BY_NAME.get(ws.title) or by_ar.get(ws.title.strip())   # English or Arabic workbook
         if not sheet:
             continue
         rows = list(ws.iter_rows(values_only=True))
@@ -760,7 +761,7 @@ def read_xlsx(path):
         if best[0] < min(2, len(sheet["cols"])):
             continue
         hi = -best[1]
-        data[ws.title] = rows_from_table(sheet, rows[hi], rows[hi + 1:])
+        data[sheet["name"]] = rows_from_table(sheet, rows[hi], rows[hi + 1:])
     wb.close()
     return data
 

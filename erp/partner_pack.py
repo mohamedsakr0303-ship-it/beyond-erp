@@ -272,7 +272,7 @@ def table(db, date_from=None, date_to=None, lang="en"):
              R(T("Work executed, not yet invoiced (work in progress)", "أعمال منفذة لم تُفوتر"), bs["wip"], indent=1),
              R(T("Materials inventory", "المخزون"), bs["inventory"], indent=1),
              R(T("Advances paid to suppliers", "دفعات مقدمة للموردين"), bs["prepaid"], indent=1),
-             R(T("Cash held by staff (custody / عهدة)", "عهد نقدية"), bs["custody"], indent=1),
+             R(T("Cash held by staff (custody)", "عهد نقدية"), bs["custody"], indent=1),
              R(T("Other current assets", "أصول متداولة أخرى"), bs["other_ca"], indent=1),
              R(T("Total current assets", "إجمالي الأصول المتداولة"), bs["tca"], style="subtotal"),
              R(T("Equipment at cost", "المعدات بالتكلفة"), bs["equipment"], indent=1),

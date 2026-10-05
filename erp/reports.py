@@ -965,7 +965,7 @@ def build(db, name, p):
     raise acc.ValidationError(f"Unknown report {name!r}")
 
 
-REPORT_PERMS = {"payroll_register": "payroll.runs", "partner_pack": "partners.equity", "income_statement": "reports.income_statement", "balance_sheet": "reports.balance_sheet",
+REPORT_PERMS = {"payroll_register": "payroll.runs", "partner_pack": ("reports.partner_pack", "partners.equity"), "income_statement": "reports.income_statement", "balance_sheet": "reports.balance_sheet",
                 "cash_flow": "reports.cash_flow", "trial_balance": "reports.trial_balance",
                 "general_ledger": "accounting.ledger", "bu_pnl": "business_units.profitability",
                 "payables": "purchasing.payables", "stock": "stock.balances", "receivables": "sales.receivables",
@@ -974,8 +974,8 @@ REPORT_PERMS = {"payroll_register": "payroll.runs", "partner_pack": "partners.eq
                 "custody": "purchasing.custody", "custody_statement": "purchasing.custody", "rent_fleet": "rentals.fleet",
                 "rentals": "rentals.contracts", "sales": "shop.orders", "installments": "shop.installments",
                 "products": "shop.products", "bank_reconciliation": "accounting.bankrec",
-                "party_statement": ("sales.parties", "purchasing.contacts", "sales.receivables", "purchasing.payables"),
-                "aging": ("sales.receivables", "purchasing.payables"), "budget": "accounting.budgets",
+                "party_statement": ("reports.statement", "sales.parties", "purchasing.contacts", "sales.receivables", "purchasing.payables"),
+                "aging": ("reports.aging", "sales.receivables", "purchasing.payables"), "budget": ("reports.budget", "accounting.budgets"),
                 "purchase_order": "purchasing.orders", "purchase_orders": "purchasing.orders",
                 "subscriptions": "shop.subscriptions"}
 

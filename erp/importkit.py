@@ -121,6 +121,16 @@ def _lists(db):
             "tax": [r["code"] for r in db.q("SELECT code FROM tax_codes WHERE active=1 ORDER BY code")]}
 
 
+FORMATS = {"date": ("date (2026-10-02, 02/10/2026 or an Excel date)", "تاريخ (2026-10-02 أو 02/10/2026 أو تاريخ إكسل)"),
+           "num": ("number", "رقم"), "money": ("amount (number)", "مبلغ (رقم)"), "pct": ("percentage (25% or 0.25)", "نسبة (25% أو 0.25)"),
+           "acct": ("account code from the chart of accounts", "كود حساب من دليل الحسابات"), "bu": ("business unit code", "كود وحدة العمل"),
+           "tax": ("tax code (VAT14…)", "كود ضريبة (VAT14…)")}
+
+
+def _fmt(kind, ar=False):
+    return FORMATS.get(kind, ("text", "نص"))[1 if ar else 0]
+
+
 def template_xlsx(db, name, lang="en", rows=None):
     """One sheet laid out exactly as the importer reads it, plus 'Lists' (drop-down values) and 'How to fill'."""
     import openpyxl
@@ -128,13 +138,18 @@ def template_xlsx(db, name, lang="en", rows=None):
     from openpyxl.styles import Alignment, Font, PatternFill
     from openpyxl.utils import get_column_letter as L
     from openpyxl.worksheet.datavalidation import DataValidation
-    from .workbook import EXAMPLES
+    from .workbook import EXAMPLES, EXAMPLES_AR
     s, d = sheet(name), describe(name)
     cols = input_cols(s)
     ar = lang == "ar"
+    tr = {}
+    if ar:              # one language per file: the Arabic template carries no English labels
+        from .workbook_ar import translations
+        tr = translations()
+    T = lambda en, a: a if ar else en  # noqa: E731
     wb = openpyxl.Workbook()
     ws = wb.active
-    ws.title = s["name"][:31]
+    ws.title = (s.get("ar") if ar and s.get("ar") else s["name"])[:31]
     if ar:
         ws.sheet_view.rightToLeft = True
     navy, grey = PatternFill("solid", fgColor="1F2A44"), PatternFill("solid", fgColor="C0392B")
@@ -142,20 +157,23 @@ def template_xlsx(db, name, lang="en", rows=None):
     ws.cell(2, 1, "اكتب البيانات من الصف 5. الأعمدة الحمراء مطلوبة. لا تغيّر صف العناوين (الصف 4). الصف 3 مثال فقط ولا يُستورد."
             if ar else "Enter data from row 5. Red headings are required. Keep the heading row (row 4) as it is. "
             "Row 3 is only an example and is not imported. See 'How to fill' for every column.").font = Font(size=9, color="555555")
-    ex = EXAMPLES.get(s["name"], {})
+    ex = {**EXAMPLES.get(s["name"], {}), **(EXAMPLES_AR.get(s["name"], {}) if ar else {})}
+    if ar:
+        ex = {k: tr.get(v, v) if isinstance(v, str) else v for k, v in ex.items()}
     lists = _lists(db)
     lst = wb.create_sheet("Lists")
     lcol = 0
     for i, c in enumerate(cols, start=1):
-        h = ws.cell(HEADER_ROW, i, f"{c['en']} / {c['ar']}")
+        h = ws.cell(HEADER_ROW, i, c["ar"] if ar else c["en"])
         h.font = Font(bold=True, color="FFFFFF", size=9)
         h.fill = grey if c["required"] else navy
         h.alignment = Alignment(wrap_text=True, vertical="center")
         tip = next(x for x in d["columns"] if x["key"] == c["key"])
-        h.comment = Comment(("Required. " if c["required"] else "") + tip["format"] +
-                            (f". Allowed: {', '.join(map(str, tip['choices']))}" if tip["choices"] else "") +
-                            (f". {tip['note']}" if tip["note"] else "") +
-                            (". Blank = the default account" if tip["default_role"] else ""), "Beyond ERP")
+        note = (tr.get(tip["note"]) or "") if ar else tip["note"]
+        h.comment = Comment((T("Required. ", "مطلوب. ") if c["required"] else "") + _fmt(tip["kind"], ar) +
+                            (f"{T('. Allowed: ', '. القيم: ')}{', '.join(map(str, tip['choices']))}" if tip["choices"] else "") +
+                            (f". {note}" if note else "") +
+                            (T(". Blank = the default account", ". فارغ = الحساب الافتراضي") if tip["default_role"] else ""), "Beyond ERP")
         ws.column_dimensions[L(i)].width = max(12, min(40, c["width"] + 2))
         if c["key"] in ex:
             e = ws.cell(3, i, ex[c["key"]])
@@ -163,7 +181,7 @@ def template_xlsx(db, name, lang="en", rows=None):
         values = c.get("choices") or lists.get(c["kind"])
         if values:
             lcol += 1
-            lst.cell(1, lcol, c["en"])
+            lst.cell(1, lcol, c["ar"] if ar else c["en"])
             for r, v in enumerate(values, start=2):
                 lst.cell(r, lcol, v)
             dv = DataValidation(type="list", formula1=f"=Lists!${L(lcol)}$2:${L(lcol)}${len(values) + 1}", allow_blank=True)
@@ -190,19 +208,21 @@ def template_xlsx(db, name, lang="en", rows=None):
     how = wb.create_sheet("How to fill" if not ar else "طريقة التعبئة")
     if ar:
         how.sheet_view.rightToLeft = True
-    head = ["Column", "العمود", "Required", "Format", "Allowed values", "Notes"]
+    head = ["العمود", "مطلوب", "الصيغة", "القيم المسموحة", "ملاحظات"] if ar else ["Column", "Required", "Format", "Allowed values", "Notes"]
     for i, t in enumerate(head, start=1):
         c = how.cell(1, i, t)
         c.font = Font(bold=True, color="FFFFFF")
         c.fill = navy
     for r, x in enumerate(d["columns"], start=2):
-        for i, v in enumerate([x["en"], x["ar"], "Yes" if x["required"] else "", x["format"],
-                               ", ".join(map(str, x["choices"])), x["note"] + (" Blank = the default account." if x["default_role"] else "")], start=1):
+        note = ((tr.get(x["note"]) or "") if ar else x["note"]) + (T(" Blank = the default account.", " فارغ = الحساب الافتراضي.") if x["default_role"] else "")
+        for i, v in enumerate([x["ar"] if ar else x["en"], T("Yes", "نعم") if x["required"] else "", _fmt(x["kind"], ar),
+                               ", ".join(map(str, x["choices"])), note.strip()], start=1):
             how.cell(r, i, v).alignment = Alignment(wrap_text=True, vertical="top")
-    for i, w in enumerate((28, 24, 9, 34, 34, 50), start=1):
+    for i, w in enumerate((28, 9, 34, 34, 50), start=1):
         how.column_dimensions[L(i)].width = w
-    how.cell(len(d["columns"]) + 3, 1, "Your own file works too: import it from the same screen and match its columns to these. "
-             "Headings in English or Arabic and common synonyms are matched automatically.").font = Font(italic=True, size=9)
+    how.cell(len(d["columns"]) + 3, 1, T("Your own file works too: import it from the same screen and match its columns to these. "
+             "Headings in English or Arabic and common synonyms are matched automatically.",
+             "يمكنك أيضاً استيراد ملفك الخاص من نفس الشاشة ومطابقة أعمدته بهذه. العناوين بالعربية أو الإنجليزية تُطابق تلقائياً.")).font = Font(italic=True, size=9)
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()

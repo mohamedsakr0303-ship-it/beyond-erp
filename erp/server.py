@@ -8,6 +8,7 @@ import base64
 import datetime as _dt
 import json
 import mimetypes
+mimetypes.add_type("font/woff2", ".woff2")
 import os
 import re
 import tempfile
@@ -2043,6 +2044,32 @@ def rental_action(ctx, rid, what):
 
 
 # ============================================================ fixed assets
+@route("GET", "/api/assets-overview", "assets.overview")
+def assets_overview(ctx):
+    from . import asset_views
+    return ok(asset_views.overview(ctx.db, ctx.q.get("date_to")))
+
+
+@route("GET", "/api/cash-accounts", "assets.cash")
+def cash_accounts(ctx):
+    from . import asset_views
+    return ok(asset_views.cash_accounts(ctx.db, ctx.q.get("date_to")))
+
+
+@route("POST", "/api/cash-transfer", "assets.cash", "add")
+def cash_transfer(ctx):
+    from . import asset_views
+    eid = asset_views.transfer(ctx.db, ctx.body, ctx.user["username"])
+    ctx.log("cash.transfer", eid)
+    return ok({"id": eid})
+
+
+@route("GET", "/api/depreciation-history", "assets.depreciation")
+def depreciation_history(ctx):
+    from . import asset_views
+    return ok({"rows": asset_views.depreciation_history(ctx.db)})
+
+
 @route("GET", "/api/assets", "assets.register")
 def assets_list(ctx):
     return ok(assets.register(ctx.db, ctx.q.get("q"), ctx.q.get("account"), ctx.q.get("state"), ctx.q.get("date_to")))
@@ -2355,6 +2382,8 @@ def dashboard(ctx):
     if ctx.can("shop.installments") or ctx.can("shop.orders"):
         d["installments_overdue"] = sales.overdue_summary(ctx.db)
         d["cheques_due"] = len(sales.cheques_due(ctx.db))
+    if ctx.can("rentals.contracts"):
+        d["rentals"] = rentals.ongoing(ctx.db)
     if ctx.can("assets.depreciation", "add"):
         d["depreciation_due"] = assets.due(ctx.db)
         if d["depreciation_due"] is None and ctx.can("rentals.fleet", "edit") and assets.policy(ctx.db)["remind"]:
@@ -2401,8 +2430,9 @@ def report(ctx, name):
 @route("GET", "/api/export/workbook", "import_export.export")
 def export_workbook(ctx):
     from . import workbook
-    data = workbook.build_workbook(ctx.db, template=False)
-    return download(data, f"BEYOND_ERP_{acc.today()}.xlsx", XLSX)
+    lang = "ar" if ctx.q.get("lang") == "ar" else "en"
+    data = workbook.build_workbook(ctx.db, template=False, lang=lang)
+    return download(data, f"BEYOND_ERP_{acc.today()}{'_AR' if lang == 'ar' else ''}.xlsx", XLSX)
 
 
 @route("GET", "/api/templates/workbook", "import_export")
@@ -2410,15 +2440,16 @@ def template_workbook(ctx):
     """The empty workbook — for this company, or (?type=scaffolding…) set up for a business type."""
     from . import workbook
     kind = ctx.q.get("type")
+    lang = "ar" if ctx.q.get("lang") == "ar" else "en"
     if kind:
         db2 = Database(":memory:")
         for k in ("company_name", "company_tagline", "currency", "company_address", "company_tax_id"):
             if ctx.db.setting(k):
                 db2.set_setting(k, ctx.db.setting(k))
         industries.apply(db2, kind)
-        return download(workbook.build_workbook(db2, template=True, hide=industries.TYPES[kind]["hide"]),
-                        f"ERP_Template_{kind}.xlsx", XLSX)
-    return download(workbook.build_workbook(ctx.db, template=True), "BEYOND_ERP_Import_Template.xlsx", XLSX)
+        return download(workbook.build_workbook(db2, template=True, hide=industries.TYPES[kind]["hide"], lang=lang),
+                        f"ERP_Template_{kind}{'_AR' if lang == 'ar' else ''}.xlsx", XLSX)
+    return download(workbook.build_workbook(ctx.db, template=True, lang=lang), f"BEYOND_ERP_Import_Template{'_AR' if lang == 'ar' else ''}.xlsx", XLSX)
 
 
 @route("GET", "/api/industries", "settings")

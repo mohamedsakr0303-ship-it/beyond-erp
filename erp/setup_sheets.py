@@ -88,7 +88,7 @@ def _specs(C):
                   C("amount", "Amount (draw / fee / interest)", "المبلغ", kind="money"),
                   C("method", "Payment Method", "طريقة الدفع", choices=acc.PAYMENT_METHODS), C("memo", "Description", "البيان", width=24)]},
         {"name": "Cash Custody", "ar": "العهد النقدية", "module": "purchasing", "setup": True,
-         "title": "Cash given to employees (عهدة). Booking: money = paid out now; opening = the employee already holds it. " + MONEY_NOTE,
+         "title": "Cash given to employees (custody). Booking: money = paid out now; opening = the employee already holds it. " + MONEY_NOTE,
          "cols": [C("code", "Custody Code", "كود العهدة", width=10, note="blank = automatic; needed to add expense reports"),
                   C("holder", "Employee", "الموظف", width=20, required=True),
                   C("kind", "Type", "النوع", width=10, choices=["temporary", "permanent"]),
@@ -141,7 +141,10 @@ def _specs(C):
                   C("charge_type", "Charge Type", "نوع المبلغ", width=10, choices=["install", "dismantle", "transport", "materials", "other"]),
                   C("po_number", "Client PO No.", "رقم أمر الشراء", width=10, note="filled = the PO was received"),
                   C("signed_client", "Signed by (client)", "وقّع عن العميل", width=14, note="filled with the PO = contract signed"),
-                  C("signed_us", "Signed by (us)", "وقّع عن الشركة", width=14)]},
+                  C("signed_us", "Signed by (us)", "وقّع عن الشركة", width=14),
+                  C("bu_code", "Business Unit (site)", "وحدة الأعمال (الموقع)", kind="bu", note="links the contract to its extracts and receipts"),
+                  C("delivered_on", "Delivered On", "تاريخ التسليم", kind="date", note="filled (with the PO and both signatures) = the signed delivery: the pieces are on site"),
+                  C("invoiced_to", "Invoiced Up To", "تمت الفوترة حتى", kind="date", note="rent already billed on an extract up to this date — the app bills from the next day")]},
         {"name": "Sales Contracts", "ar": "عقود البيع", "module": "shop", "setup": True,
          "title": "Sales of products / units with their payment plan. Rows with the same Sale No. form one sale (one row per line). " + MONEY_NOTE,
          "cols": [C("code", "Sale No.", "رقم البيع", width=10, required=True), C("date", "Date", "التاريخ", kind="date", required=True),
@@ -369,6 +372,15 @@ def _standalone(sheets, C):
                                           C("cost", "Our Cost (charge lines)", "تكلفتنا (للمبالغ)", kind="money",
                                             note="what the crew / truck costs us — for the services profit"))
 
+    # Rental contracts: each line's monthly rent and the contract's total on its first row (the dashboard's ongoing rents)
+    rc = "Rental Contracts"
+    by[rc]["cols"] += [
+        calc("x_first", "first row of the contract", f'=IF({{ref}}="",0,IF(MATCH({{ref}}&"",[[{rc}.ref]],0)={{row}}-4,1,0))'),
+        calc("x_rent", "rent / month (line)", '=IF(OR({ref}="",{line_kind}="charge",{charge_type}<>""),0,N({qty})*N({rate}))'),
+        calc("x_crent", "contract rent / month", f'=IF({{x_first}}=1,SUMIFS([[{rc}.x_rent]],[[{rc}.ref]],{{ref}}),0)'),
+        calc("x_chg", "one-time charge (line)", '=IF({ref}="",0,IF(OR({line_kind}="charge",{charge_type}<>""),N({qty})*N({rate}),0))'),
+        calc("x_charges", "one-time charges (contract)", f'=IF({{x_first}}=1,SUMIFS([[{rc}.x_chg]],[[{rc}.ref]],{{ref}}),0)')]
+
     # Sales contracts (one row per line; sale-level amounts on the sale's first row)
     sc = "Sales Contracts"
     first = "{x_first}=1"
@@ -554,11 +566,21 @@ def rent_contract(db, items, user):
             ln["charge_type"] = r.get("charge_type") or "other"
         lines.append(ln)
     rid = rentals.save(db, {**h, "lines": lines}, user=user)
+    if h.get("bu_code"):    # the contract's site = an existing business unit (its extracts and receipts)
+        bu = db.one("SELECT id FROM business_units WHERE code=?", (text(h["bu_code"]),))
+        if not bu:
+            raise ValidationError(f"Business unit {h['bu_code']} not found")
+        db.conn.execute("UPDATE rentals SET bu_id=? WHERE id=?", (bu["id"], rid))
     if h.get("po_number"):
         rentals.action(db, rid, "po", {"po_number": h["po_number"], "start_date": h.get("start_date")}, user)
         if h.get("signed_client"):
             rentals.action(db, rid, "sign", {"signed_client": h["signed_client"], "signed_us": h.get("signed_us") or "",
                                             "signed_on": h.get("start_date") or h.get("quote_date")}, user)
+    if h.get("delivered_on"):
+        if not (h.get("po_number") and h.get("signed_client")):
+            raise ValidationError("Delivered On needs the client's PO number and both signatures on the contract")
+        rentals.import_delivery(db, rid, acc.clean_date(h["delivered_on"]), h.get("signed_us") or "", h["signed_client"],
+                                acc.clean_date(h["invoiced_to"]) if h.get("invoiced_to") else None, user)
 
 
 def sale_contract(db, items, user):

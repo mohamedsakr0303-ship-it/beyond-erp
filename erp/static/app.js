@@ -122,7 +122,7 @@ function applyLook() {
   document.documentElement.dir = S.lang === "ar" ? "rtl" : "ltr";
   const font = store.get("font", "") || st.font_family || "system";
   const size = store.get("fontSize", "") || st.font_size || "15";
-  const fam = font === "system" ? 'system-ui,-apple-system,"Segoe UI",Roboto,Tahoma,Arial,sans-serif' : `"${font}",Tahoma,Arial,sans-serif`;
+  const fam = font === "system" ? '"Nunito Sans","Cairo",system-ui,-apple-system,"Segoe UI",Roboto,Tahoma,Arial,sans-serif' : `"${font}","Cairo",Tahoma,Arial,sans-serif`;
   document.documentElement.style.setProperty("--font", fam);
   document.documentElement.style.setProperty("--fs", size + "px");
   const theme = store.get("theme", "auto");
@@ -595,12 +595,19 @@ function readForm(f) {
     if (el.type === "checkbox") v[el.name] = el.checked;
     else v[el.name] = el.value;
   });
+  // a field shown only in the user's language: when the main (English) value is empty, use the Arabic one
+  Object.keys(v).forEach(k => { const base = k.endsWith("_ar") ? k.slice(0, -3) : null; if (base && base in v && !String(v[base]).trim() && String(v[k]).trim()) v[base] = v[k]; });
   return v;
 }
+// a text kept in two languages (name / name_ar …): only the user's language is shown; the other value is kept as it is
+const inLang = (en, ar, l, extra = {}) => S.lang === "ar"
+  ? [{ ...extra, k: ar[0], l, v: ar[1] || en[1] || "" }, { k: en[0], v: en[1], hidden: 1 }]
+  : [{ ...extra, k: en[0], l, v: en[1] }, { k: ar[0], v: ar[1], hidden: 1 }];
 // field: {k,l,type,opts:[[v,label]],v,span,req,list,step,ph,help,change,input}
 function form(fields, cols = 2) {
   return `<div class="grid g${cols}">` + fields.map(f => {
     if (f.html) return `<div class="${f.span || ""}">${f.html}</div>`;
+    if (f.hidden) return `<input type="hidden" name="${f.k}" value="${esc(f.v ?? "")}">`;
     const attrs = `name="${f.k}" ${f.req ? "required" : ""} ${f.ph ? `placeholder="${esc(f.ph)}"` : ""} ${f.change ? `data-change="${f.change}"` : ""} ${f.input ? `data-input="${f.input}"` : ""} ${f.dis ? "disabled" : ""}`;
     let ctl;
     if (f.type === "select") ctl = `<select ${attrs}>${(f.opts || []).map(o => { const [v, l] = Array.isArray(o) ? o : [o, tl(o)]; return `<option value="${esc(v)}" ${String(v) === String(f.v ?? "") ? "selected" : ""}>${esc(l)}</option>`; }).join("")}</select>`;
@@ -987,6 +994,13 @@ PAGES.dashboard = async (view, parts, q) => {
     <div class="grid g2"><div class="card"><h2>${t("last12")}</h2><div class="legend"><span class="r">${t("rev")}</span><span class="c">${t("costs")}</span></div>
       <div class="bar">${d.series.map(s => `<div class="m"><div class="b"><i class="r" style="height:${(s.revenue / max * 100).toFixed(1)}%" title="${money(s.revenue)}"></i><i class="c" style="height:${(s.costs / max * 100).toFixed(1)}%" title="${money(s.costs)}"></i></div>${esc(s.month.slice(2))}</div>`).join("") || `<div class="empty">${t("nothing")}</div>`}</div></div>
       <div class="card"><h2>${t("model_audit")}</h2>${d.audit.map(a => `<div class="row" style="justify-content:space-between;padding:3px 0"><span>${esc(a.check)}</span><span class="chip ${a.ok ? "ok" : "bad"}">${a.ok ? "OK" : "CHECK"}</span></div>`).join("")}</div></div>
+    ${d.rentals && d.rentals.rows.length ? `<div class="card"><h2>${L2("Ongoing rentals", "الإيجارات الجارية")} — ${money(d.rentals.monthly)} / ${L2("month", "شهر")}${d.rentals.to_bill ? ` <span class="chip warn">${d.rentals.to_bill} ${L2("to invoice", "للفوترة")}</span>` : ""}</h2>
+      <div class="tbl stack"><table><thead><tr><th>${t("code")}</th><th>${t("client")} / ${L2("site", "الموقع")}</th><th>${L2("On site since", "بالموقع منذ")}</th><th class="num">${L2("Pieces", "القطع")}</th><th class="num">${L2("Rent / month", "الإيجار الشهري")}</th>
+        <th class="num">${L2("Rent to date", "الإيجار حتى اليوم")}</th><th>${L2("Invoiced to", "تمت الفوترة حتى")}</th><th class="num">${L2("Invoiced", "المفوتر")}</th><th class="num">${L2("Collected", "المحصل")}</th><th class="num">${L2("Client owes", "مستحق على العميل")}</th></tr></thead><tbody>
+      ${d.rentals.rows.map(r => `<tr class="click" data-href="#/rental/${r.id}"><td><b>${esc(r.code)}</b></td><td>${esc(r.client)}<div class="lines">${esc(r.site || "")}</div></td>
+        <td>${fd(r.since)}<div class="lines">${r.days} ${L2("days", "يوم")}</div></td><td class="num">${numf(r.pieces_out)}</td><td class="num">${money(r.monthly)}</td><td class="num">${money(r.rent_to_date)}</td>
+        <td>${r.billed_to ? fd(r.billed_to) : "—"}${r.to_bill ? `<div class="lines"><span class="chip warn">${L2("bill from", "فوترة من")} ${fd(r.next_from)}</span></div>` : ""}</td>
+        <td class="num">${money(r.invoiced)}</td><td class="num">${money(r.collected)}</td><td class="num"><b class="${r.owed > 0 ? "" : "pos"}">${money(r.owed)}</b></td></tr>`).join("")}</tbody></table></div></div>` : ""}
     <div class="card"><h2>${t("m_bus")}</h2>${buTable(d.units)}</div>`;
 };
 function buTable(rows) {
@@ -1379,8 +1393,7 @@ PAGES.ledger = async (view, parts, q) => reportPage(view, "general_ledger", q, [
 PAGES.coa = async (view, parts, q) => {
   const rows = await api("GET", "/api/accounts?" + qs(q));
   const types = Object.keys(S.boot.enums.subtypes);
-  const edit = a => drawer(t("m_coa"), form([{ k: "code", l: t("code"), v: a.code, req: 1 }, { k: "name", l: t("name") + " (English)", v: a.name, req: 1 },
-    { k: "name_ar", l: t("name") + " (العربية)", v: a.name_ar },
+  const edit = a => drawer(t("m_coa"), form([{ k: "code", l: t("code"), v: a.code, req: 1 }, ...inLang(["name", a.name], ["name_ar", a.name_ar], t("name"), { req: 1 }),
     { k: "type", l: t("type"), type: "select", opts: types.map(x => [x, tl(x)]), v: a.type || "Expense", change: "atype", dis: a.used },
     { k: "subtype", l: t("statement_line"), type: "select", opts: [], v: a.subtype },
     { k: "active", l: t("active"), type: "checkbox", v: a.active !== 0 },
@@ -1402,7 +1415,7 @@ PAGES.coa = async (view, parts, q) => {
     <input type="search" class="coa-q" placeholder="${L2("Find an account — code or name", "ابحث عن حساب — بالكود أو الاسم")}" data-input="coaq" style="min-width:220px;flex:1;max-width:360px">
     ${inactive ? `<label class="f chk"><input type="checkbox" data-change="coainact" ${q.inactive ? "checked" : ""}>${S.lang === "ar" ? "إظهار الحسابات غير النشطة" : "Show inactive accounts"} (${inactive})</label>` : ""}<span class="spacer"></span>${exportMenu("trial_balance", {})}</div>` +
     filterBar(q, ["asof"]) + types.map(ty => `<div class="card coa-card"><div class="row" style="justify-content:space-between;align-items:center"><h2>${esc(tl(ty))}</h2>${add ? `<button class="btn sm" data-a="anew" data-type="${ty}">+ ${L2("Add", "إضافة")} ${esc(tl(ty))}</button>` : ""}</div><div class="tbl"><table><thead><tr><th>${t("code")}</th><th>${t("account")}</th><th>${t("statement_line")}</th><th>${t("normal")}</th><th class="num">${t("balance")}</th></tr></thead><tbody>
-    ${rows.filter(a => a.type === ty && (a.active || q.inactive)).map(a => `<tr class="click coa-row ${a.active ? "" : "void"}" data-a="${ed ? "aedit" : ""}" data-id="${esc(a.code)}" data-s="${esc([a.code, a.name, a.name_ar, sub(a.subtype), a.role].join(" ").toLowerCase())}"><td><b>${esc(a.code)}</b></td><td>${esc(aname(a))}${S.lang === "ar" ? "" : a.name_ar ? ` <span class="muted">${esc(a.name_ar)}</span>` : ""} ${a.role ? `<span class="chip">${esc(a.role)}</span>` : ""}</td><td>${esc(sub(a.subtype))}</td><td>${tl(a.normal) === a.normal ? (S.lang === "ar" ? (a.normal === "Debit" ? "مدين" : "دائن") : a.normal) : ""}</td><td class="num ${a.balance < 0 ? "neg" : ""}">${a.balance ? money(a.balance) : "—"}</td></tr>`).join("")}</tbody></table></div></div>`).join("");
+    ${rows.filter(a => a.type === ty && (a.active || q.inactive)).map(a => `<tr class="click coa-row ${a.active ? "" : "void"}" data-a="${ed ? "aedit" : ""}" data-id="${esc(a.code)}" data-s="${esc([a.code, a.name, a.name_ar, sub(a.subtype), a.role].join(" ").toLowerCase())}"><td><b>${esc(a.code)}</b></td><td>${esc(aname(a))} ${a.role ? `<span class="chip">${esc(a.role)}</span>` : ""}</td><td>${esc(sub(a.subtype))}</td><td>${tl(a.normal) === a.normal ? (S.lang === "ar" ? (a.normal === "Debit" ? "مدين" : "دائن") : a.normal) : ""}</td><td class="num ${a.balance < 0 ? "neg" : ""}">${a.balance ? money(a.balance) : "—"}</td></tr>`).join("")}</tbody></table></div></div>`).join("");
 };
 
 // ------------------------------------------------------------------ offers
@@ -1599,7 +1612,7 @@ PAGES.data = async (view) => {
   const ed = can("import_export.import", "edit");
   view.innerHTML = (STATIC ? `<div class="banner info">${S.lang === "ar" ? "هذه نسخة المتصفح: البيانات محفوظة في هذا المتصفح فقط. نزّل نسخة JSON أو Excel بانتظام كنسخة احتياطية، واستخدمها لنقل البيانات لجهاز آخر." : "Browser edition: your data is stored in this browser only. Download a JSON or Excel copy regularly as your backup — it is also how you move data to another device."}</div>` : "") +
     `<div class="grid g2"><div class="card"><h2>${t("exp_title")}</h2><div class="grid">
-      <a class="btn" href="/api/export/workbook">⬇ ${t("full_wb")}</a><a class="btn" href="/api/templates/workbook">⬇ ${t("empty_tpl")}</a>
+      <a class="btn" href="/api/export/workbook?lang=${S.lang}">⬇ ${t("full_wb")}</a><a class="btn" href="/api/templates/workbook?lang=${S.lang}">⬇ ${t("empty_tpl")}</a>
       <a class="btn" href="/api/demo/workbook">⬇ ${L2("Import template filled with demo data (Excel)", "قالب الاستيراد مملوء ببيانات تجريبية (Excel)")}</a>
       <a class="btn" href="/api/export/json">⬇ ${t("json_backup")}</a>${can("settings.system", "edit") ? `<a class="btn" href="/api/backup">⬇ ${t("db_backup")}</a>` : ""}
       <div class="row"><select id="csvs">${sheets.map(s => `<option value="${esc(s.name)}">${esc(S.lang === "ar" ? s.ar : s.name)}</option>`).join("")}</select>
@@ -1756,7 +1769,7 @@ PAGES.taxcodes = async (view) => {
   const rows = await api("GET", "/api/tax-codes");
   const ed = can("tax.codes", "edit");
   const edit = c => drawer(t("m_taxcodes"), form([{ k: "code", l: t("code"), v: c.code, req: 1 }, { k: "kind", l: t("kind_tax"), type: "select", opts: [["vat", t("vat_code")], ["wht", t("wht_code")]], v: c.kind || "vat" },
-    { k: "name", l: t("name") + " (English)", v: c.name, req: 1 }, { k: "name_ar", l: t("name") + " (العربية)", v: c.name_ar },
+    ...inLang(["name", c.name], ["name_ar", c.name_ar], t("name"), { req: 1 }),
     { k: "rate", l: t("rate_pct"), type: "number", v: c.rate != null ? +(c.rate * 100).toFixed(4) : "" }, { k: "eta_type", l: t("eta_type"), v: c.eta_type, ph: "T1 / T4" },
     { k: "eta_subtype", l: t("eta_sub"), v: c.eta_subtype, ph: "V009 / W001" }, { k: "active", l: t("active"), type: "checkbox", v: c.active !== 0 }]),
   async v => { v.rate = (+v.rate || 0) / 100; if (c.code) await api("PUT", "/api/tax-codes/" + encodeURIComponent(c.code), v); else await api("POST", "/api/tax-codes", v); await refreshBoot(); toast(t("saved")); },
@@ -1841,7 +1854,7 @@ const Img = {
     g.putImageData(px, 0, 0); return Img.out(cv);
   },
 };
-const FONTS = ["system", "Arial", "Tahoma", "Segoe UI", "Calibri", "Verdana", "Helvetica", "Times New Roman", "Georgia", "Noto Sans Arabic", "Noto Naskh Arabic", "Cairo", "Traditional Arabic", "Courier New"];
+const FONTS = ["system", "Nunito Sans", "Cairo", "Arial", "Tahoma", "Segoe UI", "Calibri", "Verdana", "Helvetica", "Times New Roman", "Georgia", "Noto Sans Arabic", "Noto Naskh Arabic", "Cairo", "Traditional Arabic", "Courier New"];
 const DOC_FONTS = ["Arial", "Calibri", "Tahoma", "Segoe UI", "Times New Roman", "Georgia", "Cairo", "Traditional Arabic", "Bodoni MT Black", "Bodoni MT", "Garamond", "Century Gothic"];
 
 PAGES.settings = async (view, parts, q) => {
@@ -2005,8 +2018,8 @@ async function brandingTab(view, head) {
       </tbody></table></div></div>
     <div class="card"><h2>${t("colours")}</h2><div class="grid g4">${col("dark", "c_dark")}${col("accent", "c_accent")}${col("light", "c_light")}${col("text", "c_text")}</div>
       <div class="grid g4" style="margin-top:10px"><label class="f">${t("doc_font")}<input name="font" list="dfonts" value="${esc(b.font)}"></label><label class="f">${t("sig_font")}<input name="sig_font" list="dfonts" value="${esc(b.sig_font)}"></label>
-        <label class="f">${t("cur_words")} (EN)<input name="cur_words" value="${esc(b.cur_words)}"></label><label class="f">${t("cur_fraction")} (EN)<input name="cur_fraction" value="${esc(b.cur_fraction)}"></label>
-        <label class="f">${t("cur_words")} (ع)<input name="cur_words_ar" dir="rtl" value="${esc(b.cur_words_ar)}"></label><label class="f">${t("cur_fraction")} (ع)<input name="cur_fraction_ar" dir="rtl" value="${esc(b.cur_fraction_ar)}"></label></div>
+        ${(S.lang === "ar" ? [["cur_words_ar", "cur_words"], ["cur_fraction_ar", "cur_fraction"]] : [["cur_words", "cur_words_ar"], ["cur_fraction", "cur_fraction_ar"]]).map(([k, other], i) =>
+          `<label class="f">${t(i ? "cur_fraction" : "cur_words")}<input name="${k}" value="${esc(b[k])}"></label><input type="hidden" name="${other}" value="${esc(b[other])}">`).join("")}</div>
       ${datalist("dfonts", DOC_FONTS)}</div>
     <div class="card"><h2>${t("contact_block")}</h2><div class="grid g2">
       <label class="f">${t("c_name")}<input name="contact.name" value="${esc(b.contact.name)}"></label><label class="f">${t("c_title")}<input name="contact.title" value="${esc(b.contact.title)}"></label>
@@ -3224,7 +3237,7 @@ function rentDeprForm() {
 function rentItemForm(it) {
   it = it || { category: "scaffolding", unit: "piece", active: 1 };
   drawer(it.id ? `${t("edit")} — ${it.code}` : L2("New equipment item", "صنف معدات جديد"), form([
-    { k: "name", l: L2("Name", "الاسم"), v: it.name, req: 1 }, { k: "name_ar", l: L2("Arabic name", "الاسم بالعربية"), v: it.name_ar },
+    ...inLang(["name", it.name], ["name_ar", it.name_ar], L2("Name", "الاسم"), { req: 1 }),
     { k: "category", l: L2("Category", "الفئة"), type: "select", opts: RENT_CAT(), v: it.category }, { k: "unit", l: t("unit"), v: it.unit, ph: "piece / unit / m" },
     { k: "monthly_rate", l: L2("Rent per piece / month", "إيجار القطعة شهرياً"), type: "number", v: it.monthly_rate || "" },
     { k: "std_cost", l: L2("Reference cost (until a purchase is recorded)", "التكلفة المرجعية (لحين تسجيل شراء)"), type: "number", v: it.std_cost || "" },
@@ -3274,7 +3287,7 @@ function rentKitForm(k, d) {
   k = k || { unit: "frame", lines: [] };
   let rows = k.lines.map(l => ({ item_id: l.item_id, qty: l.qty }));
   drawer(k.id ? `${t("edit")} — ${k.code}` : L2("New frame / set", "شباك / طقم جديد"), form([
-    { k: "name", l: L2("Name", "الاسم"), v: k.name, req: 1 }, { k: "name_ar", l: L2("Arabic name", "الاسم بالعربية"), v: k.name_ar },
+    ...inLang(["name", k.name], ["name_ar", k.name_ar], L2("Name", "الاسم"), { req: 1 }),
     { k: "unit", l: t("unit"), v: k.unit }, { k: "monthly_rate", l: L2("Rent per unit / month", "الإيجار للوحدة شهرياً"), type: "number", v: k.monthly_rate || "", input: "rkcalc" },
     { k: "code", l: t("code"), v: k.code || "", ph: L2("automatic", "تلقائي") }, { html: `<div id="rkl"></div>`, span: "spanall" }]),
     async v => { const body = { ...v, lines: rows }; if (k.id) await api("PUT", "/api/rent-kits/" + k.id, body); else await api("POST", "/api/rent-kits", body); toast(t("saved")); },
@@ -3296,11 +3309,13 @@ function rentSettingsForm(st) {
   drawer(L2("Rental terms & safety checklists", "شروط التأجير وقوائم فحص السلامة"), form([
     { k: "loss_markup", l: L2("Loss price = latest cost + %", "سعر الفقد = آخر تكلفة + %"), type: "number", v: +(st.loss_markup * 100).toFixed(2) },
     { k: "day_basis", l: L2("A rent month is", "شهر الإيجار"), type: "select", opts: [["0", L2("The calendar month (a full month = 1 month)", "الشهر الميلادي (الشهر الكامل = شهر)")], ["30", L2("30 days", "30 يوماً")]], v: String(st.day_basis || 0) },
-    { k: "terms_ar", l: L2("Handover terms (Arabic)", "شروط المحضر (عربي)"), type: "textarea", v: st.terms.ar || "", span: "spanall" }, { k: "terms_en", l: L2("Handover terms (English)", "شروط المحضر (إنجليزي)"), type: "textarea", v: st.terms.en || "", span: "spanall" },
-    { k: "ct_ar", l: L2("Contract terms (Arabic)", "شروط العقد (عربي)"), type: "textarea", v: st.contract_terms.ar || "", span: "spanall" }, { k: "ct_en", l: L2("Contract terms (English)", "شروط العقد (إنجليزي)"), type: "textarea", v: st.contract_terms.en || "", span: "spanall" },
-    ...RENT_CAT().map(([c, label]) => ({ k: "cl_" + c, l: `${L2("Safety checklist", "قائمة الفحص")} — ${label} (${L2("one per line: English | Arabic", "بند في كل سطر: إنجليزي | عربي")})`, type: "textarea", span: "spanall",
-      v: (cl[c] || []).map(r => `${r[0]} | ${r[1] || ""}`).join("\n") }))]),
-    async v => { const checklists = {}; RENT_CAT().forEach(([c]) => { checklists[c] = String(v["cl_" + c] || "").split("\n").map(s => s.split("|").map(x => x.trim())).filter(r => r[0]); });
+    ...inLang(["terms_en", st.terms.en || ""], ["terms_ar", st.terms.ar || ""], L2("Handover terms", "شروط المحضر"), { type: "textarea", span: "spanall" }),
+    ...inLang(["ct_en", st.contract_terms.en || ""], ["ct_ar", st.contract_terms.ar || ""], L2("Contract terms", "شروط العقد"), { type: "textarea", span: "spanall" }),
+    ...RENT_CAT().map(([c, label]) => ({ k: "cl_" + c, l: `${L2("Safety checklist", "قائمة الفحص")} — ${label} (${L2("one item per line", "بند في كل سطر")})`, type: "textarea", span: "spanall",
+      v: (cl[c] || []).map(r => (S.lang === "ar" ? r[1] || r[0] : r[0]) || "").join("\n") }))]),
+    // each item is kept in both languages: the lines typed here replace the user's language, the other stays by position
+    async v => { const checklists = {}, ar = S.lang === "ar"; RENT_CAT().forEach(([c]) => { const old = cl[c] || [];
+      checklists[c] = String(v["cl_" + c] || "").split("\n").map(x => x.trim()).filter(Boolean).map((x, i) => ar ? [old[i] ? old[i][0] : x, x] : [x, old[i] ? old[i][1] || "" : ""]); });
       await api("PUT", "/api/rent-settings", { loss_markup: v.loss_markup, day_basis: v.day_basis, terms: { ar: v.terms_ar, en: v.terms_en }, contract_terms: { ar: v.ct_ar, en: v.ct_en }, checklists }); toast(t("saved")); },
     { wide: true });
 }
@@ -3436,7 +3451,7 @@ function rentModelEditor(m, after) {
       <td><button type="button" class="btn sm danger" data-a="rmedel" data-s="${key}" data-i="${i}">✕</button></td></tr>`).join("")}</tbody></table></div>
     <button type="button" class="btn sm" data-a="rmeadd" data-s="${key}">+ ${L2("Row", "سطر")}</button>`;
   const html = () => `<p class="muted">${L2("Names are what formulas use (letters, digits, _). Formulas can use + − × ÷, brackets, comparisons, 'a if condition else b' and ceil, floor, round, min, max, sqrt. Each piece's formula gives its quantity; 'item' is the equipment code.", "الأسماء هي ما تستخدمه المعادلات (حروف إنجليزية وأرقام و _). يمكن استخدام + − × ÷ والأقواس والمقارنات و 'a if شرط else b' و ceil, floor, round, min, max, sqrt. معادلة كل قطعة تعطي كميتها؛ 'item' هو كود الصنف.")}</p>`
-    + form([{ k: "name", l: L2("Model name", "اسم النموذج"), v: m.name, req: 1 }, { k: "name_ar", l: L2("Arabic name", "الاسم بالعربية"), v: m.name_ar }])
+    + form(inLang(["name", m.name], ["name_ar", m.name_ar], L2("Model name", "اسم النموذج"), { req: 1 }))
     + `<div id="rmeb">${body()}</div>`;
   const body = () => sec("inputs", [["key", L2("Name", "الاسم")], ["label", L2("Label", "العنوان")], ["label_ar", "عربي"], ["unit", t("unit")], ["value", L2("Default", "الافتراضي")]])
     + sec("params", [["key", L2("Name", "الاسم")], ["label", L2("Label", "العنوان")], ["label_ar", "عربي"], ["unit", t("unit")], ["value", L2("Default", "الافتراضي")]])
@@ -3453,6 +3468,50 @@ function rentModelEditor(m, after) {
 }
 const models_del = m => can("rentals.calculator", "edit") ? `<button type="button" class="btn danger" data-a="rmdel">${t("delete")}</button>` : "";
 
+// ------------------------------------------------------ assets: overview, cash & banks, depreciation
+PAGES["assets-overview"] = async (view, parts, q) => {
+  const d = await api("GET", "/api/assets-overview?" + qs(q));
+  const nm = a => (S.lang === "ar" && a.name_ar ? a.name_ar : a.name);
+  view.innerHTML = filterBar(q, ["asof"]) +
+    `<div class="kpis"><div class="kpi"><div class="l">${L2("Total assets", "إجمالي الأصول")}</div><div class="v">${money(d.total)}</div></div></div>
+    <div class="grid g2">${d.classes.filter(c => c.amount || c.accounts.length).map(c => `<div class="card"><h2>${esc(S.lang === "ar" ? c.ar : c.en)} <span class="spacer"></span><b>${money(c.amount)}</b></h2>
+      <div class="tbl"><table><tbody>${c.accounts.map(a => `<tr><td>${esc(a.code)} ${esc(nm(a))}</td><td class="num">${money(a.amount)}</td></tr>`).join("")}</tbody></table></div>
+      <div class="row" style="margin-top:8px"><a class="btn sm" href="#/${c.route}">${L2("Open", "فتح")} →</a></div></div>`).join("") ||
+      `<div class="card"><div class="empty">${L2("No assets in the books yet.", "لا توجد أصول في الدفاتر بعد.")}</div></div>`}</div>`;
+};
+PAGES.cash = async (view, parts, q) => {
+  const d = await api("GET", "/api/cash-accounts?" + qs(q));
+  const nm = a => (S.lang === "ar" && a.name_ar ? a.name_ar : a.name);
+  const add = can("assets.cash", "add"), opts = d.accounts.map(a => [a.code, `${a.code} — ${nm(a)}`]);
+  S.H.cashx = () => drawer(L2("Transfer between accounts", "تحويل بين الحسابات"), form([
+    { k: "date", l: t("date"), type: "date", v: today(), req: 1 }, { k: "amount", l: t("amount"), type: "number", req: 1 },
+    { k: "from", l: L2("From", "من"), type: "select", opts, v: opts[0] && opts[0][0] }, { k: "to", l: L2("To", "إلى"), type: "select", opts, v: opts[1] && opts[1][0] },
+    { k: "fee", l: L2("Transfer fee (optional)", "رسوم التحويل (اختياري)"), type: "number" }, { k: "memo", l: t("memo") }]),
+    async v => { await api("POST", "/api/cash-transfer", v); toast(t("saved")); });
+  view.innerHTML = `<div class="toolbar">${add && d.accounts.length > 1 ? `<button class="btn pri" data-a="cashx">⇄ ${L2("Transfer between accounts", "تحويل بين الحسابات")}</button>` : ""}<span class="spacer"></span>
+    ${can("accounting.coa", "add") ? `<a class="btn" href="#/coa">+ ${L2("Add a cash / bank account", "إضافة حساب نقدية / بنك")}</a>` : ""}</div>` +
+    filterBar(q, ["asof"]) +
+    `<div class="kpis"><div class="kpi"><div class="l">${L2("Cash & bank in total", "إجمالي النقدية والبنوك")}</div><div class="v">${money(d.total)}</div></div></div>
+    <div class="card"><div class="tbl"><table><thead><tr><th>${t("account")}</th><th class="num">${L2("Balance", "الرصيد")}</th><th>${L2("Last movement", "آخر حركة")}</th><th class="num">${L2("Movements", "الحركات")}</th><th></th></tr></thead><tbody>
+      ${d.accounts.map(a => `<tr><td><b>${esc(a.code)}</b> ${esc(nm(a))}</td><td class="num ${a.balance < 0 ? "neg" : ""}"><b>${money(a.balance)}</b></td><td>${a.last ? fd(a.last) : "—"}</td><td class="num">${a.moves}</td>
+        <td>${can("accounting.ledger") ? `<a class="btn sm" href="#/ledger?account=${encodeURIComponent(a.code)}">${t("m_ledger")}</a>` : ""}</td></tr>`).join("")}</tbody></table></div></div>
+    <div class="card"><h2>${L2("Latest movements", "آخر الحركات")}</h2>${d.recent.length ? `<div class="tbl"><table><thead><tr><th>${t("date")}</th><th>${t("account")}</th><th>${t("memo")}</th><th class="num">${L2("In", "وارد")}</th><th class="num">${L2("Out", "منصرف")}</th></tr></thead><tbody>
+      ${d.recent.map(r => `<tr><td>${fd(r.date)}</td><td>${esc(r.account)}</td><td>${esc(r.memo || tl(r.kind))}</td><td class="num">${r.in ? money(r.in) : ""}</td><td class="num">${r.out ? money(r.out) : ""}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${L2("No movements yet.", "لا توجد حركات بعد.")}</div>`}</div>`;
+};
+PAGES.depreciation = async (view, parts, q) => {
+  const [d, h] = await Promise.all([api("GET", "/api/assets?" + qs({ state: "active" })), api("GET", "/api/depreciation-history")]);
+  const dep = can("assets.depreciation", "add");
+  S.H.fadep = () => deprForm(); S.H.fapol = () => deprPolicyForm();
+  const live = d.rows.filter(r => r.life_months && !r.disposed && !r.fully_depreciated);
+  const monthly = live.reduce((s, r) => s + (+r.monthly || 0), 0);
+  view.innerHTML = `<div class="toolbar">${dep ? `<button class="btn pri" data-a="fadep">${L2("Run depreciation", "احتساب الإهلاك")}</button>` : ""}${canPolicy() ? `<button class="btn" data-a="fapol">${L2("Depreciation policy", "سياسة الإهلاك")}</button>` : ""}<span class="spacer"></span><a class="btn" href="#/assets">${t("m_assets")}</a></div>
+    <div class="kpis"><div class="kpi"><div class="l">${L2("Depreciation a month", "الإهلاك الشهري")}</div><div class="v">${money(monthly)}</div></div>
+      <div class="kpi"><div class="l">${L2("Accumulated", "المجمع")}</div><div class="v">${money(d.totals.accumulated)}</div></div><div class="kpi"><div class="l">${L2("Book value", "القيمة الدفترية")}</div><div class="v">${money(d.totals.book_value)}</div></div></div>
+    <div class="card"><h2>${L2("Assets being depreciated", "أصول قيد الإهلاك")}</h2>${live.length ? `<div class="tbl"><table><thead><tr><th>${t("code")}</th><th>${L2("Asset", "الأصل")}</th><th class="num">${L2("A month", "شهرياً")}</th><th>${L2("Booked to", "محتسب حتى")}</th><th class="num">${L2("Book value", "القيمة الدفترية")}</th></tr></thead><tbody>
+      ${live.map(r => `<tr><td>${esc(r.code)}</td><td>${esc(r.name)}</td><td class="num">${money(r.monthly)}</td><td>${esc(r.booked_through || "—")}</td><td class="num">${money(r.book_value)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${L2("Nothing to depreciate.", "لا يوجد ما يُهلك.")}</div>`}</div>
+    <div class="card"><h2>${L2("Depreciation booked", "الإهلاك المسجل")}</h2>${h.rows.length ? `<div class="tbl"><table><thead><tr><th>${t("date")}</th><th>${t("memo")}</th><th class="num">${t("amount")}</th></tr></thead><tbody>
+      ${h.rows.map(r => `<tr><td>${fd(r.date)}</td><td>${esc(r.memo)}</td><td class="num">${money(r.amount)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${L2("No depreciation booked yet.", "لم يُسجل إهلاك بعد.")}</div>`}</div>`;
+};
 PAGES.assets = async (view, parts, q) => {
   const d = await api("GET", "/api/assets?" + qs(q));
   const add = can("assets.register", "add"), dep = can("assets.depreciation", "add");
@@ -3820,7 +3879,7 @@ function productForm(p) {
   const invAccts = [["", L2("— no cost booked —", "— بدون تكلفة —")], ...accts(["Asset"], ["inventory", "other_current_asset", "fixed_asset"])];
   drawer(isNew ? L2("New product / unit", "منتج / وحدة جديدة") : `${t("edit")} — ${p.code}`, form([
     { k: "kind", l: L2("Type", "النوع"), type: "select", opts: P_KINDS(), v: p.kind, change: "pkind", span: "spanall" },
-    { k: "name", l: t("name"), v: p.name, req: 1 }, { k: "name_ar", l: t("name") + " (العربية)", v: p.name_ar },
+    ...inLang(["name", p.name], ["name_ar", p.name_ar], t("name"), { req: 1 }),
     { k: "code", l: t("code"), v: p.code, ph: L2("automatic", "تلقائي") }, { k: "category", l: L2("Category", "التصنيف"), v: p.category, list: "pcatl", ph: L2("Apartments, Villas, Furniture…", "شقق، فيلات، أثاث…") },
     { k: "price", l: L2("Price", "السعر"), type: "number", v: p.price, req: 1 }, { k: "unit", l: t("unit"), v: p.unit, list: "units", ph: "m², pcs, set" },
     { k: "status", l: t("status"), type: "select", opts: Object.keys(P_ST).map(k => [k, L2(P_ST[k][0], P_ST[k][1])]), v: p.status },
@@ -3885,8 +3944,7 @@ function shopSettingsForm() {
     { k: "frequency", l: L2("Every", "كل"), type: "select", opts: FREQS(), v: st.frequency }, { k: "rate", l: L2("Installment interest % per year (flat)", "فائدة التقسيط % سنوياً (ثابتة)"), type: "number", v: st.rate },
     { k: "round_to", l: L2("Round installments to", "تقريب القسط إلى"), type: "number", v: st.round_to, help: L2("e.g. 10 or 100 — the last installment takes the difference", "مثال 10 أو 100 — والقسط الأخير يأخذ الفرق") },
     { k: "revenue_on", l: L2("Recognise the sale (revenue)", "تسجيل الإيراد"), type: "select", opts: [["sale", L2("When sold", "عند البيع")], ["delivery", L2("On delivery / handover (off-plan, made to order)", "عند التسليم (بيع على الخريطة / حسب الطلب)")]], v: st.revenue_on },
-    { k: "terms", l: L2("Contract terms (English)", "شروط العقد (إنجليزي)"), type: "textarea", v: st.terms, span: "spanall" },
-    { k: "terms_ar", l: L2("Contract terms (Arabic)", "شروط العقد (عربي)"), type: "textarea", v: st.terms_ar, span: "spanall" }]),
+    ...inLang(["terms", st.terms], ["terms_ar", st.terms_ar], L2("Contract terms", "شروط العقد"), { type: "textarea", span: "spanall" })]),
   async v => { await api("PUT", "/api/shop-settings", v); toast(t("saved")); })).catch(fail);
 }
 
@@ -4438,14 +4496,14 @@ function platformConfigForm(c) {
     async v => { await window.BeyondCloud.billingConfig({ ...v, trial_days: +v.trial_days, grace_days: +v.grace_days, yearly_months: +v.yearly_months, extra_user: +v.extra_user }); S.billingPublic = null; toast(t("saved")); }, { wide: true });
 }
 function platformPlansForm(c) {
-  const row = (p = {}) => `<tr class="plrow"><td><input data-f="code" value="${esc(p.code || "")}" style="width:90px"></td><td><input data-f="name" value="${esc(p.name || "")}"></td><td><input data-f="name_ar" dir="rtl" value="${esc(p.name_ar || "")}"></td>
+  const row = (p = {}) => `<tr class="plrow"><td><input data-f="code" value="${esc(p.code || "")}" style="width:90px"></td><td>${S.lang === "ar" ? `<input data-f="name_ar" value="${esc(p.name_ar || p.name || "")}"><input type="hidden" data-f="name" value="${esc(p.name || "")}">` : `<input data-f="name" value="${esc(p.name || "")}"><input type="hidden" data-f="name_ar" value="${esc(p.name_ar || "")}">`}</td>
     <td><input data-f="price" type="number" step="any" value="${p.price ?? ""}" style="width:90px"></td><td><input data-f="users" type="number" min="1" value="${p.users ?? 1}" style="width:70px"></td><td><input data-f="companies" type="number" min="1" value="${p.companies ?? 1}" style="width:60px"></td>
     <td><textarea data-f="features" rows="2" style="min-width:220px">${esc((p.features || []).join("\n"))}</textarea></td><td><button type="button" class="btn sm danger" data-k="rm">✕</button></td></tr>`;
-  const f = drawer(L2("Plans & prices", "الباقات والأسعار"), `<div class="tbl"><table><thead><tr><th>${L2("Code", "الكود")}</th><th>${t("name")}</th><th>${L2("Arabic", "بالعربية")}</th><th>${L2("Price / month", "السعر / شهر")}</th><th>${L2("Users", "مستخدمون")}</th><th>${L2("Companies", "شركات")}</th><th>${L2("Features (one per line)", "المزايا (سطر لكل ميزة)")}</th><th></th></tr></thead><tbody>${c.plans.map(row).join("")}</tbody></table></div>
+  const f = drawer(L2("Plans & prices", "الباقات والأسعار"), `<div class="tbl"><table><thead><tr><th>${L2("Code", "الكود")}</th><th>${t("name")}</th><th>${L2("Price / month", "السعر / شهر")}</th><th>${L2("Users", "مستخدمون")}</th><th>${L2("Companies", "شركات")}</th><th>${L2("Features (one per line)", "المزايا (سطر لكل ميزة)")}</th><th></th></tr></thead><tbody>${c.plans.map(row).join("")}</tbody></table></div>
     <button type="button" class="btn sm" data-k="add">+ ${L2("Plan", "باقة")}</button>
     <p class="muted" style="font-size:.85em">${L2("New prices apply to the next payment; periods already paid are not touched.", "الأسعار الجديدة تسري على الدفعة القادمة؛ الفترات المدفوعة لا تتأثر.")}</p>`,
     async () => { const plans = $$("tr.plrow", f).map(tr => { const g = k => $(`[data-f=${k}]`, tr).value.trim();
-      return { code: g("code"), name: g("name"), name_ar: g("name_ar"), price: +g("price") || 0, users: +g("users") || 1, companies: +g("companies") || 1, features: g("features").split("\n").map(x => x.trim()).filter(Boolean) }; }).filter(p => p.code);
+      return { code: g("code"), name: g("name") || g("name_ar"), name_ar: g("name_ar"), price: +g("price") || 0, users: +g("users") || 1, companies: +g("companies") || 1, features: g("features").split("\n").map(x => x.trim()).filter(Boolean) }; }).filter(p => p.code);
       await window.BeyondCloud.billingConfig({ plans }); S.billingPublic = null; toast(t("saved")); }, { wide: true });
   f.addEventListener("click", e => { const k = e.target.dataset.k; if (k === "add") $("tbody", f).insertAdjacentHTML("beforeend", row()); if (k === "rm") e.target.closest("tr").remove(); });
 }
@@ -4545,7 +4603,7 @@ PAGES.sub = async (view, parts) => {
 function planForm(p) {
   p = p || { kind: "maintenance", period_months: 12, visits: 0 };
   drawer(p.id ? `${p.code} — ${t("edit")}` : L2("New plan", "خطة جديدة"), `<div class="grid g2">
-    <label class="f">${t("name")} *<input name="name" required value="${esc(p.name || "")}"></label><label class="f">${L2("Arabic name", "الاسم بالعربية")}<input name="name_ar" dir="rtl" value="${esc(p.name_ar || "")}"></label>
+    ${S.lang === "ar" ? `<label class="f">${t("name")} *<input name="name_ar" required value="${esc(p.name_ar || p.name || "")}"></label><input type="hidden" name="name" value="${esc(p.name || "")}">` : `<label class="f">${t("name")} *<input name="name" required value="${esc(p.name || "")}"></label><input type="hidden" name="name_ar" value="${esc(p.name_ar || "")}">`}
     <label class="f">${t("type")}<select name="kind">${optHtml(Object.keys(SUB_KIND).map(k => [k, kindL(k)]), p.kind)}</select></label>
     <label class="f">${L2("Billed every", "الفوترة كل")}<select name="period_months">${optHtml([1, 2, 3, 4, 6, 12, 24, 36].map(n => [n, everyL(n)]), p.period_months)}</select></label>
     <label class="f">${L2("Price per period", "السعر لكل فترة")} *<input name="price" type="number" step="any" required value="${p.price ?? ""}"></label>
@@ -4877,7 +4935,10 @@ const SCREEN_SHEETS = { costs: ["Direct Costs"], expenses: ["Operating Expenses"
   moves: ["Stock Moves"], warehouses: ["Warehouses"], journal: ["Journal Vouchers"], coa: ["Chart of Accounts"],
   partners: ["Partners", "Partner Shares", "Partner Transactions"], taxcodes: ["Tax Codes"], products: ["Products"],
   loans: ["Loans", "Loan Transactions"], custody: ["Cash Custody", "Custody Expenses"], rentfleet: ["Rental Equipment", "Rental Stock Lots"],
-  rentals: ["Rental Contracts"], sales: ["Sales Contracts"], bankrec: ["Bank Statement Lines"], recurring: ["Recurring Entries"], budgets: ["Budgets"], pos: ["Purchase Orders"], subs: ["Service Plans", "Service Subscriptions"] };
+  rentals: ["Rental Contracts"], sales: ["Sales Contracts"], bankrec: ["Bank Statement Lines"], recurring: ["Recurring Entries"], budgets: ["Budgets"], pos: ["Purchase Orders"], subs: ["Service Plans", "Service Subscriptions"],
+  employees: ["Employees"], payruns: ["Payroll Run"], payset: ["Payroll Settings"], cash: ["Journal Vouchers", "Bank Statement Lines"],
+  depreciation: ["Fixed Assets"], "assets-overview": ["Fixed Assets", "Journal Vouchers"], receivables: ["Sales Invoices", "Receipt Vouchers"],
+  payables: ["Direct Costs", "Payment Vouchers"] };
 const sheetLabel = n => { const s = (S.cache.impSheets || []).find(x => x.name === n); return s && S.lang === "ar" && s.ar ? s.ar : n; };
 const canImportSheet = n => { const s = (S.cache.impSheets || []).find(x => x.name === n); return can("import_export.import", "edit") || (s && s.perm && can(s.perm, "add")); };
 const tplUrl = (n, fmt, demo) => "/api/templates/sheet?" + qs({ sheet: n, format: fmt, lang: S.lang, demo: demo ? 1 : "" });
@@ -4983,7 +5044,7 @@ function specOpts(cur) {
 }
 const reqOpts = cur => [["none", L2("Not asked", "لا يُطلب")], ["optional", L2("Optional", "اختياري")], ["required", L2("Required", "إلزامي")]]
   .map(([v, l]) => `<option value="${v}" ${v === cur ? "selected" : ""}>${esc(l)}</option>`).join("");
-const etRow = e => `<tr data-id="${esc(e.id || "")}"><td><input class="et-name" value="${esc(e.name || "")}" style="min-width:160px"><input class="et-name-ar" dir="rtl" value="${esc(e.name_ar || "")}" placeholder="العربية" style="min-width:160px;margin-top:4px"></td>
+const etRow = e => `<tr data-id="${esc(e.id || "")}"><td><input class="et-name" ${S.lang === "ar" ? 'type="hidden"' : ""} value="${esc(e.name || "")}" style="min-width:160px"><input class="et-name-ar" ${S.lang === "ar" ? "" : 'type="hidden"'} value="${esc(e.name_ar || (S.lang === "ar" ? e.name || "" : ""))}" style="min-width:160px"></td>
   <td><input class="et-kind" list="etkinds" value="${esc(e.kind || "Journal Voucher")}" style="min-width:130px"></td>
   <td><select class="et-debit" style="min-width:190px;max-width:260px">${specOpts(e.debit)}</select></td><td><select class="et-credit" style="min-width:190px;max-width:260px">${specOpts(e.credit)}</select></td>
   <td><select class="et-party">${reqOpts(e.party || "optional")}</select></td><td><select class="et-bu">${reqOpts(e.bu || "optional")}</select></td>
@@ -5025,7 +5086,7 @@ function entryOptionWire(view) {
   S.H.etadd = () => { $("#ettab tbody", view).insertAdjacentHTML("beforeend", etRow({ kind: "Journal Voucher", debit: "type:Expense", credit: "subtype:cash", party: "optional", bu: "optional" })); };
   S.H.etdel = el => { if (confirm(L2("Remove this entry type? Entries already booked with it stay.", "حذف نوع القيد؟ القيود المسجلة به تبقى."))) el.closest("tr").remove(); };
   S.H.etsave = async () => {
-    const types = $$("#ettab tbody tr", view).map(tr => ({ id: tr.dataset.id, name: $(".et-name", tr).value.trim(), name_ar: $(".et-name-ar", tr).value.trim(), kind: $(".et-kind", tr).value.trim(),
+    const types = $$("#ettab tbody tr", view).map(tr => ({ id: tr.dataset.id, name: $(".et-name", tr).value.trim() || $(".et-name-ar", tr).value.trim(), name_ar: $(".et-name-ar", tr).value.trim(), kind: $(".et-kind", tr).value.trim(),
       debit: $(".et-debit", tr).value, credit: $(".et-credit", tr).value, party: $(".et-party", tr).value, bu: $(".et-bu", tr).value, active: $(".et-active", tr).checked })).filter(x => x.name);
     try { await api("PUT", "/api/entry-types", { types }); await after(); } catch (e) { fail(e); }
   };
@@ -5088,7 +5149,7 @@ PAGES.employees = async (view, parts, q) => {
       ${kpiBox(L2("Insured", "مؤمن عليهم"), String(act.filter(r => r.insured).length))}${kpiBox(L2("Daily / piece workers", "عمالة يومية / إنتاج"), String(act.filter(r => r.emp_type !== "monthly").length))}</div>` +
     filterBar(q, ["q", ["select", "status", t("status"), [["active", L2("Active", "على رأس العمل")], ["left", L2("Left", "ترك العمل")]]]]) +
     `<div class="card">${d.rows.length ? `<div class="tbl stack"><table><thead><tr><th>${t("code")}</th><th>${L2("Name", "الاسم")}</th><th>${L2("Job / department", "الوظيفة / القسم")}</th><th>${L2("Pay", "الأجر")}</th><th class="num">${L2("Monthly (fixed)", "شهرياً (الثابت)")}</th><th>${t("bu")}</th><th>${L2("Insured / taxed", "تأمين / ضريبة")}</th><th>${t("status")}</th></tr></thead><tbody>
-      ${d.rows.map(r => `<tr class="${ed || add ? "click" : ""} ${r.status === "left" ? "void" : ""}" data-a="empedit" data-id="${r.id}"><td><b>${esc(r.code)}</b></td><td>${esc(r.name)}${r.name_ar ? `<div class="lines">${esc(r.name_ar)}</div>` : ""}</td>
+      ${d.rows.map(r => `<tr class="${ed || add ? "click" : ""} ${r.status === "left" ? "void" : ""}" data-a="empedit" data-id="${r.id}"><td><b>${esc(r.code)}</b></td><td>${esc(S.lang === "ar" && r.name_ar ? r.name_ar : r.name)}</td>
         <td>${esc(r.job_title)}${r.department ? `<div class="lines">${esc(r.department)}</div>` : ""}</td>
         <td>${esc(empTypeL(r.emp_type))}<div class="lines">${r.emp_type === "monthly" ? money(r.basic) : r.emp_type === "daily" ? money(r.daily_rate) + " / " + L2("day", "يوم") : r.emp_type === "hourly" ? money(r.hourly_rate) + " / " + L2("hour", "ساعة") : money(r.piece_rate) + " / " + esc(r.piece_unit || L2("unit", "وحدة"))}</div></td>
         <td class="num">${money(monthly(r))}</td><td>${esc(r.bu_code || "—")}</td><td>${r.insured ? "✓" : "—"} / ${r.taxed ? "✓" : "—"}</td>
@@ -5100,7 +5161,7 @@ function employeeForm(E, st) {
   const ed = !!E, e = E || { emp_type: "monthly", insured: true, taxed: true, cost_type: "Administrative Salaries (Shared Overhead)", allowances: {}, status: "active" };
   const fixed = st.components.filter(c => c.where === "fixed" && c.kind === "earning" && (c.active || (e.allowances || {})[c.code]));
   const html = form([
-    { k: "name", l: L2("Name", "الاسم"), v: e.name, req: 1 }, { k: "name_ar", l: L2("Name (Arabic)", "الاسم بالعربية"), v: e.name_ar },
+    ...inLang(["name", e.name], ["name_ar", e.name_ar], L2("Name", "الاسم"), { req: 1 }),
     { k: "code", l: t("code"), v: e.code, ph: L2("automatic", "تلقائي") }, { k: "national_id", l: L2("National ID", "الرقم القومي"), v: e.national_id },
     { k: "job_title", l: L2("Job title", "الوظيفة"), v: e.job_title, list: "pjobs" }, { k: "department", l: L2("Department", "القسم"), v: e.department, list: "pdeps" },
     { k: "emp_type", l: L2("Paid", "طريقة الأجر"), type: "select", opts: EMP_TYPES(), v: e.emp_type, change: "empsync" },
@@ -5203,9 +5264,9 @@ PAGES.payset = async (view) => {
   const draw = () => {
     $("#psbands").innerHTML = `<table><thead><tr><th>#</th><th class="num">${L2("Annual taxable up to", "الدخل السنوي الخاضع حتى")}</th><th class="num">${L2("Rate", "السعر")}</th></tr></thead><tbody>${bands.map((b, i) => `<tr><td>${i + 1}</td><td class="num">${i === bands.length - 1 ? L2("and above", "فما فوق") : num(b[0], 0, i, "psband", 120)}</td><td class="num">${num(b[1] * 100, 1, i, "psband", 70)} %</td></tr>`).join("")}</tbody></table>`;
     $("#psrules").innerHTML = `<table><thead><tr><th class="num">${L2("When annual taxable is above", "إذا زاد الدخل السنوي عن")}</th><th class="num">${L2("tax starts at band", "تبدأ الضريبة من الشريحة")}</th><th></th></tr></thead><tbody>${rules.map((r, i) => `<tr><td class="num">${num(r[0], 0, i, "psrule", 120)}</td><td class="num">${num(r[1], 1, i, "psrule", 60, 1)}</td><td>${ed ? `<button type="button" class="btn sm danger" data-a="psruledel" data-i="${i}">✕</button>` : ""}</td></tr>`).join("")}</tbody></table>${ed ? `<button type="button" class="btn sm" data-a="psruleadd">+ ${L2("Rule", "قاعدة")}</button>` : ""}`;
-    $("#pscomps").innerHTML = `<table><thead><tr><th>${t("code")}</th><th>${L2("Name", "الاسم")}</th><th>${L2("Arabic", "بالعربية")}</th><th>${L2("Type", "النوع")}</th><th>${L2("Entered", "يُدخل")}</th><th>${L2("Taxable", "خاضع للضريبة")}</th><th>${L2("Insurable", "خاضع للتأمين")}</th><th>${L2("On", "مفعّل")}</th></tr></thead><tbody>
+    $("#pscomps").innerHTML = `<table><thead><tr><th>${t("code")}</th><th>${L2("Name", "الاسم")}</th><th>${L2("Type", "النوع")}</th><th>${L2("Entered", "يُدخل")}</th><th>${L2("Taxable", "خاضع للضريبة")}</th><th>${L2("Insurable", "خاضع للتأمين")}</th><th>${L2("On", "مفعّل")}</th></tr></thead><tbody>
       ${comps.map((c, i) => `<tr><td><input data-skip="1" value="${esc(c.code)}" data-input="pscomp" data-i="${i}" data-k="code" style="width:90px" ${ed && !["advance", "penalty"].includes(c.code) ? "" : "disabled"}></td>
-        <td><input data-skip="1" value="${esc(c.name)}" data-input="pscomp" data-i="${i}" data-k="name" ${ed ? "" : "disabled"}></td><td><input data-skip="1" dir="rtl" value="${esc(c.name_ar || "")}" data-input="pscomp" data-i="${i}" data-k="name_ar" ${ed ? "" : "disabled"}></td>
+        <td><input data-skip="1" value="${esc(S.lang === "ar" ? c.name_ar || c.name : c.name)}" data-input="pscomp" data-i="${i}" data-k="${S.lang === "ar" ? "name_ar" : "name"}" ${ed ? "" : "disabled"}></td>
         <td><select data-skip="1" data-change="pscomp" data-i="${i}" data-k="kind" ${ed ? "" : "disabled"}><option value="earning" ${c.kind === "earning" ? "selected" : ""}>${L2("Earning", "استحقاق")}</option><option value="deduction" ${c.kind === "deduction" ? "selected" : ""}>${L2("Deduction", "استقطاع")}</option></select></td>
         <td><select data-skip="1" data-change="pscomp" data-i="${i}" data-k="where" ${ed ? "" : "disabled"}><option value="fixed" ${c.where === "fixed" ? "selected" : ""}>${L2("Fixed on the employee", "ثابت على الموظف")}</option><option value="run" ${c.where === "run" ? "selected" : ""}>${L2("Each month", "كل شهر")}</option></select></td>
         ${["taxable", "insurable", "active"].map(k => `<td><input type="checkbox" data-skip="1" data-change="pscomp" data-i="${i}" data-k="${k}" ${c[k] !== false && (k !== "insurable" || c[k]) ? "checked" : ""} ${ed ? "" : "disabled"}></td>`).join("")}</tr>`).join("")}</tbody></table>
@@ -5218,7 +5279,7 @@ PAGES.payset = async (view) => {
     pscomp: el => { const c = comps[+el.dataset.i]; c[el.dataset.k] = el.type === "checkbox" ? el.checked : el.value; },
     pscompadd: () => { comps.push({ code: "item" + (comps.length + 1), name: "", name_ar: "", kind: "earning", where: "run", taxable: true, insurable: false, active: true }); draw(); },
     pssave: async () => { const v = readForm($("#psf")); ["si_emp_rate", "si_er_rate", "martyrs_rate"].forEach(k => { v[k] = (+v[k]) / 100; });
-      try { await api("PUT", "/api/payroll/settings", { ...v, bands, high_income: rules, components: comps }); toast(t("saved")); route(); } catch (e) { fail(e); } },
+      try { await api("PUT", "/api/payroll/settings", { ...v, bands, high_income: rules, components: comps.map(c => ({ ...c, name: c.name || c.name_ar })) }); toast(t("saved")); route(); } catch (e) { fail(e); } },
     pstest: async () => { const g = +$("#pstg").value || 0; const c = await api("POST", "/api/payroll/preview", { employee: { emp_type: "monthly", basic: g, insured: true, taxed: true }, inputs: {} });
       $("#pstr").innerHTML = `${L2("gross", "الإجمالي")} ${money(c.gross)} · ${L2("insurance", "التأمينات")} ${money(c.si_emp)} (${L2("on", "على")} ${money(c.insurable)}) · ${L2("annual taxable", "الوعاء السنوي")} ${money(c.annual_taxable)} · ${L2("tax", "الضريبة")} <b>${money(c.tax)}</b> · ${L2("Martyrs", "الشهداء")} ${money(c.martyrs)} · ${L2("net", "الصافي")} <b>${money(c.net)}</b> · ${L2("employer insurance", "حصة صاحب العمل")} ${money(c.si_er)}`; },
   });
@@ -5310,7 +5371,7 @@ PAGES.industry = async (view) => {
     <div class="grid g2">${d.types.map(ty => `<div class="card"><h2>${esc(S.lang === "ar" ? ty.name_ar : ty.name)} ${d.current === ty.key ? `<span class="chip ok">${L2("current", "الحالي")}</span>` : ""}</h2>
       <ul>${ty.guide.map(g => `<li>${esc(g)}</li>`).join("")}</ul>
       <p class="muted">${L2("Business units are", "وحدات الأعمال")}: ${esc(ty.bu)} · ${L2("hidden", "مخفي")}: ${esc(ty.hide.join(", "))}${ty.accounts.length ? `<br>${L2("adds", "يضيف")}: ${ty.accounts.map(a => esc(a.code + " " + (S.lang === "ar" ? a.name_ar : a.name))).join(" · ")}` : ""}<br>${L2("crew work items", "بنود الأطقم")}: ${ty.work_items.map(w => esc(w.item + " (" + w.unit + ")")).join(" · ")}</p>
-      <div class="row">${ed ? `<button class="btn ${d.current === ty.key ? "" : "pri"}" data-a="indapply" data-k="${ty.key}">${L2("Use for this company", "استخدم لهذه الشركة")}</button>` : ""}<a class="btn" href="/api/templates/workbook?type=${ty.key}">⇩ ${L2("Excel template", "قالب إكسل")}</a></div></div>`).join("")}</div>`;
+      <div class="row">${ed ? `<button class="btn ${d.current === ty.key ? "" : "pri"}" data-a="indapply" data-k="${ty.key}">${L2("Use for this company", "استخدم لهذه الشركة")}</button>` : ""}<a class="btn" href="/api/templates/workbook?type=${ty.key}&lang=${S.lang}">⇩ ${L2("Excel template", "قالب إكسل")}</a></div></div>`).join("")}</div>`;
 };
 
 // files on the record pages (business unit, offer, loan, custody, rental, sale): appended under the page

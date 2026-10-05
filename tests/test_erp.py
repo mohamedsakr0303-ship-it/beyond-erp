@@ -190,7 +190,7 @@ class Reports(unittest.TestCase):
         self.assertAlmostEqual(d["bs"]["ta"], bs["total_assets"], places=2)
         self.assertTrue(d["bs"]["balanced"])
         self.assertTrue(d["audit_ok"])
-        self.assertEqual(reports.REPORT_PERMS["partner_pack"], "partners.equity")
+        self.assertEqual(reports.REPORT_PERMS["partner_pack"], ("reports.partner_pack", "partners.equity"))
         tb = reports.build(db, "partner_pack", {"date_from": "2026-01-01", "date_to": "2026-12-31", "lang": "ar"})
         self.assertIn("<table", reports.to_html(tb, auto_print=True))
         self.assertEqual(reports.to_xlsx(tb)[:2], b"PK")
@@ -2437,3 +2437,80 @@ class BrowserAdapter(unittest.TestCase):
         a.record_expense(db, {"description": "rent", "amount": 40})
         self.assertEqual(a.income_statement(db)["net_profit"], 60.0)
         self.assertTrue(all(c["ok"] for c in a.audit(db)))
+
+
+class RentalsLanguageAssets(unittest.TestCase):
+    """Rental contracts imported with delivery and billing marker; one-language workbooks and templates; the Assets section."""
+
+    def books(self):
+        db = Database(":memory:")
+        interchange.import_data(db, {
+            "Business Units": [{"code": "RNT-1", "name": "Building 3", "client": "Swag"}],
+            "Rental Equipment": [{"code": "FR", "name": "Frame", "category": "scaffolding", "unit": "piece", "monthly_rate": 94.5,
+                                  "std_cost": 1000, "opening_qty": 200, "opening_unit_cost": 1000, "opening_date": "2026-07-01"}],
+            "Rental Contracts": [
+                {"ref": "RC-1", "client": "Swag", "site": "Building 3", "quote_date": "2026-07-25", "start_date": "2026-08-01",
+                 "duration_months": 12, "line_kind": "item", "item": "FR", "qty": 200, "rate": 94.5, "po_number": "EXT-1",
+                 "signed_client": "Swag", "signed_us": "Rawasi", "bu_code": "RNT-1", "delivered_on": "2026-08-01", "invoiced_to": "2026-10-31"},
+                {"ref": "RC-1", "client": "Swag", "line_kind": "charge", "charge_type": "install", "qty": 1, "rate": 38250, "cost": 27702}],
+            "Sales Invoices": [{"number": "EXT-1", "date": "2026-09-30", "bu_code": "RNT-1", "status": "Posted", "customer": "Swag"}],
+            "Invoice Lines": [{"number": "EXT-1", "description": "Rent Aug-Oct", "qty": 600, "price": 94.5}],
+        })
+        return db
+
+    def test_rental_import_delivers_and_marks_billing(self):
+        from erp import rentals
+        db = self.books()
+        r = rentals.list_rentals(db)["rows"][0]
+        self.assertEqual(r["status"], "active")
+        on = rentals.ongoing(db, "2026-10-05")["rows"]
+        self.assertEqual(len(on), 1)
+        self.assertEqual(on[0]["monthly"], 18900.0)
+        self.assertEqual(on[0]["pieces_out"], 200)
+        self.assertEqual(on[0]["billed_to"], "2026-10-31")
+
+    def test_assets_overview_and_cash_transfer(self):
+        from erp import asset_views
+        db = Database(":memory:")
+        a.record_journal(db, {"date": "2026-01-01", "memo": "opening", "lines": [{"account": "1010", "debit": 1000}, {"account": "3010", "credit": 1000}]})
+        asset_views.transfer(db, {"date": "2026-01-02", "from": "1010", "to": "1020", "amount": 300})
+        cash = {x["code"]: x["balance"] for x in asset_views.cash_accounts(db)["accounts"]}
+        self.assertEqual((cash["1010"], cash["1020"]), (700.0, 300.0))
+        ov = asset_views.overview(db)
+        self.assertEqual(ov["total"], a.balance_sheet(db)["total_assets"])
+        self.assertEqual(next(c for c in ov["classes"] if c["key"] == "cash")["amount"], 1000.0)
+        with self.assertRaises(a.ValidationError):
+            asset_views.transfer(db, {"from": "1010", "to": "1010", "amount": 5})
+
+    def test_workbooks_and_templates_are_one_language(self):
+        import io as _io
+        import re as _re
+        import openpyxl
+        from erp import importkit, workbook
+        AR = _re.compile("[؀-ۿ]")
+        db = Database(":memory:")
+        data_sheets = {s["name"] for s in interchange.SHEETS}
+        en = openpyxl.load_workbook(_io.BytesIO(workbook.build_workbook(db, template=True)))
+        bad = [(ws.title, c.coordinate) for ws in en.worksheets for row in ws.iter_rows() for c in row
+               if isinstance(c.value, str) and not c.value.startswith("=") and AR.search(c.value)
+               and not (ws.title in data_sheets and (c.row > 4 or c.row == 3))]
+        self.assertEqual(bad, [])
+        ar = openpyxl.load_workbook(_io.BytesIO(workbook.build_workbook(db, template=True, lang="ar")))
+        self.assertEqual(ar.sheetnames[:2], ["الغلاف", "دليل الاستخدام"])
+        self.assertTrue(ar["سندات القبض"].sheet_view.rightToLeft)
+        for lang, want in (("en", "Date"), ("ar", "التاريخ")):
+            t = openpyxl.load_workbook(_io.BytesIO(importkit.template_xlsx(db, "Receipt Vouchers", lang)))
+            self.assertEqual(t.worksheets[0].cell(interchange.HEADER_ROW, 1).value, want)
+
+    def test_arabic_workbook_imports_back(self):
+        from erp import workbook
+        db = self.books()
+        a.record_collection(db, {"bu_code": "RNT-1", "amount": 5000})
+        raw = workbook.build_workbook(db, lang="ar")
+        d2 = Database(":memory:")
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as fh:
+            fh.write(raw)
+        interchange.import_data(d2, interchange.read_xlsx(fh.name), mode="replace")
+        __import__("os").unlink(fh.name)
+        self.assertEqual(a.balance_sheet(d2)["total_assets"], a.balance_sheet(db)["total_assets"])

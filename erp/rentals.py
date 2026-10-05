@@ -1277,6 +1277,33 @@ def list_rentals(db, q=None, status=None):
                                      "monthly": round(sum(x["monthly_on_site"] for x in live), 2)}}
 
 
+def ongoing(db, today=None):
+    """Contracts with equipment on site, for the dashboard: rent a month, rent earned since the first delivery,
+    what the site was invoiced and paid, and the next period to bill."""
+    today = today or acc.today()
+    out = []
+    for r in list_rentals(db, status="open")["rows"]:
+        if r["status"] not in ("active", "returned"):
+            continue
+        first = db.one("SELECT MIN(date) AS d FROM rental_handovers WHERE rental_id=? AND kind='delivery' AND status='confirmed'", (r["id"],))["d"]
+        days = max(0, (_dt.date.fromisoformat(today) - _dt.date.fromisoformat(first)).days) if first else 0
+        inv = col = 0
+        if r["bu_id"]:
+            inv = db.one("SELECT COALESCE(SUM(l.debit-l.credit),0) n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id "
+                         "JOIN accounts a ON a.code=l.account WHERE e.status='posted' AND e.bu_id=? AND a.subtype='receivable' AND l.debit>0",
+                         (r["bu_id"],))["n"]
+            col = db.one("SELECT COALESCE(SUM(l.credit),0) n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id "
+                         "JOIN accounts a ON a.code=l.account WHERE e.status='posted' AND e.bu_id=? AND a.subtype='receivable' AND l.credit>0",
+                         (r["bu_id"],))["n"]
+        nxt = next_period(db, r["id"])
+        out.append({"id": r["id"], "code": r["code"], "client": r["client"], "site": r["site"], "since": first or "", "days": days,
+                    "monthly": r["monthly_on_site"], "rent_to_date": round(r["monthly_on_site"] / 30 * days, 2), "pieces_out": r["pieces_out"],
+                    "billed_to": r["billed_to"], "next_from": nxt["from"] if nxt else "", "invoiced": to_major(inv), "collected": to_major(col),
+                    "owed": to_major(inv - col), "to_bill": bool(nxt and nxt["from"] <= today)})
+    return {"rows": out, "monthly": round(sum(x["monthly"] for x in out), 2), "owed": round(sum(x["owed"] for x in out), 2),
+            "to_bill": sum(1 for x in out if x["to_bill"])}
+
+
 # ---------------------------------------------------------------- allocation (frame / m² rent → per piece)
 def allocation(db, rid, line_id):
     """How a frame / square-metre / piece line's rent splits over its pieces, by the pieces' FIFO cost."""
@@ -1722,6 +1749,28 @@ def create_invoice(db, rid, d, user=""):
         if d.get("post"):
             acc.post_extract(db, xid, user=user)
     return xid
+
+
+def import_delivery(db, rid, date, our_name, client_name, invoiced_to=None, user=""):
+    """A contract that came from Excel already on site: the full signed delivery on `date` (pieces leave the yard),
+    and, when rent was already billed on an extract up to `invoiced_to`, that period and the one-time delivery charges
+    are linked to the site's latest extract so the app bills from the next day — nothing twice."""
+    r = get(db, rid)
+    tpl = handover_template(db, r["id"], "delivery")
+    tpl.update(date=date, our_name=our_name or "—", client_name=client_name, signed=True, decision="safe",
+               checklist=[{**c, "ok": "yes"} for c in tpl.get("checklist") or []], notes="Imported from Excel")
+    hid = save_handover(db, r["id"], tpl)
+    confirm_handover(db, hid, user)
+    if invoiced_to:
+        r = get(db, rid)
+        bu = _ensure_bu(db, r)
+        x = db.one("SELECT id FROM extracts WHERE bu_id=? ORDER BY date DESC, id DESC LIMIT 1", (bu,))
+        if not x:
+            raise ValidationError(f"{r['code']}: 'Invoiced up to' needs the extract on Sales Invoices (same business unit)")
+        db.conn.execute("INSERT INTO rental_invoices(rental_id,extract_id,period_from,period_to) VALUES (?,?,?,?)",
+                        (r["id"], x["id"], date, invoiced_to))
+        db.conn.execute("UPDATE rental_charges SET extract_id=? WHERE rental_id=? AND extract_id IS NULL", (x["id"], r["id"]))
+    return hid
 
 
 # ---------------------------------------------------------------- backups
