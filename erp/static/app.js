@@ -115,6 +115,79 @@ const levelOf = key => {
 const can = (mod, lvl = "view") => LV.indexOf(levelOf(mod)) >= LV.indexOf(lvl);
 
 // ---------------------------------------------------------- appearance
+// ---------------------------------------------------------- line icons (24×24, stroke) — bundled, so they work offline
+const IC = {
+  home: '<path d="M3 10.5 12 3l9 7.5V21a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/>',
+  grid: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
+  brief: '<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M3 13h18"/>',
+  mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>',
+  in: '<path d="M17 7 7 17M7 8v9h9"/>', out: '<path d="M7 17 17 7M8 7h9v9"/>',
+  file: '<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/>',
+  inbox: '<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5h13L22 12v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-6z"/>',
+  users: '<circle cx="9" cy="8" r="3.5"/><path d="M2 21a7 7 0 0 1 14 0M16 4a3.5 3.5 0 0 1 0 7M22 21a7 7 0 0 0-4-6.3"/>',
+  user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+  box: '<path d="m21 8-9-5-9 5v8l9 5 9-5z"/><path d="m3 8 9 5 9-5M12 13v8"/>',
+  cart: '<circle cx="9" cy="20" r="1.5"/><circle cx="18" cy="20" r="1.5"/><path d="M2 3h3l2.6 12.4a1 1 0 0 0 1 .8h9.7a1 1 0 0 0 1-.8L21 7H6"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  repeat: '<path d="M17 2l4 4-4 4"/><path d="M3 11V9a3 3 0 0 1 3-3h15M7 22l-4-4 4-4"/><path d="M21 13v2a3 3 0 0 1-3 3H3"/>',
+  list: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
+  tag: '<path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.5"/>',
+  clip: '<rect x="5" y="4" width="14" height="18" rx="2"/><path d="M9 2h6v4H9zM9 12h6M9 16h4"/>',
+  hammer: '<path d="m15 12-8.5 8.5a2.1 2.1 0 0 1-3-3L12 9"/><path d="M17.6 15 22 10.6l-6-6L11.6 9"/>',
+  receipt: '<path d="M5 2v20l3-2 2 2 2-2 2 2 2-2 3 2V2l-3 2-2-2-2 2-2-2-2 2z"/><path d="M9 8h6M9 12h6"/>',
+  wallet: '<path d="M20 7V5a2 2 0 0 0-2-2H5a2 2 0 0 0 0 4h15v13a1 1 0 0 1-1 1H5a2 2 0 0 1-2-2V5"/><circle cx="16.5" cy="13.5" r="1.2"/>',
+  phone: '<path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2z"/>',
+  scale: '<path d="M12 3v18M5 21h14M3 7h18M6 7l-3 7a3 3 0 0 0 6 0zM18 7l-3 7a3 3 0 0 0 6 0z"/>',
+  boxes: '<path d="M3 7h8v8H3zM13 7h8v8h-8zM8 3h8v4H8zM3 15h18v6H3z"/>',
+  swap: '<path d="M7 4 3 8l4 4M3 8h14M17 20l4-4-4-4M21 16H7"/>',
+  store: '<path d="M3 9 5 3h14l2 6M3 9h18v2a3 3 0 0 1-6 0 3 3 0 0 1-6 0 3 3 0 0 1-6 0zM5 13v8h14v-8M10 21v-5h4v5"/>',
+  building: '<rect x="4" y="2" width="16" height="20" rx="1.5"/><path d="M9 22v-4h6v4M8 6h.01M12 6h.01M16 6h.01M8 10h.01M12 10h.01M16 10h.01M8 14h.01M12 14h.01M16 14h.01"/>',
+  layers: '<path d="m12 2 10 5-10 5L2 7z"/><path d="m2 12 10 5 10-5M2 17l10 5 10-5"/>',
+  calc: '<rect x="4" y="2" width="16" height="20" rx="2"/><path d="M8 6h8M8 11h.01M12 11h.01M16 11h.01M8 15h.01M12 15h.01M16 15h.01M8 19h.01M12 19h4"/>',
+  cash: '<rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 12h.01M18 12h.01"/>',
+  ruler: '<path d="M21.3 8.7 8.7 21.3a1 1 0 0 1-1.4 0L2.7 16.7a1 1 0 0 1 0-1.4L15.3 2.7a1 1 0 0 1 1.4 0l4.6 4.6a1 1 0 0 1 0 1.4zM7.5 10.5l2 2M10.5 7.5l2 2M13.5 4.5l2 2M4.5 13.5l2 2"/>',
+  pen: '<path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
+  gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
+  pie: '<path d="M21.2 15.9A10 10 0 1 1 8 2.8"/><path d="M22 12A10 10 0 0 0 12 2v10z"/>',
+  truck: '<path d="M1 3h15v13H1zM16 8h4l3 3v5h-7z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/>',
+  down: '<path d="m22 17-8.5-8.5-5 5L2 7"/><path d="M16 17h6v-6"/>',
+  bank: '<path d="M3 21h18M3 10h18M5 6l7-3 7 3M4 10v11M20 10v11M8 14v3M12 14v3M16 14v3"/>',
+  coins: '<circle cx="8" cy="8" r="6"/><path d="M18.1 10.4A6 6 0 1 1 10.3 18M7 6h1v4M16.7 13.9l.7.7-2.8 2.8"/>',
+  hands: '<path d="m11 17 2 2a1 1 0 1 0 3-3"/><path d="m14 14 2.5 2.5a1 1 0 1 0 3-3l-3.9-3.9a3 3 0 0 0-4.2 0l-.9.9a1 1 0 1 1-3-3l2.8-2.8a5.8 5.8 0 0 1 7.1-.9l.5.3a2 2 0 0 0 1.4.2L21 4M21 3l1 11h-2M3 3 2 14l6.5 6.5a1 1 0 1 0 3-3M3 4h8"/>',
+  pct: '<path d="M19 5 5 19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/>',
+  chart: '<path d="M3 3v18h18"/><path d="M7 16v-4M11 16V8M15 16v-6M19 16V5"/>',
+  send: '<path d="m22 2-7 20-4-9-9-4z"/><path d="M22 2 11 13"/>',
+  book: '<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V2H6.5A2.5 2.5 0 0 0 4 4.5z"/><path d="M4 19.5V22h16v-5"/>',
+  bookopen: '<path d="M2 4h6a4 4 0 0 1 4 4v13a3 3 0 0 0-3-3H2zM22 4h-6a4 4 0 0 0-4 4v13a3 3 0 0 1 3-3h7z"/>',
+  tree: '<path d="M3 5h6M3 12h6M3 19h6M13 5h8M13 12h8M13 19h8M9 5v14"/>',
+  compare: '<circle cx="6" cy="6" r="3"/><circle cx="18" cy="18" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7M11 18H8a2 2 0 0 1-2-2V9"/>',
+  target: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/>',
+  hour: '<path d="M5 22h14M5 2h14M17 22v-4.2a2 2 0 0 0-.6-1.4L12 12l-4.4 4.4a2 2 0 0 0-.6 1.4V22M7 2v4.2a2 2 0 0 0 .6 1.4L12 12l4.4-4.4a2 2 0 0 0 .6-1.4V2"/>',
+  updown: '<path d="m21 16-4 4-4-4M17 20V4M3 8l4-4 4 4M7 4v16"/>',
+  history: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l4 2"/>',
+  pack: '<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M9 15l2 2 4-4"/>',
+  search: '<circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>',
+  bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.9 1.9 0 0 0 3.4 0"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>', menu: '<path d="M4 6h16M4 12h10M4 18h16"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+  moon: '<path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/>',
+  chev: '<path d="m6 9 6 6 6-6"/>', globe: '<circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20"/>',
+  alert: '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0zM12 9v4M12 17h.01"/>',
+  check: '<path d="M20 6 9 17l-5-5"/>', x: '<path d="M18 6 6 18M6 6l12 12"/>',
+};
+const ROUTE_IC = { dashboard: "grid", bus: "brief", offers: "mail", receipts: "in", invoices: "file", receivables: "inbox", parties: "users",
+  products: "box", sales: "cart", installments: "clock", subs: "repeat", boqs: "list", prices: "tag", pos: "clip", costs: "hammer", expenses: "receipt",
+  payments: "out", payables: "wallet", contacts: "phone", negotiations: "scale", stock: "boxes", moves: "swap", warehouses: "store", rentals: "building",
+  rentfleet: "layers", rentcalc: "calc", payruns: "cash", employees: "user", crew: "ruler", payroll: "pen", payset: "gear", "assets-overview": "pie",
+  cash: "wallet", assets: "truck", depreciation: "down", loans: "bank", custody: "coins", partners: "hands", taxcodes: "pct", "report/tax": "chart",
+  einvoice: "send", journal: "book", ledger: "bookopen", coa: "tree", bankrec: "compare", recurring: "repeat", budgets: "target",
+  "report/partner_pack": "pack", "report/income_statement": "chart", "report/balance_sheet": "layers", "report/cash_flow": "swap",
+  "report/trial_balance": "list", "report/bu_pnl": "pie", "budget-report": "target", aging: "hour", statement: "file", data: "updown",
+  settings: "gear", industry: "store", users: "users", audit: "history" };
+const GROUP_IC = { g_home: "home", g_bu: "brief", g_sales: "in", g_shop: "cart", g_est: "list", g_buy: "out", g_stock: "boxes", g_rent: "building",
+  g_hr: "users", g_assets: "pie", g_fin: "bank", g_equity: "hands", g_tax: "pct", g_acc: "book", g_rep: "chart", g_sys: "gear" };
+const svg = (name, cls = "") => `<svg class="i ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${IC[name] || IC.grid}</svg>`;
+
 function applyLook() {
   const st = S.boot.settings || {};
   S.lang = store.get("lang", st.language || "en");
@@ -213,26 +286,79 @@ function stackify(root) {
 
 // ----------------------------------------------------------------- shell
 function renderShell() {
-  const st = S.boot.settings;
-  $("#root").innerHTML = `<div class="app">
-    <aside class="side">${brandBlock(st)}<nav class="nav" id="nav"></nav></aside>
+  const st = S.boot.settings, u = S.boot.user, ar = S.lang === "ar";
+  const initials = esc(((u.full_name || u.username || "?").trim().split(/\s+/).map(w => w[0]).join("").slice(0, 2)).toUpperCase());
+  const role = u.is_super ? L2("Super admin", "مدير عام") : u.is_admin ? L2("Administrator", "مدير النظام") : L2("User", "مستخدم");
+  const dark = document.documentElement.dataset.theme === "dark" || (!document.documentElement.dataset.theme && matchMedia("(prefers-color-scheme: dark)").matches);
+  $("#root").innerHTML = `<div class="app ${store.get("navMini", "") === "1" ? "mini" : ""}">
+    <aside class="side">${brandBlock(st)}
+      <div class="dd ucard"><button class="btn ucard-btn"><span class="avatar">${initials}</span><span class="ucard-t"><b>${esc(u.full_name || u.username)}</b><small>${esc(role)}</small></span>${svg("chev", "chev")}</button>
+        <div class="dd-menu">${userMenu()}</div></div>
+      <nav class="nav" id="nav"></nav></aside>
     <div class="main"><header class="top">
-      <button class="btn sm menu-btn" data-a="menu" aria-label="Menu">☰</button>
-      <button class="btn icon sm top-back" data-a="goback" style="display:none" aria-label="${esc(t("back"))}">${BACK_ICON}</button>
-      <div class="ttl-box"><h1 id="ttl"></h1><div class="crumb" id="crumb"></div></div><span class="spacer"></span>
-      <div class="dd"><button class="btn pri sm" aria-label="${esc(t("new"))}">+<span class="lbl"> ${t("new")}</span></button><div class="dd-menu" id="newmenu"></div></div>
+      <button class="icbtn menu-btn" data-a="menu" aria-label="Menu">${svg("menu")}</button>
+      <button class="icbtn top-back" data-a="goback" style="display:none" aria-label="${esc(t("back"))}">${BACK_ICON}</button>
+      <div class="ttl-box"><h1 id="ttl"></h1><div class="crumb" id="crumb"></div></div>
+      <button class="search" data-a="palette" aria-label="${esc(t("search"))}">${svg("search")}<span>${esc(L2("Search screens, actions…", "ابحث عن شاشة أو إجراء…"))}</span><kbd>Ctrl K</kbd></button>
+      <span class="spacer"></span>
       <span id="syncdot" class="chip" style="display:none"></span>
-      <button class="btn sm" data-a="lang"><span class="lbl">${t("language")}</span><span class="lbl-short">${S.lang === "ar" ? "EN" : "ع"}</span></button>
-      <div class="dd"><button class="btn sm user-btn"><span class="avatar">${esc(((S.boot.user.full_name || S.boot.user.username || "?").trim().split(/\s+/).map(w => w[0]).join("").slice(0, 2)).toUpperCase())}</span><span class="lbl">${esc(S.boot.user.full_name || S.boot.user.username)} ▾</span></button><div class="dd-menu">
-        <button data-a="theme">${t("theme")}: ${esc(store.get("theme", "auto"))}</button>
-        ${cloudOn() ? `<button data-a="coswitch">⇄ ${S.lang === "ar" ? "الشركات" : "Companies"}</button>` : ""}
-        ${cloudOn() && window.BeyondCloud && window.BeyondCloud.billing ? `<a href="#/subscription">◎ ${S.lang === "ar" ? "الاشتراك" : "Subscription"}</a>` : ""}${S.billing && S.billing.is_owner ? `<a href="#/platform">⚙ ${S.lang === "ar" ? "إدارة الاشتراكات (المالك)" : "Platform billing (owner)"}</a>` : ""}
-        <a href="#/settings">${t("m_settings")}</a>${STATIC && /^https?:$/.test(location.protocol) ? `<a href="#/download">⬇ ${S.lang === "ar" ? "تحميل التطبيق" : "Get the app"}</a>` : ""}<button data-a="pw">${t("change_pw")}</button><button data-a="logout">${t("logout")}</button></div></div>
-    </header><div id="billbar"></div><main class="content" id="view"></main></div></div>`;
+      <div class="dd bell"><button class="btn icbtn" aria-label="${esc(L2("Alerts", "التنبيهات"))}">${svg("bell")}<b class="badge" id="bellc" hidden></b></button><div class="dd-menu" id="bellmenu"><div class="muted" style="padding:10px">${t("loading")}</div></div></div>
+      <button class="icbtn hide-sm" data-a="theme" title="${esc(t("theme"))}">${svg(dark ? "sun" : "moon")}</button>
+      <button class="icbtn langbtn" data-a="lang" title="${esc(t("language"))}">${svg("globe")}<span>${ar ? "EN" : "ع"}</span></button>
+      <div class="dd newdd"><button class="btn pri newbtn" aria-label="${esc(t("new"))}">${svg("plus")}<span class="lbl">${t("new")}</span></button><div class="dd-menu" id="newmenu"></div></div>
+    </header><div id="billbar"></div><main class="content" id="view"></main></div>
+    <nav class="bottombar">
+      <a href="#/dashboard" class="bb-home">${svg("home")}<span>${esc(t("m_dashboard"))}</span></a>
+      <button data-a="palette">${svg("search")}<span>${esc(t("search").replace("…", ""))}</span></button>
+      <div class="dd newdd bb-new"><button class="btn pri" aria-label="${esc(t("new"))}">${svg("plus")}</button><div class="dd-menu" id="newmenu2"></div></div>
+      <button data-a="bellopen">${svg("bell")}<b class="badge" id="bellc2" hidden></b><span>${esc(L2("Alerts", "التنبيهات"))}</span></button>
+      <button data-a="menu">${svg("menu")}<span>${esc(L2("Menu", "القائمة"))}</span></button>
+    </nav></div>`;
   // "+ New": the items chosen in Settings → Menus, in that order, that this user may add
   const items = newMenuItems().filter(i => i.show && i.ok);
-  $("#newmenu").innerHTML = items.map(i => `<button data-a="quicknew" data-doc="${esc(i.key)}">${esc(i.label)}</button>`).join("") || `<div class="muted" style="padding:8px">${t("view_only")}</div>`;
+  const html = items.map(i => `<button data-a="quicknew" data-doc="${esc(i.key)}">${esc(i.label)}</button>`).join("") || `<div class="muted" style="padding:8px">${t("view_only")}</div>`;
+  $("#newmenu").innerHTML = html; $("#newmenu2").innerHTML = html;
+  S.alertsAt = 0; loadAlerts();
 }
+function userMenu() {
+  return `<button data-a="theme">${t("theme")}: ${esc(store.get("theme", "auto"))}</button>
+    ${cloudOn() ? `<button data-a="coswitch">⇄ ${S.lang === "ar" ? "الشركات" : "Companies"}</button>` : ""}
+    ${cloudOn() && window.BeyondCloud && window.BeyondCloud.billing ? `<a href="#/subscription">◎ ${S.lang === "ar" ? "الاشتراك" : "Subscription"}</a>` : ""}${S.billing && S.billing.is_owner ? `<a href="#/platform">⚙ ${S.lang === "ar" ? "إدارة الاشتراكات (المالك)" : "Platform billing (owner)"}</a>` : ""}
+    <a href="#/settings">${t("m_settings")}</a>${STATIC && /^https?:$/.test(location.protocol) ? `<a href="#/download">⬇ ${S.lang === "ar" ? "تحميل التطبيق" : "Get the app"}</a>` : ""}<button data-a="pw">${t("change_pw")}</button><button data-a="logout">${t("logout")}</button>`;
+}
+// the bell: what needs attention (bills to issue, overdue installments, depreciation, books checks…)
+async function loadAlerts(force) {
+  if (!force && S.alertsAt && Date.now() - S.alertsAt < 60000) return;
+  S.alertsAt = Date.now();
+  let d; try { d = await api("GET", "/api/alerts"); } catch { d = { rows: [] }; }
+  const n = d.rows.length, ar = S.lang === "ar";
+  ["#bellc", "#bellc2"].forEach(id => { const b = $(id); if (b) { b.hidden = !n; b.textContent = n > 9 ? "9+" : n; } });
+  const m = $("#bellmenu"); if (!m) return;
+  m.innerHTML = `<div class="dd-head">${esc(L2("Needs attention", "يحتاج متابعة"))}</div>` + (n ? d.rows.map(r => `<a class="alert-row" href="${esc(r.href)}"><span class="dot ${r.level}">${svg(r.level === "bad" ? "alert" : r.level === "warn" ? "clock" : "bell")}</span><span>${esc(ar ? r.ar : r.en)}</span></a>`).join("")
+    : `<div class="empty" style="padding:18px">${svg("check")}<div>${esc(L2("All clear", "لا يوجد ما يحتاج متابعة"))}</div></div>`);
+}
+// Ctrl+K: jump to any screen or start any new entry by typing
+function openPalette() {
+  const items = [];
+  for (const [g, list] of window.MENU) for (const [k, r, mod] of list) if (can(mod) && shown(mod)) items.push({ label: t(k), sub: t(g), href: "#/" + r, ic: ROUTE_IC[r] || GROUP_IC[g] });
+  newMenuItems().filter(i => i.show && i.ok).forEach(i => items.push({ label: "+ " + i.label, sub: t("new"), doc: i.key, ic: "plus" }));
+  const box = document.createElement("div"); box.className = "pal-bg";
+  box.innerHTML = `<div class="pal" role="dialog"><div class="pal-in">${svg("search")}<input placeholder="${esc(L2("Type a screen or an action…", "اكتب اسم شاشة أو إجراء…"))}" autofocus><kbd>Esc</kbd></div><div class="pal-list"></div></div>`;
+  document.body.appendChild(box);
+  const inp = $("input", box), list = $(".pal-list", box); let sel = 0, shownItems = [];
+  const norm = x => x.toLowerCase().normalize("NFKD").replace(/[ً-ٟ]/g, "");
+  const draw = () => { const words = norm(inp.value).split(/\s+/).filter(Boolean);
+    shownItems = items.filter(i => words.every(w => norm(i.label + " " + i.sub).includes(w))).slice(0, 40); sel = Math.min(sel, Math.max(0, shownItems.length - 1));
+    list.innerHTML = shownItems.map((i, n) => `<button class="pal-it ${n === sel ? "on" : ""}" data-n="${n}">${svg(i.ic)}<span><b>${esc(i.label)}</b><small>${esc(i.sub)}</small></span></button>`).join("") || `<div class="empty">${esc(t("nothing"))}</div>`; };
+  const go = n => { const i = shownItems[n]; if (!i) return; close(); if (i.doc) newItem(i.doc); else location.hash = i.href; };
+  const close = () => box.remove();
+  box.addEventListener("click", e => { const b = e.target.closest(".pal-it"); if (b) go(+b.dataset.n); else if (!e.target.closest(".pal")) close(); });
+  inp.addEventListener("input", () => { sel = 0; draw(); });
+  inp.addEventListener("keydown", e => { if (e.key === "ArrowDown") { sel = Math.min(sel + 1, shownItems.length - 1); draw(); e.preventDefault(); }
+    else if (e.key === "ArrowUp") { sel = Math.max(sel - 1, 0); draw(); e.preventDefault(); } else if (e.key === "Enter") go(sel); else if (e.key === "Escape") close(); });
+  draw(); setTimeout(() => inp.focus(), 0);
+}
+document.addEventListener("keydown", e => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k" && S.boot && S.boot.user) { e.preventDefault(); if (!$(".pal-bg")) openPalette(); } });
 // Sidebar header: logo and/or name (Settings → Appearance → Sidebar shows), and an optional tagline
 function brandBlock(st) {
   const ap = st.appearance || {}, show = ap.brand_show || "logo_name";
@@ -255,7 +381,11 @@ function newMenuItems() {
   }).filter(Boolean);
 }
 S.GLOBAL_H = {
-  menu: () => $(".app").classList.toggle("menu"),
+  menu: () => { const app = $(".app"); if (innerWidth <= 900) app.classList.toggle("menu"); else { app.classList.toggle("mini"); store.set("navMini", app.classList.contains("mini") ? "1" : ""); } },
+  palette: () => openPalette(),
+  bellopen: () => { const b = $(".bell"); if (b) { b.classList.add("open"); loadAlerts(true); } },
+  grp: el => { const w = el.closest(".grp-wrap"), open = new Set(store.get("navOpen", "").split(",").filter(Boolean)); w.classList.toggle("open");
+    if (w.classList.contains("open")) open.add(el.dataset.g); else open.delete(el.dataset.g); store.set("navOpen", [...open].join(",")); },
   lang: () => { store.set("lang", S.lang === "ar" ? "en" : "ar"); applyLook(); renderShell(); route(); },
   theme: () => { const order = ["auto", "light", "dark"]; store.set("theme", order[(order.indexOf(store.get("theme", "auto")) + 1) % 3]); applyLook(); renderShell(); route(); },
   logout: async () => { await api("POST", "/api/logout").catch(() => {}); store.set("token", "");
@@ -271,17 +401,20 @@ S.GLOBAL_H = {
 function renderNav(active) {
   const nav = $("#nav"); if (!nav) return;
   let html = "", title = "", group = "";
+  const open = new Set(store.get("navOpen", "").split(",").filter(Boolean));
+  const parent = { bu: "bus", invoice: "invoices", boq: "boqs", offer: "offers", offertypes: "offers", loan: "loans", cust: "custody",
+    rental: "rentals", product: "products", sale: "sales", bankstmt: "bankrec" }[active.split("/")[0]];
   for (const [g, items] of window.MENU) {
     const vis = items.filter(i => can(i[2]) && shown(i[2]));
     if (!vis.length) continue;
-    html += `<div class="grp">${esc(t(g))}</div>`;
-    for (const [k, r, , ic] of vis) {
-      const parent = { bu: "bus", invoice: "invoices", boq: "boqs", offer: "offers", offertypes: "offers", loan: "loans", cust: "custody",
-        rental: "rentals", product: "products", sale: "sales", bankstmt: "bankrec" }[active.split("/")[0]];
+    let links = "", has = false;
+    for (const [k, r] of vis) {
       const on = active === r || active.startsWith(r + "/") || parent === r;
-      if (on) { title = t(k); group = t(g); }
-      html += `<a href="#/${r}" class="${on ? "on" : ""}"><span class="ic">${ic}</span>${esc(t(k))}</a>`;
+      if (on) { title = t(k); group = t(g); has = true; }
+      links += `<a href="#/${r}" class="${on ? "on" : ""}" title="${esc(t(k))}">${svg(ROUTE_IC[r] || GROUP_IC[g])}<span>${esc(t(k))}</span></a>`;
     }
+    if (vis.length === 1 && g === "g_home") { html += `<div class="grp-solo">${links}</div>`; continue; }
+    html += `<div class="grp-wrap ${has || open.has(g) ? "open" : ""} ${has ? "has" : ""}"><button class="grp" data-a="grp" data-g="${g}" title="${esc(t(g))}">${svg(GROUP_IC[g] || "grid")}<span>${esc(t(g))}</span>${svg("chev", "chev")}</button><div class="grp-items">${links}</div></div>`;
   }
   nav.innerHTML = html;
   $("#ttl").textContent = title || t("m_dashboard");
@@ -289,6 +422,8 @@ function renderNav(active) {
   // detail pages (a business unit, an invoice, a quotation, an offer…) get a back arrow to the list they came from
   const inMenu = window.MENU.some(([, items]) => items.some(i => i[1] === active));
   const back = $(".top-back"); if (back) back.style.display = inMenu ? "none" : "";
+  $$(".bottombar .bb-home").forEach(a => a.classList.toggle("on", active === "dashboard"));
+  loadAlerts();
 }
 
 // ------------------------------------------------------------- auth pages
@@ -976,32 +1111,102 @@ function journalForm(e, copy) {
 }
 
 // ============================================================== pages
+// ---------------------------------------------------------- dashboard charts (plain SVG — no library, works offline)
+function smoothPath(pts) {
+  if (pts.length < 2) return pts.length ? `M${pts[0][0]},${pts[0][1]}` : "";
+  let d = `M${pts[0][0]},${pts[0][1]}`;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[i - 1] || pts[i], p1 = pts[i], p2 = pts[i + 1], p3 = pts[i + 2] || p2;
+    d += ` C${p1[0] + (p2[0] - p0[0]) / 6},${p1[1] + (p2[1] - p0[1]) / 6} ${p2[0] - (p3[0] - p1[0]) / 6},${p2[1] - (p3[1] - p1[1]) / 6} ${p2[0]},${p2[1]}`;
+  }
+  return d;
+}
+function spark(values, color, id) {
+  const W = 300, H = 70, v = values.length ? values : [0, 0], lo = Math.min(...v), hi = Math.max(...v), span = hi - lo || 1;
+  const pts = v.map((y, i) => [v.length === 1 ? W / 2 : i * W / (v.length - 1), H - 8 - (y - lo) / span * (H - 22)]);
+  const line = smoothPath(pts);
+  return `<svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true"><defs><linearGradient id="g${id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${color}" stop-opacity=".32"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs>
+    <path d="${line} L${W},${H} L0,${H} Z" fill="url(#g${id})"/><path d="${line}" fill="none" stroke="${color}" stroke-width="3.5" stroke-linecap="round"/></svg>`;
+}
+function ring(pctv, label, cls) {
+  const p = Math.max(0, Math.min(1, isFinite(pctv) ? pctv : 0)), r = 34, c = 2 * Math.PI * r;
+  return `<div class="ring ${cls}"><svg viewBox="0 0 90 90"><circle cx="45" cy="45" r="${r}" class="trk"/><circle cx="45" cy="45" r="${r}" class="val" stroke-dasharray="${(c * p).toFixed(1)} ${c.toFixed(1)}" transform="rotate(-90 45 45)"/></svg>
+    <b>${isFinite(pctv) ? Math.round(pctv * 100) + "%" : "—"}</b><span>${esc(label)}</span></div>`;
+}
+function monthBars(series) {
+  if (!series.length) return `<div class="empty">${t("nothing")}</div>`;
+  const W = 640, H = 230, padL = 6, padB = 26, max = Math.max(1, ...series.map(s => Math.max(s.revenue, s.costs)));
+  const bw = (W - padL) / series.length, b = Math.min(16, bw / 3);
+  const y = v => (H - padB) - v / max * (H - padB - 12);
+  const grid = [0.25, 0.5, 0.75, 1].map(f => `<line x1="0" x2="${W}" y1="${y(max * f)}" y2="${y(max * f)}" class="gl"/>`).join("");
+  const bars = series.map((s, i) => { const x = padL + i * bw + bw / 2;
+    return `<g class="mb" data-tip="${esc(s.month)} · ${esc(t("rev"))} ${money(s.revenue)} · ${esc(t("costs"))} ${money(s.costs)} · ${esc(t("net_profit"))} ${money(s.revenue - s.costs)}">
+      <rect x="${x - bw / 2}" y="0" width="${bw}" height="${H}" class="hit"/>
+      <rect x="${x - b - 2}" y="${y(s.revenue)}" width="${b}" height="${Math.max(1, H - padB - y(s.revenue))}" rx="${b / 2}" class="r"/>
+      <rect x="${x + 2}" y="${y(s.costs)}" width="${b}" height="${Math.max(1, H - padB - y(s.costs))}" rx="${b / 2}" class="c"/>
+      <text x="${x}" y="${H - 8}">${esc(s.month.slice(5))}/${esc(s.month.slice(2, 4))}</text></g>`; }).join("");
+  return `<div class="mchart"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${grid}${bars}</svg><div class="tip" hidden></div></div>`;
+}
+function countUp(root) {
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  $$("[data-count]", root).forEach(el => { const to = +el.dataset.count, t0 = performance.now(), fmt = el.dataset.fmt === "money" ? money : numf;
+    const step = now => { const k = Math.min(1, (now - t0) / 700), e = 1 - Math.pow(1 - k, 3); el.textContent = fmt(to * e); if (k < 1 && el.isConnected) requestAnimationFrame(step); else el.textContent = fmt(to); };
+    requestAnimationFrame(step); });
+}
 PAGES.dashboard = async (view, parts, q) => {
-  const d = await api("GET", "/api/dashboard?" + qs({ date_from: q.date_from || yearStart(), date_to: q.date_to || "", bu_id: q.bu_id || "" }));
-  const k = (l, v, s, cls = "") => `<div class="kpi"><div class="l">${esc(l)}</div><div class="v ${cls}">${v}</div>${s ? `<div class="s">${s}</div>` : ""}</div>`;
-  const max = Math.max(1, ...d.series.map(s => Math.max(s.revenue, s.costs)));
-  const cp = d.cash_position;
+  const [d, al] = await Promise.all([api("GET", "/api/dashboard?" + qs({ date_from: q.date_from || yearStart(), date_to: q.date_to || "", bu_id: q.bu_id || "" })),
+    api("GET", "/api/alerts").catch(() => ({ rows: [] }))]);
+  const ar = S.lang === "ar", cp = d.cash_position, ser = d.series || [];
+  const months = +(store.get("dashMonths", "12")) || 12, sr = ser.slice(-months);
+  const hero = (cls, ic, label, value, series, color, extra = "", after = "") => `<div class="hero ${cls}"><div class="hero-top"><span class="hero-ic">${svg(ic)}</span>
+      <div><div class="hero-v" data-count="${value}" data-fmt="money">${money(value)}</div><div class="hero-l">${esc(label)}</div></div>${extra}</div>${series ? spark(series, color, cls) : ""}${after}</div>`;
+  const gap = cp.floor ? cp.cash / cp.floor : NaN;
+  const cashExtra = `<div class="hero-floor"><div class="meter"><i style="width:${Math.max(3, Math.min(100, (isFinite(gap) ? gap : 1) * 100)).toFixed(0)}%"></i></div>
+    <small>${esc(t("cash_floor"))} ${money(cp.floor)} ${cp.gap > 0 ? `· <b class="neg">−${money(cp.gap)}</b>` : "✓"}</small></div>`;
+  const pos = [["receivable", t("receivable"), d.receivable, "#/receivables", "var(--info)"], ["payable", t("payable"), d.payable, "#/payables", "var(--bad)"],
+    ["advances", t("advances"), d.advances, "#/receipts", "#a855f7"], ["accrued", t("accrued"), d.accrued, "#/payables", "var(--warn)"],
+    ["inventory", t("inventory"), d.inventory, "#/stock", "#14b8a6"], ["ebitda", t("ebitda"), d.ebitda, "#/report/income_statement", "var(--good)"]];
+  const rent = d.rentals && d.rentals.rows.length ? d.rentals : null;
+  const rtab = store.get("dashRent", "all");
+  const rrows = rent ? rent.rows.filter(r => rtab === "all" || r.to_bill) : [];
   view.innerHTML = filterBar({ date_from: q.date_from || yearStart(), ...q }, ["dates", "bu"]) +
-    `<div class="kpis">${k(t("cash"), money(d.cash), cur(), d.cash < 0 ? "neg" : "")}${k(t("receivable"), money(d.receivable))}${k(t("payable"), money(d.payable))}
-      ${k(t("accrued"), money(d.accrued))}${k(t("advances"), money(d.advances))}${k(t("inventory"), money(d.inventory))}
-      ${k(t("revenue"), money(d.revenue))}${k(t("ebitda"), money(d.ebitda), pct(d.margins.ebitda), d.ebitda < 0 ? "neg" : "")}${k(t("net_profit"), money(d.net_profit), pct(d.margins.net), d.net_profit < 0 ? "neg" : "pos")}</div>
-    ${S.boot.settings.demo_loaded ? `<div class="banner info">${L2("You are looking at the demo company (invented data).", "هذه بيانات الشركة التجريبية (بيانات وهمية).")} <a href="#/data">${L2("Demo & data", "البيانات التجريبية")} →</a></div>` : ""}
-    ${d.recurring_due ? `<div class="banner ${d.recurring_due.errors ? "err" : "info"}">${L2("Recurring entries due", "قيود متكررة مستحقة")}: ${d.recurring_due.review ? `${d.recurring_due.review} ${L2("to review", "للمراجعة")}` : ""}${d.recurring_due.auto ? ` ${d.recurring_due.auto} ${L2("automatic", "تلقائية")}` : ""}${d.recurring_due.errors ? ` · ⚠ ${d.recurring_due.errors} ${L2("failed", "فشلت")}` : ""} · <a href="#/recurring">${L2("Open", "فتح")} →</a></div>` : ""}
-    ${d.installments_overdue ? `<div class="banner err">${L2("Overdue installments", "أقساط متأخرة")}: ${money(d.installments_overdue.amount)} (${d.installments_overdue.count} · ${d.installments_overdue.customers} ${L2("customers", "عميل")}) · <a href="#/installments?status=overdue">${L2("Follow up", "متابعة التحصيل")} →</a></div>` : ""}
-    ${d.cheques_due ? `<div class="banner warn">${d.cheques_due} ${L2("customer cheques are due — deposit them", "شيكات عملاء مستحقة — قم بإيداعها")} · <a href="#/installments">${L2("Open", "فتح")} →</a></div>` : ""}
-    ${d.depreciation_due ? `<div class="banner warn">${L2("Depreciation not booked yet up to", "لم يُحتسب الإهلاك حتى")} ${esc(d.depreciation_due.through)}: ${money(d.depreciation_due.total)} (${d.depreciation_due.count}) · <a href="#/${d.depreciation_due.rental ? "rentfleet" : "assets"}">${L2("Run depreciation", "احتساب الإهلاك")} →</a></div>` : ""}
-    <div class="banner ${cp.gap > 0 ? "err" : "ok"}">${t("cash_floor")}: ${money(cp.floor)} (${t("floor_note")}) · ${t("cash")} ${money(cp.cash)}${cp.gap > 0 ? ` · <b>−${money(cp.gap)}</b>` : " ✓"}</div>
-    <div class="grid g2"><div class="card"><h2>${t("last12")}</h2><div class="legend"><span class="r">${t("rev")}</span><span class="c">${t("costs")}</span></div>
-      <div class="bar">${d.series.map(s => `<div class="m"><div class="b"><i class="r" style="height:${(s.revenue / max * 100).toFixed(1)}%" title="${money(s.revenue)}"></i><i class="c" style="height:${(s.costs / max * 100).toFixed(1)}%" title="${money(s.costs)}"></i></div>${esc(s.month.slice(2))}</div>`).join("") || `<div class="empty">${t("nothing")}</div>`}</div></div>
-      <div class="card"><h2>${t("model_audit")}</h2>${d.audit.map(a => `<div class="row" style="justify-content:space-between;padding:3px 0"><span>${esc(a.check)}</span><span class="chip ${a.ok ? "ok" : "bad"}">${a.ok ? "OK" : "CHECK"}</span></div>`).join("")}</div></div>
-    ${d.rentals && d.rentals.rows.length ? `<div class="card"><h2>${L2("Ongoing rentals", "الإيجارات الجارية")} — ${money(d.rentals.monthly)} / ${L2("month", "شهر")}${d.rentals.to_bill ? ` <span class="chip warn">${d.rentals.to_bill} ${L2("to invoice", "للفوترة")}</span>` : ""}</h2>
-      <div class="tbl stack"><table><thead><tr><th>${t("code")}</th><th>${t("client")} / ${L2("site", "الموقع")}</th><th>${L2("On site since", "بالموقع منذ")}</th><th class="num">${L2("Pieces", "القطع")}</th><th class="num">${L2("Rent / month", "الإيجار الشهري")}</th>
-        <th class="num">${L2("Rent to date", "الإيجار حتى اليوم")}</th><th>${L2("Invoiced to", "تمت الفوترة حتى")}</th><th class="num">${L2("Invoiced", "المفوتر")}</th><th class="num">${L2("Collected", "المحصل")}</th><th class="num">${L2("Client owes", "مستحق على العميل")}</th></tr></thead><tbody>
-      ${d.rentals.rows.map(r => `<tr class="click" data-href="#/rental/${r.id}"><td><b>${esc(r.code)}</b></td><td>${esc(r.client)}<div class="lines">${esc(r.site || "")}</div></td>
-        <td>${fd(r.since)}<div class="lines">${r.days} ${L2("days", "يوم")}</div></td><td class="num">${numf(r.pieces_out)}</td><td class="num">${money(r.monthly)}</td><td class="num">${money(r.rent_to_date)}</td>
-        <td>${r.billed_to ? fd(r.billed_to) : "—"}${r.to_bill ? `<div class="lines"><span class="chip warn">${L2("bill from", "فوترة من")} ${fd(r.next_from)}</span></div>` : ""}</td>
-        <td class="num">${money(r.invoiced)}</td><td class="num">${money(r.collected)}</td><td class="num"><b class="${r.owed > 0 ? "" : "pos"}">${money(r.owed)}</b></td></tr>`).join("")}</tbody></table></div></div>` : ""}
-    <div class="card"><h2>${t("m_bus")}</h2>${buTable(d.units)}</div>`;
+    (S.boot.settings.demo_loaded ? `<div class="banner info">${L2("You are looking at the demo company (invented data).", "هذه بيانات الشركة التجريبية (بيانات وهمية).")} <a href="#/data">${L2("Demo & data", "البيانات التجريبية")} →</a></div>` : "") +
+    `<div class="heroes">
+      ${hero("h-rev", "in", t("revenue"), d.revenue, sr.map(s => s.revenue), "#34c77b")}
+      ${hero("h-cost", "out", t("costs"), sr.reduce((a, s) => a + s.costs, 0), sr.map(s => s.costs), "#ff5a5f")}
+      ${hero("h-prof", "chart", t("net_profit"), d.net_profit, sr.map(s => s.revenue - s.costs), "#ffa726", `<span class="chip ${d.net_profit < 0 ? "bad" : "ok"} hero-chip">${pct(d.margins.net)}</span>`)}
+      ${hero("h-cash", "wallet", t("cash"), d.cash, null, "#5b9dff", "", cashExtra)}
+    </div>
+    <div class="dgrid">
+      <div class="card"><h2>${esc(L2("Money position", "المركز المالي"))}<span class="spacer"></span><a class="btn sm" href="#/report/balance_sheet">${esc(t("m_bs"))}</a></h2>
+        <div class="posgrid">${pos.map(([k, l, v, href, c]) => `<a class="posit" href="${href}" style="--c:${c}"><i></i><div><small>${esc(l)}</small><b class="${v < 0 ? "neg" : ""}" data-count="${v}" data-fmt="money">${money(v)}</b></div></a>`).join("")}</div>
+        <div class="rings">${ring(d.margins.ebitda, t("ebitda"), "r1")}${ring(d.margins.net, t("net_profit"), "r2")}${ring(gap, L2("Cash vs safety floor", "النقدية مقابل حد الأمان"), "r3")}
+          ${rent ? ring(rent.rows.reduce((a, r) => a + r.collected, 0) / Math.max(1, rent.rows.reduce((a, r) => a + r.invoiced, 0)), L2("Rent invoices collected", "تحصيل فواتير الإيجار"), "r4") : ""}</div></div>
+      <div class="card"><h2>${svg("bell")} ${esc(L2("Needs attention", "يحتاج متابعة"))}</h2>
+        ${al.rows.length ? `<div class="alist">${al.rows.map(r => `<a class="alert-row" href="${esc(r.href)}"><span class="dot ${r.level}">${svg(r.level === "bad" ? "alert" : r.level === "warn" ? "clock" : "bell")}</span><span>${esc(ar ? r.ar : r.en)}</span></a>`).join("")}</div>`
+          : `<div class="empty">${svg("check")}<div>${esc(L2("All clear — nothing waiting on you.", "لا يوجد ما ينتظرك."))}</div></div>`}
+        <h2 style="margin-top:18px">${esc(t("model_audit"))}</h2><div class="audit">${d.audit.map(a => `<span class="chip ${a.ok ? "ok" : "bad"}" title="${esc(a.check)}">${a.ok ? "✓" : "✗"} ${esc(a.check)}</span>`).join("")}</div></div>
+    </div>
+    <div class="dgrid">
+      <div class="card"><h2>${esc(t("last12"))}<span class="spacer"></span><span class="seg">${[6, 12].map(m => `<button class="btn sm ${months === m ? "pri" : ""}" data-a="dmonths" data-m="${m}">${m} ${esc(L2("months", "شهر"))}</button>`).join("")}</span></h2>
+        <div class="legend"><span class="r">${t("rev")}</span><span class="c">${t("costs")}</span></div>${monthBars(sr)}</div>
+      ${rent ? `<div class="card"><h2>${esc(L2("Ongoing rentals", "الإيجارات الجارية"))}<span class="spacer"></span><span class="seg">${[["all", L2("All", "الكل")], ["bill", L2("To invoice", "للفوترة")]].map(([k, l]) => `<button class="btn sm ${rtab === k ? "pri" : ""}" data-a="drent" data-k="${k}">${esc(l)}${k === "bill" && rent.to_bill ? ` (${rent.to_bill})` : ""}</button>`).join("")}</span></h2>
+        <div class="rlist">${rrows.map(r => `<a class="rrow" href="#/rental/${r.id}"><span class="dot ${r.to_bill ? "warn" : "ok"}">${svg("building")}</span>
+          <span class="rr-main"><b>${esc(r.client)}</b><small>${esc(r.code)} · ${esc(r.site || "")}</small></span>
+          <span class="rr-mid"><small>${esc(L2("Rent / month", "الإيجار الشهري"))}</small><b>${money(r.monthly)}</b></span>
+          <span class="rr-end"><b class="${r.owed > 0 ? "" : "pos"}">${money(r.owed)}</b><small>${r.to_bill ? `${esc(L2("bill from", "فوترة من"))} ${fd(r.next_from)}` : esc(L2("client owes", "على العميل"))}</small></span></a>`).join("") || `<div class="empty">${esc(t("nothing"))}</div>`}</div>
+        <div class="rfoot"><span>${esc(L2("Monthly rent on site", "إجمالي الإيجار الشهري"))}: <b>${money(rent.monthly)}</b></span><a class="btn sm" href="#/rentals">${esc(t("m_rentals"))} →</a></div></div>`
+      : `<div class="card"><h2>${esc(t("m_bus"))}</h2>${buTable(d.units)}</div>`}
+    </div>
+    ${rent ? `<div class="card"><h2>${esc(t("m_bus"))}</h2>${buTable(d.units)}</div>` : ""}`;
+  Object.assign(S.H, { dmonths: el => { store.set("dashMonths", el.dataset.m); route(); }, drent: el => { store.set("dashRent", el.dataset.k); route(); } });
+  const mc = $(".mchart", view);
+  if (mc) { const tip = $(".tip", mc);
+    mc.addEventListener("pointermove", e => { const g = e.target.closest(".mb"); $$(".mb.on", mc).forEach(x => x !== g && x.classList.remove("on"));
+      if (!g) { tip.hidden = true; return; } g.classList.add("on"); const r = mc.getBoundingClientRect(); tip.hidden = false; tip.textContent = g.dataset.tip;
+      tip.style.left = Math.min(r.width - tip.offsetWidth - 4, Math.max(4, e.clientX - r.left - tip.offsetWidth / 2)) + "px"; });
+    mc.addEventListener("pointerleave", () => { tip.hidden = true; $$(".mb.on", mc).forEach(x => x.classList.remove("on")); }); }
+  countUp(view);
 };
 function buTable(rows) {
   if (!rows.length) return `<div class="empty">${t("nothing")}</div>`;
@@ -4383,7 +4588,7 @@ async function refreshBilling() {
   S.billingAt = Date.now();
   try { S.billing = await window.BeyondCloud.billing(); } catch { S.billing = null; }
   renderBillBar();
-  const um = $(".user-btn + .dd-menu") || $(".user-btn") && $(".user-btn").parentElement.querySelector(".dd-menu");
+  const um = $(".ucard .dd-menu");
   if (um && S.billing && S.billing.is_owner && !$('a[href="#/platform"]', um))
     um.insertAdjacentHTML("afterbegin", `<a href="#/platform">⚙ ${S.lang === "ar" ? "إدارة الاشتراكات (المالك)" : "Platform billing (owner)"}</a>`);
 }

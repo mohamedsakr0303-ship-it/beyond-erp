@@ -2044,6 +2044,40 @@ def rental_action(ctx, rid, what):
 
 
 # ============================================================ fixed assets
+@route("GET", "/api/alerts")
+def alerts(ctx):
+    """What needs attention now, for the bell in the top bar — only what this user may see."""
+    out = []
+
+    def add(level, en, ar, href, n=1):
+        out.append({"level": level, "en": en, "ar": ar, "href": href, "count": n})
+    if ctx.can("rentals.contracts"):
+        on = rentals.ongoing(ctx.db)
+        for r in on["rows"]:
+            if r.get("to_bill"):
+                add("warn", f"{r['code']} — bill from {r['next_from']}", f"{r['code']} — فوترة من {r['next_from']}", f"#/rental/{r['id']}")
+    if ctx.can("shop.installments") or ctx.can("shop.orders"):
+        o = sales.overdue_summary(ctx.db)
+        if o:
+            add("bad", f"Overdue installments: {o['count']}", f"أقساط متأخرة: {o['count']}", "#/installments?status=overdue", o["count"])
+        c = len(sales.cheques_due(ctx.db))
+        if c:
+            add("warn", f"Customer cheques due: {c}", f"شيكات عملاء مستحقة: {c}", "#/installments", c)
+    if ctx.can("accounting.recurring"):
+        due = recurring.due_list(ctx.db, acc.today(), lambda m: ctx.can(m, "add"))
+        if due:
+            add("info", f"Recurring entries due: {len(due)}", f"قيود متكررة مستحقة: {len(due)}", "#/recurring", len(due))
+    if ctx.can("assets.depreciation", "add"):
+        d = assets.due(ctx.db)
+        if d:
+            add("warn", f"Depreciation not booked up to {d['through']}", f"لم يُحتسب الإهلاك حتى {d['through']}", "#/depreciation", d["count"])
+    if ctx.can("reports"):
+        bad = [a for a in acc.audit(ctx.db) if not a["ok"]]
+        if bad:
+            add("bad", f"Books check: {len(bad)} to review", f"فحص الدفاتر: {len(bad)} للمراجعة", "#/dashboard", len(bad))
+    return ok({"rows": out, "count": sum(1 for x in out)})
+
+
 @route("GET", "/api/assets-overview", "assets.overview")
 def assets_overview(ctx):
     from . import asset_views
