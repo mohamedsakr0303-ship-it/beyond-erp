@@ -2001,6 +2001,89 @@ class Rentals(unittest.TestCase):
         self.assertEqual(len(R.detail(db2, "RC-0001")["invoices"]), 1)
 
 
+class Payroll(unittest.TestCase):
+    """Payroll v2: Egyptian insurance and tax, posting, Excel round trip, crew sheets and business-type templates."""
+
+    def _db(self):
+        from erp import payroll as P
+        db = Database(":memory:")
+        db.x("INSERT INTO business_units(code,name,basis,status) VALUES ('P1','Site','Fixed Price','In Progress')")
+        return db, P
+
+    def test_tax_bands_and_high_income_rule(self):
+        db, P = self._db()
+        s = P.settings(db)
+        self.assertEqual(P.annual_tax(40000, s), 0)
+        self.assertAlmostEqual(P.annual_tax(100000, s), 1500 + 2250 + 6000)
+        self.assertAlmostEqual(P.annual_tax(650000, s), 0.10 * 55000 + 0.15 * 15000 + 0.20 * 130000 + 0.225 * 200000 + 0.25 * 250000)
+        self.assertAlmostEqual(P.annual_tax(1500000, s), 0.25 * 1200000 + 0.275 * 300000)
+        P.save_settings(db, {"high_income": []})            # the rule can be switched off
+        self.assertAlmostEqual(P.annual_tax(650000, P.settings(db)), 0 + 1500 + 2250 + 26000 + 45000 + 62500)
+
+    def test_payslip_and_posting(self):
+        db, P = self._db()
+        e = P.save_employee(db, {"name": "Eng", "basic": 15000, "al_housing": 2000, "cost_type": "Direct Labour (Cost of Revenue)", "bu_code": "P1"})
+        w = P.save_employee(db, {"name": "Worker", "emp_type": "daily", "daily_rate": 400, "insured": "No", "taxed": "No"})
+        c = P.compute(P.get_employee(db, e), {"absent_days": 3, "ot_day": 4, "components": {"bonus": 500, "penalty": 100, "advance": 300}}, P.settings(db))
+        self.assertAlmostEqual(c["gross"], 15000 * 27 / 30 + 2000 * 27 / 30 + round(15000 / 30 / 8 * 4 * 1.35, 2) + 500, places=2)
+        self.assertEqual(c["si_emp"], round(16700 * 0.11, 2))      # 17,000 insurable, capped at the 2026 ceiling
+        self.assertAlmostEqual(c["net"], c["gross"] - 100 - 300 - c["si_emp"] - c["tax"] - c["martyrs"], places=2)
+        rid = P.create_run(db, {"period": "2026-09"})
+        P.save_lines(db, rid, [{"employee_id": e, "absent_days": 3, "ot_day": 4, "components": {"bonus": 500, "penalty": 100, "advance": 300}},
+                               {"employee_id": w, "units": 20, "paid": 8000, "method": "Cash"}])
+        P.post_run(db, rid)
+        tb = {r["account"]: r["n"] for r in db.q("SELECT account, SUM(debit-credit) n FROM journal_lines GROUP BY account")}
+        self.assertEqual(sum(tb.values()), 0)
+        self.assertEqual(tb["1010"], -800000)                         # the daily worker paid in cash
+        self.assertEqual(db.one("SELECT bu_id FROM journal_entries WHERE ref='PR:2026-09:EMP-001'")["bu_id"], 1)
+        P.unpost_run(db, rid)
+        self.assertEqual(db.one("SELECT COUNT(*) n FROM journal_entries WHERE status='posted'")["n"], 0)
+        self.assertEqual(reports.build(db, "payroll_register", {"run": rid})["rows"][-1]["style"], "grand")
+
+    @unittest.skipUnless(HAVE_XL, "openpyxl not installed")
+    def test_workbook_payroll_round_trip(self):
+        from erp import payroll as P, workbook
+        db = Database(":memory:")
+        data = interchange.export_data(db)
+        data["Employees"] = [{"code": "E1", "name": "A", "basic": 9000, "al_transport": 600, "insured": "Yes", "taxed": "Yes"},
+                             {"code": "E2", "name": "B", "emp_type": "piece", "piece_rate": 17, "insured": "No", "taxed": "No"}]
+        data["Payroll Run"] = [{"date": "2026-10-31", "employee": "E1", "bonus": 1000, "paid": 2000, "method": "Cash"},
+                               {"date": "2026-10-31", "employee": "E2", "units": 1000}]
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "pay.xlsx"
+            p.write_bytes(workbook.build_workbook(db, template=True, data=data))
+            rows = interchange.read_xlsx(p)
+        self.assertEqual(rows["Payroll Run"][0]["paid"], 2000)       # helper columns must not shadow the inputs
+        db2 = Database(":memory:")
+        interchange.import_data(db2, rows, mode="replace")
+        r = P.get_run(db2, "2026-10")
+        self.assertEqual(r["status"], "posted")
+        self.assertEqual(r["totals"]["gross"], 9000 + 600 + 1000 + 17000)
+        # the export carries employees and the payroll rules back out (and re-importing them doubles nothing)
+        again = interchange.export_data(db2)
+        self.assertEqual(len(again["Employees"]), 2)
+        interchange.import_data(db2, {"Employees": again["Employees"], "Payroll Settings": again["Payroll Settings"]})
+        self.assertEqual(db2.one("SELECT COUNT(*) n FROM employees")["n"], 2)
+
+    def test_crew_sheet_stays_out_of_the_books(self):
+        db, P = self._db()
+        cid = P.save_crew(db, {"date": "2026-10-05", "crew": "Crew", "lines": [{"item": "Frames", "unit": "m²", "count": 260, "dim1": 2.5, "dim2": 2, "rate": 17}]})
+        self.assertEqual(P.list_crew(db)[0]["total"], 22100)
+        self.assertIsNone(db.one("SELECT 1 FROM journal_entries"))
+        P.pay_crew(db, cid, {"amount": 22000, "method": "Cash", "bu_id": 1})
+        self.assertEqual(db.one("SELECT SUM(credit) n FROM journal_lines")["n"], 2200000)
+
+    def test_business_type_templates(self):
+        from erp import industries
+        for k in industries.ORDER:
+            db = Database(":memory:")
+            r = industries.apply(db, k)
+            self.assertEqual(db.setting("business_type"), k)
+            for code in r["accounts_added"]:
+                self.assertTrue(db.one("SELECT 1 FROM accounts WHERE code=?", (code,)))
+        self.assertIn("1225", industries.apply(Database(":memory:"), "development")["accounts_added"])
+
+
 if __name__ == "__main__":
     unittest.main()
 

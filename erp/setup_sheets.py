@@ -21,6 +21,45 @@ def specs(C):
 
 def _specs(C):
     return [
+        {"name": "Payroll Settings", "ar": "إعدادات الرواتب", "module": "payroll", "setup": True,
+         "title": "Payroll rules: social insurance, salary tax bands, the high-income rule (start_band_N_above), Martyrs Fund, overtime "
+                  "and the pay items (name | Arabic | earning/deduction | fixed/run | taxable | insurable | on/off). Rates as decimals: 0.11 = 11 %",
+         "cols": [C("key", "Setting", "الإعداد", width=26, required=True), C("value", "Value", "القيمة", width=60),
+                  C("note", "Note", "ملاحظة", width=30)]},
+        {"name": "Employees", "ar": "الموظفون والعمال", "module": "payroll", "setup": True,
+         "title": "Employees and workers (the contract). Re-importing a row with the same code updates the employee — nothing is doubled",
+         "cols": [C("code", "Employee Code", "كود الموظف", width=10, required=True), C("name", "Name", "الاسم", width=22, required=True),
+                  C("name_ar", "Arabic Name", "الاسم بالعربية", width=20), C("national_id", "National ID", "الرقم القومي", width=14),
+                  C("job_title", "Job Title", "الوظيفة", width=16), C("department", "Department", "القسم", width=14),
+                  C("emp_type", "Paid", "طريقة الأجر", width=9, choices=["monthly", "daily", "hourly", "piece"]),
+                  C("cost_type", "Cost Classification", "تصنيف التكلفة", width=30, choices=list(acc.PAYROLL_TYPES)),
+                  C("account", "Cost Account (optional)", "حساب التكلفة", kind="acct"), C("bu_code", "Business Unit", "وحدة الأعمال", kind="bu"),
+                  C("hire_date", "Hired On", "تاريخ التعيين", kind="date"), C("end_date", "Left On", "تاريخ الترك", kind="date"),
+                  C("basic", "Basic Monthly Salary", "الأجر الأساسي", kind="money"), C("daily_rate", "Daily Wage", "اليومية", kind="money"),
+                  C("hourly_rate", "Hourly Rate", "أجر الساعة", kind="money"), C("piece_rate", "Rate per Unit", "سعر الوحدة", kind="money"),
+                  C("piece_unit", "Unit", "الوحدة", width=7)]
+                 + [C("al_" + c, n, ar, kind="money") for c, n, ar in (("housing", "Housing Allowance", "بدل سكن"), ("transport", "Transport Allowance", "بدل انتقال"),
+                                                                        ("meal", "Meal Allowance", "بدل وجبة"), ("phone", "Phone Allowance", "بدل اتصالات"),
+                                                                        ("site", "Site Allowance", "بدل موقع"), ("other_allow", "Other Allowance", "بدلات أخرى"))]
+                 + [C("insured", "Insured", "مؤمن عليه", width=7, choices=["Yes", "No"]),
+                    C("insurable_wage", "Insurable Wage (blank = basic + allowances)", "أجر الاشتراك", kind="money"),
+                    C("insurance_no", "Insurance No.", "الرقم التأميني", width=12), C("taxed", "Salary Tax", "ضريبة كسب العمل", width=7, choices=["Yes", "No"]),
+                    C("method", "Paid By", "طريقة الصرف", choices=acc.PAYMENT_METHODS), C("bank_account", "Bank / InstaPay", "الحساب", width=16),
+                    C("phone", "Mobile", "الموبايل", width=12), C("status", "Status", "الحالة", width=7, choices=["active", "left"]),
+                    C("notes", "Notes", "ملاحظات", width=18)]},
+        {"name": "Payroll Run", "ar": "مسير الرواتب", "module": "payroll", "setup": True,
+         "title": "One row per employee per month. Monthly staff: type unpaid absent days; daily / hourly / piece: the days, hours or units. "
+                  "Gross, insurance, tax and net are calculated (grey). Rows of one month form that month's payroll. " + MONEY_NOTE,
+         "cols": [C("date", "Posting Date", "تاريخ القيد", kind="date", required=True, note="usually the month end"),
+                  C("employee", "Employee Code", "كود الموظف", width=10, required=True),
+                  C("units", "Days / Hours / Units", "أيام / ساعات / وحدات", kind="num", width=8), C("absent_days", "Absent Days (unpaid)", "أيام الغياب", kind="num", width=8),
+                  C("ot_day", "Overtime h — day", "إضافي نهاري (س)", kind="num", width=7), C("ot_night", "Overtime h — night", "إضافي ليلي (س)", kind="num", width=7),
+                  C("ot_rest", "Overtime h — rest day", "إضافي راحة (س)", kind="num", width=7),
+                  C("bonus", "Bonus", "مكافأة", kind="money"), C("commission", "Commission", "عمولة", kind="money"),
+                  C("incentive", "Incentive", "حافز", kind="money"), C("other_earn", "Other Earnings", "مستحقات أخرى", kind="money"),
+                  C("penalty", "Penalties", "جزاءات", kind="money"), C("advance", "Advance Recovery", "استرداد سلفة", kind="money"),
+                  C("other_ded", "Other Deductions", "خصومات أخرى", kind="money"), C("paid", "Paid Now", "المدفوع الآن", kind="money"),
+                  C("method", "Payment Method", "طريقة الدفع", choices=acc.PAYMENT_METHODS)]},
         {"name": "Loans", "ar": "القروض", "module": "accounting", "setup": True,
          "title": "Loans the company took or gave. Booking: money = the drawdown is booked now; opening = already in the "
                   "books, only its remaining balance is tracked. " + MONEY_NOTE,
@@ -207,6 +246,67 @@ def _standalone(sheets, C):
         return calc(key, f"{r} account", "=" + ROLE(r), 9)
 
     money = lambda m: f'IF({{{m}}}="Cash",{ROLE("cash")},{ROLE("bank")})'  # noqa: E731
+
+    # Payroll run: the same payslip as the app (payroll.compute), and its entry
+    from .interchange import PRM
+    pr = "Payroll Run"
+    G = lambda col: f'INDEX([[Employees.{col}]],{{x_m}})'  # noqa: E731
+    on = lambda c: PRM(f"{c}_on")  # noqa: E731
+    fixed = ["housing", "transport", "meal", "phone", "site", "other_allow"]
+    earn_v, ded_v = ["bonus", "commission", "incentive", "other_earn"], ["penalty", "advance", "other_ded"]
+    U = [PRM(f"band_{i}_upto") for i in range(1, 7)] + ["1E+15"]
+    R = [PRM(f"band_{i}_rate") for i in range(1, 8)]
+    T = [PRM(f"start_band_{i}_above") for i in range(2, 8)]
+    A = "{x_annual}"
+    k = "{x_k}"
+    tax_ann = ("CHOOSE(" + k + "," + ",".join(f"{R[j]}*MIN({A},{U[j]})" for j in range(7)) + ")+"
+               + "+".join(f"IF({j + 1}>{k},{R[j]}*MAX(0,MIN({A},{U[j]})-{U[j - 1]}),0)" for j in range(1, 7)))
+    cost_role = (f'IF(LEFT({{x_ct}},6)="Direct",{ROLE("direct_labour")},IF(LEFT({{x_ct}},6)="Indire",{ROLE("project_overhead")},'
+                 f'{ROLE("admin_salaries")}))')
+    by[pr]["cols"] += [
+        calc("x_m", "employee row", '=IF({employee}="","",MATCH({employee}&"",[[Employees.code]],0))'),
+        calc("x_type", "pay type", f'=IF({{x_m}}="","",IF({G("emp_type")}&""="","monthly",{G("emp_type")}&""))'),
+        calc("bu_code", "business unit", f'=IF({{x_m}}="","",{G("bu_code")}&"")'),
+        calc("x_ct", "cost type", f'=IF({{x_m}}="","",IF({G("cost_type")}&""="","Administrative Salaries (Shared Overhead)",{G("cost_type")}&""))'),
+        calc("x_dm", "days / month", "=" + PRM("days_month")),
+        calc("x_factor", "paid share of the month", f'=IF({{x_type}}="monthly",MAX(0,{{x_dm}}-N({{absent_days}}))/{{x_dm}},1)'),
+        calc("x_basic", "basic earned", f'=IF({{x_m}}="",0,ROUND(IF({{x_type}}="monthly",N({G("basic")})*{{x_factor}},'
+                                         f'IF({{x_type}}="daily",N({G("daily_rate")}),IF({{x_type}}="hourly",N({G("hourly_rate")}),N({G("piece_rate")})))*N({{units}})),2))'),
+        calc("x_pf", "allowance share", f'=IF(AND({{x_type}}="monthly",{PRM("prorate_allowances")}=1),{{x_factor}},1)')]
+    by[pr]["cols"] += [calc(f"x_al_{c}", f"{c} allowance", f'=IF({{x_m}}="",0,ROUND(N({G("al_" + c)})*{{x_pf}},2)*{on(c)})') for c in fixed]
+    by[pr]["cols"] += [
+        calc("x_hr", "hourly base", f'=IF({{x_m}}="",0,IF({{x_type}}="monthly",N({G("basic")})/{{x_dm}}/{PRM("hours_day")},'
+                                    f'IF({{x_type}}="daily",N({G("daily_rate")})/{PRM("hours_day")},N({G("hourly_rate")}))))'),
+        calc("x_ot", "overtime", f'=ROUND({{x_hr}}*(N({{ot_day}})*{PRM("ot_day")}+N({{ot_night}})*{PRM("ot_night")}+N({{ot_rest}})*{PRM("ot_rest")}),2)'),
+        calc("x_gross", "gross", "={x_basic}+" + "+".join(f"{{x_al_{c}}}" for c in fixed) + "+{x_ot}+"
+             + "+".join(f"ROUND(N({{{c}}}),2)*{on(c)}" for c in earn_v)),
+        calc("x_taxearn", "taxable earnings", "={x_basic}+{x_ot}+" + "+".join(f"{{x_al_{c}}}*{PRM(c + '_tax')}" for c in fixed) + "+"
+             + "+".join(f"ROUND(N({{{c}}}),2)*{on(c)}*{PRM(c + '_tax')}" for c in earn_v)),
+        calc("x_pretax", "deductions before tax", "=" + "+".join(f"ROUND(N({{{c}}}),2)*{on(c)}*{PRM(c + '_tax')}" for c in ded_v)),
+        calc("x_base", "insurable base", f'=IF({{x_m}}="",0,IF(N({G("insurable_wage")})>0,N({G("insurable_wage")}),IF({{x_type}}="monthly",N({G("basic")}),'
+                                         f'IF({{x_type}}="daily",N({G("daily_rate")})*{{x_dm}},0))+'
+                                         + "+".join(f'N({G("al_" + c)})*{PRM(c + "_ins")}*{on(c)}' for c in fixed) + "))"),
+        calc("x_ins", "insurable wage", f'=IF({{x_m}}="",0,IF(AND({G("insured")}&""="Yes",{{x_base}}>0),MIN(MAX({{x_base}},{PRM("si_min")}),{PRM("si_max")}),0))'),
+        calc("x_siemp", "insurance (employee)", f'=ROUND({{x_ins}}*{PRM("si_emp_rate")},2)'),
+        calc("x_sier", "insurance (employer)", f'=ROUND({{x_ins}}*{PRM("si_er_rate")},2)'),
+        calc("x_taxed", "taxed", f'=IF({{x_m}}="",0,IF({G("taxed")}&""="Yes",1,0))'),
+        calc("x_annual", "annual taxable", f'=IF({{x_taxed}}=1,ROUND(MAX(0,{{x_taxearn}}-{{x_pretax}}-{{x_siemp}})*12-{PRM("exemption")},2),0)'),
+        calc("x_k", "first band", "=MAX(1," + ",".join(f"IF({A}>{T[i]},{i + 2},1)" for i in range(6)) + ")"),
+        calc("x_tax", "salary tax", f'=IF({A}<=0,0,ROUND(({tax_ann})/12,2))'),
+        calc("x_mf", "Martyrs Fund", f'=IF({{x_taxed}}=1,ROUND({{x_gross}}*{PRM("martyrs_rate")},2),0)'),
+        calc("x_adv", "advance recovered", f'=ROUND(N({{advance}}),2)*{on("advance")}'),
+        calc("x_kept", "penalties & deductions", f'=ROUND(N({{penalty}}),2)*{on("penalty")}+ROUND(N({{other_ded}}),2)*{on("other_ded")}'),
+        calc("x_net", "net pay", "=ROUND({x_gross}-{x_kept}-{x_adv}-{x_siemp}-{x_tax}-{x_mf},2)"),
+        calc("x_cost", "salary cost", "=ROUND({x_gross}-{x_kept},2)"),
+        calc("x_cacct", "cost account", f'=IF({{x_m}}="","",IF({G("account")}&""<>"",{G("account")}&"",{cost_role}))'),
+        calc("x_eracct", "employer insurance account", f'=IF(LEFT({{x_ct}},6)="Admini",IFERROR({ROLE("employer_si")},{{x_cacct}}),{{x_cacct}})'),
+        calc("x_sitot", "insurance payable", "={x_siemp}+{x_sier}"), role("x_siacct", "social_insurance_payable"),
+        role("x_taxacct", "salary_tax_payable"), role("x_mfacct", "martyrs_fund"), role("x_advacct", "employee_advances"),
+        calc("x_paid", "paid (up to the net)", "=MAX(0,MIN(N({paid}),{x_net}))"),
+        calc("x_money", "money account", f'=IF({{x_m}}="",{ROLE("bank")},IF(TRIM(IF({{method}}<>"",{{method}},{G("method")}&""))="Cash",{ROLE("cash")},{ROLE("bank")}))'),
+        calc("x_unpaid", "owed to the employee", "={x_net}-{x_paid}"), role("x_accr", "accrued_payroll")]
+    by[pr]["legs"] = [("x_cost", "x_cacct", "D"), ("x_sier", "x_eracct", "D"), ("x_sitot", "x_siacct", "C"), ("x_tax", "x_taxacct", "C"),
+                      ("x_mf", "x_mfacct", "C"), ("x_adv", "x_advacct", "C"), ("x_paid", "x_money", "C"), ("x_unpaid", "x_accr", "C")]
 
     # Loans: the drawdown (money paid out / received); "opening" loans are already in the books
     by["Loans"]["cols"] += [
@@ -548,13 +648,31 @@ def purchase_order(db, items, user):
         purchasing.approve(db, pid, user)
 
 
-ROW_IMPORTERS = [("Loans", loan), ("Loan Transactions", loan_tx), ("Cash Custody", custody_row),
+def employee_row(db, r, user=""):
+    from . import payroll
+    ex = db.one("SELECT id FROM employees WHERE code=?", (text(r.get("code")),))
+    payroll.save_employee(db, r, ex["id"] if ex else None)
+
+
+def payroll_settings_rows(db, items, user=""):
+    from . import payroll
+    payroll.import_settings_rows(db, [r for _, r in items])
+
+
+def payroll_run_rows(db, items, user=""):
+    from . import payroll
+    payroll.run_sheet_import(db, items, user)
+
+
+ROW_IMPORTERS = [("Employees", employee_row), ("Loans", loan), ("Loan Transactions", loan_tx), ("Cash Custody", custody_row),
                  ("Rental Equipment", rent_item), ("Rental Stock Lots", rent_lot), ("Recurring Entries", recurring_row),
                  ("Budgets", budget_row), ("Service Plans", service_plan), ("Service Subscriptions", service_sub)]
-GROUP_IMPORTERS = [("Custody Expenses", lambda r: (str(r.get("custody")), str(r.get("report") or r.get("date"))), custody_reports),
+GROUP_IMPORTERS = [("Payroll Settings", lambda r: "all", payroll_settings_rows),
+                   ("Payroll Run", lambda r: str(r.get("date"))[:7], payroll_run_rows),
+                   ("Custody Expenses", lambda r: (str(r.get("custody")), str(r.get("report") or r.get("date"))), custody_reports),
                    ("Rental Contracts", lambda r: str(r.get("ref")), rent_contract),
                    ("Sales Contracts", lambda r: str(r.get("code")), sale_contract),
                    ("Purchase Orders", lambda r: str(r.get("code")), purchase_order),
                    ("Bank Statement Lines", lambda r: (str(r.get("account")), str(r.get("statement") or "")), bank_statement)]
-ORDER = ["Loans", "Loan Transactions", "Cash Custody", "Custody Expenses", "Rental Equipment", "Rental Stock Lots",
+ORDER = ["Payroll Settings", "Employees", "Payroll Run", "Loans", "Loan Transactions", "Cash Custody", "Custody Expenses", "Rental Equipment", "Rental Stock Lots",
          "Rental Contracts", "Sales Contracts", "Recurring Entries", "Bank Statement Lines", "Purchase Orders", "Budgets", "Service Plans", "Service Subscriptions"]

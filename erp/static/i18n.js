@@ -26,7 +26,7 @@ window.I18N = {
   "Custody Settlement": ["Custody Settlement", "تسوية عهدة"], "Custody Return": ["Custody Return", "رد عهدة"], "Custody Deduction": ["Custody Deduction", "خصم عهدة"],
   search_v: ["Account, code, party, amount, deal…", "حساب، كود، طرف، مبلغ، اتفاق…"],
   m_stock: ["Stock Balances", "أرصدة المخزون"], m_moves: ["Stock Movements", "حركات المخزون"], m_warehouses: ["Warehouses", "المخازن"],
-  m_payroll: ["Payroll", "الرواتب والأجور"], m_partners: ["Partners & Distributions", "الشركاء والتوزيعات"],
+  m_payroll: ["Quick wage entries", "قيود أجور سريعة"], m_payruns: ["Monthly payroll", "مسيرات الرواتب الشهرية"], m_employees: ["Employees & workers", "الموظفون والعمال"], m_crew: ["Crew pay calculator (per m²)", "حاسبة أجور الأطقم (بالمتر)"], m_payset: ["Payroll settings", "إعدادات الرواتب"], m_industry: ["Business type & templates", "نوع النشاط والقوالب"], m_partners: ["Partners & Distributions", "الشركاء والتوزيعات"],
   m_journal: ["Journal Vouchers", "قيود اليومية"], m_coa: ["Chart of Accounts", "دليل الحسابات"], m_ledger: ["General Ledger", "دفتر الأستاذ العام"],
   m_ppack: ["Partner Pack", "تقرير الشركاء"], m_is: ["Income Statement", "قائمة الدخل"], m_bs: ["Balance Sheet", "الميزانية العمومية"], m_cf: ["Cash Flow Statement", "قائمة التدفقات النقدية"],
   m_tb: ["Trial Balance", "ميزان المراجعة"], m_bup: ["Profitability by Business Unit", "ربحية وحدات الأعمال"],
@@ -202,7 +202,7 @@ window.MENU = [
   ["g_buy", [["m_pos", "pos", "purchasing.orders", "⎘"], ["m_costs", "costs", "purchasing.costs", "⚒"], ["m_expenses", "expenses", "purchasing.expenses", "◔"], ["m_payments", "payments", "purchasing.payments", "↗"], ["m_payables", "payables", "purchasing.payables", "⇱"], ["m_contacts", "contacts", "purchasing.contacts", "☏"], ["m_nego", "negotiations", "purchasing.negotiations", "⚖"]]],
   ["g_stock", [["m_stock", "stock", "stock.balances", "▣"], ["m_moves", "moves", "stock.moves", "⇄"], ["m_warehouses", "warehouses", "stock.warehouses", "⌂"]]],
   ["g_rent", [["m_rentals", "rentals", "rentals.contracts", "⌸"], ["m_rentfleet", "rentfleet", "rentals.fleet", "▤"], ["m_rentcalc", "rentcalc", "rentals.calculator", "⊞"]]],
-  ["g_hr", [["m_payroll", "payroll", "payroll", "☺"]]],
+  ["g_hr", [["m_payruns", "payruns", "payroll.runs", "▤"], ["m_employees", "employees", "payroll.employees", "☺"], ["m_crew", "crew", "payroll.crew", "⊞"], ["m_payroll", "payroll", "payroll", "✎"], ["m_payset", "payset", "payroll.settings", "⚙"]]],
   ["g_assets", [["m_assets", "assets", "assets.register", "▥"]]],
   ["g_fin", [["m_loans", "loans", "accounting.loans", "⇋"], ["m_custody", "custody", "purchasing.custody", "◈"]]],
   ["g_equity", [["m_partners", "partners", "partners", "◑"], ["m_ppack", "report/partner_pack", "partners.equity", "▣"]]],
@@ -211,10 +211,11 @@ window.MENU = [
   ["g_rep", [["m_ppack", "report/partner_pack", "partners.equity", "▣"], ["m_is", "report/income_statement", "reports.income_statement", "◰"], ["m_bs", "report/balance_sheet", "reports.balance_sheet", "◱"], ["m_cf", "report/cash_flow", "reports.cash_flow", "◲"],
              ["m_tb", "report/trial_balance", "reports.trial_balance", "◳"], ["m_bup", "report/bu_pnl", "business_units.profitability", "◴"],
              ["m_budget_rep", "budget-report", "accounting.budgets", "◎"], ["m_aging", "aging", "sales.receivables", "⏳"], ["m_statement", "statement", "sales.parties", "☰"]]],
-  ["g_sys", [["m_data", "data", "import_export", "⇅"], ["m_settings", "settings", "settings", "⚙"], ["m_users", "users", "users.users", "☷"], ["m_audit", "audit", "users.audit", "⌚"]]],
+  ["g_sys", [["m_data", "data", "import_export", "⇅"], ["m_settings", "settings", "settings", "⚙"], ["m_industry", "industry", "settings", "◎"], ["m_users", "users", "users.users", "☷"], ["m_audit", "audit", "users.audit", "⌚"]]],
 ];
 // labels for screen-level permissions (section.screen)
 window.SUBPERM = {
+  "payroll.employees": "m_employees", "payroll.runs": "m_payruns", "payroll.crew": "m_crew", "payroll.settings": "m_payset",
   "business_units.units": "m_bus", "business_units.allocation": "p_alloc", "business_units.profitability": "m_bup",
   "sales.offers": "m_offers", "sales.receipts": "m_receipts", "sales.invoices": "m_invoices", "sales.receivables": "m_receivables", "sales.parties": "m_parties", "shop.products": "m_products", "shop.orders": "m_sales_orders", "shop.installments": "m_installments", "shop.subscriptions": "m_subs",
   "estimating.boqs": "m_boqs", "estimating.prices": "m_prices",

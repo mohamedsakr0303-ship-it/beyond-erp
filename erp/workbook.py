@@ -297,6 +297,24 @@ def build_workbook(db, template=False, data=None, hide=None):
     lists["ZY1"] = f'=IFERROR({ROLE("unbilled_revenue")}&"","1180")'
     lists["ZY2"] = f'=IFERROR({ROLE("custody")}&"","")'
     WIPACCT, CUSTACCT = "Lists!$ZY$1", "Lists!$ZY$2"
+    # payroll parameters from the Payroll Settings sheet (key / value rows), one cell each, used by Payroll Run
+    from .interchange import PAYROLL_PARAMS, PAYROLL_FLAGS
+    from .payroll import DEFAULT_COMPONENTS
+    ps = "'Payroll Settings'!$A$5:$A$500", "'Payroll Settings'!$B$5:$B$500"
+    look = lambda k: f'INDEX({ps[1]},MATCH("{k}",{ps[0]},0))'  # noqa: E731
+    zx = 1
+    for k, dflt in PAYROLL_PARAMS:
+        lists[f"ZX{zx}"] = f'=IFERROR(VALUE({look(k)}&""),{dflt!r})'
+        zx += 1
+    lists[f"ZX{zx}"] = f'=IFERROR(IF(UPPER(LEFT({look("prorate_allowances")}&"Y",1))="N",0,1),1)'
+    zx += 1
+    dflt = {c[0]: c for c in DEFAULT_COMPONENTS}
+    for code in PAYROLL_FLAGS:
+        t = look(f"component_{code}")
+        lists[f"ZX{zx}"] = f'=IFERROR(IF(ISNUMBER(SEARCH("| taxable |",{t})),1,0),{int(dflt[code][5])})'
+        lists[f"ZX{zx + 1}"] = f'=IFERROR(IF(ISNUMBER(SEARCH("| insurable |",{t})),1,0),{int(dflt[code][6])})'
+        lists[f"ZX{zx + 2}"] = f'=IFERROR(IF(ISNUMBER(SEARCH("| off",{t})),0,1),1)'
+        zx += 3
     OPEX = '{"Expense|employee","Expense|general_admin","Expense|marketing","Expense|utilities","Expense|other_operating"}'
     for s in POSTING_SHEETS:
         ws = wb[s["name"]]
@@ -860,6 +878,7 @@ def build_workbook(db, template=False, data=None, hide=None):
     qe["H57"].number_format = PCT
 
     _scaffold_calculator(wb, db, colmap, F, fill, NAVY, BLUE, MONEY, L)
+    _crew_calculator(wb, db, F, fill, NAVY, BLUE, MONEY)
 
     # ----------------------------------------------------------------- audit
     au = wb.create_sheet("Model Audit")
@@ -1247,6 +1266,66 @@ def _scaffold_calculator(wb, db, colmap, F, fill, NAVY, BLUE, MONEY, L):
     ws.freeze_panes = "A5"
 
 
+def _crew_calculator(wb, db, F, fill, NAVY, BLUE, MONEY):
+    """What a crew / subcontractor earns for measured work: count × width × height × depth = quantity × rate.
+    Stands alone on purpose — no other sheet reads it and the import ignores it. Record what you actually paid as an
+    Operating Expense, a Payroll row or a Journal Voucher (or 'Record payment' on the app's crew calculator)."""
+    from openpyxl.styles import Alignment
+    from . import payroll
+    ws = wb.create_sheet("Crew Pay Calculator")
+    ws.sheet_view.showGridLines = False
+    ws["A1"] = "Crew Pay Calculator  |  حاسبة أجور الأطقم والمقاولين"
+    ws["A1"].font = F(bold=True, size=14, color=NAVY)
+    ws["A2"] = ("Quantity = count × width / length × height / width × depth (blank = 1). Scaffold frames: count = frames, width = frame width, "
+                "height = frame height → m² installed. This sheet is only a calculator: it never touches the books, rents or other calculators.")
+    ws["A2"].font = F(size=8, color="555555")
+    ws["A3"] = ("To book what you ACTUALLY paid (it can differ from the calculation): add an Operating Expenses or Payroll row, "
+                "or a Journal Voucher (Dr labour cost, Cr cash / bank). In the app: Crew pay calculator → Record payment.")
+    ws["A3"].font = F(size=8, color="B00020")
+    heads = ["Date", "Crew / worker", "Building / work", "Item", "Unit", "Count", "Width / length", "Height / width", "Depth",
+             "Quantity", "Rate", "Calculated", "Actually paid", "Difference", "Notes"]
+    widths = [11, 18, 22, 28, 7, 8, 10, 10, 8, 11, 9, 13, 13, 12, 22]
+    for i, (h, w) in enumerate(zip(heads, widths), start=1):
+        c = ws.cell(5, i, h)
+        c.font, c.fill = F(bold=True, color="FFFFFF", size=9), fill(NAVY)
+        c.alignment = Alignment(wrap_text=True, horizontal="center")
+        ws.column_dimensions[chr(64 + i)].width = w
+    kind = db.setting("business_type") or ""
+    items = payroll.DEFAULT_WORK_ITEMS.get(kind) or payroll.DEFAULT_WORK_ITEMS["general"]
+    first, n = 6, 60
+    for k in range(n):
+        r = first + k
+        for col in (1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 13, 15):
+            ws.cell(r, col).font = F(color=BLUE)
+        if k < len(items):
+            ws.cell(r, 4, items[k][0])
+            ws.cell(r, 5, items[k][1])
+        ws.cell(r, 1).number_format = "yyyy-mm-dd"
+        ws.cell(r, 10, f'=IF(F{r}="","",N(F{r})*IF(N(G{r})=0,1,G{r})*IF(N(H{r})=0,1,H{r})*IF(N(I{r})=0,1,I{r}))').number_format = "#,##0.##"
+        ws.cell(r, 12, f'=IF(J{r}="",0,ROUND(J{r}*N(K{r}),2))').number_format = MONEY
+        ws.cell(r, 13).number_format = MONEY
+        ws.cell(r, 14, f'=IF(M{r}="","",N(M{r})-L{r})').number_format = MONEY
+    t = first + n
+    ws.cell(t, 4, "TOTAL  |  الإجمالي").font = F(bold=True)
+    for col, f in ((10, f"=SUM(J{first}:J{t - 1})"), (12, f"=SUM(L{first}:L{t - 1})"), (13, f"=SUM(M{first}:M{t - 1})"), (14, f"=M{t}-SUMIFS(L{first}:L{t - 1},M{first}:M{t - 1},\"<>\")")):
+        c = ws.cell(t, col, f)
+        c.font, c.number_format = F(bold=True), MONEY if col != 10 else "#,##0.##"
+    ws.cell(t + 1, 4, "Difference = what was paid − what the sheet calculates, on the rows where a payment is typed").font = F(size=8, color="555555")
+    # per crew summary
+    s0 = t + 3
+    for i, h in enumerate(["Crew / worker (type a name)", "Quantity", "Calculated", "Actually paid", "Still to pay (calculated − paid)"], start=2):
+        c = ws.cell(s0, i, h)
+        c.font, c.fill = F(bold=True, color="FFFFFF", size=9), fill(NAVY)
+    for k in range(8):
+        r = s0 + 1 + k
+        ws.cell(r, 2).font = F(color=BLUE)
+        ws.cell(r, 3, f'=IF(B{r}="","",SUMIFS(J{first}:J{t - 1},B{first}:B{t - 1},B{r}))').number_format = "#,##0.##"
+        ws.cell(r, 4, f'=IF(B{r}="","",SUMIFS(L{first}:L{t - 1},B{first}:B{t - 1},B{r}))').number_format = MONEY
+        ws.cell(r, 5, f'=IF(B{r}="","",SUMIFS(M{first}:M{t - 1},B{first}:B{t - 1},B{r}))').number_format = MONEY
+        ws.cell(r, 6, f'=IF(B{r}="","",D{r}-E{r})').number_format = MONEY
+    ws.freeze_panes = "A6"
+
+
 def _budget_sheet(wb, colmap, F, fill, NAVY, BLUE, MONEY, PCT, L):
     """Budget vs actual for the report period (Settings: report_from / report_to): each Budgets row against the
     account's movement on the Trial Balance (company-wide). A positive variance is good for profit."""
@@ -1297,15 +1376,16 @@ def _budget_sheet(wb, colmap, F, fill, NAVY, BLUE, MONEY, PCT, L):
 SHEET_ORDER = ["Cover", "Partner Pack", "Dashboard", "Journal Vouchers", "Chart of Accounts", "Trial Balance", "Income Statement",
                "Balance Sheet", "Cash Flow", "BU Profitability", "Payables", "Receivables", "Partner Equity", "Business Units",
                "Sales Invoices", "Invoice Lines", "Rental Contracts", "Rental Equipment", "Rental Stock Lots", "Loans",
-               "Loan Transactions", "Price List", "BOQ Lines", "Quick Estimator", "Scaffold Calculator", "Budget vs Actual",
+               "Loan Transactions", "Employees", "Payroll Run", "Price List", "BOQ Lines", "Quick Estimator", "Scaffold Calculator",
+               "Crew Pay Calculator", "Budget vs Actual",
                "Tax Summary", "Model Audit", "Receipt Vouchers", "Payment Vouchers", "Direct Costs", "Operating Expenses", "Payroll",
                "Partner Transactions", "Cash Custody", "Custody Expenses", "Settings", "Parties", "Partners", "Partner Shares",
-               "Tax Codes"]
+               "Payroll Settings", "Tax Codes"]
 
 
 # ------------------------------------------------------------------ sections a company does not use
 # report / tool sheets that belong to one section of the app (data sheets carry their own "module")
-EXTRA_SHEET_MODULE = {"Scaffold Calculator": "rentals.calculator", "Quick Estimator": "estimating", "Budget vs Actual": "accounting.budgets",
+EXTRA_SHEET_MODULE = {"Crew Pay Calculator": "payroll.crew", "Scaffold Calculator": "rentals.calculator", "Quick Estimator": "estimating", "Budget vs Actual": "accounting.budgets",
                       "Receivables": "sales.receivables", "Payables": "purchasing.payables", "Partner Equity": "partners",
                       "Tax Summary": "tax", "BU Profitability": "business_units.profitability"}
 NEVER_HIDDEN = {"Cover", "Partner Pack", "Dashboard", "Settings", "Chart of Accounts", "Journal Vouchers", "Trial Balance", "Income Statement",
@@ -1530,7 +1610,7 @@ COVER_SECTIONS = [
                     ("Settings", "Company details and the report period (report_from / report_to)")]),
     ("EVERY DAY", [("Journal Vouchers", "Any entry as balanced debit and credit lines"),
                    ("Direct Costs", "Project costs: materials, subcontractors, site labour"),
-                   ("Operating Expenses", "Office and company overhead"), ("Payroll", "Salaries and wages, by project or office"),
+                   ("Operating Expenses", "Office and company overhead"), ("Payroll", "Quick wage entries (one line per worker)"),
                    ("Receipt Vouchers", "Money received from clients"), ("Payment Vouchers", "Payments to suppliers and staff"),
                    ("Sales Invoices", "One row per invoice — header and terms"), ("Invoice Lines", "The lines of each invoice"),
                    ("Cash Custody", "Cash given to staff (عهدة)"), ("Custody Expenses", "What the custody was spent on"),
@@ -1544,6 +1624,10 @@ COVER_SECTIONS = [
                       ("Partner Equity", "Profit share, reserve, drawings and balances"),
                       ("Budget vs Actual", "The budget for the period against the books"),
                       ("Tax Summary", "VAT and withholding balances"), ("Tax Codes", "VAT / withholding rates")]),
+    ("PEOPLE & PAYROLL", [("Employees", "Staff and workers: pay type, allowances, insurance, tax, cost type and project"),
+                          ("Payroll Run", "Monthly payroll: absence, overtime, bonuses, penalties, advances → insurance, tax, net"),
+                          ("Payroll Settings", "Insurance rates and limits, tax bands, overtime rates, the pay items"),
+                          ("Crew Pay Calculator", "Measured-work pay (frames × width × height m² × rate) — a calculator only")]),
     ("PROJECTS & PRICING", [("Business Units", "Projects: client, billing basis and fee"), ("Parties", "Clients, suppliers, staff"),
                             ("Partners", "Owners and their default share"), ("Partner Shares", "Each partner's share per project"),
                             ("BOQ Lines", "Bills of quantities"), ("Price List", "Your priced item library"),

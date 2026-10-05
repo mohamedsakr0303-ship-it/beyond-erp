@@ -24,7 +24,7 @@ from .interchange import FIRST_DATA_ROW, HEADER_ROW, SHEET_BY_NAME, SHEETS, _cel
 
 # which screen a sheet belongs to (permission to import = permission to add there)
 SHEET_PERM = {
-    "Direct Costs": "purchasing.costs", "Operating Expenses": "purchasing.expenses", "Payroll": "payroll",
+    "Direct Costs": "purchasing.costs", "Operating Expenses": "purchasing.expenses", "Payroll": "payroll", "Employees": "payroll.employees", "Payroll Run": "payroll.runs", "Payroll Settings": "payroll.settings",
     "Receipt Vouchers": "sales.receipts", "Payment Vouchers": "purchasing.payments", "Sales Invoices": "sales.invoices",
     "Invoice Lines": "sales.invoices", "BOQ Lines": "estimating.boqs", "Price List": "estimating.prices",
     "Parties": "sales.parties", "Business Units": "business_units.units", "Fixed Assets": "assets.register",

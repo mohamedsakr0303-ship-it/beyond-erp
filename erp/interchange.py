@@ -14,7 +14,7 @@ import io
 import json
 
 from . import accounting as acc
-from . import bankrec, custody, loans, recurring, rentals, sales
+from . import bankrec, custody, loans, payroll, recurring, rentals, sales
 from .db import SUBTYPES, to_major, to_minor
 
 FORMAT = "beyond-erp"
@@ -33,6 +33,22 @@ def ROLE(role):
     """Excel formula returning the account code that holds a system role."""
     return (f"INDEX('Chart of Accounts'!$A${FIRST_DATA_ROW}:$A$3000,"
             f"MATCH(\"{role}\",'Chart of Accounts'!$F${FIRST_DATA_ROW}:$F$3000,0))")
+
+
+# payroll parameters, looked up once on the Lists sheet from the Payroll Settings sheet (key, default)
+PAYROLL_PARAMS = ([("si_emp_rate", 0.11), ("si_er_rate", 0.1875), ("si_min", 2700), ("si_max", 16700), ("exemption", 20000),
+                   ("martyrs_rate", 0.0005), ("ot_day", 1.35), ("ot_night", 1.7), ("ot_rest", 2), ("days_month", 30), ("hours_day", 8)]
+                  + [(f"band_{i}_upto", u) for i, u in enumerate((40000, 55000, 70000, 200000, 400000, 1200000), start=1)]
+                  + [(f"band_{i}_rate", r) for i, r in enumerate((0, 0.10, 0.15, 0.20, 0.225, 0.25, 0.275), start=1)]
+                  + [(f"start_band_{i}_above", 1e15) for i in range(2, 8)])
+PAYROLL_FLAGS = ["housing", "transport", "meal", "phone", "site", "other_allow", "bonus", "commission", "incentive", "other_earn",
+                 "penalty", "advance", "other_ded"]
+
+
+def PRM(key):
+    """The Lists cell holding a payroll parameter (see workbook: Lists!ZX…)."""
+    keys = [k for k, _ in PAYROLL_PARAMS] + ["prorate_allowances"] + [f"{c}_{f}" for c in PAYROLL_FLAGS for f in ("tax", "ins", "on")]
+    return f"Lists!$ZX${keys.index(key) + 1}"
 
 
 def WH_ACCT(cell):
@@ -443,6 +459,9 @@ def export_data(db):
     for r in db.q("SELECT key, value FROM settings ORDER BY key"):
         if r["key"] not in ("schema_version", "report_from", "report_to", "docs_seeded", "eta_client_secret"):
             out["Settings"].append({"key": r["key"], "value": r["value"]})
+    from . import payroll as _pr   # employees and payroll rules carry no money: re-import updates them
+    out["Employees"] = _pr.employee_sheet_rows(db)
+    out["Payroll Settings"] = _pr.settings_sheet_rows(db)
     from . import budgets   # budgets carry no money, so the export can include them (re-import replaces, never doubles)
     out["Budgets"] = budgets.export_rows(db)
     for t in db.q("SELECT * FROM tax_codes ORDER BY kind, code"):
@@ -789,7 +808,7 @@ def export_extras(db):
             "offer_types": db.q("SELECT id, name, content FROM offer_types ORDER BY id"),
             "offers": db.q("SELECT o.*, u.code AS bu_code FROM offers o LEFT JOIN business_units u ON u.id=o.bu_id ORDER BY o.id"),
             "ownership_changes": _ownership_export(db), "loans": loans.export_rows(db),
-            "custodies": custody.export_rows(db), "rentals": rentals.export_rows(db),
+            "custodies": custody.export_rows(db), "rentals": rentals.export_rows(db), "payroll": payroll.export_rows(db),
             "sales": sales.export_rows(db), "bank": bankrec.export_rows(db), "recurring": recurring.export_rows(db),
             "entry_meta": _entry_meta_export(db), "attachments": _attachments_export(db),
             "purchase_orders": _po_export(db), "services": _svc_export(db)}
@@ -876,6 +895,8 @@ def _imp_extras(db, ex, mode, counts):
         counts["Loans"] = loans.import_rows(db, ex["loans"])
     if ex.get("custodies"):
         counts["Cash custody"] = custody.import_rows(db, ex["custodies"])
+    if isinstance(ex.get("payroll"), dict) and (mode == "replace" or not db.one("SELECT 1 FROM employees")):
+        payroll.import_rows(db, ex["payroll"], counts)
     if isinstance(ex.get("rentals"), dict) and (mode == "replace" or not db.one("SELECT 1 FROM rentals")):
         rentals.import_rows(db, ex["rentals"], counts)
     if isinstance(ex.get("sales"), dict) and (mode == "replace" or not db.one("SELECT 1 FROM sales_orders")):
@@ -955,7 +976,7 @@ def to_csv(db, sheet_name, template=False):
     return ("﻿" + buf.getvalue()).encode("utf-8")
 
 
-WIPE_ORDER = ("sub_recognitions", "sub_visits", "sub_invoices", "subscriptions", "service_plans", "attachments", "po_receipts", "po_lines", "purchase_orders", "budgets", "bank_lines", "bank_statements", "bank_rules", "recurring_runs", "recurring", "sale_cheques", "sale_installments", "sale_lines", "sales_orders", "product_media", "products", "rent_moves", "rental_invoices", "rental_charges", "rental_handovers", "rental_lines", "rentals", "rent_lots",
+WIPE_ORDER = ("payroll_lines", "payroll_runs", "crew_sheets", "employees", "sub_recognitions", "sub_visits", "sub_invoices", "subscriptions", "service_plans", "attachments", "po_receipts", "po_lines", "purchase_orders", "budgets", "bank_lines", "bank_statements", "bank_rules", "recurring_runs", "recurring", "sale_cheques", "sale_installments", "sale_lines", "sales_orders", "product_media", "products", "rent_moves", "rental_invoices", "rental_charges", "rental_handovers", "rental_lines", "rentals", "rent_lots",
               "rent_kit_lines", "rent_kits", "rent_models", "rent_items", "loans", "custodies", "parties", "ownership_changes", "fixed_assets", "stock_moves", "stock_levels", "stock_items", "extract_lines", "extracts", "boq_lines", "boqs",
               "journal_lines", "journal_entries", "partner_shares", "partners", "rates", "business_units")
 

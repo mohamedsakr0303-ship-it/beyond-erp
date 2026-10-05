@@ -594,11 +594,12 @@ def rent_fleet_table(db, lang="en"):
                     ("On rent", "مؤجر", "right", "num"), ("Owned", "المملوك", "right", "num"), ("Utilisation %", "نسبة التشغيل", "right", "pct"),
                     ("Avg cost (FIFO)", "متوسط التكلفة", "right"), ("Cost", "التكلفة", "right"), ("Accumulated depreciation", "مجمع الإهلاك", "right"),
                     ("Book value", "القيمة الدفترية", "right"), ("Rent / month", "الإيجار الشهري", "right"),
+                    ("Rent % of cost / month", "الإيجار % من التكلفة", "right", "pct"), ("Months to pay back", "شهور استرداد التكلفة", "right", "num"),
                     ("Loss price", "سعر الفقد", "right")], lang)
     rows = [{"cells": [i["code"], (i["name_ar"] if ar and i["name_ar"] else i["name"]), i["unit"], i["in_yard"], i["on_rent"], i["owned"],
-                       i["utilisation"], i["avg_cost"], i["value"], i["accum"], i["book_value"], i["monthly_rate"], i["loss_price"]],
+                       i["utilisation"], i["avg_cost"], i["value"], i["accum"], i["book_value"], i["monthly_rate"], i["rent_pct"], i["payback_months"], i["loss_price"]],
              "style": "item", "indent": 0} for i in d["items"]]
-    rows.append({"cells": [L("total", lang), "", "", "", "", "", "", "", d["totals"]["value"], d["totals"]["accum"], d["totals"]["book_value"], "", ""],
+    rows.append({"cells": [L("total", lang), "", "", "", "", "", "", "", d["totals"]["value"], d["totals"]["accum"], d["totals"]["book_value"], "", "", "", ""],
                  "style": "grand", "indent": 0})
     return {"title": "معدات التأجير" if ar else "Rental equipment", "subtitle": f"{L('as_of', lang)} {acc.today()} · {db.setting('currency')}",
             "columns": cols, "rows": rows, "lang": lang}
@@ -898,6 +899,9 @@ def build(db, name, p):
     """Dispatch a report by name with query params dict p."""
     lang = p.get("lang") or "en"
     bu = p.get("bu_id") or None
+    if name == "payroll_register":
+        from . import payroll
+        return payroll.register_table(db, p.get("run"), lang)
     if name == "partner_pack":
         from . import partner_pack
         return partner_pack.table(db, p.get("date_from") or None, p.get("date_to") or None, lang)
@@ -961,7 +965,7 @@ def build(db, name, p):
     raise acc.ValidationError(f"Unknown report {name!r}")
 
 
-REPORT_PERMS = {"partner_pack": "partners.equity", "income_statement": "reports.income_statement", "balance_sheet": "reports.balance_sheet",
+REPORT_PERMS = {"payroll_register": "payroll.runs", "partner_pack": "partners.equity", "income_statement": "reports.income_statement", "balance_sheet": "reports.balance_sheet",
                 "cash_flow": "reports.cash_flow", "trial_balance": "reports.trial_balance",
                 "general_ledger": "accounting.ledger", "bu_pnl": "business_units.profitability",
                 "payables": "purchasing.payables", "stock": "stock.balances", "receivables": "sales.receivables",

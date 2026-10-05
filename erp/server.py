@@ -17,10 +17,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from . import assets, bankrec, custody, entries, equity, loans, recurring, rental_docs, rentals, sales, sales_docs, __version__
+from . import assets, bankrec, custody, entries, industries, payroll, equity, loans, recurring, rental_docs, rentals, sales, sales_docs, __version__
 from . import accounting as acc
 from . import auth, branding, cloud, documents, einvoice, interchange, reports
-from .db import MODULES, SUBMODULES, SUBTYPES, to_major, to_minor
+from .db import Database, MODULES, SUBMODULES, SUBTYPES, to_major, to_minor
 
 STATIC = Path(__file__).resolve().parent / "static"
 MAX_BODY = 25 * 1024 * 1024
@@ -1634,6 +1634,146 @@ def custody_action(ctx, cid, action):
     return ok({"ids": ids})
 
 
+# ================================================================ payroll
+@route("GET", "/api/employees", "payroll.employees")
+def emp_list(ctx):
+    return ok({"rows": payroll.list_employees(ctx.db, ctx.q.get("q"), ctx.q.get("status")), "types": payroll.EMP_TYPES,
+               "cost_types": payroll.COST_TYPES, "settings": payroll.settings(ctx.db)})
+
+
+@route("GET", "/api/employees/<eid>", "payroll.employees")
+def emp_one(ctx, eid):
+    e = payroll.get_employee(ctx.db, eid)
+    e["history"] = [{"period": r["period"], "status": r["status"], **(json.loads(r["result"] or "{}") and
+                     {k: json.loads(r["result"])[k] for k in ("gross", "net", "tax", "si_emp")})}
+                    for r in ctx.db.q("SELECT r.period, r.status, l.result FROM payroll_lines l JOIN payroll_runs r ON r.id=l.run_id "
+                                      "WHERE l.employee_id=? ORDER BY r.period DESC", (e["id"],))]
+    return ok(e)
+
+
+@route("POST", "/api/employees", "payroll.employees", "add")
+def emp_add(ctx):
+    eid = payroll.save_employee(ctx.db, ctx.body)
+    ctx.log("employee.add", eid)
+    return ok({"id": eid})
+
+
+@route("PUT", "/api/employees/<eid>", "payroll.employees", "edit")
+def emp_edit(ctx, eid):
+    payroll.save_employee(ctx.db, ctx.body, eid)
+    ctx.log("employee.edit", eid)
+    return ok()
+
+
+@route("DELETE", "/api/employees/<eid>", "payroll.employees", "edit")
+def emp_del(ctx, eid):
+    payroll.delete_employee(ctx.db, eid)
+    ctx.log("employee.delete", eid)
+    return ok()
+
+
+@route("GET", "/api/payroll/settings", "payroll")
+def pr_settings(ctx):
+    return ok(payroll.settings(ctx.db))
+
+
+@route("PUT", "/api/payroll/settings", "payroll.settings", "edit")
+def pr_settings_save(ctx):
+    s = payroll.save_settings(ctx.db, ctx.body)
+    ctx.log("payroll.settings", "")
+    return ok(s)
+
+
+@route("POST", "/api/payroll/preview", "payroll")
+def pr_preview(ctx):
+    return ok(payroll.preview(ctx.db, ctx.body))
+
+
+@route("GET", "/api/payroll/runs", "payroll.runs")
+def pr_runs(ctx):
+    return ok({"rows": payroll.list_runs(ctx.db)})
+
+
+@route("POST", "/api/payroll/runs", "payroll.runs", "add")
+def pr_run_add(ctx):
+    rid = payroll.create_run(ctx.db, ctx.body)
+    ctx.log("payroll.run", rid)
+    return ok({"id": rid})
+
+
+@route("GET", "/api/payroll/runs/<rid>", "payroll.runs")
+def pr_run(ctx, rid):
+    return ok({**payroll.get_run(ctx.db, rid), "settings": payroll.settings(ctx.db)})
+
+
+@route("PUT", "/api/payroll/runs/<rid>", "payroll.runs", "add")
+def pr_run_save(ctx, rid):
+    payroll.save_lines(ctx.db, rid, ctx.body.get("lines") or [])
+    return ok(payroll.get_run(ctx.db, rid))
+
+
+@route("DELETE", "/api/payroll/runs/<rid>", "payroll.runs", "edit")
+def pr_run_del(ctx, rid):
+    payroll.delete_run(ctx.db, rid)
+    ctx.log("payroll.run.delete", rid)
+    return ok()
+
+
+@route("POST", "/api/payroll/runs/<rid>/<action>", "payroll.runs", "add")
+def pr_run_action(ctx, rid, action):
+    if action == "post":
+        payroll.post_run(ctx.db, rid, ctx.user["username"])
+    elif action == "unpost":
+        ctx.require("payroll.runs", "edit")
+        payroll.unpost_run(ctx.db, rid, ctx.user["username"])
+    else:
+        return ok({"error": "unknown action"}, 400)
+    ctx.log(f"payroll.{action}", rid)
+    return ok(payroll.get_run(ctx.db, rid))
+
+
+@route("GET", "/api/payroll/runs/<rid>/payslip/<eid>", "payroll.runs")
+def pr_payslip(ctx, rid, eid):
+    if ctx.q.get("print"):
+        return Reply(payroll.payslips_html(ctx.db, rid, eid, ctx.q.get("lang") or "en").encode("utf-8"), 200, "text/html; charset=utf-8")
+    return ok(payroll.payslip(ctx.db, rid, eid))
+
+
+@route("GET", "/api/crew", "payroll.crew")
+def crew_list(ctx):
+    return ok({"rows": payroll.list_crew(ctx.db), "items": payroll.DEFAULT_WORK_ITEMS.get(ctx.db.setting("business_type") or "general",
+                                                                                          payroll.DEFAULT_WORK_ITEMS["general"])})
+
+
+@route("POST", "/api/crew/calc", "payroll.crew")
+def crew_calc(ctx):
+    return ok(payroll.crew_calc(ctx.body.get("lines") or []))
+
+
+@route("POST", "/api/crew", "payroll.crew", "add")
+def crew_add(ctx):
+    return ok({"id": payroll.save_crew(ctx.db, ctx.body)})
+
+
+@route("PUT", "/api/crew/<cid>", "payroll.crew", "edit")
+def crew_edit(ctx, cid):
+    payroll.save_crew(ctx.db, ctx.body, cid)
+    return ok()
+
+
+@route("DELETE", "/api/crew/<cid>", "payroll.crew", "edit")
+def crew_del(ctx, cid):
+    payroll.delete_crew(ctx.db, cid)
+    return ok()
+
+
+@route("POST", "/api/crew/<cid>/pay", "payroll.crew", "add")
+def crew_pay(ctx, cid):
+    eid = payroll.pay_crew(ctx.db, cid, ctx.body, ctx.user["username"])
+    ctx.log("crew.pay", f"{cid} -> {eid}")
+    return ok({"id": eid})
+
+
 # ================================================================ rentals
 @route("GET", "/api/rent-items", "rentals.fleet")
 def rent_items(ctx):
@@ -2267,8 +2407,30 @@ def export_workbook(ctx):
 
 @route("GET", "/api/templates/workbook", "import_export")
 def template_workbook(ctx):
+    """The empty workbook — for this company, or (?type=scaffolding…) set up for a business type."""
     from . import workbook
+    kind = ctx.q.get("type")
+    if kind:
+        db2 = Database(":memory:")
+        for k in ("company_name", "company_tagline", "currency", "company_address", "company_tax_id"):
+            if ctx.db.setting(k):
+                db2.set_setting(k, ctx.db.setting(k))
+        industries.apply(db2, kind)
+        return download(workbook.build_workbook(db2, template=True, hide=industries.TYPES[kind]["hide"]),
+                        f"ERP_Template_{kind}.xlsx", XLSX)
     return download(workbook.build_workbook(ctx.db, template=True), "BEYOND_ERP_Import_Template.xlsx", XLSX)
+
+
+@route("GET", "/api/industries", "settings")
+def industries_list(ctx):
+    return ok({"types": industries.catalogue(), "current": ctx.db.setting("business_type") or ""})
+
+
+@route("POST", "/api/industries/apply", "settings.menus", "edit")
+def industries_apply(ctx):
+    r = industries.apply(ctx.db, ctx.body.get("type"), ctx.body.get("hide_modules", True) not in (False, 0, "0", "false"))
+    ctx.log("industry.apply", r["type"])
+    return ok(r)
 
 
 @route("GET", "/api/export/json", "import_export.export")

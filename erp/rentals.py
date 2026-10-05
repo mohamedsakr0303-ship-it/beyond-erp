@@ -150,7 +150,10 @@ def save_settings(db, d):
 def _item_row(db, it, stock=None):
     st = stock if stock is not None else item_stock(db, it["id"])
     return {**it, "residual_pct": round((it["residual_pct"] or 0) * 100, 4), "monthly_rate": to_major(it["monthly_rate"]), "std_cost": to_major(it["std_cost"]),
-            "loss_price_set": to_major(it["loss_price"]), "loss_price": to_major(loss_price(db, it)), **st}
+            "loss_price_set": to_major(it["loss_price"]), "loss_price": to_major(loss_price(db, it)), **st,
+            # pricing yardsticks: rent as a share of what the piece cost, and how many months of rent buy it back
+            "rent_pct": round(to_major(it["monthly_rate"]) / (st["avg_cost"] or to_major(it["std_cost"])), 4) if (st["avg_cost"] or it["std_cost"]) else 0,
+            "payback_months": round((st["avg_cost"] or to_major(it["std_cost"])) / to_major(it["monthly_rate"]), 1) if it["monthly_rate"] else 0}
 
 
 def get_item(db, iid):

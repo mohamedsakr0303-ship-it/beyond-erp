@@ -3201,9 +3201,9 @@ PAGES.rentfleet = async (view, parts, q) => {
       ${add && !d.items.some(i => i.code === "SC-FRM2") ? `<button class="btn" data-a="rstart">${L2("Add scaffolding starter set", "إضافة المجموعة الأساسية للسقالات")}</button>` : ""}
       ${ed ? `<button class="btn" data-a="rset">${L2("Terms & checklists", "الشروط وقوائم الفحص")}</button>` : ""}${add && d.items.length ? `<button class="btn" data-a="rdep2">${L2("Run depreciation", "احتساب الإهلاك")}</button>` : ""}${canPolicy() ? `<button class="btn" data-a="fapol">⚙ ${L2("Depreciation settings", "إعدادات الإهلاك")}</button>` : ""}<span class="spacer"></span>${exportMenu("rent_fleet", {})}</div>
     <div class="kpis">${kpiBox(L2("Equipment cost (FIFO)", "تكلفة المعدات (الوارد أولاً)"), d.totals.value)}${kpiBox(L2("Accumulated depreciation", "مجمع الإهلاك"), d.totals.accum)}${kpiBox(L2("Book value", "القيمة الدفترية"), d.totals.book_value, "pos")}${kpiBox(L2("Out on rent", "مؤجر حالياً"), d.totals.on_rent_value, "pos", d.totals.value ? pct(d.totals.on_rent_value / d.totals.value) + " " + L2("of the fleet", "من المعدات") : "")}</div>
-    ${RENT_CAT().map(([c, label]) => { const rows = d.items.filter(i => i.category === c); return rows.length ? `<div class="card"><h2>${esc(label)}</h2><div class="tbl stack"><table><thead><tr><th>${t("code")}</th><th>${L2("Item", "الصنف")}</th><th class="num">${L2("In the yard", "بالمخزن")}</th><th class="num">${L2("On rent", "مؤجر")}</th><th class="num">${L2("Use", "التشغيل")}</th><th class="num">${L2("Avg cost (FIFO)", "متوسط التكلفة")}</th><th class="num">${L2("Book value", "القيمة الدفترية")}</th><th class="num">${L2("Rent / month", "الإيجار الشهري")}</th><th class="num">${L2("Loss price", "سعر الفقد")}</th></tr></thead><tbody>
+    ${RENT_CAT().map(([c, label]) => { const rows = d.items.filter(i => i.category === c); return rows.length ? `<div class="card"><h2>${esc(label)}</h2><div class="tbl stack"><table><thead><tr><th>${t("code")}</th><th>${L2("Item", "الصنف")}</th><th class="num">${L2("In the yard", "بالمخزن")}</th><th class="num">${L2("On rent", "مؤجر")}</th><th class="num">${L2("Use", "التشغيل")}</th><th class="num">${L2("Avg cost (FIFO)", "متوسط التكلفة")}</th><th class="num">${L2("Book value", "القيمة الدفترية")}</th><th class="num">${L2("Rent / month", "الإيجار الشهري")}</th><th class="num" title="${L2("Rent a month as a share of the piece's cost, and the months of rent that pay the piece back", "الإيجار الشهري كنسبة من تكلفة القطعة، وعدد شهور الإيجار التي تسترد تكلفتها")}">${L2("Rent % of cost · payback", "نسبة الإيجار · الاسترداد")}</th><th class="num">${L2("Loss price", "سعر الفقد")}</th></tr></thead><tbody>
       ${rows.map(i => `<tr class="click ${i.active ? "" : "void"}" data-a="riopen" data-id="${i.id}"><td><b>${esc(i.code)}</b></td><td>${esc(nm(i))}<div class="lines">${esc(i.unit)}</div></td><td class="num">${numf(i.in_yard)}</td><td class="num">${numf(i.on_rent)}</td><td class="num">${pct(i.utilisation)}</td>
-        <td class="num">${money(i.avg_cost || i.std_cost)}</td><td class="num">${money(i.book_value)}${i.accum ? `<div class="lines">${L2("cost", "التكلفة")} ${money(i.value)}</div>` : ""}</td><td class="num">${money(i.monthly_rate)}</td><td class="num">${money(i.loss_price)}</td></tr>`).join("")}</tbody></table></div></div>` : ""; }).join("")}
+        <td class="num">${money(i.avg_cost || i.std_cost)}</td><td class="num">${money(i.book_value)}${i.accum ? `<div class="lines">${L2("cost", "التكلفة")} ${money(i.value)}</div>` : ""}</td><td class="num">${money(i.monthly_rate)}</td><td class="num">${i.rent_pct ? pct(i.rent_pct) + `<div class="lines">${numf(i.payback_months)} ${L2("months", "شهر")}</div>` : "—"}</td><td class="num">${money(i.loss_price)}</td></tr>`).join("")}</tbody></table></div></div>` : ""; }).join("")}
     ${!d.items.length ? `<div class="card"><div class="empty">${L2("No equipment yet. Add your pieces (frames, braces, clamps, boards…), elevators and cradles — or add the scaffolding starter set taken from the standard handover form, then record your stock with its cost.", "لا توجد معدات بعد. أضف القطع (شبابيك، مقصات، كلبسات، ألواح…) والمصاعد والسقالات المعلقة — أو أضف المجموعة الأساسية المأخوذة من محضر التسليم القياسي، ثم سجّل المخزون بتكلفته.")}</div></div>` : ""}
     <div class="card"><h2>${L2("Frames / sets (rented as one unit)", "الشبابيك / الأطقم (تؤجر كوحدة)")}</h2>${d.kits.length ? `<div class="tbl"><table><thead><tr><th>${t("code")}</th><th>${L2("Name", "الاسم")}</th><th>${L2("Pieces in one", "القطع في الوحدة")}</th><th class="num">${L2("Rent / month", "الإيجار الشهري")}</th></tr></thead><tbody>
       ${d.kits.map(k => `<tr class="click" data-a="rkopen" data-id="${k.id}"><td><b>${esc(k.code)}</b></td><td>${esc(nm(k))}<div class="lines">${L2("per", "لكل")} ${esc(k.unit)}</div></td><td>${esc(k.lines.map(l => `${nm(l)} × ${numf(l.qty)}`).join(" · "))}</td><td class="num">${money(k.monthly_rate)}</td></tr>`).join("")}</tbody></table></div>`
@@ -5066,6 +5066,251 @@ PAGES.download = async view => {
       <div class="grid g2"><label class="f">${L2("Workspace URL", "رابط مساحة العمل")}<input value="${esc(cfg.url)}" readonly></label><div class="row" style="align-items:end"><button class="btn" data-a="copycfg" data-v="${esc(cfg.url)}">${L2("Copy", "نسخ")}</button></div>
       <label class="f">${L2("Public key", "المفتاح العام")}<input value="${esc(cfg.key)}" readonly></label><div class="row" style="align-items:end"><button class="btn" data-a="copycfg" data-v="${esc(cfg.key)}">${L2("Copy", "نسخ")}</button></div></div>`) : "");
   $("#ttl").textContent = L2("Get the app", "تحميل التطبيق");
+};
+
+// ================================================================ payroll: employees, monthly runs, payslips, settings
+const EMP_TYPES = () => [["monthly", L2("Monthly salary", "راتب شهري")], ["daily", L2("Daily wage", "يومية")], ["hourly", L2("Hourly", "بالساعة")], ["piece", L2("Piece-rate / per unit", "بالقطعة / بالإنتاج")]];
+const empTypeL = k => (EMP_TYPES().find(x => x[0] === k) || [k, k])[1];
+const compName = c => S.lang === "ar" && c.name_ar ? c.name_ar : c.name;
+const COST_L = { "Direct Labour (Cost of Revenue)": ["Direct labour (project cost)", "عمالة مباشرة (تكلفة المشروع)"], "Indirect Labour (Cost-Centre Overhead)": ["Site overhead (project)", "عمالة غير مباشرة (مصروفات الموقع)"], "Administrative Salaries (Shared Overhead)": ["Admin / office (company overhead)", "إدارية (مصروفات الشركة)"] };
+const costTypeOpts = () => Object.keys(COST_L).map(k => [k, L2(...COST_L[k])]);
+const settingList = k => { try { return JSON.parse(S.boot.settings[k] || "[]"); } catch { return []; } };
+
+PAGES.employees = async (view, parts, q) => {
+  const d = await api("GET", "/api/employees?" + qs(q));
+  const add = can("payroll.employees", "add"), ed = can("payroll.employees", "edit");
+  S.H.empnew = () => employeeForm(null, d.settings);
+  S.H.empedit = el => employeeForm(d.rows.find(r => String(r.id) === el.dataset.id), d.settings);
+  const act = d.rows.filter(r => r.status === "active"), fixed = d.settings.components.filter(c => c.where === "fixed" && c.kind === "earning" && c.active);
+  const monthly = r => r.emp_type === "monthly" ? r.basic + fixed.reduce((s, c) => s + (r.allowances[c.code] || 0), 0) : r.emp_type === "daily" ? r.daily_rate * d.settings.days_month : 0;
+  view.innerHTML = `<div class="toolbar">${add ? `<button class="btn pri" data-a="empnew">+ ${L2("New employee / worker", "موظف / عامل جديد")}</button>` : ""}<a class="btn" href="#/payruns">▤ ${t("m_payruns")}</a><span class="spacer"></span></div>
+    <div class="kpis">${kpiBox(L2("Active", "على رأس العمل"), String(act.length))}${kpiBox(L2("Monthly payroll (fixed pay)", "الرواتب الشهرية (الثابت)"), act.reduce((s, r) => s + monthly(r), 0))}
+      ${kpiBox(L2("Insured", "مؤمن عليهم"), String(act.filter(r => r.insured).length))}${kpiBox(L2("Daily / piece workers", "عمالة يومية / إنتاج"), String(act.filter(r => r.emp_type !== "monthly").length))}</div>` +
+    filterBar(q, ["q", ["select", "status", t("status"), [["active", L2("Active", "على رأس العمل")], ["left", L2("Left", "ترك العمل")]]]]) +
+    `<div class="card">${d.rows.length ? `<div class="tbl stack"><table><thead><tr><th>${t("code")}</th><th>${L2("Name", "الاسم")}</th><th>${L2("Job / department", "الوظيفة / القسم")}</th><th>${L2("Pay", "الأجر")}</th><th class="num">${L2("Monthly (fixed)", "شهرياً (الثابت)")}</th><th>${t("bu")}</th><th>${L2("Insured / taxed", "تأمين / ضريبة")}</th><th>${t("status")}</th></tr></thead><tbody>
+      ${d.rows.map(r => `<tr class="${ed || add ? "click" : ""} ${r.status === "left" ? "void" : ""}" data-a="empedit" data-id="${r.id}"><td><b>${esc(r.code)}</b></td><td>${esc(r.name)}${r.name_ar ? `<div class="lines">${esc(r.name_ar)}</div>` : ""}</td>
+        <td>${esc(r.job_title)}${r.department ? `<div class="lines">${esc(r.department)}</div>` : ""}</td>
+        <td>${esc(empTypeL(r.emp_type))}<div class="lines">${r.emp_type === "monthly" ? money(r.basic) : r.emp_type === "daily" ? money(r.daily_rate) + " / " + L2("day", "يوم") : r.emp_type === "hourly" ? money(r.hourly_rate) + " / " + L2("hour", "ساعة") : money(r.piece_rate) + " / " + esc(r.piece_unit || L2("unit", "وحدة"))}</div></td>
+        <td class="num">${money(monthly(r))}</td><td>${esc(r.bu_code || "—")}</td><td>${r.insured ? "✓" : "—"} / ${r.taxed ? "✓" : "—"}</td>
+        <td>${r.status === "left" ? `<span class="chip">${L2("Left", "ترك")}</span>` : `<span class="chip ok">${L2("Active", "يعمل")}</span>`}</td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="empty">${L2("No employees yet. Add your staff (monthly salary) and site workers (daily wage or piece-rate). Each has a cost type and business unit, so their pay lands in the right project's profit.", "لا يوجد موظفون بعد. أضف الموظفين (راتب شهري) والعمالة (يومية أو بالإنتاج). لكل منهم نوع تكلفة ووحدة أعمال لتظهر أجورهم في ربح المشروع الصحيح.")}</div>`}</div>`;
+};
+
+function employeeForm(E, st) {
+  const ed = !!E, e = E || { emp_type: "monthly", insured: true, taxed: true, cost_type: "Administrative Salaries (Shared Overhead)", allowances: {}, status: "active" };
+  const fixed = st.components.filter(c => c.where === "fixed" && c.kind === "earning" && (c.active || (e.allowances || {})[c.code]));
+  const html = form([
+    { k: "name", l: L2("Name", "الاسم"), v: e.name, req: 1 }, { k: "name_ar", l: L2("Name (Arabic)", "الاسم بالعربية"), v: e.name_ar },
+    { k: "code", l: t("code"), v: e.code, ph: L2("automatic", "تلقائي") }, { k: "national_id", l: L2("National ID", "الرقم القومي"), v: e.national_id },
+    { k: "job_title", l: L2("Job title", "الوظيفة"), v: e.job_title, list: "pjobs" }, { k: "department", l: L2("Department", "القسم"), v: e.department, list: "pdeps" },
+    { k: "emp_type", l: L2("Paid", "طريقة الأجر"), type: "select", opts: EMP_TYPES(), v: e.emp_type, change: "empsync" },
+    { k: "basic", l: L2("Basic monthly salary", "الأجر الأساسي الشهري"), type: "number", v: e.basic || "", input: "empprev" },
+    { k: "daily_rate", l: L2("Daily wage", "اليومية"), type: "number", v: e.daily_rate || "", input: "empprev" },
+    { k: "hourly_rate", l: L2("Hourly rate (also overtime base for piece-rate)", "أجر الساعة (وأساس الإضافي للإنتاج)"), type: "number", v: e.hourly_rate || "", input: "empprev" },
+    { k: "piece_rate", l: L2("Rate per unit", "السعر للوحدة"), type: "number", v: e.piece_rate || "", input: "empprev" }, { k: "piece_unit", l: L2("Unit (m², piece…)", "الوحدة (م²، قطعة…)"), v: e.piece_unit },
+    { html: `<h4 style="margin:6px 0 0">${L2("Fixed monthly allowances", "البدلات الشهرية الثابتة")}</h4>`, span: "spanall" },
+    ...fixed.map(c => ({ k: "al_" + c.code, l: compName(c), type: "number", v: (e.allowances || {})[c.code] || "", input: "empprev" })),
+    { html: `<h4 style="margin:6px 0 0">${L2("Where the cost goes", "تحميل التكلفة")}</h4>`, span: "spanall" },
+    { k: "cost_type", l: L2("Cost type", "نوع التكلفة"), type: "select", opts: costTypeOpts(), v: e.cost_type },
+    { k: "bu_id", l: t("bu"), type: "select", opts: buOpts("—"), v: e.bu_id || "", help: L2("Needed for direct / site labour", "مطلوب للعمالة المباشرة / الموقع") },
+    { k: "account", l: L2("Cost account (blank = by cost type)", "حساب التكلفة (فارغ = حسب النوع)"), type: "select", opts: [["", "—"], ...accts(["COGS", "Expense"])], v: e.account || "" },
+    { html: `<h4 style="margin:6px 0 0">${L2("Social insurance & tax", "التأمينات والضرائب")}</h4>`, span: "spanall" },
+    { k: "insured", l: L2("Insured (social insurance)", "مؤمن عليه (تأمينات اجتماعية)"), type: "checkbox", v: e.insured },
+    { k: "taxed", l: L2("Salary tax & Martyrs Fund apply", "تخضع لضريبة كسب العمل وصندوق الشهداء"), type: "checkbox", v: e.taxed },
+    { k: "insurable_wage", l: L2("Insurable wage (blank = basic + insurable allowances)", "أجر الاشتراك (فارغ = الأساسي + البدلات الخاضعة)"), type: "number", v: e.insurable_wage || "", input: "empprev" },
+    { k: "insurance_no", l: L2("Insurance no.", "الرقم التأميني"), v: e.insurance_no },
+    { html: `<h4 style="margin:6px 0 0">${L2("Employment & payment", "التعاقد والصرف")}</h4>`, span: "spanall" },
+    { k: "hire_date", l: L2("Hired on", "تاريخ التعيين"), type: "date", v: e.hire_date }, { k: "end_date", l: L2("Left on", "تاريخ ترك العمل"), type: "date", v: e.end_date },
+    { k: "method", l: L2("Paid by", "طريقة الصرف"), type: "select", opts: [["", "—"], ...methodOpts().map(m => [m, tl(m)])], v: e.method },
+    { k: "bank_account", l: L2("Bank / InstaPay / wallet", "الحساب / انستاباي / المحفظة"), v: e.bank_account }, { k: "phone", l: L2("Phone", "الهاتف"), v: e.phone },
+    { k: "notes", l: t("notes"), type: "textarea", v: e.notes, span: "spanall" },
+    { html: `<div id="empprev" class="muted"></div>`, span: "spanall" }]) +
+    datalist("pjobs", settingList("payroll_jobs")) + datalist("pdeps", settingList("payroll_departments"));
+  const collect = v => { const o = { ...v, allowances: {} }; Object.keys(v).filter(k => k.startsWith("al_")).forEach(k => { if (+v[k]) o.allowances[k.slice(3)] = +v[k]; delete o[k]; }); return o; };
+  drawer(ed ? `${t("edit")} — ${e.code} ${e.name}` : L2("New employee / worker", "موظف / عامل جديد"), html, async v => {
+    const body = collect(v);
+    if (ed) await api("PUT", "/api/employees/" + e.id, body); else await api("POST", "/api/employees", body);
+    toast(t("saved"));
+  }, { wide: true, extraButtons: ed && can("payroll.employees", "edit") ? `<button type="button" class="btn danger" data-a="empdel">${t("delete")}</button>` : "", onOpen: f => {
+    S.H.empdel = () => confirmDelete(e.name, "/api/employees/" + e.id, async () => { closeDrawer(); route(); });
+    S.H.empsync = () => { const t0 = $("[name=emp_type]", f).value, show = (k, on) => { const el = $(`[name=${k}]`, f); if (el) el.closest("label").style.display = on ? "" : "none"; };
+      show("basic", t0 === "monthly"); show("daily_rate", t0 === "daily"); show("hourly_rate", t0 !== "monthly" && t0 !== "daily"); show("piece_rate", t0 === "piece"); show("piece_unit", t0 === "piece"); S.H.empprev(); };
+    let tm; S.H.empprev = () => { clearTimeout(tm); tm = setTimeout(async () => { const v = collect(readForm(f)); const box = $("#empprev", f); if (!box) return;
+      try { const c = await api("POST", "/api/payroll/preview", { employee: { ...v, insured: v.insured, taxed: v.taxed }, inputs: { units: v.emp_type === "daily" ? st.days_month : v.emp_type === "monthly" ? 0 : 1 } });
+        box.innerHTML = `<div class="banner info">${L2("A full month", "شهر كامل")}: ${L2("gross", "الإجمالي")} <b>${money(c.gross)}</b> · ${L2("insurance", "التأمينات")} ${money(c.si_emp)} · ${L2("tax", "الضريبة")} ${money(c.tax)} · ${L2("net", "الصافي")} <b>${money(c.net)}</b> · ${L2("cost to the company", "التكلفة على الشركة")} <b>${money(c.cost)}</b></div>`; } catch { box.textContent = ""; } }, 250); };
+    $$("[name=insured],[name=taxed]", f).forEach(x => x.addEventListener("change", () => S.H.empprev()));
+    S.H.empsync(); } });
+}
+
+PAGES.payruns = async (view) => {
+  const d = await api("GET", "/api/payroll/runs");
+  const add = can("payroll.runs", "add");
+  S.H.prnew = () => { const m = today().slice(0, 7);
+    drawer(L2("New monthly payroll", "مسير رواتب جديد"), form([{ k: "period", l: L2("Month (YYYY-MM)", "الشهر (YYYY-MM)"), v: m, req: 1, ph: "2026-10" },
+      { k: "date", l: L2("Posting date (blank = month end)", "تاريخ القيد (فارغ = آخر الشهر)"), type: "date" }, { k: "notes", l: t("notes"), span: "spanall" }]),
+      async v => { const r = await api("POST", "/api/payroll/runs", v); closeDrawer(); location.hash = "#/payrun/" + r.id; return false; }); };
+  view.innerHTML = `<div class="toolbar">${add ? `<button class="btn pri" data-a="prnew">+ ${L2("New month", "شهر جديد")}</button>` : ""}<a class="btn" href="#/employees">☺ ${t("m_employees")}</a><a class="btn" href="#/payset">⚙ ${t("m_payset")}</a><span class="spacer"></span></div>
+    <div class="card">${d.rows.length ? `<div class="tbl stack"><table><thead><tr><th>${L2("Month", "الشهر")}</th><th>${t("status")}</th><th class="num">${L2("People", "العدد")}</th><th class="num">${L2("Gross", "الإجمالي")}</th><th class="num">${L2("Insurance (both)", "التأمينات (الحصتان)")}</th><th class="num">${L2("Salary tax", "الضريبة")}</th><th class="num">${L2("Net pay", "الصافي")}</th><th class="num">${L2("Cost to company", "التكلفة على الشركة")}</th></tr></thead><tbody>
+      ${d.rows.map(r => `<tr class="click" data-href="#/payrun/${r.id}"><td><b>${esc(r.period)}</b></td><td>${r.status === "posted" ? `<span class="chip ok">${L2("Posted", "مرحّل")}</span>` : `<span class="chip warn">${L2("Draft", "مسودة")}</span>`}</td>
+        <td class="num">${r.employees}</td><td class="num">${money(r.gross)}</td><td class="num">${money(r.si_emp + r.si_er)}</td><td class="num">${money(r.tax)}</td><td class="num"><b>${money(r.net)}</b></td><td class="num">${money(r.cost)}</td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="empty">${L2("No payroll yet. Start a month: every active employee is added with a full month (daily workers with the days in a month) — then enter absences, overtime, bonuses, penalties and advances, check, and post.", "لا توجد مسيرات بعد. ابدأ شهراً: يُضاف كل موظف يعمل بشهر كامل (والعمالة اليومية بأيام الشهر) — ثم أدخل الغياب والإضافي والمكافآت والجزاءات والسلف وراجع ثم رحّل.")}</div>`}</div>`;
+};
+
+PAGES.payrun = async (view, parts) => {
+  const d = await api("GET", "/api/payroll/runs/" + encodeURIComponent(parts[1]));
+  const st = d.settings, draft = d.status === "draft", add = can("payroll.runs", "add"), ed = can("payroll.runs", "edit");
+  const runComps = st.components.filter(c => c.where === "run" && (c.active || d.lines.some(l => +(l.components || {})[c.code])));
+  $("#ttl").textContent = `${L2("Payroll", "مسير الرواتب")} ${d.period}`;
+  const rows = d.lines.map(l => ({ employee_id: l.employee_id, units: l.units, absent_days: l.absent_days, ot_day: l.ot_day, ot_night: l.ot_night, ot_rest: l.ot_rest, paid: l.paid, method: l.method, components: { ...l.components } }));
+  const save = async () => api("PUT", "/api/payroll/runs/" + d.id, { lines: rows });
+  Object.assign(S.H, {
+    prset: (el) => { const r = rows[+el.dataset.i]; const k = el.dataset.k; if (k.startsWith("c_")) r.components[k.slice(2)] = el.value; else r[k] = el.value; },
+    prsave: async () => { try { await save(); toast(t("saved")); route(); } catch (e) { fail(e); } },
+    prpost: async () => { try { if (draft) await save(); await api("POST", `/api/payroll/runs/${d.id}/post`, {}); toast(t("posted")); route(); } catch (e) { fail(e); } },
+    prunpost: async () => { if (!confirm(L2("Reopen this month? Its entries are voided (kept in the audit trail) and the lines become editable.", "إعادة فتح هذا الشهر؟ تُلغى قيوده (وتبقى في سجل المراجعة) وتصبح السطور قابلة للتعديل."))) return;
+      try { await api("POST", `/api/payroll/runs/${d.id}/unpost`, {}); route(); } catch (e) { fail(e); } },
+    prdel: () => confirmDelete(d.period, "/api/payroll/runs/" + d.id, async () => { location.hash = "#/payruns"; }),
+    prslip: el => openApi(`/api/payroll/runs/${d.id}/payslip/${el.dataset.e}?print=1&lang=${S.lang}`, true),
+    prslips: () => openApi(`/api/payroll/runs/${d.id}/payslip/all?print=1&lang=${S.lang}`, true),
+  });
+  const T = d.totals, inp = (i, k, v, w = 70) => draft && add ? `<input class="num" type="number" step="any" data-skip="1" value="${esc(v || "")}" data-input="prset" data-i="${i}" data-k="${k}" style="width:${w}px">` : (+v ? esc(v) : "");
+  const unitsL = l => ({ monthly: L2("absent days", "أيام غياب"), daily: L2("days", "أيام"), hourly: L2("hours", "ساعات"), piece: L2("units", "وحدات") })[l.emp_type];
+  view.innerHTML = `<div class="toolbar"><a class="btn" href="#/payruns">← ${t("m_payruns")}</a>
+      ${draft && add ? `<button class="btn" data-a="prsave">↻ ${L2("Save & recalculate", "حفظ وإعادة الحساب")}</button><button class="btn pri" data-a="prpost">✓ ${L2("Post to the books", "ترحيل للدفاتر")}</button>` : ""}
+      ${!draft && ed ? `<button class="btn" data-a="prunpost">${L2("Reopen", "إعادة فتح")}</button>` : ""}
+      <button class="btn" data-a="prslips">⎙ ${L2("All payslips", "كل القسائم")}</button><span class="spacer"></span>
+      ${exportMenu("payroll_register", { run: d.id })}${draft && ed ? `<button class="btn danger" data-a="prdel">${t("delete")}</button>` : ""}</div>
+    ${draft ? `<div class="banner info">${L2("Draft: enter this month's variable items, press Save & recalculate to see the payslips, then Post. Monthly staff start at a full month — type their unpaid absent days.", "مسودة: أدخل متغيرات الشهر واضغط «حفظ وإعادة الحساب» لترى القسائم ثم «ترحيل». الموظف الشهري يبدأ بشهر كامل — اكتب أيام الغياب بدون أجر.")}</div>` : ""}
+    <div class="kpis">${kpiBox(L2("Gross pay", "إجمالي الأجور"), T.gross)}${kpiBox(L2("Net to pay", "الصافي المستحق"), T.net, "", T.paid ? `${L2("paid now", "مدفوع الآن")} ${money(T.paid)}` : "")}
+      ${kpiBox(L2("Social insurance (11 % + 18.75 %)", "التأمينات (11% + 18.75%)"), T.si_emp + T.si_er)}${kpiBox(L2("Salary tax + Martyrs Fund", "الضريبة + صندوق الشهداء"), T.tax + T.martyrs)}
+      ${kpiBox(L2("Cost to the company", "التكلفة على الشركة"), T.cost)}</div>
+    <div class="card"><div class="tbl"><table><thead><tr><th>${L2("Employee", "الموظف")}</th><th class="num">${L2("Gross", "الإجمالي")}</th><th class="num">${L2("Ins. + tax", "تأمين + ضريبة")}</th><th class="num">${L2("Net", "الصافي")}</th><th>${L2("Days / hours / units · absence", "أيام / ساعات / وحدات · غياب")}</th><th>${L2("Overtime h (day / night / rest)", "إضافي س (نهار / ليل / راحة)")}</th>
+      ${runComps.map(c => `<th class="num">${esc(compName(c))}${c.kind === "deduction" ? " −" : ""}</th>`).join("")}<th class="num">${L2("Paid now", "مدفوع الآن")}</th><th></th></tr></thead><tbody>
+      ${d.lines.map((l, i) => { const c = l.result || {}; return `<tr><td><b>${esc(l.name)}</b><div class="lines">${esc(l.code)} · ${esc(empTypeL(l.emp_type))}${l.job_title ? " · " + esc(l.job_title) : ""}</div></td>
+        <td class="num">${money(c.gross || 0)}</td><td class="num">${money((c.si_emp || 0) + (c.tax || 0) + (c.martyrs || 0))}</td><td class="num"><b class="${c.net < 0 ? "neg" : ""}">${money(c.net || 0)}</b></td>
+        <td>${l.emp_type === "monthly" ? inp(i, "absent_days", l.absent_days) : inp(i, "units", l.units)} <span class="muted">${unitsL(l)}</span></td>
+        <td style="white-space:nowrap">${inp(i, "ot_day", l.ot_day, 52)}${inp(i, "ot_night", l.ot_night, 52)}${inp(i, "ot_rest", l.ot_rest, 52)}</td>
+        ${runComps.map(rc => `<td class="num">${inp(i, "c_" + rc.code, (l.components || {})[rc.code], 80)}</td>`).join("")}
+        <td class="num">${inp(i, "paid", l.paid, 90)}</td><td><button class="btn sm" data-a="prslip" data-e="${l.employee_id}">⎙</button></td></tr>`; }).join("") || `<tr><td colspan="9" class="muted">${t("nothing")}</td></tr>`}</tbody></table></div></div>
+    <div class="card"><h2>${L2("How it is posted", "طريقة القيد")}</h2><p class="muted">${L2("One entry per employee, in their business unit: Dr salary cost (gross − penalties) and employer insurance; Cr social insurance payable (both shares), salary tax payable, Martyrs Fund payable, employee advances (recovered) and accrued payroll (the net, owed to them). Pay the net later from Payables (or type “paid now”).", "قيد لكل موظف في وحدة أعماله: من حـ تكلفة الأجور (الإجمالي − الجزاءات) وحصة صاحب العمل في التأمينات؛ إلى حـ التأمينات المستحقة (الحصتان) وضريبة كسب العمل وصندوق الشهداء وسلف العاملين (المستردة) والأجور المستحقة (الصافي). يُصرف الصافي لاحقاً من الدائنين (أو اكتبه في «مدفوع الآن»).")}</p></div>`;
+};
+
+PAGES.payset = async (view) => {
+  const s = await api("GET", "/api/payroll/settings");
+  const ed = can("payroll.settings", "edit");
+  let bands = s.bands.map(b => [...b]), rules = s.high_income.map(r => [...r]), comps = s.components.map(c => ({ ...c }));
+  const num = (v, k, i, attr, w = 100, step = "any") => `<input class="num" type="number" step="${step}" data-skip="1" value="${esc(v ?? "")}" data-input="${attr}" data-i="${i}" data-k="${k}" style="width:${w}px" ${ed ? "" : "disabled"}>`;
+  const draw = () => {
+    $("#psbands").innerHTML = `<table><thead><tr><th>#</th><th class="num">${L2("Annual taxable up to", "الدخل السنوي الخاضع حتى")}</th><th class="num">${L2("Rate", "السعر")}</th></tr></thead><tbody>${bands.map((b, i) => `<tr><td>${i + 1}</td><td class="num">${i === bands.length - 1 ? L2("and above", "فما فوق") : num(b[0], 0, i, "psband", 120)}</td><td class="num">${num(b[1] * 100, 1, i, "psband", 70)} %</td></tr>`).join("")}</tbody></table>`;
+    $("#psrules").innerHTML = `<table><thead><tr><th class="num">${L2("When annual taxable is above", "إذا زاد الدخل السنوي عن")}</th><th class="num">${L2("tax starts at band", "تبدأ الضريبة من الشريحة")}</th><th></th></tr></thead><tbody>${rules.map((r, i) => `<tr><td class="num">${num(r[0], 0, i, "psrule", 120)}</td><td class="num">${num(r[1], 1, i, "psrule", 60, 1)}</td><td>${ed ? `<button type="button" class="btn sm danger" data-a="psruledel" data-i="${i}">✕</button>` : ""}</td></tr>`).join("")}</tbody></table>${ed ? `<button type="button" class="btn sm" data-a="psruleadd">+ ${L2("Rule", "قاعدة")}</button>` : ""}`;
+    $("#pscomps").innerHTML = `<table><thead><tr><th>${t("code")}</th><th>${L2("Name", "الاسم")}</th><th>${L2("Arabic", "بالعربية")}</th><th>${L2("Type", "النوع")}</th><th>${L2("Entered", "يُدخل")}</th><th>${L2("Taxable", "خاضع للضريبة")}</th><th>${L2("Insurable", "خاضع للتأمين")}</th><th>${L2("On", "مفعّل")}</th></tr></thead><tbody>
+      ${comps.map((c, i) => `<tr><td><input data-skip="1" value="${esc(c.code)}" data-input="pscomp" data-i="${i}" data-k="code" style="width:90px" ${ed && !["advance", "penalty"].includes(c.code) ? "" : "disabled"}></td>
+        <td><input data-skip="1" value="${esc(c.name)}" data-input="pscomp" data-i="${i}" data-k="name" ${ed ? "" : "disabled"}></td><td><input data-skip="1" dir="rtl" value="${esc(c.name_ar || "")}" data-input="pscomp" data-i="${i}" data-k="name_ar" ${ed ? "" : "disabled"}></td>
+        <td><select data-skip="1" data-change="pscomp" data-i="${i}" data-k="kind" ${ed ? "" : "disabled"}><option value="earning" ${c.kind === "earning" ? "selected" : ""}>${L2("Earning", "استحقاق")}</option><option value="deduction" ${c.kind === "deduction" ? "selected" : ""}>${L2("Deduction", "استقطاع")}</option></select></td>
+        <td><select data-skip="1" data-change="pscomp" data-i="${i}" data-k="where" ${ed ? "" : "disabled"}><option value="fixed" ${c.where === "fixed" ? "selected" : ""}>${L2("Fixed on the employee", "ثابت على الموظف")}</option><option value="run" ${c.where === "run" ? "selected" : ""}>${L2("Each month", "كل شهر")}</option></select></td>
+        ${["taxable", "insurable", "active"].map(k => `<td><input type="checkbox" data-skip="1" data-change="pscomp" data-i="${i}" data-k="${k}" ${c[k] !== false && (k !== "insurable" || c[k]) ? "checked" : ""} ${ed ? "" : "disabled"}></td>`).join("")}</tr>`).join("")}</tbody></table>
+      ${ed ? `<button type="button" class="btn sm" data-a="pscompadd">+ ${L2("Pay item", "بند أجر")}</button>` : ""}`;
+  };
+  Object.assign(S.H, {
+    psband: el => { const b = bands[+el.dataset.i]; b[+el.dataset.k] = el.value === "" ? null : +el.value / (el.dataset.k === "1" ? 100 : 1); },
+    psrule: el => { rules[+el.dataset.i][+el.dataset.k] = +el.value; },
+    psruleadd: () => { rules.push([0, 2]); draw(); }, psruledel: el => { rules.splice(+el.dataset.i, 1); draw(); },
+    pscomp: el => { const c = comps[+el.dataset.i]; c[el.dataset.k] = el.type === "checkbox" ? el.checked : el.value; },
+    pscompadd: () => { comps.push({ code: "item" + (comps.length + 1), name: "", name_ar: "", kind: "earning", where: "run", taxable: true, insurable: false, active: true }); draw(); },
+    pssave: async () => { const v = readForm($("#psf")); ["si_emp_rate", "si_er_rate", "martyrs_rate"].forEach(k => { v[k] = (+v[k]) / 100; });
+      try { await api("PUT", "/api/payroll/settings", { ...v, bands, high_income: rules, components: comps }); toast(t("saved")); route(); } catch (e) { fail(e); } },
+    pstest: async () => { const g = +$("#pstg").value || 0; const c = await api("POST", "/api/payroll/preview", { employee: { emp_type: "monthly", basic: g, insured: true, taxed: true }, inputs: {} });
+      $("#pstr").innerHTML = `${L2("gross", "الإجمالي")} ${money(c.gross)} · ${L2("insurance", "التأمينات")} ${money(c.si_emp)} (${L2("on", "على")} ${money(c.insurable)}) · ${L2("annual taxable", "الوعاء السنوي")} ${money(c.annual_taxable)} · ${L2("tax", "الضريبة")} <b>${money(c.tax)}</b> · ${L2("Martyrs", "الشهداء")} ${money(c.martyrs)} · ${L2("net", "الصافي")} <b>${money(c.net)}</b> · ${L2("employer insurance", "حصة صاحب العمل")} ${money(c.si_er)}`; },
+  });
+  view.innerHTML = `<div class="toolbar"><a class="btn" href="#/payruns">← ${t("m_payruns")}</a><span class="spacer"></span>${ed ? `<button class="btn pri" data-a="pssave">${t("save")}</button>` : ""}</div>
+    <div class="banner info">${L2("Egyptian defaults from Law 148/2019 (social insurance), the 2026 insurable wage limits and Law 7/2024 (salary tax). Rules change — check every number with your accountant; everything here is editable and every run uses these settings.", "القيم الافتراضية من قانون التأمينات 148/2019 وحدود أجر الاشتراك 2026 وقانون 7/2024 لضريبة كسب العمل. القواعد تتغير — راجع كل رقم مع المحاسب؛ كل شيء هنا قابل للتعديل وكل مسير يستخدم هذه الإعدادات.")}</div>
+    <form id="psf" onsubmit="return false"><div class="card"><h2>${L2("Social insurance", "التأمينات الاجتماعية")}</h2>${form([
+      { k: "si_emp_rate", l: L2("Employee share %", "حصة العامل %"), type: "number", v: +(s.si_emp_rate * 100).toFixed(4) }, { k: "si_er_rate", l: L2("Employer share %", "حصة صاحب العمل %"), type: "number", v: +(s.si_er_rate * 100).toFixed(4) },
+      { k: "si_min", l: L2("Minimum insurable wage / month", "الحد الأدنى لأجر الاشتراك / شهر"), type: "number", v: s.si_min }, { k: "si_max", l: L2("Maximum insurable wage / month", "الحد الأقصى لأجر الاشتراك / شهر"), type: "number", v: s.si_max }])}</div>
+    <div class="card"><h2>${L2("Salary tax", "ضريبة كسب العمل")}</h2>${form([{ k: "exemption", l: L2("Personal exemption / year", "الإعفاء الشخصي / سنة"), type: "number", v: s.exemption },
+      { k: "martyrs_rate", l: L2("Martyrs Fund % of gross", "صندوق الشهداء % من الإجمالي"), type: "number", v: +(s.martyrs_rate * 100).toFixed(4) }])}
+      <div class="grid g2"><div><h4>${L2("Bands (on annual taxable after the exemption)", "الشرائح (على الوعاء السنوي بعد الإعفاء)")}</h4><div class="tbl" id="psbands"></div></div>
+      <div><h4>${L2("High-income rule — lower bands dropped", "قاعدة الدخول المرتفعة — إسقاط الشرائح الأدنى")}</h4><div class="tbl" id="psrules"></div><p class="muted">${L2("Delete all rules to switch it off.", "احذف كل القواعد لإيقافها.")}</p></div></div>
+      <div class="row" style="margin-top:8px"><label class="f" style="max-width:220px">${L2("Try a monthly salary", "جرّب راتباً شهرياً")}<input id="pstg" class="num" type="number" value="15000" data-skip="1"></label><button type="button" class="btn" data-a="pstest">${L2("Calculate", "احسب")}</button></div><div id="pstr" class="muted"></div></div>
+    <div class="card"><h2>${L2("Overtime & working time", "الإضافي ووقت العمل")}</h2>${form([
+      { k: "ot_day", l: L2("Overtime — day (× hourly)", "إضافي نهاري (× أجر الساعة)"), type: "number", v: s.ot_day }, { k: "ot_night", l: L2("Overtime — night", "إضافي ليلي"), type: "number", v: s.ot_night },
+      { k: "ot_rest", l: L2("Rest day / public holiday", "يوم الراحة / العطلة الرسمية"), type: "number", v: s.ot_rest }, { k: "days_month", l: L2("Days in a pay month", "أيام الشهر للحساب"), type: "number", v: s.days_month },
+      { k: "hours_day", l: L2("Hours in a working day", "ساعات يوم العمل"), type: "number", v: s.hours_day },
+      { k: "prorate_allowances", l: L2("Absence also reduces fixed allowances", "الغياب يخصم من البدلات الثابتة أيضاً"), type: "checkbox", v: s.prorate_allowances }])}</div>
+    <div class="card"><h2>${L2("Pay items (earnings & deductions)", "بنود الأجر (استحقاقات واستقطاعات)")}</h2><p class="muted">${L2("Rename, switch off or add your own items. ‘Fixed’ items are typed on each employee; ‘each month’ items on the payroll run. Penalties and other deductions reduce the cost; advance recovery repays employee advances.", "أعد التسمية أو أوقف أو أضف بنودك. البنود «الثابتة» تُكتب على الموظف، و«كل شهر» في المسير. الجزاءات والخصومات تقلل التكلفة؛ استرداد السلفة يسدد سلف العاملين.")}</p><div class="tbl" id="pscomps"></div></div></form>`;
+  draw();
+};
+
+// ---------------------------------------------------------------- crew / measured-work pay (outside the books)
+const crewQty = l => { let q = +l.count || 0; ["dim1", "dim2", "dim3"].forEach(k => { if (+l[k]) q *= +l[k]; }); return Math.round(q * 10000) / 10000; };
+PAGES.crew = async (view) => {
+  const d = await api("GET", "/api/crew");
+  const add = can("payroll.crew", "add"), ed = can("payroll.crew", "edit");
+  S.H.crnew = () => crewForm(null, d.items);
+  S.H.credit = el => crewForm(d.rows.find(r => String(r.id) === el.dataset.id), d.items);
+  S.H.crpay = el => crewPay(d.rows.find(r => String(r.id) === el.dataset.id));
+  S.H.crdel = el => confirmDelete(L2("this sheet", "هذه الورقة"), "/api/crew/" + el.dataset.id, async () => route());
+  const tot = d.rows.reduce((s, r) => s + r.total, 0), paid = d.rows.reduce((s, r) => s + r.paid, 0);
+  view.innerHTML = `<div class="toolbar">${add ? `<button class="btn pri" data-a="crnew">+ ${L2("New crew sheet", "ورقة حساب جديدة")}</button>` : ""}<span class="spacer"></span></div>
+    <div class="banner info">${L2("What a crew or subcontractor earns for measured work — e.g. scaffold frames × frame width × frame height = m² × your rate. It is only a calculation: nothing reaches the books, rents or other calculators. When you pay, press “Record payment” and type what you actually paid (it may differ from the sheet).", "حساب ما يستحقه طقم العمال أو مقاول الباطن عن الأعمال المقاسة — مثلاً عدد الشبابيك × عرض الشباك × ارتفاعه = م² × سعرك. هو حساب فقط: لا يصل للدفاتر أو الإيجارات أو الحاسبات الأخرى. عند الدفع اضغط «تسجيل الدفع» واكتب ما دفعته فعلاً (قد يختلف عن الورقة).")}</div>
+    <div class="kpis">${kpiBox(L2("Sheets", "الأوراق"), String(d.rows.length))}${kpiBox(L2("Calculated", "المحسوب"), tot)}${kpiBox(L2("Actually paid (recorded)", "المدفوع فعلاً (المسجل)"), paid)}</div>
+    <div class="card">${d.rows.length ? `<div class="tbl stack"><table><thead><tr><th>${t("date")}</th><th>${L2("Crew / worker", "الطقم / العامل")}</th><th>${L2("Work", "العمل")}</th><th>${t("bu")}</th><th class="num">${L2("Quantity", "الكمية")}</th><th class="num">${L2("Calculated", "المحسوب")}</th><th class="num">${L2("Paid", "المدفوع")}</th><th></th></tr></thead><tbody>
+      ${d.rows.map(r => `<tr><td>${fd(r.date)}</td><td><b>${esc(r.crew)}</b></td><td>${esc(r.title || "")}<div class="lines">${r.lines.map(l => `${esc(l.item || "")}: ${+l.qty} ${esc(l.unit || "")} × ${money(+l.rate || 0)}`).join("<br>")}</div></td>
+        <td>${esc(r.bu_code || "—")}</td><td class="num">${r.lines.map(l => `${+l.qty} ${esc(l.unit || "")}`).join("<br>")}</td><td class="num"><b>${money(r.total)}</b></td>
+        <td class="num">${r.paid ? money(r.paid) : `<span class="muted">${L2("not recorded", "غير مسجل")}</span>`}${r.paid && Math.abs(r.paid - r.total) > 0.005 ? `<div class="lines">${L2("difference", "الفرق")} ${money(r.paid - r.total)}</div>` : ""}</td>
+        <td style="white-space:nowrap">${ed ? `<button class="btn sm" data-a="credit" data-id="${r.id}">${t("edit")}</button>` : ""}${!r.entry_id && add ? `<button class="btn sm" data-a="crpay" data-id="${r.id}">${L2("Record payment", "تسجيل الدفع")}</button>` : r.entry_id ? `<button class="btn sm" data-a="openv" data-id="${r.entry_id}">${L2("Entry", "القيد")}</button>` : ""}${ed && !r.entry_id ? `<button class="btn sm danger" data-a="crdel" data-id="${r.id}">✕</button>` : ""}</td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="empty">${L2("No sheets yet.", "لا توجد أوراق بعد.")}</div>`}</div>`;
+};
+
+function crewForm(C, items) {
+  const ed = !!C;
+  let rows = C ? C.lines.map(l => ({ ...l })) : (items || []).slice(0, 1).map(i => ({ item: i[0] || i.item, unit: i[1] || i.unit, count: "", dim1: "", dim2: "", dim3: "", rate: "" }));
+  const presets = (items || []).map(i => Array.isArray(i) ? i : [i.item, i.unit]);
+  const html = form([{ k: "date", l: t("date"), type: "date", v: C ? C.date : today(), req: 1 }, { k: "crew", l: L2("Crew / worker / subcontractor", "الطقم / العامل / مقاول الباطن"), v: C ? C.crew : "", req: 1, list: "crewp" },
+    { k: "title", l: L2("Work / building", "العمل / المبنى"), v: C ? C.title : "", ph: L2("e.g. Building 1 — installation", "مثال: عمارة 1 — تركيب") }, { k: "bu_id", l: t("bu"), type: "select", opts: buOpts("—"), v: C ? C.bu_id || "" : "" },
+    { html: `<div id="crlines"></div>`, span: "spanall" }, { k: "notes", l: t("notes"), type: "textarea", v: C ? C.notes : "", span: "spanall" }]) + partyList("crewp");
+  drawer(ed ? `${t("edit")} — ${C.crew}` : L2("Crew pay sheet", "ورقة حساب أجر طقم"), html, async v => {
+    const body = { ...v, lines: rows }; if (ed) await api("PUT", "/api/crew/" + C.id, body); else await api("POST", "/api/crew", body); toast(t("saved"));
+  }, { wide: true, onOpen: f => {
+    const draw = () => { let tot = 0, qty = 0;
+      $("#crlines", f).innerHTML = `<div class="tbl"><table><thead><tr><th style="min-width:170px">${L2("Item", "البند")}</th><th>${L2("Unit", "الوحدة")}</th><th class="num">${L2("Count (frames, rooms…)", "العدد (شبابيك، غرف…)")}</th><th class="num">${L2("Width / length", "العرض / الطول")}</th><th class="num">${L2("Height / width", "الارتفاع / العرض")}</th><th class="num">${L2("Depth", "العمق")}</th><th class="num">${L2("Quantity", "الكمية")}</th><th class="num">${L2("Rate", "السعر")}</th><th class="num">${t("amount")}</th><th></th></tr></thead><tbody>
+        ${rows.map((r, i) => { const q = crewQty(r), a = Math.round(q * (+r.rate || 0) * 100) / 100; tot += a; qty += q; const c = k => `<input class="num" type="number" step="any" data-skip="1" value="${esc(r[k] ?? "")}" data-input="crln" data-i="${i}" data-k="${k}" style="width:80px">`;
+          return `<tr><td><input data-skip="1" value="${esc(r.item || "")}" data-input="crln" data-i="${i}" data-k="item" list="crpre" style="min-width:170px"></td><td><input data-skip="1" value="${esc(r.unit || "")}" data-input="crln" data-i="${i}" data-k="unit" style="width:60px"></td>
+            <td class="num">${c("count")}</td><td class="num">${c("dim1")}</td><td class="num">${c("dim2")}</td><td class="num">${c("dim3")}</td><td class="num"><b>${q}</b></td><td class="num">${c("rate")}</td><td class="num"><b>${money(a)}</b></td>
+            <td><button type="button" class="btn sm danger" data-a="crldel" data-i="${i}">✕</button></td></tr>`; }).join("")}</tbody></table></div>
+        ${datalist("crpre", presets.map(p => p[0]))}
+        <div class="row" style="margin-top:6px"><button type="button" class="btn sm" data-a="crladd">+ ${L2("Line", "سطر")}</button><span class="spacer"></span><span>${L2("Total", "الإجمالي")}: <b>${money(tot)}</b></span></div>
+        <p class="muted">${L2("Quantity = count × width × height × depth (blank dimensions count as 1). Frames: count = frames, width = frame width, height = frame height → m² installed.", "الكمية = العدد × العرض × الارتفاع × العمق (الخانة الفارغة = 1). الشبابيك: العدد = عدد الشبابيك، العرض = عرض الشباك، الارتفاع = ارتفاعه ← م² المركبة.")}</p>`; };
+    S.H.crln = el => { const r = rows[+el.dataset.i]; r[el.dataset.k] = el.value; if (el.dataset.k === "item") { const p = presets.find(x => x[0] === el.value); if (p && !r.unit) r.unit = p[1]; }
+      if (el.dataset.k !== "item" && el.dataset.k !== "unit") { const tr = el.closest("tr"), q = crewQty(r); tr.children[6].innerHTML = `<b>${q}</b>`; tr.children[8].innerHTML = `<b>${money(Math.round(q * (+r.rate || 0) * 100) / 100)}</b>`;
+        const tot = rows.reduce((s, x) => s + Math.round(crewQty(x) * (+x.rate || 0) * 100) / 100, 0); $("#crlines .row b", f).textContent = money(tot); } };
+    S.H.crladd = () => { rows.push({ item: "", unit: "m²", count: "", dim1: "", dim2: "", dim3: "", rate: "" }); draw(); };
+    S.H.crldel = el => { rows.splice(+el.dataset.i, 1); draw(); };
+    draw(); } });
+}
+
+function crewPay(C) {
+  drawer(L2("Record what you actually paid", "تسجيل ما دُفع فعلاً") + " — " + C.crew, form([
+    { k: "date", l: t("date"), type: "date", v: today(), req: 1 }, { k: "amount", l: L2("Amount actually paid", "المبلغ المدفوع فعلاً"), type: "number", v: C.total, req: 1, help: L2("The sheet calculated", "المحسوب في الورقة") + " " + money(C.total) },
+    { k: "bu_id", l: t("bu"), type: "select", opts: buOpts("—"), v: C.bu_id || "" }, { k: "cost_type", l: L2("Cost type", "نوع التكلفة"), type: "select", opts: costTypeOpts(), v: C.bu_id ? "Direct Labour (Cost of Revenue)" : "Administrative Salaries (Shared Overhead)" },
+    { k: "account", l: L2("Cost account (blank = by cost type)", "حساب التكلفة (فارغ = حسب النوع)"), type: "select", opts: [["", "—"], ...accts(["COGS", "Expense"])], v: "" },
+    { k: "method", l: L2("Paid by", "طريقة الدفع"), type: "select", opts: methodOpts().map(m => [m, tl(m)]), v: "Cash" },
+    { k: "paid_now", l: L2("Paid now (untick = owed to the crew)", "مدفوع الآن (بدون علامة = مستحق للطقم)"), type: "checkbox", v: true }]),
+    async v => { await api("POST", `/api/crew/${C.id}/pay`, v); toast(t("posted")); }, { submitLabel: t("post") });
+}
+
+// ---------------------------------------------------------------- business type & templates
+PAGES.industry = async (view) => {
+  const d = await api("GET", "/api/industries");
+  const ed = can("settings.menus", "edit");
+  S.H.indapply = async el => { const k = el.dataset.k, ty = d.types.find(x => x.key === k);
+    if (!confirm(L2(`Set up this company as “${ty.name}”? Missing accounts are added, the sections it does not use are hidden (not deleted — Settings → Menus brings them back), and payroll gets its departments and pay items. Nothing is deleted.`, `ضبط الشركة كـ «${ty.name_ar}»؟ تُضاف الحسابات الناقصة وتُخفى الأقسام غير المستخدمة (لا تُحذف — الإعدادات ← القوائم تعيدها) وتُضبط أقسام الرواتب وبنودها. لا يُحذف شيء.`))) return;
+    try { const r = await api("POST", "/api/industries/apply", { type: k }); toast(L2(`Done — ${r.accounts_added.length} account(s) added`, `تم — أُضيف ${r.accounts_added.length} حساب`)); await refreshBoot(); route(); } catch (e) { fail(e); } };
+  view.innerHTML = `<div class="banner info">${L2("Pick what this company does. Each template switches on the sections it uses, adds the accounts it needs and sets payroll's departments, job titles, pay items and the crew calculator's work items. Download a ready Excel workbook for any type.", "اختر نشاط الشركة. كل قالب يفعّل الأقسام المستخدمة ويضيف الحسابات اللازمة ويضبط أقسام الرواتب والوظائف وبنود الأجر وبنود حاسبة الأطقم. ويمكن تحميل ملف إكسل جاهز لأي نشاط.")}</div>
+    <div class="grid g2">${d.types.map(ty => `<div class="card"><h2>${esc(S.lang === "ar" ? ty.name_ar : ty.name)} ${d.current === ty.key ? `<span class="chip ok">${L2("current", "الحالي")}</span>` : ""}</h2>
+      <ul>${ty.guide.map(g => `<li>${esc(g)}</li>`).join("")}</ul>
+      <p class="muted">${L2("Business units are", "وحدات الأعمال")}: ${esc(ty.bu)} · ${L2("hidden", "مخفي")}: ${esc(ty.hide.join(", "))}${ty.accounts.length ? `<br>${L2("adds", "يضيف")}: ${ty.accounts.map(a => esc(a.code + " " + (S.lang === "ar" ? a.name_ar : a.name))).join(" · ")}` : ""}<br>${L2("crew work items", "بنود الأطقم")}: ${ty.work_items.map(w => esc(w.item + " (" + w.unit + ")")).join(" · ")}</p>
+      <div class="row">${ed ? `<button class="btn ${d.current === ty.key ? "" : "pri"}" data-a="indapply" data-k="${ty.key}">${L2("Use for this company", "استخدم لهذه الشركة")}</button>` : ""}<a class="btn" href="/api/templates/workbook?type=${ty.key}">⇩ ${L2("Excel template", "قالب إكسل")}</a></div></div>`).join("")}</div>`;
 };
 
 // files on the record pages (business unit, offer, loan, custody, rental, sale): appended under the page
