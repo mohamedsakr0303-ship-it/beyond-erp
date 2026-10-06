@@ -161,7 +161,9 @@ jobs:
 
   web:
     needs: [test, database, desktop]
-    if: always() && needs.test.result == 'success' && needs.database.result != 'failure' && needs.database.result != 'cancelled'
+    # the site still deploys when the database step fails (e.g. an outdated database password): the app works with an
+    # older workspace and says what is missing, and the next database run catches up
+    if: always() && needs.test.result == 'success' && needs.database.result != 'cancelled'
     runs-on: ubuntu-24.04
     env:
       BEYOND_SUPABASE_URL: ${{ vars.SUPABASE_URL }}
