@@ -411,10 +411,11 @@ function renderNav(active) {
     for (const [k, r] of vis) {
       const on = active === r || active.startsWith(r + "/") || parent === r;
       if (on) { title = t(k); group = t(g); has = true; }
-      links += `<a href="#/${r}" class="${on ? "on" : ""}" title="${esc(t(k))}">${svg(ROUTE_IC[r] || GROUP_IC[g])}<span>${esc(t(k))}</span></a>`;
+      links += g === "g_home" ? `<a href="#/${r}" class="${on ? "on" : ""}" title="${esc(t(k))}">${svg(ROUTE_IC[r] || GROUP_IC[g])}<span>${esc(t(k))}</span></a>`
+        : `<a href="#/${r}" class="${on ? "on" : ""}"><i class="dash"></i><span>${esc(t(k))}</span></a>`;
     }
-    if (vis.length === 1 && g === "g_home") { html += `<div class="grp-solo">${links}</div>`; continue; }
-    html += `<div class="grp-wrap ${has || open.has(g) ? "open" : ""} ${has ? "has" : ""}"><button class="grp" data-a="grp" data-g="${g}" title="${esc(t(g))}">${svg(GROUP_IC[g] || "grid")}<span>${esc(t(g))}</span>${svg("chev", "chev")}</button><div class="grp-items">${links}</div></div>`;
+    if (g === "g_home") { html += `<div class="grp-solo">${links}</div>`; continue; }
+    html += `<div class="grp-wrap ${has || open.has(g) ? "open" : ""} ${has ? "has" : ""}"><button class="grp" data-a="grp" data-g="${g}" title="${esc(t(g))}">${svg(GROUP_IC[g] || "grid")}<span>${esc(t(g))}</span>${svg("chev", "chev")}</button><div class="grp-items"><div class="fly-t">${esc(t(g))}</div>${links}</div></div>`;
   }
   nav.innerHTML = html;
   $("#ttl").textContent = title || t("m_dashboard");

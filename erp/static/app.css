@@ -524,3 +524,30 @@ tr.click:hover td{background:color-mix(in srgb,var(--brand) 6%,transparent)}
              radial-gradient(900px 500px at 110% 110%,color-mix(in srgb,#0ea5e9 35%,transparent),transparent 60%),var(--bg)}
 .login{margin:0 auto;border-radius:22px;box-shadow:var(--shadow-lg);border:1px solid var(--line);width:100%}
 .login .btn.pri{width:100%;height:46px;border-radius:12px;font-size:.95em}
+/* ---------------------------------------------------------------- menu: dash sub-items, hover to open */
+.grp-wrap .grp-items a{padding-inline-start:46px;gap:10px}
+.fly-t{display:none}
+.dash{display:block;width:8px;height:2px;border-radius:2px;background:currentColor;opacity:.45;flex:none;transition:width .22s ease,opacity .22s,background .22s}
+.grp-items a span{transition:transform .22s ease}
+.grp-items a:hover .dash,.grp-items a.on .dash{width:20px;opacity:1;background:var(--brand)}
+.grp-items a:hover span{transform:translateX(5px)}
+[dir=rtl] .grp-items a:hover span{transform:translateX(-5px)}
+.grp-items a:hover{background:none;color:var(--brand)}
+.grp-items a.on{background:none}
+.grp-items a.on::before{display:none}
+.grp-wrap .grp-items{transition:max-height .3s ease .06s}
+@media (hover:hover) and (pointer:fine){
+  .app:not(.mini) .grp-wrap:hover .grp-items{max-height:900px}
+  .app:not(.mini) .grp-wrap:hover>.grp .chev{transform:rotate(180deg)}
+  .app:not(.mini) .grp-wrap:hover>.grp{background:var(--hover)}
+  /* slim menu: a group opens as a panel beside the icons */
+  .app.mini .side{overflow:visible;z-index:45}
+  .app.mini .grp-wrap{position:relative}
+  .app.mini .grp-wrap .grp-items{position:absolute;top:-6px;inset-inline-start:calc(100% + 14px);width:240px;max-height:none;display:none;
+    background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow-lg);padding:8px;z-index:70;animation:pagein .15s ease}
+  .app.mini .grp-wrap:hover .grp-items{display:block}
+  .app.mini .grp-wrap .grp-items::before{content:"";position:absolute;inset-block:0;inset-inline-start:-18px;width:18px}
+  .app.mini .grp-items a{justify-content:flex-start;padding:9px 12px}
+  .app.mini .grp-items a span{display:inline}
+  .app.mini .fly-t{display:block;padding:6px 12px 8px;font-size:.72em;font-weight:800;text-transform:uppercase;letter-spacing:.7px;color:var(--muted)}
+}
