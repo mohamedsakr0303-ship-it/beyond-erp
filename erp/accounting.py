@@ -1471,10 +1471,12 @@ def partner_report(db, date_from=None, date_to=None):
     reserve = float(db.setting("reserve_pct", "0.4") or 0)
     draws = {r["party"]: to_major(r["n"]) for r in db.q(
         f"SELECT {PARTY} AS party, SUM(l.debit-l.credit) AS n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id "
-        f"JOIN accounts a ON a.code=l.account WHERE {LIVE} AND a.subtype='drawings'"
+        f"JOIN accounts a ON a.code=l.account WHERE {LIVE} AND a.subtype='drawings' AND e.kind<>'Profit Appropriation'"
         + (" AND e.date>=?" if date_from else "") + (" AND e.date<=?" if date_to else "") + " GROUP BY 1",
         [x for x in (date_from, date_to) if x])}
     from . import equity
+    ratio, typed = equity.profit_ratios(db, partners)
+    ratio = {int(k): v for k, v in ratio.items()}
     # agreed interest on capital comes out of the company's result before the rest is shared
     cap_int = equity.capital_interest(db, date_from, date_to)
     pool = round(company_after_alloc - sum(cap_int.values()), 2)
@@ -1482,23 +1484,28 @@ def partner_report(db, date_from=None, date_to=None):
     for pt in partners:
         per, total = {}, 0.0
         for b in bus:
-            s = shares.get((pt["id"], b["id"]), pt["default_share"] or 0)
+            s = shares.get((pt["id"], b["id"]), ratio[pt["id"]])
             per[b["code"]] = {"share": s, "profit": round(b["net_profit"] * s, 2)}
             total += b["net_profit"] * s
-        total += pool * (pt["default_share"] or 0) + cap_int.get(pt["name"], 0)
+        total += pool * ratio[pt["id"]] + cap_int.get(pt["name"], 0)
         distributable = total * (1 - reserve) if total > 0 else total
         drawn = draws.get(pt["name"], 0)
         rows.append({"id": pt["id"], "name": pt["name"], "default_share": pt["default_share"], "units": per,
                      "active": pt["active"], "joined": pt["joined"], "left_on": pt["left_on"],
                      "capital_interest_rate": pt["capital_interest"], "loan_rate": pt["loan_rate"], "notes": pt["notes"],
+                     "profit_ratio": ratio[pt["id"]], "profit_share_typed": pt["profit_share"], "salary": to_major(pt["salary"] or 0),
+                     "drawings_interest": pt["drawings_interest"],
                      "capital_interest": cap_int.get(pt["name"], 0), "accounts": equity.balances(db, pt["name"], date_to),
                      "profit_share": round(total, 2), "distributable": round(distributable, 2), "drawn": drawn,
                      "balance": round(distributable - drawn, 2)})
-    checks = {b["code"]: round(sum(shares.get((pt["id"], b["id"]), pt["default_share"] or 0) for pt in partners), 4)
+    checks = {b["code"]: round(sum(shares.get((pt["id"], b["id"]), ratio[pt["id"]]) for pt in partners), 4)
               for b in bus}
     return {"partners": rows, "units": [{"id": b["id"], "code": b["code"], "net_profit": b["net_profit"]} for b in bus],
             "company_result": company_after_alloc, "reserve_pct": reserve, "share_checks": checks,
-            "default_check": round(sum(pt["default_share"] or 0 for pt in partners), 4)}
+            "default_check": round(sum(pt["default_share"] or 0 for pt in partners), 4), "ratio_typed": typed,
+            "ratio_check": round(sum(ratio.values()), 4), "appropriations": equity.appropriations(db),
+            "legal_reserve_pct": float(db.setting("legal_reserve_pct", "0") or 0),
+            "legal_reserve_cap": float(db.setting("legal_reserve_cap", "0.5") or 0)}
 
 
 def cash_position(db):

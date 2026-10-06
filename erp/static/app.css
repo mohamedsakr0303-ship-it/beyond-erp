@@ -41,8 +41,8 @@ button,input,select,textarea{font:inherit;color:inherit}
 .g2{grid-template-columns:repeat(2,minmax(0,1fr))}.g3{grid-template-columns:repeat(3,minmax(0,1fr))}
 .g4{grid-template-columns:repeat(4,minmax(0,1fr))}.g6{grid-template-columns:repeat(6,minmax(0,1fr))}
 .span2{grid-column:span 2}.spanall{grid-column:1/-1}
-label.f{display:flex;flex-direction:column;gap:4px;font-size:.78em;color:var(--muted);font-weight:600}
-label.f.chk{flex-direction:row;align-items:center;gap:8px;font-size:.85em;justify-self:start;width:fit-content;max-width:100%}
+label.f,div.f{display:flex;flex-direction:column;gap:4px;font-size:.78em;color:var(--muted);font-weight:600}
+label.f.chk,div.f.chk{flex-direction:row;align-items:center;gap:8px;font-size:.85em;justify-self:start;width:fit-content;max-width:100%}
 input,select,textarea{background:var(--input);border:1px solid var(--line);border-radius:8px;padding:8px 10px;width:100%;min-width:0}
 input[type=checkbox]{width:auto}
 input:focus,select:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:-1px}
@@ -51,7 +51,8 @@ td.num,.kpi .v{direction:ltr;unicode-bidi:isolate}
 [dir=rtl] td.num,[dir=rtl] th.num,[dir=rtl] input.num{text-align:left}
 td:first-child b{white-space:nowrap}
 [dir=rtl] .kpi .v{text-align:right}
-.btn{border:1px solid var(--line);background:var(--panel);padding:7px 13px;border-radius:8px;cursor:pointer;font-weight:600;font-size:.88em;white-space:nowrap}
+.btn{border:1px solid var(--line);background:var(--panel);padding:7px 13px;border-radius:8px;cursor:pointer;font-weight:600;font-size:.88em;white-space:nowrap;display:inline-flex;align-items:center;justify-content:center;gap:6px;vertical-align:middle;box-sizing:border-box;line-height:1.25}
+.btn>svg.i{flex:none}
 .btn:hover{background:var(--hover)}
 .btn.pri{background:var(--brand);border-color:var(--brand);color:var(--brand-ink)}
 .btn.pri:hover{filter:brightness(1.1)}
@@ -377,7 +378,8 @@ svg.i{width:20px;height:20px;flex:none}
 .icbtn{all:unset;box-sizing:border-box;position:relative;display:inline-flex;align-items:center;justify-content:center;gap:4px;min-width:42px;height:42px;padding:0 8px;border-radius:12px;cursor:pointer;color:var(--ink);transition:background .15s}
 .icbtn:hover{background:var(--hover)}
 .btn.icbtn{border:0;background:none;padding:0 8px}
-.langbtn span{font-weight:800;font-size:.8em}
+.langbtn span{font-weight:800;font-size:.8em;line-height:1}
+.langbtn span:lang(ar){font-family:"Cairo","Noto Sans Arabic","Segoe UI",Tahoma,sans-serif;font-size:.9em}
 .menu-btn{display:inline-flex}
 .search{all:unset;box-sizing:border-box;display:flex;align-items:center;gap:10px;height:44px;min-width:280px;padding:0 12px;margin-inline-start:16px;border-radius:12px;background:var(--panel);border:1px solid var(--line);color:var(--muted);cursor:pointer;font-size:.9em;transition:border-color .15s}
 .search:hover{border-color:var(--brand)}
@@ -644,6 +646,8 @@ tr.click:hover td{background:color-mix(in srgb,var(--brand) 6%,transparent)}
 .chat{display:grid;grid-template-columns:320px minmax(0,1fr);height:calc(100vh - var(--top-h,72px) - 56px);min-height:420px;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}
 .chl{border-inline-end:1px solid var(--line);display:flex;flex-direction:column;min-height:0;background:color-mix(in srgb,var(--bg) 45%,var(--panel))}
 .chl-head{padding:12px;border-bottom:1px solid var(--line)}
+.ai .chl-head{padding:0 12px;min-height:64px;box-sizing:border-box;display:flex;align-items:center}
+.ai .chl-head>.btn{flex:1}
 .chl-head .btn{font-size:.85em}
 .chl-list{overflow:auto;flex:1;padding:6px}
 .chl-sec{font-size:.7em;text-transform:uppercase;letter-spacing:.7px;font-weight:800;color:var(--muted);padding:12px 10px 4px;display:flex;align-items:center;gap:6px}
@@ -665,7 +669,7 @@ tr.click:hover td{background:color-mix(in srgb,var(--brand) 6%,transparent)}
 .chl-n.at{background:var(--bad)}
 .chv{display:flex;flex-direction:column;min-height:0;position:relative}
 .chv.drop::after{content:"";position:absolute;inset:8px;border:2px dashed var(--brand);border-radius:16px;background:color-mix(in srgb,var(--brand) 8%,transparent);pointer-events:none}
-.ch-top{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line)}
+.ch-top{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line);min-height:64px;box-sizing:border-box}
 .ch-tt{display:flex;flex-direction:column;min-width:0;flex:1}
 .ch-tt small{color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ch-mem{display:flex}
@@ -713,6 +717,7 @@ tr.click:hover td{background:color-mix(in srgb,var(--brand) 6%,transparent)}
 .ch-comp{display:flex;align-items:flex-end;gap:6px;padding:10px 12px;border-top:1px solid var(--line)}
 .ch-inbox{flex:1;position:relative}
 .ch-inbox textarea{width:100%;resize:none;border:1px solid var(--line);border-radius:14px;padding:10px 12px;background:var(--bg);color:var(--ink);font:inherit;max-height:200px;min-height:42px;box-sizing:border-box}
+.ch-inbox textarea::placeholder{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ch-inbox textarea:focus{outline:2px solid color-mix(in srgb,var(--brand) 45%,transparent)}
 .ch-send{width:42px;height:42px;border-radius:14px;padding:0;justify-content:center;background:var(--brand);color:#fff;flex:none}
 .ch-send:hover{background:color-mix(in srgb,var(--brand) 85%,#000)}

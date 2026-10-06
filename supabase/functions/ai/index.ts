@@ -47,7 +47,14 @@ function toOpenAI(p: any) {
       if (typeof m.content === "string") { msgs.push({ role: "user", content: m.content }); continue; }
       for (const b of m.content || []) if (b?.type === "tool_result")
         msgs.push({ role: "tool", tool_call_id: b.tool_use_id, content: typeof b.content === "string" ? b.content : JSON.stringify(b.content) });
-      const t = textOf(m.content); if (t) msgs.push({ role: "user", content: t });
+      const parts: any[] = [];   // attachments: pictures as image_url, PDFs as file (the chat-completions shapes)
+      for (const b of m.content || []) {
+        const src = b?.source || {};
+        if (b?.type === "text" && b.text) parts.push({ type: "text", text: b.text });
+        else if (b?.type === "image" && src.type === "base64") parts.push({ type: "image_url", image_url: { url: `data:${src.media_type};base64,${src.data}` } });
+        else if (b?.type === "document" && src.type === "base64") parts.push({ type: "file", file: { filename: b.title || "document.pdf", file_data: `data:${src.media_type};base64,${src.data}` } });
+      }
+      if (parts.length) msgs.push({ role: "user", content: parts.every(x => x.type === "text") ? parts.map(x => x.text).join("\n") : parts });
     } else {
       const calls = (Array.isArray(m.content) ? m.content : []).filter((b: any) => b?.type === "tool_use")
         .map((b: any) => ({ id: b.id, type: "function", function: { name: b.name, arguments: JSON.stringify(b.input || {}) } }));
@@ -121,6 +128,7 @@ Deno.serve(async (req) => {
   let messages = test ? [{ role: "user", content: "Reply with the single word OK." }] : (Array.isArray(b.messages) ? b.messages : []);
   if (!messages.length || messages[0]?.role !== "user" || messages.some((m: any) => !["user", "assistant"].includes(m?.role)))
     return fail(400, "Malformed conversation");
+  messages = messages.map((m: any) => ({ role: m.role, content: m.content }));   // screen-only fields (file chips) stay behind
   const model = other ? String(s.model || "") : (MODELS.includes(s.model) ? s.model : "claude-opus-5-5");
   const write = ["off", "confirm", "auto"].includes(s.write) ? s.write : "confirm";
   const tools = test ? [] : (Array.isArray(b.tools) ? b.tools : [])

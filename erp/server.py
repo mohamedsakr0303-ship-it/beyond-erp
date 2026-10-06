@@ -81,7 +81,7 @@ COMPANY_KEYS = ("company_name", "company_tagline", "company_address", "company_t
                 "company_city", "company_phone", "company_email", "company_website", "bank_name", "bank_account",
                 "bank_holder", "bank_swift", "bank_iban", "offer_validity_days", "offer_prefix", "offer_digits", "regional",
                 "banks", "bank_default")
-PUBLIC_SETTINGS = COMPANY_KEYS + ("demo_loaded", "menu_labels", "reserve_pct", "report_from", "report_to", "lock_date", "hidden_modules",
+PUBLIC_SETTINGS = COMPANY_KEYS + ("demo_loaded", "menu_labels", "reserve_pct", "legal_reserve_pct", "legal_reserve_cap", "report_from", "report_to", "lock_date", "hidden_modules",
                                   "appearance", "po_self_approve_limit")
 JSON_SETTINGS = {"menu_labels": {}, "units": [], "hidden_modules": [], "appearance": {}, "regional": {}, "banks": []}
 
@@ -251,7 +251,7 @@ def put_settings(ctx):
         ctx.require("settings.company", "edit")
     if "appearance" in keys:
         ctx.require("settings.branding", "edit")
-    if "reserve_pct" in keys and not ctx.can("partners.equity", "edit"):
+    if keys & {"reserve_pct", "legal_reserve_pct", "legal_reserve_cap"} and not ctx.can("partners.equity", "edit"):
         ctx.require("settings.company", "edit")
     if keys & {"backup_keep", "lock_date", "po_self_approve_limit"}:
         ctx.require("settings.system", "edit")
@@ -292,7 +292,7 @@ def put_settings(ctx):
             v = acc.clean_date(v, "lock date")
         if k == "font_size":
             v = str(max(11, min(22, int(float(v or 15)))))
-        if k == "reserve_pct":
+        if k in ("reserve_pct", "legal_reserve_pct", "legal_reserve_cap"):
             v = str(max(0.0, min(1.0, acc.num(v, "reserve %"))))
         ctx.db.set_setting(k, acc.text(v, maxlen=20000))
     ctx.log("settings", ", ".join(ctx.body.keys()))
@@ -1006,6 +1006,14 @@ def partner_edit(ctx, pid):
             raise acc.ValidationError("Another partner already has this name")
         before = equity.state(ctx.db)
         rate = lambda k: min(acc.num(b.get(k), k), 100) / 100 if b.get(k) not in (None, "") else old[k]  # noqa: E731
+        if "profit_share" in b:  # blank = follow ownership
+            ps = None if b.get("profit_share") in (None, "") else min(acc.num(b.get("profit_share"), "profit share"), 100) / 100
+        else:
+            ps = old["profit_share"]
+        salary = to_minor(acc.num(b.get("salary"), "salary")) if b.get("salary") not in (None, "") else \
+            (0 if "salary" in b else old["salary"])
+        ctx.db.conn.execute("UPDATE partners SET profit_share=?, salary=?, drawings_interest=? WHERE id=?",
+                            (ps, salary, rate("drawings_interest") or 0, int(pid)))
         ctx.db.conn.execute("UPDATE partners SET name=?, default_share=?, active=?, joined=?, left_on=?, capital_interest=?, "
                             "loan_rate=?, notes=? WHERE id=?",
                             (name, min(acc.num(b.get("default_share", old["default_share"])), 1),
@@ -2979,6 +2987,15 @@ def ai_convert(ctx):
     """Browser-only edition with another provider: turn the provider's reply into the assistant's message shape."""
     from . import ai
     return ok({"message": ai.from_openai(ctx.body.get("response"))})
+
+
+@route("POST", "/api/ai/extract")
+def ai_extract(ctx):
+    """An Excel / Word / PowerPoint file attached to the assistant, as text it can read."""
+    from . import ai
+    if not ai.allowed(ai.policy(ctx.db), ctx.user):
+        raise PermissionError("The AI assistant is switched off for you")
+    return ok(ai.extract_text(ctx.body.get("name"), ctx.body.get("data")))
 
 
 @route("POST", "/api/ai/preview")

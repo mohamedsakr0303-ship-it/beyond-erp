@@ -143,6 +143,9 @@ SHEETS = [
               C("joined", "Joined", "تاريخ الانضمام", kind="date"), C("left_on", "Left", "تاريخ الخروج", kind="date"),
               C("capital_interest", "Interest on Capital %", "فائدة رأس المال", kind="pct", width=10),
               C("loan_rate", "Loan Interest %", "فائدة القرض", kind="pct", width=10),
+              C("profit_share", "Profit Share % (blank = ownership)", "نسبة الأرباح والخسائر (فارغ = الملكية)", kind="pct", width=12),
+              C("salary", "Monthly Salary", "المرتب الشهري", kind="money"),
+              C("drawings_interest", "Interest on Drawings %", "فائدة المسحوبات", kind="pct", width=10),
               C("notes", "Notes", "ملاحظات", width=24)]},
     {"name": "Partner Shares", "ar": "حصص الشركاء", "module": "partners",
      "title": "Ownership per business unit (overrides the default share)",
@@ -497,7 +500,9 @@ def export_data(db):
         out["Partners"].append({"name": p["name"], "default_share": p["default_share"],
                                 "active": "Yes" if p["active"] else "No", "joined": p["joined"] or "",
                                 "left_on": p["left_on"] or "", "capital_interest": p["capital_interest"] or "",
-                                "loan_rate": p["loan_rate"] or "", "notes": p["notes"] or ""})
+                                "loan_rate": p["loan_rate"] or "", "notes": p["notes"] or "",
+                                "profit_share": "" if p["profit_share"] is None else p["profit_share"],
+                                "salary": to_major(p["salary"]) if p["salary"] else "", "drawings_interest": p["drawings_interest"] or ""})
     for s in db.q("SELECT p.name, s.bu_id, s.share FROM partner_shares s JOIN partners p ON p.id=s.partner_id "
                   "ORDER BY p.id, s.bu_id"):
         out["Partner Shares"].append({"partner": s["name"], "bu_code": code(s["bu_id"]), "share": s["share"]})
@@ -1175,6 +1180,10 @@ def _imp_partner(db, r):
                      acc.clean_date(r["joined"]) if r.get("joined") else "",
                      acc.clean_date(r["left_on"]) if r.get("left_on") else "", _pct(r.get("capital_interest")),
                      _pct(r.get("loan_rate")), acc.text(r.get("notes"), maxlen=2000)))
+    if any(k in r for k in ("profit_share", "salary", "drawings_interest")):
+        db.conn.execute("UPDATE partners SET profit_share=?, salary=?, drawings_interest=? WHERE name=?",
+                        (None if str(r.get("profit_share") if r.get("profit_share") is not None else "").strip() == "" else _pct(r.get("profit_share")),
+                         to_minor(acc.num(r.get("salary"), "salary") if str(r.get("salary") or "").strip() else 0), _pct(r.get("drawings_interest")), acc.text(r.get("name"))))
 
 
 def _imp_share(db, r):

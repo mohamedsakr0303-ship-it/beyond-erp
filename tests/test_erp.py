@@ -582,6 +582,69 @@ class Workspace(unittest.TestCase):
         self.nodes[1][0].cloud.configure(url, "anon")
 
 
+class ProfitAppropriation(unittest.TestCase):
+    """Sharing the year's profit: legal reserve → salaries + interest on capital → interest on drawings → the rest by
+    the profit-sharing ratio, onto the partners' current accounts (capital untouched)."""
+    def setUp(self):
+        db = self.db = Database(":memory:")
+        db.x("INSERT INTO partners(name,default_share,capital_interest,salary,profit_share,drawings_interest) "
+             "VALUES ('A',0.6,0.10,200000,0.5,0),('B',0.4,0,0,0.5,0.12)")
+        a.record_partner_tx(db, {"partner": "A", "type": "Capital", "amount": 60000, "date": "2026-01-01"})
+        a.record_partner_tx(db, {"partner": "B", "type": "Capital", "amount": 40000, "date": "2026-01-01"})
+        a.post_entry(db, date="2026-06-30", kind="Journal Voucher", lines=[{"account": "1020", "debit": 100000},
+                                                                           {"account": "4010", "credit": 100000}])
+        a.post_entry(db, date="2026-06-30", kind="Journal Voucher", lines=[{"account": "6010", "debit": 20000},
+                                                                           {"account": "1020", "credit": 20000}])
+        a.record_partner_tx(db, {"partner": "B", "type": "Distribution", "amount": 10000, "date": "2026-07-01"})
+        db.set_setting("legal_reserve_pct", "0.05")
+
+    def test_year_end_sharing(self):
+        db = self.db
+        d = {"date_from": "2026-01-01", "date_to": "2026-12-31"}
+        st = equity.preview(db, "appropriate", d)["statement"]
+        self.assertEqual((st["profit"], st["reserve"], st["salaries"], st["interest_on_capital"]), (80000, 4000, 24000, 6000))
+        self.assertEqual(st["interest_on_drawings"], 604.93)          # 10,000 × 12% × 184 days / 365
+        self.assertEqual(st["residual"], 46604.93)                     # 80,000 − 4,000 − 30,000 + 604.93
+        by = {r["partner"]: r for r in st["partners"]}
+        self.assertEqual(round(by["A"]["share_of_rest"] + by["B"]["share_of_rest"], 2), 46604.93)
+        self.assertEqual(by["A"]["total"], round(24000 + 6000 + by["A"]["share_of_rest"], 2))
+        before = {n: equity.balances(db, n)["capital"] for n in "AB"}
+        equity.post(db, "appropriate", d)
+        self.assertEqual({n: equity.balances(db, n)["capital"] for n in "AB"}, before)   # capital stays as agreed
+        self.assertEqual(equity.balances(db, "A")["current"], by["A"]["current_after"])
+        self.assertEqual(equity.balances(db, "B")["current"], round(by["B"]["total"] - 10000, 2))
+        self.assertEqual(equity.balances(db, "B")["drawings"], 0)                          # drawings closed in
+        bs = a.balance_sheet(db, "2026-12-31")
+        self.assertEqual(bs["balanced"] if "balanced" in bs else True, True)
+        self.assertEqual([c["check"] for c in a.audit(db) if not c["ok"]], [])
+        with self.assertRaises(a.ValidationError):                                         # the year is shared once
+            equity.preview(db, "appropriate", d)
+        nxt = equity.preview(db, "appropriate", {"date_to": "2027-03-31", "mode": "full"})["statement"]   # next period starts after it
+        self.assertEqual(nxt["period_from"], "2027-01-01")
+
+    def test_loss_and_short_profit(self):
+        db = self.db
+        a.post_entry(db, date="2027-01-10", kind="Journal Voucher", lines=[{"account": "6010", "debit": 5000},
+                                                                           {"account": "1020", "credit": 5000}])
+        q = {"date_from": "2027-01-01", "date_to": "2027-03-31", "close_drawings": False}
+        st = equity.preview(db, "appropriate", q)["statement"]
+        self.assertEqual((st["reserve"], st["salaries"], st["interest_on_capital"]), (0, 0, 0))   # nothing out of a loss
+        self.assertEqual([r["share_of_rest"] for r in st["partners"]], [-2500, -2500])
+        full = equity.preview(db, "appropriate", {**q, "mode": "full"})["statement"]
+        self.assertEqual(full["salaries"], 6000)                      # 3 months × 2,000
+        self.assertEqual(round(sum(r["total"] for r in full["partners"]), 2), -5000)   # the shortfall is shared as a loss
+        equity.post(db, "appropriate", {**q, "mode": "full"})
+        self.assertEqual([c["check"] for c in a.audit(db) if not c["ok"]], [])
+        eid = equity.appropriations(db)[0]["id"]
+        a.void_entry(db, eid, "redo")                                 # undo = void the entry
+        self.assertEqual(equity.appropriations(db), [])
+
+    def test_ratio_must_total_100(self):
+        self.db.x("UPDATE partners SET profit_share=0.3 WHERE name='B'")
+        with self.assertRaises(a.ValidationError):
+            equity.preview(self.db, "appropriate", {"date_to": "2026-12-31"})
+
+
 class Equity(unittest.TestCase):
     def setUp(self):
         self.db = Database(":memory:")

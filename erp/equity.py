@@ -565,7 +565,8 @@ def preview(db, action, d):
     names = {str(p["id"]): p["name"] for p in db.q("SELECT id, name FROM partners")}
     names["new"] = pl["new_partner"] or ""
     out = {"kind": pl["kind"], "memo": pl["memo"], "date": pl["date"], "notes": pl["notes"],
-           "lines": [ln for ln in pl["lines"] if ln["debit"] or ln["credit"]], "ownership": None}
+           "lines": [ln for ln in pl["lines"] if ln["debit"] or ln["credit"]], "ownership": None,
+           "statement": pl["meta"].get("statement")}
     acc_names = {a["code"]: a for a in db.q("SELECT code, name, name_ar FROM accounts")}
     for ln in out["lines"]:
         ln["name"], ln["name_ar"] = acc_names[ln["account"]]["name"], acc_names[ln["account"]]["name_ar"]
@@ -650,3 +651,209 @@ def capital_interest(db, date_from, date_to):
         total = sum(_daily_interest(db, p["name"], c, start, end, p["capital_interest"]) for c in capital)
         out[p["name"]] = to_major(total)
     return out
+
+
+# ------------------------------------------------- sharing the profit (appropriation)
+APPROPRIATION = "Profit Appropriation"
+_LIVE_APPR = f"{acc.LIVE} AND e.reversed_by IS NULL AND e.reversal_of IS NULL AND e.kind='{APPROPRIATION}'"
+
+
+def profit_ratios(db, partners=None):
+    """Each active partner's profit / loss sharing ratio: the agreed ratio when one is typed for any partner,
+    otherwise their ownership. {partner id (str): ratio}."""
+    ps = partners if partners is not None else db.q("SELECT * FROM partners WHERE active=1 ORDER BY id")
+    typed = any(p["profit_share"] is not None for p in ps)
+    return {str(p["id"]): float((p["profit_share"] if typed else p["default_share"]) or 0) for p in ps}, typed
+
+
+def _months(start, end):
+    """Calendar months in start..end, a part month counted by its days (1 Jan–31 Mar = 3; 1–15 Jan = 15/31)."""
+    total, d = 0.0, start
+    while d <= end:
+        nxt = (d.replace(day=28) + _dt.timedelta(days=4)).replace(day=1)
+        last = min(end, nxt - _dt.timedelta(days=1))
+        total += ((last - d).days + 1) / (nxt - d.replace(day=1)).days
+        d = nxt
+    return total
+
+
+def _drawings_interest(db, name, account, start, end, rate):
+    """Σ drawings outstanding × rate / 365 over the days, counting only what was drawn inside the period."""
+    rows = db.q(f"""SELECT e.date, SUM(l.debit-l.credit) AS n FROM journal_lines l JOIN journal_entries e
+                    ON e.id=l.entry_id WHERE {acc.LIVE} AND e.kind<>? AND l.account=? AND {acc.PARTY}=?
+                    AND e.date>=? AND e.date<=? GROUP BY e.date""",
+                (APPROPRIATION, account, name, start.isoformat(), end.isoformat()))
+    changes = {r["date"]: r["n"] for r in rows}
+    total, bal, day = 0.0, 0, start
+    while day <= end:
+        bal += changes.get(day.isoformat(), 0)
+        total += max(bal, 0) * rate / 365
+        day += _dt.timedelta(days=1)
+    return int(round(total))
+
+
+def appropriations(db):
+    out = []
+    for e in db.q(f"SELECT e.id, e.date, e.memo, e.meta FROM journal_entries e WHERE {_LIVE_APPR} ORDER BY e.date DESC, e.id DESC"):
+        m = json.loads(e["meta"] or "{}")
+        out.append({"id": e["id"], "date": e["date"], "memo": e["memo"], "period_from": m.get("period_from"),
+                    "period_to": m.get("period_to"), "profit": m.get("profit", 0), "statement": m.get("statement")})
+    return out
+
+
+def _split(total, weights):
+    """Split an amount in minor units by weights; the last one takes the rounding."""
+    keys = list(weights)
+    tot = sum(weights.values())
+    out, left = {}, total
+    for i, k in enumerate(keys):
+        out[k] = left if i == len(keys) - 1 else (int(round(total * weights[k] / tot)) if tot else 0)
+        left -= out[k]
+    return out
+
+
+def plan_appropriate(db, d):
+    """Share a period's profit (or loss), in the professional order: legal reserve → partners' salaries and interest on
+    capital (paid only out of profit unless agreed otherwise) → interest charged on drawings added back → the rest by
+    the profit-sharing ratio. Everything lands on each partner's current account; capital stays as agreed. The
+    period's drawings are closed into the current accounts too."""
+    end = _dt.date.fromisoformat(acc.clean_date(d.get("date_to") or d.get("date")))
+    if d.get("date_from"):
+        start = _dt.date.fromisoformat(acc.clean_date(d.get("date_from")))
+    else:
+        last = max((a["period_to"] for a in appropriations(db) if a["period_to"]), default=None)
+        if last:
+            start = _dt.date.fromisoformat(last) + _dt.timedelta(days=1)
+        else:
+            first = db.one(f"SELECT MIN(e.date) AS d FROM journal_entries e WHERE {acc.LIVE}")["d"]
+            start = _dt.date.fromisoformat(first) if first else end
+    if start > end:
+        raise ValidationError("The period starts after it ends")
+    for a in appropriations(db):
+        if a["period_from"] and a["period_from"] <= end.isoformat() and a["period_to"] >= start.isoformat():
+            raise ValidationError(f"Profit for {a['period_from']} to {a['period_to']} is already shared (entry #{a['id']}) — "
+                                  "choose a period after it, or void that entry first")
+    sf, st_ = start.isoformat(), end.isoformat()
+    ps = db.q("SELECT * FROM partners WHERE active=1 ORDER BY id")
+    if not ps:
+        raise ValidationError("Add the partners first")
+    ratio, typed = profit_ratios(db, ps)
+    if abs(sum(ratio.values()) - 1) > 0.0001:
+        raise ValidationError(f"The {'profit-sharing ratios' if typed else 'partners’ shares'} add up to "
+                              f"{sum(ratio.values()) * 100:.2f}% — they must add up to 100%")
+    names = {str(p["id"]): p["name"] for p in ps}
+    notes = []
+    if typed and any(r <= EPS for r in ratio.values()):
+        notes.append("A partner has a 0% profit share. Under Egyptian Civil Code article 515 a clause that keeps a partner out "
+                     "of the profits or the losses is void — check the partnership agreement.")
+    left = [p["name"] for p in db.q("SELECT name, left_on FROM partners WHERE active=0 AND left_on>=? AND left_on<=?", (sf, st_))]
+    if left:
+        notes.append(f"{', '.join(left)} left during this period — their share up to the exit date is not included here; "
+                     "share the profit up to the exit date before recording an exit.")
+    # 1 · the period's result, and who it belongs to (business units can have their own owners)
+    profit = to_minor(acc.income_statement(db, sf, st_)["net_profit"])
+    base = {k: 0 for k in ratio}
+    over = {}
+    for r in db.q("SELECT * FROM partner_shares"):
+        over.setdefault(r["bu_id"], {})[str(r["partner_id"])] = r["share"]
+    in_units = 0
+    for b in acc.bu_summaries(db, sf, st_):
+        bp = to_minor(b["net_profit"])
+        if not bp:
+            continue
+        vec = {k: over.get(b["id"], {}).get(k, ratio[k]) for k in ratio}
+        if abs(sum(vec.values()) - 1) > 0.0001:
+            raise ValidationError(f"The partners' shares in business unit {b['code']} add up to "
+                                  f"{sum(vec.values()) * 100:.2f}% — they must add up to 100%")
+        for k, v in _split(bp, vec).items():
+            base[k] += v
+        in_units += bp
+    for k, v in _split(profit - in_units, ratio).items():
+        base[k] += v
+    # 2 · legal reserve, out of a profit only, until it reaches the cap
+    pct = _pct(d["reserve_pct"], "legal reserve %") if d.get("reserve_pct") not in (None, "") else \
+        float(db.setting("legal_reserve_pct", "0") or 0)
+    cap = float(db.setting("legal_reserve_cap", "0.5") or 0)
+    reserve, reserve_note = 0, ""
+    if profit > 0 and pct > 0:
+        reserve = int(round(profit * pct))
+        if cap > 0:
+            have = db.one(f"SELECT COALESCE(SUM(l.credit-l.debit),0) AS n FROM journal_lines l JOIN journal_entries e "
+                       f"ON e.id=l.entry_id WHERE {acc.LIVE} AND e.date<=? AND l.account=?", (st_, _role(db, "legal_reserve")))["n"]
+            room = max(int(round(to_minor(total_capital(db, st_)) * cap)) - have, 0)
+            if reserve > room:
+                reserve, reserve_note = room, f"limited — the reserve reaches {cap * 100:g}% of capital"
+    # 3 · per partner: salary, interest on capital, interest on drawings, drawings to close
+    draw_acc = _role(db, "drawings")
+    capital = [a["code"] for a in db.q("SELECT code FROM accounts WHERE subtype='capital'")]
+    months = _months(start, end)
+    rows = {}
+    for p in ps:
+        k, pstart = str(p["id"]), start
+        if p["joined"] and p["joined"] > sf:
+            pstart = _dt.date.fromisoformat(p["joined"])
+        sal = int(round((p["salary"] or 0) * _months(pstart, end))) if pstart <= end else 0
+        ioc = sum(_daily_interest(db, p["name"], c, pstart, end, p["capital_interest"]) for c in capital) \
+            if p["capital_interest"] else 0
+        iod = _drawings_interest(db, p["name"], draw_acc, start, end, p["drawings_interest"]) if p["drawings_interest"] else 0
+        drawn = to_minor(balances(db, p["name"], st_)["drawings"])
+        rows[k] = {"partner": p["name"], "ratio": ratio[k], "salary": sal, "ioc": ioc, "iod": iod, "drawings": max(drawn, 0)}
+    asked = sum(r["salary"] + r["ioc"] for r in rows.values())
+    iod_total = sum(r["iod"] for r in rows.values())
+    avail = profit - reserve + iod_total
+    mode = d.get("mode") or "limit"
+    if mode not in ("limit", "full"):
+        raise ValidationError("Unknown option for salaries and interest when profit is short")
+    factor = 1.0 if mode == "full" or not asked else max(0.0, min(1.0, avail / asked))
+    if asked and factor < 1:
+        notes.append("Profit is not enough for the agreed salaries and interest on capital — they are "
+                     + ("not paid this period (there is no profit)." if factor == 0 else f"cut to {factor * 100:.1f}% of the agreed amounts.")
+                     + " Choose “pay them in full” if your agreement says they are due whatever the result; "
+                       "the shortfall is then shared as a loss.")
+    if factor < 1:
+        for r in rows.values():
+            r["salary"], r["ioc"] = int(round(r["salary"] * factor)), int(round(r["ioc"] * factor))
+    paid = sum(r["salary"] + r["ioc"] for r in rows.values())
+    residual = profit - reserve + iod_total - paid
+    # the result of each unit goes to its owners; the company-wide items are borne by the sharing ratio
+    charges = _split(reserve + paid - iod_total, ratio)
+    for k, r in rows.items():
+        r["residual"] = base[k] - charges[k]
+    if not (profit or any(r["salary"] or r["ioc"] or r["iod"] or r["drawings"] for r in rows.values())):
+        raise ValidationError("Nothing to share for this period — no profit or loss, salaries, interest or drawings")
+    # 4 · the entry
+    M = to_major
+    cur, appr = _role(db, "partner_current"), _role(db, "appropriation")
+    lines = [_L(appr, "", M(profit)) if profit > 0 else _L(appr, "", credit=M(-profit))]
+    if reserve:
+        lines.append(_L(_role(db, "legal_reserve"), "", credit=M(reserve)))
+    close = d.get("close_drawings", True) not in (False, 0, "0", "false", "off")
+    for r in rows.values():
+        n = r["partner"]
+        lines += [_L(cur, n, credit=M(r["salary"])), _L(cur, n, credit=M(r["ioc"])), _L(cur, n, M(r["iod"])),
+                  _L(cur, n, credit=M(r["residual"])) if r["residual"] >= 0 else _L(cur, n, M(-r["residual"]))]
+        if close and r["drawings"]:
+            lines += [_L(cur, n, M(r["drawings"])), _L(draw_acc, n, credit=M(r["drawings"]))]
+    opening = {r["partner"]: balances(db, r["partner"], st_)["current"] for r in rows.values()}
+    statement = {
+        "period_from": sf, "period_to": st_, "months": round(months, 4), "profit": M(profit),
+        "reserve": M(reserve), "reserve_pct": pct, "reserve_note": reserve_note, "interest_on_drawings": M(iod_total),
+        "salaries": M(sum(r["salary"] for r in rows.values())), "interest_on_capital": M(sum(r["ioc"] for r in rows.values())),
+        "residual": M(residual), "ratio_basis": "agreed profit-sharing ratio" if typed else "ownership", "mode": mode,
+        "factor": round(factor, 6), "drawings_closed": close,
+        "partners": [{"partner": r["partner"], "ratio": r["ratio"], "salary": M(r["salary"]), "interest_on_capital": M(r["ioc"]),
+                      "interest_on_drawings": M(r["iod"]), "share_of_rest": M(r["residual"]),
+                      "total": M(r["salary"] + r["ioc"] - r["iod"] + r["residual"]),
+                      "drawings": M(r["drawings"]) if close else 0, "current_before": opening[r["partner"]],
+                      "current_after": round(opening[r["partner"]] + M(r["salary"] + r["ioc"] - r["iod"] + r["residual"])
+                                             - (M(r["drawings"]) if close else 0), 2)}
+                     for r in rows.values()]}
+    if over:
+        notes.append("Business units with their own partner shares: each unit's result goes to its owners; the reserve, "
+                     "salaries and interest are borne by the sharing ratio.")
+    memo = text(d.get("memo")) or f"Profit shared {sf} to {st_}"
+    return _plan(APPROPRIATION, memo, "", lines, st_, {"period_from": sf, "period_to": st_, "profit": M(profit),
+                                                        "statement": statement}, notes=notes)
+
+
+PLANS["appropriate"] = plan_appropriate

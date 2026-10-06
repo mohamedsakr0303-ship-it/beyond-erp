@@ -409,7 +409,7 @@ function renderShell() {
       <span id="syncdot" class="chip" style="display:none"></span>
       <div class="dd bell"><button class="btn icbtn" aria-label="${esc(L2("Alerts", "التنبيهات"))}">${svg("bell")}<b class="badge" id="bellc" hidden></b></button><div class="dd-menu" id="bellmenu"><div class="muted" style="padding:10px">${t("loading")}</div></div></div>
       <button class="icbtn themebtn" data-a="theme" title="${esc(themeTitle())}" aria-label="${esc(themeTitle())}">${svg(dark ? "sun" : "moon")}</button>
-      <button class="icbtn langbtn" data-a="lang" title="${esc(L2("Language — switch to العربية", "اللغة — التبديل إلى English"))}">${svg("globe")}<span>${ar ? "EN" : "ع"}</span></button>
+      <button class="icbtn langbtn" data-a="lang" title="${esc(L2("Language — switch to العربية", "اللغة — التبديل إلى English"))}">${svg("globe")}${ar ? "<span>EN</span>" : `<span lang="ar">عربي</span>`}</button>
       <div class="dd newdd"><button class="btn pri newbtn" aria-label="${esc(t("new"))}">${svg("plus")}<span class="lbl">${t("new")}</span></button><div class="dd-menu" id="newmenu"></div></div>
     </header><div id="billbar"></div><main class="content" id="view"></main></div>
     <nav class="bottombar">
@@ -2050,6 +2050,7 @@ PAGES.data = async (view) => {
       <p class="muted" style="font-size:.85em">${S.lang === "ar" ? "المصنف الكامل هو نفسه قالب الاستيراد: نفس أسماء الأوراق والأعمدة، مع قوائم مالية وتسعير سريع وحاسبة سقالات تُحسب تلقائياً داخل Excel." : "The full workbook is also the import template: same sheet and column names, with statements, a quick estimator and a scaffold calculator that calculate inside Excel."}</p></div>
     <div class="card"><h2>${t("imp_title")}</h2>${ed ? `<div class="grid">
       <div class="f">${t("file")}<input type="file" id="impf" accept=".xlsx,.json,.csv"></div>
+      <label class="f spanall">${L2("…or a Google Sheets link", "…أو رابط Google Sheets")}<input id="impurl" type="url" placeholder="https://docs.google.com/spreadsheets/d/…" dir="ltr"></label>
       <label class="f">${t("format")}<select id="impfmt"><option value="xlsx">Excel (.xlsx)</option><option value="json">JSON</option><option value="csv">CSV</option></select></label>
       <label class="f" id="impsheetl" style="display:none">CSV → <select id="impsheet">${sheets.map(s => `<option value="${esc(s.name)}">${esc(s.name)}</option>`).join("")}</select></label>
       <label class="f">${t("mode")}<select id="impmode"><option value="append">${t("append")}</option>${S.boot.user.is_super ? `<option value="replace">${t("replace")}</option>` : ""}</select></label>
@@ -2084,7 +2085,12 @@ PAGES.data = async (view) => {
       if (["json", "csv"].includes(ext)) fmtSel.value = ext; else fmtSel.value = "xlsx"; fmtSel.dispatchEvent(new Event("change")); });
   }
   S.H.imp = async () => {
-    const file = $("#impf").files[0]; const out = $("#impres");
+    const out = $("#impres"), link = ($("#impurl") || {}).value?.trim();
+    let file = $("#impf").files[0];
+    if (link) {
+      out.innerHTML = `<div class="muted">${L2("Downloading the sheet…", "جارٍ تنزيل الملف…")}</div>`;
+      try { file = await fetchGoogleSheet(link); fmtSel.value = "xlsx"; } catch (e) { out.innerHTML = `<div class="banner err">${esc(e.message)}</div>`; return; }
+    }
     if (!file) { toast(t("file") + "?", true); return; }
     if ($("#impmode").value === "replace" && !$("#impdry").checked && !confirm(S.lang === "ar" ? "سيتم استبدال كل البيانات (مع نسخة احتياطية تلقائية). متابعة؟" : "This replaces ALL data (an automatic backup is taken first). Continue?")) return;
     out.innerHTML = `<div class="muted">${t("loading")}</div>`;
@@ -2100,6 +2106,18 @@ PAGES.data = async (view) => {
     }
   };
 };
+
+// A Google Sheets link → the workbook as .xlsx (Google allows this download from any page when the sheet is shared
+// "Anyone with the link"); the import then runs exactly as for an uploaded file.
+async function fetchGoogleSheet(link) {
+  const m = /docs\.google\.com\/spreadsheets\/d\/([A-Za-z0-9_-]{20,})/.exec(link);
+  if (!m) throw new Error(L2("That is not a Google Sheets link (it should look like docs.google.com/spreadsheets/d/…)", "هذا ليس رابط Google Sheets (يجب أن يكون docs.google.com/spreadsheets/d/…)"));
+  let r;
+  try { r = await fetch(`https://docs.google.com/spreadsheets/d/${m[1]}/export?format=xlsx`, { credentials: "omit" }); } catch { r = null; }
+  const type = r && (r.headers.get("content-type") || "");
+  if (!r || !r.ok || !type.includes("spreadsheetml")) throw new Error(L2("Google did not hand over the sheet. In Google Sheets press Share → General access → “Anyone with the link” (Viewer), then try again — or use File → Download → Microsoft Excel and upload that file.", "لم يسمح Google بتنزيل الملف. في Google Sheets اضغط مشاركة ← الوصول العام ← «أي شخص لديه الرابط» (عارض) ثم أعد المحاولة — أو استخدم ملف ← تنزيل ← Microsoft Excel وارفع الملف."));
+  return new File([await r.arrayBuffer()], "google-sheet.xlsx");
+}
 
 // ------------------------------------------------------ parties & taxes
 // one form for every party: customers (tax & e-invoice details) and contacts (suppliers, subcontractors, drivers…)
@@ -2765,7 +2783,27 @@ function planHtml(p) {
     ${p.ownership.map(o => `<tr><td>${esc(o.partner)}</td><td class="num">${pct(o.before)}</td><td class="num ${o.after > o.before + 1e-9 ? "pos" : o.after < o.before - 1e-9 ? "neg" : ""}"><b>${pct(o.after)}</b></td></tr>`).join("")}
     <tr class="total"><td>${t("total")}</td><td class="num">${pct(p.ownership.reduce((a, o) => a + o.before, 0))}</td><td class="num">${pct(p.ownership.reduce((a, o) => a + o.after, 0))}</td></tr></tbody></table></div>` : "";
   const notes = (p.notes || []).map(n => `<div class="banner info" style="margin-top:8px">${esc(n)}</div>`).join("");
-  return `<h4 style="margin:4px 0 6px">${L2("What will be booked", "ما سيتم تسجيله")}</h4>${lines}${own}${notes}`;
+  return (p.statement ? appropriationHtml(p.statement) : "") + `<h4 style="margin:4px 0 6px">${L2("What will be booked", "ما سيتم تسجيله")}</h4>${lines}${own}${notes}`;
+}
+// the profit and loss appropriation statement: how the period's result is shared, then each partner's current account
+function appropriationHtml(st) {
+  const has = k => st.partners.some(r => r[k]);   // columns that are all zero are left out
+  const col = (k, h) => has(k) ? `<th class="num">${h}</th>` : "", cell = (r, k, v) => has(k) ? `<td class="num">${v}</td>` : "";
+  const row = (l, v, cls = "") => `<tr class="${cls}"><td>${l}</td><td class="num">${money(v)}</td></tr>`;
+  const basis = st.ratio_basis === "ownership" ? L2("by ownership", "حسب نسب الملكية") : L2("by the agreed profit-sharing ratio", "حسب نسبة توزيع الأرباح المتفق عليها");
+  return `<h4 style="margin:4px 0 6px">${L2("Profit appropriation", "توزيع الأرباح")} · ${fd(st.period_from)} → ${fd(st.period_to)}</h4>
+    <div class="tbl"><table><tbody>
+      ${row(`<b>${st.profit < 0 ? L2("Net loss for the period", "صافي خسارة الفترة") : L2("Net profit for the period", "صافي ربح الفترة")}</b>`, st.profit, "total")}
+      ${st.reserve ? row(`${L2("Less: legal reserve", "يُخصم: الاحتياطي القانوني")} ${pct(st.reserve_pct)}${st.reserve_note ? ` <small class="muted">(${esc(st.reserve_note)})</small>` : ""}`, -st.reserve) : ""}
+      ${st.interest_on_drawings ? row(L2("Add: interest charged on drawings", "يُضاف: فوائد على المسحوبات"), st.interest_on_drawings) : ""}
+      ${st.salaries ? row(L2("Less: partners' salaries", "يُخصم: مرتبات الشركاء"), -st.salaries) : ""}
+      ${st.interest_on_capital ? row(L2("Less: interest on capital", "يُخصم: فوائد رأس المال"), -st.interest_on_capital) : ""}
+      ${row(`<b>${L2("Shared", "يوزع")} ${basis}</b>`, st.residual, "total")}</tbody></table></div>
+    <div class="tbl" style="margin-top:8px"><table><thead><tr><th>${t("partner")}</th><th class="num">${L2("Share", "النسبة")}</th>${col("salary", L2("Salary", "المرتب"))}${col("interest_on_capital", L2("Interest on capital", "فائدة رأس المال"))}
+      ${col("interest_on_drawings", L2("Interest on drawings", "فائدة المسحوبات"))}<th class="num">${L2("Share of the rest", "نصيبه من الباقي")}</th><th class="num">${t("total")}</th>${st.drawings_closed ? `<th class="num">${L2("Drawings closed", "المسحوبات المقفلة")}</th>` : ""}<th class="num">${L2("Current account after", "الجاري بعد")}</th></tr></thead><tbody>
+      ${st.partners.map(r => `<tr><td style="white-space:nowrap"><bdi>${esc(r.partner)}</bdi></td><td class="num">${pct(r.ratio)}</td>${cell(r, "salary", money(r.salary))}${cell(r, "interest_on_capital", money(r.interest_on_capital))}${cell(r, "interest_on_drawings", money(-r.interest_on_drawings))}
+        <td class="num ${r.share_of_rest < 0 ? "neg" : ""}">${money(r.share_of_rest)}</td><td class="num"><b>${money(r.total)}</b></td>${st.drawings_closed ? `<td class="num">${money(-r.drawings)}</td>` : ""}<td class="num">${money(r.current_before)} → <b>${money(r.current_after)}</b></td></tr>`).join("")}</tbody></table></div>
+    <p class="muted" style="font-size:.85em">${L2("Capital stays as agreed. Each partner's share goes to their current account, which drawings and distributions are paid from.", "رأس المال يبقى كما هو متفق عليه. نصيب كل شريك يُضاف إلى حسابه الجاري الذي تُصرف منه المسحوبات والتوزيعات.")}</p>`;
 }
 
 // ============================================================ partners' equity
@@ -2830,6 +2868,18 @@ const EQ = {
       { k: "memo", l: t("memo"), span: "spanall" }],
     sync: v => ["date", "amount", "pay_now", "memo", ...(v.pay_now ? ["method"] : [])], blocks: () => ["eqamt"],
     body: (v, f) => ({ ...v, amounts: collectBlock(f, "eqamt") }) },
+  appropriate: { title: ["Share the profit (close the period)", "توزيع أرباح الفترة (إقفال)"], mod: "partners.transactions",
+    fields: d => [
+      { k: "date_from", l: t("from"), type: "date", help: L2("Blank = the day after the last period shared.", "فارغ = اليوم التالي لآخر فترة وُزعت.") },
+      { k: "date_to", l: t("to"), type: "date", v: today(), req: 1 },
+      { k: "reserve_pct", l: L2("Legal reserve % of the profit", "الاحتياطي القانوني % من الربح"), type: "number", v: pctIn(d.legal_reserve_pct) || 0,
+        help: L2(`Stops once the reserve reaches ${pct(d.legal_reserve_cap || 0.5)} of capital. Set the default under “Legal reserve” on this screen.`, `يتوقف عند بلوغ الاحتياطي ${pct(d.legal_reserve_cap || 0.5)} من رأس المال. اضبط القيمة الافتراضية من «الاحتياطي القانوني» في هذه الشاشة.`) },
+      { k: "mode", l: L2("If the profit is less than the salaries and interest on capital", "إذا كان الربح أقل من المرتبات وفوائد رأس المال"), type: "select", span: "spanall", opts: [
+        ["limit", L2("Pay them only out of profit (cut in proportion; none on a loss) — usual", "تُصرف من الربح فقط (تُخفض بالتناسب؛ لا شيء عند الخسارة) — المعتاد")],
+        ["full", L2("Pay them in full — the shortfall is shared as a loss", "تُصرف كاملة — ويوزع العجز كخسارة")]] },
+      { k: "close_drawings", l: L2("Close the period's drawings into the current accounts", "إقفال مسحوبات الفترة في الحسابات الجارية"), type: "checkbox", v: true, span: "spanall" },
+      { k: "memo", l: t("memo"), span: "spanall" }],
+    body: v => ({ ...v, close_drawings: !!v.close_drawings }) },
   transfer: { title: ["Transfer / sell a share", "تنازل / بيع حصة"], mod: "partners.ownership",
     fields: (d, pre) => [
       { k: "date", l: t("date"), type: "date", v: today(), req: 1 },
@@ -2926,6 +2976,12 @@ PAGES.partners = async (view, parts, q) => {
     { k: "capital_interest", l: L2("Interest on capital % a year", "فائدة رأس المال % سنوياً"), type: "number", v: pctIn(p.capital_interest_rate ?? p.capital_interest) || "",
       help: L2("Agreed return on their capital, taken from profit before the rest is shared (not an expense).", "عائد متفق عليه على رأس المال يُخصم من الربح قبل توزيع الباقي (ليس مصروفاً).") },
     { k: "loan_rate", l: L2("Interest on their loans % a year", "فائدة قروضه % سنوياً"), type: "number", v: pctIn(p.loan_rate) || "" },
+    { k: "profit_share", l: L2("Profit / loss share % (blank = same as ownership)", "نسبة الأرباح والخسائر % (فارغ = مثل الملكية)"), type: "number", v: p.profit_share_typed != null ? pctIn(p.profit_share_typed) : "",
+      help: L2("Only when the partnership agreement shares profit differently from ownership. Once typed for one partner, type it for all.", "فقط إذا نص العقد على توزيع الأرباح بنسبة تختلف عن الملكية. إذا أُدخلت لشريك فأدخلها للجميع.") },
+    { k: "salary", l: L2("Partner's salary per month", "مرتب الشريك شهرياً"), type: "number", v: p.salary || "",
+      help: L2("For the partner who manages the work — paid out of profit when it is shared (not an expense).", "للشريك المدير — يُصرف من الربح عند توزيعه (ليس مصروفاً).") },
+    { k: "drawings_interest", l: L2("Interest on drawings % a year", "فائدة المسحوبات % سنوياً"), type: "number", v: pctIn(p.drawings_interest) || "",
+      help: L2("Only if the agreement charges partners for taking money early.", "فقط إذا نص العقد على فائدة على المسحوبات.") },
     { k: "notes", l: t("notes"), type: "textarea", v: p.notes, span: "spanall" },
     { html: `<h4>${t("ownership")}</h4>`, span: "spanall" }, ...d.units.map(u => ({ k: "s_" + u.id, l: u.code + " %", type: "number", v: p.id ? pctIn(shareOf(p.id, u.id, p.default_share)) : "" }))]),
   async v => { const body = { ...v, default_share: (+v.default_share || 0) / 100, shares: {} };
@@ -2941,11 +2997,14 @@ PAGES.partners = async (view, parts, q) => {
   S.H.eqreplace = () => equityForm("transfer", { all: true });
   S.H.equndo = async el => { if (!confirm(L2("Undo this ownership change? The shares go back to what they were before.", "التراجع عن تغيير الملكية هذا؟ تعود النسب كما كانت."))) return;
     try { await api("DELETE", "/api/equity/history/" + el.dataset.id); await refreshBoot(); toast(t("saved")); route(); } catch (e) { fail(e); } };
+  S.H.lrsave = async () => { try { await api("PUT", "/api/settings", { legal_reserve_pct: (+$("#lrpct").value || 0) / 100, legal_reserve_cap: (+$("#lrcap").value || 0) / 100 }); await refreshBoot(); toast(t("saved")); route(); } catch (e) { fail(e); } };
+  S.H.apprview = el => { const a = d.appropriations.find(x => String(x.id) === el.dataset.id); if (a && a.statement) drawer(L2("Profit appropriation", "توزيع الأرباح"), appropriationHtml(a.statement), null, { readOnly: true }); };
   S.H.rsave = async () => { try { await api("PUT", "/api/settings", { reserve_pct: (+$("#rpct").value || 0) / 100 }); await refreshBoot(); route(); } catch (e) { fail(e); } };
   const act = (a, l) => `<button data-a="eqa" data-act="${a}">${esc(l)}</button>`;
   const txMenu = tx ? `<div class="dd"><button class="btn pri">+ ${L2("Partner transaction", "حركة شريك")} ▾</button><div class="dd-menu">
       ${act("contribute", L2("Capital contribution", "زيادة رأس المال"))}${act("withdraw", L2("Capital withdrawal", "تخفيض رأس المال"))}
       <button data-a="eqdraw">${L2("Drawing (on account of profit)", "مسحوبات (تحت حساب الأرباح)")}</button>${act("distribute", L2("Profit distribution", "توزيع أرباح"))}
+      ${act("appropriate", L2("Share the profit (close the period)", "توزيع أرباح الفترة (إقفال)"))}
       ${act("loan", L2("Loan from a partner", "قرض من شريك"))}${act("interest", L2("Interest on a partner's loan", "فوائد قرض شريك"))}${act("repay", L2("Repay a loan / interest", "سداد قرض / فوائد"))}</div></div>` : "";
   const ownMenu = own ? `<div class="dd"><button class="btn">${L2("Ownership", "الملكية")} ▾</button><div class="dd-menu">
       ${act("transfer", L2("Transfer / sell a share", "تنازل / بيع حصة"))}<button data-a="eqreplace">${L2("Replace a partner (whole share)", "استبدال شريك (كامل الحصة)")}</button>
@@ -2965,12 +3024,21 @@ PAGES.partners = async (view, parts, q) => {
       <p class="muted" style="font-size:.85em;margin:8px 0 0">${L2("Capital = what each partner invested (changes only with contributions, withdrawals, transfers, admissions and exits). Loans are debts the company owes them. Drawings are taken on account of profit.", "رأس المال = ما استثمره كل شريك (يتغير فقط بالزيادة أو التخفيض أو التنازل أو الدخول أو الخروج). القروض ديون على الشركة. المسحوبات تحت حساب الأرباح.")}</p></div>
     <div class="card"><h2>${t("reserve_pct")}</h2><div class="row"><input id="rpct" type="number" step="1" min="0" max="100" value="${+(d.reserve_pct * 100).toFixed(2)}" style="max-width:120px" ${ed ? "" : "disabled"}>
       ${ed ? `<button class="btn" data-a="rsave">${t("save")}</button>` : ""}<span class="muted">${t("company_result")}: ${money(d.company_result)}</span></div>
+      <h4 style="margin:14px 0 6px">${L2("Legal reserve (set aside when profit is shared)", "الاحتياطي القانوني (يُجنب عند توزيع الأرباح)")}</h4>
+      <div class="row" style="gap:8px;flex-wrap:wrap"><label class="f" style="max-width:180px">${L2("% of each profit", "% من كل ربح")}<input id="lrpct" type="number" step="any" min="0" max="100" value="${+(d.legal_reserve_pct * 100).toFixed(2)}" ${ed ? "" : "disabled"}></label>
+        <label class="f" style="max-width:200px">${L2("Until it reaches % of capital", "حتى يبلغ % من رأس المال")}<input id="lrcap" type="number" step="any" min="0" max="100" value="${+(d.legal_reserve_cap * 100).toFixed(2)}" ${ed ? "" : "disabled"}></label>
+        ${ed ? `<button class="btn" data-a="lrsave" style="align-self:flex-end">${t("save")}</button>` : ""}</div>
+      <p class="muted" style="font-size:.85em;margin:6px 0 0">${L2("Egyptian joint-stock companies set aside at least 5% of net profit until the reserve equals half of the capital (Companies Law 159/1981); check with your auditor what applies to your company type. 0 = none.", "شركات المساهمة المصرية تجنب 5% على الأقل من صافي الربح حتى يبلغ الاحتياطي نصف رأس المال (قانون الشركات 159 لسنة 1981)؛ راجع المراجع لمعرفة ما ينطبق على نوع شركتك. 0 = لا يوجد.")}</p>
       <div class="banner ${cp.gap > 0 ? "err" : "ok"}" style="margin-top:10px">${t("cash_floor")}: ${money(cp.floor)} · ${t("cash")}: ${money(cp.cash)}${cp.gap > 0 ? ` — ${L2("nothing is safely distributable until this gap closes", "لا يوجد ما يمكن توزيعه بأمان حتى تُسد الفجوة")} (${money(cp.gap)})` : " ✓"}</div></div>
     <div class="card"><h2>${L2("Profit shares", "حصص الأرباح")}</h2><div class="tbl"><table><thead><tr><th>${t("partner")}</th>${d.units.map(u => `<th class="num">${esc(u.code)}</th>`).join("")}${anyInt ? `<th class="num">${L2("Interest on capital", "فائدة رأس المال")}</th>` : ""}<th class="num">${t("profit_share")}</th><th class="num">${t("distributable")}</th><th class="num">${t("drawn")}</th><th class="num">${t("balance")}</th></tr></thead><tbody>
       ${d.partners.filter(p => p.active || p.profit_share || p.drawn).map(p => `<tr class="click" data-a="${ed ? "pedit" : ""}" data-id="${p.id}"><td>${esc(p.name)}<div class="lines">${t("default")} ${pct(p.default_share)}</div></td>${d.units.map(u => `<td class="num">${pct(p.units[u.code].share)}<div class="lines">${money(p.units[u.code].profit)}</div></td>`).join("")}
         ${anyInt ? `<td class="num">${money(p.capital_interest)}</td>` : ""}<td class="num">${money(p.profit_share)}</td><td class="num">${money(p.distributable)}</td><td class="num">${money(p.drawn)}</td><td class="num ${p.balance < 0 ? "neg" : "pos"}"><b>${money(p.balance)}</b></td></tr>`).join("")}
       <tr class="total"><td>${t("total")}</td>${d.units.map(u => `<td class="num ${Math.abs(d.share_checks[u.code] - 1) < 0.001 ? "pos" : "neg"}">${pct(d.share_checks[u.code])}</td>`).join("")}${anyInt ? `<td class="num">${money(d.partners.reduce((s, p) => s + p.capital_interest, 0))}</td>` : ""}<td class="num">${money(d.partners.reduce((s, p) => s + p.profit_share, 0))}</td><td class="num">${money(d.partners.reduce((s, p) => s + p.distributable, 0))}</td><td class="num">${money(d.partners.reduce((s, p) => s + p.drawn, 0))}</td><td class="num">${money(d.partners.reduce((s, p) => s + p.balance, 0))}</td></tr>
       </tbody></table></div></div>
+    ${d.appropriations.length ? `<div class="card"><h2>${L2("Profit shared", "الأرباح الموزعة")}</h2><div class="tbl"><table><thead><tr><th>${L2("Period", "الفترة")}</th><th class="num">${L2("Result", "النتيجة")}</th><th class="num">${L2("Reserve", "الاحتياطي")}</th><th class="num">${L2("To partners", "للشركاء")}</th><th></th></tr></thead><tbody>
+      ${d.appropriations.map(a => `<tr><td>${fd(a.period_from)} → ${fd(a.period_to)}</td><td class="num">${money(a.profit)}</td><td class="num">${money((a.statement || {}).reserve || 0)}</td>
+        <td class="num">${money(((a.statement || {}).partners || []).reduce((x, r) => x + r.total, 0))}</td><td><button class="btn sm" data-a="apprview" data-id="${a.id}">${L2("Statement", "القائمة")}</button> <a href="#" class="btn sm" data-a="openv" data-id="${a.id}">#${a.id}</a></td></tr>`).join("")}</tbody></table></div>
+      <p class="muted" style="font-size:.85em">${L2("To redo a period, void its entry and share it again.", "لإعادة توزيع فترة، ألغِ قيدها ثم وزعها من جديد.")}</p></div>` : ""}
     ${hist.rows.length ? `<div class="card"><h2>${L2("Ownership history", "سجل الملكية")}</h2><div class="tbl"><table><thead><tr><th>${t("date")}</th><th>${t("kind")}</th><th>${t("description")}</th><th>${L2("Shares", "النسب")}</th><th></th></tr></thead><tbody>
       ${hist.rows.map(h => `<tr><td>${fd(h.date)}</td><td><span class="chip">${esc(tl(h.kind))}</span></td><td>${esc(h.memo)}${h.entry_id ? ` · <a href="#" data-a="openv" data-id="${h.entry_id}">#${h.entry_id}</a>` : ""}${h.created_by ? `<div class="lines">${esc(h.created_by)}</div>` : ""}</td>
         <td>${h.moves.map(m => `<bdi>${esc(m.partner)}</bdi> <span dir="ltr">${pct(m.before)} → <b>${pct(m.after)}</b></span>`).join("<br>")}</td>
@@ -6381,13 +6449,28 @@ PAGES.assistant = async (view, parts) => {
       <div class="chl-list">${threads.map(th => `<a class="chl-item ${th.id === tid ? "on" : ""}" href="#/assistant/${th.id}"><span class="chl-ic">${svg("spark")}</span><span class="chl-t"><b>${esc(th.title)}</b><small>${esc(fmtTime(th.updated_at))}</small></span><button class="lnk" data-a="aidel" data-id="${th.id}" title="${esc(L2("Delete", "حذف"))}">×</button></a>`).join("") || `<div class="muted chl-note">${esc(L2("Your conversations stay on this device.", "محادثاتك تبقى على هذا الجهاز."))}</div>`}</div></aside>
     <section class="chv"><div class="ch-top"><a class="icbtn ch-back" href="#/assistant">${BACK_ICON}</a>${aiAvatar(40)}<div class="ch-tt"><b>${esc(name)}</b><small>${esc(L2("Works with your own access only", "يعمل بصلاحياتك أنت فقط"))} · ${esc(S.ai.policy.write === "off" ? L2("read-only", "قراءة فقط") : L2("every change is checked, then you review it", "كل تعديل يُفحص ثم تراجعه أنت"))}</small></div></div>
       <div class="ch-list ai-list" id="ailist"></div>
-      <div class="ch-comp"><div class="ch-inbox"><textarea id="aitext" rows="1" placeholder="${esc(L2("Ask about your books, or ask for a change… e.g. “Which clients owe us the most?”", "اسأل عن دفاترك أو اطلب تعديلاً… مثال: «من أكثر العملاء مديونية لنا؟»"))}"></textarea></div>
+      <div class="ch-pending" id="aipend"></div>
+      <div class="ch-comp"><div class="dd ch-emo"><button class="btn icbtn" type="button" aria-label="Emoji">${svg("smile")}</button><div class="dd-menu emo-grid">${EMOJIS.map(e => `<button type="button" data-a="aiemo" data-e="${e}">${e}</button>`).join("")}</div></div>
+        <label class="icbtn" title="${esc(L2("Attach files (pictures, PDF, Excel, Word, text…)", "إرفاق ملفات (صور، PDF، Excel، Word، نصوص…)"))}">${svg("attach")}<input type="file" id="aifiles" multiple hidden></label>
+        <div class="ch-inbox"><textarea id="aitext" rows="1" placeholder="${esc(L2("Ask about your books or ask for a change…", "اسأل عن دفاترك أو اطلب تعديلاً…"))}"></textarea></div>
         <button class="btn pri icbtn ch-send" data-a="aisend" aria-label="${esc(L2("Send", "إرسال"))}">${svg("send")}</button></div>
       <div class="muted ai-foot">${esc(L2("What the assistant reads is sent to the AI provider your company chose, to answer you. Check important figures in the reports.", "ما يقرؤه المساعد يُرسل إلى مزوّد الذكاء الاصطناعي الذي اختارته شركتك للإجابة. راجع الأرقام المهمة في التقارير."))}${S.ai.policy.daily_limit ? " · " + esc(L2("Today", "اليوم")) + ` ${S.ai.used_today}/${S.ai.policy.daily_limit}` : ""}</div></section></div>`;
   const ta = $("#aitext");
   ta.addEventListener("input", () => { ta.style.height = "auto"; ta.style.height = Math.min(ta.scrollHeight, 200) + "px"; });
   ta.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing && matchMedia("(pointer: fine)").matches) { e.preventDefault(); S.H.aisend(); } });
   S.H.aisend = () => aiSend(ta.value.trim(), ta);
+  // attachments: pick, paste or drop — any kind of file
+  AI.pending = [];
+  const drawPend = () => { $("#aipend").innerHTML = AI.pending.map((f, i) => `<span class="chip">${f.thumb ? `<img src="${esc(f.thumb)}" alt="">` : svg("file")} ${esc(f.name)} · ${esc(sizeTxt(f.size))} <button class="lnk" data-a="aiunpend" data-i="${i}">×</button></span>`).join(""); };
+  const add = async files => { for (const f of files) { try { AI.pending.push(await readFile(f)); } catch (e) { fail(e); } } drawPend(); };
+  AI.drawPend = drawPend;
+  $("#aifiles").addEventListener("change", e => { add([...e.target.files]); e.target.value = ""; });
+  ta.addEventListener("paste", e => { const fs = [...(e.clipboardData && e.clipboardData.files || [])]; if (fs.length) { e.preventDefault(); add(fs); } });
+  const zone = $(".chv"); zone.addEventListener("dragover", e => { e.preventDefault(); zone.classList.add("drop"); });
+  zone.addEventListener("dragleave", () => zone.classList.remove("drop"));
+  zone.addEventListener("drop", e => { e.preventDefault(); zone.classList.remove("drop"); add([...e.dataTransfer.files]); });
+  S.H.aiunpend = el => { AI.pending.splice(+el.dataset.i, 1); drawPend(); };
+  S.H.aiemo = el => { const p = ta.selectionStart || ta.value.length; ta.value = ta.value.slice(0, p) + el.dataset.e + ta.value.slice(p); ta.focus(); ta.selectionStart = ta.selectionEnd = p + el.dataset.e.length; $$(".dd.open").forEach(d => d.classList.remove("open")); };
   S.H.aidel = async el => { if (!confirm(L2("Delete this conversation?", "حذف هذه المحادثة؟"))) return; await api("DELETE", "/api/ai/threads/" + el.dataset.id); location.hash = "#/assistant"; route(); };
   S.H.aiok = el => { const w = AI.waiting && AI.waiting[el.dataset.id]; if (w) w(true); };
   S.H.aino = el => { const w = AI.waiting && AI.waiting[el.dataset.id]; if (w) w(false); };
@@ -6427,6 +6510,10 @@ function aiDraw() {
   for (const m of msgs) {
     if (m.role === "user") {
       if (typeof m.content === "string") h += `<div class="ch-msg mine"><div class="ch-b"><div class="ch-bubble">${richText(m.content)}</div></div></div>`;
+      else if (m.files) {   // a question with attachments: the files as chips / thumbnails, then the words
+        const said = m.content.filter(b => b.type === "text" && !/^📎 /.test(b.text)).map(b => b.text).join("\n");
+        h += `<div class="ch-msg mine"><div class="ch-b"><div class="ch-bubble"><div class="ch-files">${m.files.map(f => f.thumb ? `<span class="ch-img" title="${esc(f.name)}"><img src="${esc(f.thumb)}" alt="${esc(f.name)}"></span>` : `<span class="chip">${svg("file")} ${esc(f.name)} · ${esc(sizeTxt(f.size))}</span>`).join("")}</div>${said ? richText(said) : ""}</div></div></div>`;
+      }
       continue;
     }
     for (const b of m.content || []) {
@@ -6496,15 +6583,56 @@ async function aiTool(b) {
   } catch (e) { return { type: "tool_result", tool_use_id: b.id, content: "Error: " + e.message, is_error: true }; }
 }
 async function aiSave() {
-  const th = AI.thread, first = th.messages.find(m => m.role === "user" && typeof m.content === "string");
-  const title = (first ? first.content : "Conversation").slice(0, 80);
+  const th = AI.thread, first = th.messages.find(m => m.role === "user" && (typeof m.content === "string" || m.files));
+  const said = !first ? "" : typeof first.content === "string" ? first.content
+    : first.content.filter(b => b.type === "text" && !/^📎 /.test(b.text)).map(b => b.text).join(" ") || first.files.map(f => f.name).join(", ");
+  const title = (said || "Conversation").slice(0, 80);
   if (th.id) await api("PUT", "/api/ai/threads/" + th.id, { title, messages: th.messages });
-  else { th.id = (await api("POST", "/api/ai/threads", { title, messages: th.messages })).id; history.replaceState(null, "", "#/assistant/" + th.id); }
+  else {
+    th.id = (await api("POST", "/api/ai/threads", { title, messages: th.messages })).id; history.replaceState(null, "", "#/assistant/" + th.id);
+    const list = $(".ai .chl-list");   // show the new conversation in the list straight away
+    if (list) { list.querySelector(".chl-note")?.remove(); list.querySelectorAll(".chl-item.on").forEach(x => x.classList.remove("on"));
+      list.insertAdjacentHTML("afterbegin", `<a class="chl-item on" href="#/assistant/${th.id}"><span class="chl-ic">${svg("spark")}</span><span class="chl-t"><b>${esc(title)}</b><small>${esc(fmtTime(new Date().toISOString()))}</small></span><button class="lnk" data-a="aidel" data-id="${th.id}" title="${esc(L2("Delete", "حذف"))}">×</button></a>`); }
+  }
+}
+// files attached to a question → content blocks every provider path understands: pictures and PDFs as they are,
+// Excel / Word / PowerPoint and text files as their text; anything else by name only
+const AI_TEXT = /\.(txt|csv|tsv|json|md|xml|html?|log|ya?ml|ini|sql|js|py|css)$/i;
+async function aiBlocks(files) {
+  const blocks = [];
+  let size = 0;
+  for (const f of files) {
+    const label = `📎 ${f.name} (${sizeTxt(f.size)})`;
+    if (/^image\/(png|jpe?g|gif|webp|bmp)/.test(f.mime)) {
+      const url = await shrinkPic(`data:${f.mime};base64,${f.data}`, 1568, "image/jpeg", .85);   // the size providers read best
+      const data = url.split(",")[1]; size += data.length;
+      blocks.push({ type: "text", text: label }, { type: "image", source: { type: "base64", media_type: "image/jpeg", data } });
+    } else if (f.mime === "application/pdf" || /\.pdf$/i.test(f.name)) {
+      size += f.data.length;
+      blocks.push({ type: "document", title: f.name, source: { type: "base64", media_type: "application/pdf", data: f.data } });
+    } else if (/\.(xlsx|xlsm|docx|pptx)$/i.test(f.name)) {
+      const r = await api("POST", "/api/ai/extract", { name: f.name, data: f.data });
+      blocks.push({ type: "text", text: `${label}${r.cut ? " — only the first part fits" : ""}:\n${r.text}` });
+    } else if (/^text\//.test(f.mime) || AI_TEXT.test(f.name)) {
+      const txt = new TextDecoder().decode(Uint8Array.from(atob(f.data), c => c.charCodeAt(0)));
+      blocks.push({ type: "text", text: `${label}:\n${txt.slice(0, 200000)}` });
+    } else {
+      blocks.push({ type: "text", text: `${label} — this kind of file cannot be read by the assistant; only its name was shared.` });
+    }
+  }
+  if (size > 20 * 1048576) throw new Error(L2("The attachments are too large for one message (about 15 MB at most) — send fewer or smaller files", "المرفقات أكبر من المسموح لرسالة واحدة (حوالي ١٥ ميجابايت) — أرسل ملفات أقل أو أصغر"));
+  return blocks;
 }
 async function aiSend(text, ta) {
-  if (!text || AI.busy) return;
-  const th = AI.thread; ta.value = ""; ta.style.height = "auto";
-  th.messages.push({ role: "user", content: text });
+  const files = AI.pending || [];
+  if ((!text && !files.length) || AI.busy) return;
+  const th = AI.thread;
+  let content = text;
+  if (files.length) {
+    try { content = [...(await aiBlocks(files)), ...(text ? [{ type: "text", text }] : [])]; } catch (e) { fail(e); return; }
+  }
+  ta.value = ""; ta.style.height = "auto"; AI.pending = []; if (AI.drawPend) AI.drawPend();
+  th.messages.push(files.length ? { role: "user", content, files: files.map(f => ({ name: f.name, size: f.size, thumb: f.thumb })) } : { role: "user", content });
   AI.busy = true; aiDraw();
   try {
     AI.ctx = AI.ctx && AI.ctx.at > Date.now() - 600000 ? AI.ctx : { ...(await api("GET", "/api/ai/context")), at: Date.now() };

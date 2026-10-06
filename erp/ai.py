@@ -455,7 +455,57 @@ def _clean_messages(msgs):
             raise AIError("Malformed conversation")
     if msgs[0]["role"] != "user":
         raise AIError("Malformed conversation")
-    return msgs
+    return [{"role": m["role"], "content": m.get("content")} for m in msgs]   # screen-only fields (file chips) stay behind
+
+
+TEXT_LIMIT = 200_000
+
+
+def extract_text(name, data):
+    """What the assistant can read from an attached Excel or Word file: the cells / paragraphs as plain text."""
+    import base64
+    import io
+    import re
+    import zipfile
+    try:
+        raw = base64.b64decode(data or "", validate=False)
+    except ValueError:
+        raise AIError("The file could not be read") from None
+    low = (name or "").lower()
+    out = []
+    try:
+        if low.endswith((".xlsx", ".xlsm")):
+            import openpyxl
+            wb = openpyxl.load_workbook(io.BytesIO(raw), data_only=True, read_only=True)
+            for ws in wb.worksheets:
+                out.append(f"## Sheet: {ws.title}")
+                for row in ws.iter_rows(values_only=True):
+                    cells = ["" if v is None else str(v) for v in row]
+                    while cells and not cells[-1]:
+                        cells.pop()
+                    if cells:
+                        out.append("\t".join(cells))
+                    if sum(len(x) for x in out) > TEXT_LIMIT:
+                        break
+        elif low.endswith((".docx", ".pptx")):
+            with zipfile.ZipFile(io.BytesIO(raw)) as z:
+                parts = ["word/document.xml"] if low.endswith(".docx") else \
+                    sorted((n for n in z.namelist() if re.match(r"ppt/slides/slide\d+\.xml$", n)), key=lambda n: int(re.findall(r"\d+", n)[-1]))
+                for part in parts:
+                    xml = z.read(part).decode("utf-8", "replace")
+                    for para in re.findall(r"<(?:w|a):p[ >].*?</(?:w|a):p>", xml, re.S):
+                        t = "".join(re.findall(r"<(?:w|a):t(?: [^>]*)?>([^<]*)</(?:w|a):t>", para))
+                        if t.strip():
+                            out.append(t)
+        else:
+            raise AIError("Only Excel (.xlsx) and Word / PowerPoint (.docx, .pptx) files are converted here")
+    except AIError:
+        raise
+    except Exception:
+        raise AIError(f"{name} could not be opened — is it a valid file?") from None
+    import html
+    text = html.unescape("\n".join(out))
+    return {"text": text[:TEXT_LIMIT], "cut": len(text) > TEXT_LIMIT}
 
 
 def request_params(db, user, d):
@@ -503,9 +553,19 @@ def to_openai(params):
                     out = b.get("content")
                     msgs.append({"role": "tool", "tool_call_id": b["tool_use_id"],
                                  "content": out if isinstance(out, str) else json.dumps(out, ensure_ascii=False)})
-            t = text(c)
-            if t:
-                msgs.append({"role": "user", "content": t})
+            parts = []   # attachments: pictures as image_url, PDFs as file (the chat-completions shapes)
+            for b in c:
+                src = b.get("source") or {}
+                if b.get("type") == "text" and b.get("text"):
+                    parts.append({"type": "text", "text": b["text"]})
+                elif b.get("type") == "image" and src.get("type") == "base64":
+                    parts.append({"type": "image_url", "image_url": {"url": f"data:{src.get('media_type')};base64,{src.get('data')}"}})
+                elif b.get("type") == "document" and src.get("type") == "base64":
+                    parts.append({"type": "file", "file": {"filename": b.get("title") or "document.pdf",
+                                                           "file_data": f"data:{src.get('media_type')};base64,{src.get('data')}"}})
+            if parts:
+                plain = all(x["type"] == "text" for x in parts)
+                msgs.append({"role": "user", "content": "\n".join(x["text"] for x in parts) if plain else parts})
         else:
             calls = [{"id": b["id"], "type": "function", "function": {"name": b["name"], "arguments": json.dumps(b.get("input") or {}, ensure_ascii=False)}}
                      for b in (c if isinstance(c, list) else []) if b.get("type") == "tool_use"]
