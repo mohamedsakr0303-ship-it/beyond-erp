@@ -2049,7 +2049,7 @@ PAGES.data = async (view) => {
         <button class="btn" data-a="csv">${t("csv_sheet")}</button><button class="btn" data-a="csvt">${t("csv_tpl")}</button></div></div>
       <p class="muted" style="font-size:.85em">${S.lang === "ar" ? "المصنف الكامل هو نفسه قالب الاستيراد: نفس أسماء الأوراق والأعمدة، مع قوائم مالية وتسعير سريع وحاسبة سقالات تُحسب تلقائياً داخل Excel." : "The full workbook is also the import template: same sheet and column names, with statements, a quick estimator and a scaffold calculator that calculate inside Excel."}</p></div>
     <div class="card"><h2>${t("imp_title")}</h2>${ed ? `<div class="grid">
-      <label class="f">${t("file")}<input type="file" id="impf" accept=".xlsx,.json,.csv"></label>
+      <div class="f">${t("file")}<input type="file" id="impf" accept=".xlsx,.json,.csv"></div>
       <label class="f">${t("format")}<select id="impfmt"><option value="xlsx">Excel (.xlsx)</option><option value="json">JSON</option><option value="csv">CSV</option></select></label>
       <label class="f" id="impsheetl" style="display:none">CSV → <select id="impsheet">${sheets.map(s => `<option value="${esc(s.name)}">${esc(s.name)}</option>`).join("")}</select></label>
       <label class="f">${t("mode")}<select id="impmode"><option value="append">${t("append")}</option>${S.boot.user.is_super ? `<option value="replace">${t("replace")}</option>` : ""}</select></label>
@@ -2357,7 +2357,7 @@ PAGES.settings = async (view, parts, q) => {
         { html: `<label class="f">${esc(L2("Colours", "الألوان"))}<a class="btn" href="#/settings?tab=theme">🎨 ${esc(L2("Open the Theme tab", "افتح تبويب السمات"))}</a></label>` },
         { k: "density", l: t("density"), type: "select", opts: [["comfortable", t("d_comfortable")], ["compact", t("d_compact")]], v: ap.density || "comfortable" },
         { k: "corners", l: t("corners"), type: "select", opts: [["rounded", t("cr_rounded")], ["square", t("cr_square")]], v: ap.corners || "rounded" },
-        { html: `<label class="f">${t("app_logo")} — ${t("al_custom")}<input type="file" id="aplogo" accept="image/*"></label>` }], 3)}
+        { html: `<div class="f">${t("app_logo")} — ${t("al_custom")}<input type="file" id="aplogo" accept="image/*"></div>` }], 3)}
         ${ed ? `<div class="row" style="margin-top:10px"><button class="btn pri" data-a="apsave">${t("save")}</button></div>` : ""}</div>` : ""}`;
     S.H.mysave = () => { store.set("lang", $("#my_lang").value); store.set("font", $("#my_font").value); store.set("fontSize", $("#my_size").value); store.set("theme", $("#my_theme").value); saveNavMode($("#my_navmode").value); applyLook(); renderShell(); route(); };
     S.H.myreset = () => { ["font", "fontSize"].forEach(k => store.set(k, "")); store.set("theme", "auto"); saveNavMode("click"); applyLook(); renderShell(); route(); };
@@ -2434,7 +2434,7 @@ async function brandingTab(view, head) {
   const col = (k, l) => `<label class="f">${t(l)}<span class="swatch"><input type="color" name="${k}" value="${esc(b[k])}"><code>${esc(b[k])}</code></span></label>`;
   view.innerHTML = head + `<div class="split"><div id="brcard">
     <div class="card"><h2>${t("logo")}</h2><div class="imgbox" id="logobox">${imgTag(imgs.logo)}</div>
-      <div class="grid g3" style="margin-top:10px"><label class="f">${t("upload")}<input type="file" id="logofile" accept="image/*"></label>
+      <div class="grid g3" style="margin-top:10px"><div class="f">${t("upload")}<input type="file" id="logofile" accept="image/*"></div>
         <label class="f chk"><input type="checkbox" name="clean_bg" ${b.clean_bg ? "checked" : ""}>${t("clean_bg")}</label>
         <label class="f">${t("logo_height")}<input type="number" name="logo_height" min="40" max="170" value="${esc(b.logo_height)}"></label></div>
       ${ed && imgs.logo ? `<button class="btn sm danger" data-a="logorm" style="margin-top:8px">${t("remove")}</button>` : ""}</div>
@@ -2443,7 +2443,7 @@ async function brandingTab(view, head) {
       <label class="f">${t("wm_strength")} <input type="range" name="wm.opacity" min="4" max="40" value="${Math.round(b.wm.opacity * 100)}"></label>
       <label class="f chk"><input type="checkbox" name="wm.grey" ${b.wm.grey ? "checked" : ""}>${t("wm_grey")}</label>
       <label class="f span2">${t("wm_textv")}<input name="wm.text" value="${esc(b.wm.text)}" placeholder="${esc(S.boot.settings.company_name || "")}"></label>
-      <label class="f">${t("wm_upload")}<input type="file" id="wmfile" accept="image/*"></label></div>
+      <div class="f">${t("wm_upload")}<input type="file" id="wmfile" accept="image/*"></div></div>
       <div class="imgbox" style="margin-top:10px">${imgTag(imgs.watermark)}${imgs.wm_image ? imgTag(imgs.wm_image) : ""}</div></div>
     <div class="card"><h2>${t("apply_to")}</h2><div class="tbl"><table class="perm"><thead><tr><th>${t("file_kind")}</th><th class="c">${t("logo")}</th><th class="c">${t("watermark")}</th></tr></thead><tbody>
       ${b.kinds.map(k => `<tr><td>${esc(S.lang === "ar" ? k.ar : k.en)}</td><td class="c"><input type="checkbox" data-apply="${k.key}" data-f="logo" ${b.apply[k.key].logo ? "checked" : ""}></td><td class="c"><input type="checkbox" data-apply="${k.key}" data-f="wm" ${b.apply[k.key].wm ? "checked" : ""}></td></tr>`).join("")}
@@ -4662,7 +4662,7 @@ function bankImportForm(account) {
   drawer(L2("Import bank statement", "استيراد كشف حساب البنك"), form([
     { k: "account", l: L2("Bank / cash account", "حساب البنك / النقدية"), type: "select", opts: bankAccts(), v: account || accByRole("bank"), req: 1 },
     { k: "date_order", l: L2("Dates are written", "صيغة التاريخ"), type: "select", opts: [["", L2("Detect", "تلقائي")], ["dmy", "31/12/2026"], ["mdy", "12/31/2026"]] },
-    { html: `<label class="f">${L2("Statement file (CSV or Excel)", "ملف الكشف (CSV أو Excel)")}<input type="file" id="brfile" data-skip="1" accept=".csv,.txt,.xlsx,.xlsm,text/csv"></label>`, span: "spanall" },
+    { html: `<div class="f">${L2("Statement file (CSV or Excel)", "ملف الكشف (CSV أو Excel)")}<input type="file" id="brfile" data-skip="1" accept=".csv,.txt,.xlsx,.xlsm,text/csv"></div>`, span: "spanall" },
     { k: "paste", l: L2("…or paste the lines (copied from Excel / the bank's page, with the heading row)", "…أو الصق الحركات (منسوخة من Excel أو صفحة البنك مع صف العناوين)"), type: "textarea", span: "spanall" },
     { html: `<div id="brprev"></div>`, span: "spanall" }]),
   async v => { if (!parsed) { await read(); return false; }
@@ -5401,7 +5401,7 @@ function importWizard(sheet) {
   drawer(`${L2("Import", "استيراد")} — ${sheetLabel(sheet)}`, `
     <p class="muted" style="margin-top:0">${L2("Use the app's template, or your own sheet: its columns are matched by name (English or Arabic) and you can fix the matching below. A check runs first and lists every problem with its row number — nothing is saved until you press Import.", "استخدم قالب البرنامج أو ملفك الخاص: تتم مطابقة الأعمدة بالاسم (عربي أو إنجليزي) ويمكنك تعديل المطابقة بالأسفل. يتم الفحص أولاً ويعرض كل خطأ برقم الصف — ولا يُحفظ شيء حتى تضغط استيراد.")}</p>
     <div class="row" style="gap:6px;flex-wrap:wrap;margin-bottom:8px"><a class="btn sm" href="${tplUrl(sheet, "xlsx")}">⬇ ${L2("Excel template", "قالب Excel")}</a><a class="btn sm" href="${tplUrl(sheet, "csv")}">⬇ ${L2("CSV template", "قالب CSV")}</a></div>
-    <label class="f">${L2("Your file (Excel or CSV)", "ملفك (Excel أو CSV)")}<input type="file" id="impwf" data-skip="1" accept=".xlsx,.xlsm,.csv,.txt"></label>
+    <div class="f">${L2("Your file (Excel or CSV)", "ملفك (Excel أو CSV)")}<input type="file" id="impwf" data-skip="1" accept=".xlsx,.xlsm,.csv,.txt"></div>
     <div id="impwa"></div><div id="impwr"></div>`,
   async () => { if (!an) throw new Error(L2("Choose a file first", "اختر ملفاً أولاً")); if (!checked) { await check(); return false; }
     const r = await api("POST", "/api/import-sheet?" + qs(params()), undefined, await file.arrayBuffer());
@@ -6537,9 +6537,9 @@ async function aiSettingsTab(view, head) {
     <form id="aiform">${form([
       { k: "enabled", l: L2("AI assistant", "المساعد الذكي"), type: "switch", v: p.enabled, on: L2("On", "يعمل"), off: L2("Off", "متوقف") },
       { k: "name", l: L2("Assistant's name", "اسم المساعد"), v: p.name },
-      { html: `<label class="f">${esc(L2("Assistant's picture", "صورة المساعد"))}<span class="row" style="gap:10px;align-items:center"><img id="aiavprev" class="av" style="width:48px;height:48px" src="${esc(p.avatar || "assistant.jpg")}" alt="">
+      { html: `<div class="f">${esc(L2("Assistant's picture", "صورة المساعد"))}<span class="row" style="gap:10px;align-items:center;justify-content:flex-start"><img id="aiavprev" class="av" style="width:48px;height:48px" src="${esc(p.avatar || "assistant.jpg")}" alt="">
         <label class="btn" style="cursor:pointer">${svg("upload")} ${esc(L2("Change", "تغيير"))}<input type="file" id="aiavf" accept="image/*" hidden></label>
-        <button class="btn" type="button" data-a="aiavreset">${esc(L2("Default", "الافتراضية"))}</button></span></label>` },
+        <button class="btn" type="button" data-a="aiavreset">${esc(L2("Default", "الافتراضية"))}</button></span></div>` },
       { k: "provider", l: L2("AI provider", "مزوّد الذكاء الاصطناعي"), type: "select", opts: (r.providers || []).map(x => [x.id, x.label]), v: p.provider, change: "aiprov" },
       { html: `<label class="f" id="aimodelsel">${esc(L2("Model", "النموذج"))}<select name="model_claude">${r.models.map(([v, l]) => `<option value="${esc(v)}" ${p.model === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
         <label class="f" id="aimodeltxt">${esc(L2("Model name (exactly as the provider writes it)", "اسم النموذج (كما يكتبه المزوّد تماماً)"))}<input name="model_other" value="${esc(p.provider === "anthropic" ? "" : p.model)}" autocomplete="off"></label>` },
