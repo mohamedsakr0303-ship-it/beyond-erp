@@ -41,6 +41,13 @@ In this repository: **Settings → Secrets and variables → Actions**
 Then **Actions → deploy → Run workflow** (or push any change). The workflow runs the tests, creates the workspace
 tables and functions in Supabase (`supabase/migrations/`), and builds the web app pre-linked to your project.
 
+Without the two secrets the workflow skips this step (the log says "Supabase secrets not set yet"). Everything else
+keeps working; only the newest workspace features wait for it — **chat between companies** and the **AI assistant's
+key in the workspace** (`supabase/migrations/20261006000000_chat_links_ai.sql` and the `ai` function). To apply them
+by hand instead: Supabase dashboard → SQL Editor → paste that migration file → Run; then deploy the function with the
+Supabase CLI (`supabase functions deploy ai --project-ref <ref> --no-verify-jwt`). Until then the assistant uses a key
+installed on the device itself.
+
 ## 3 · Publish the web app (choose one)
 
 **Cloudflare Pages — free, keeps the repository private (recommended)**

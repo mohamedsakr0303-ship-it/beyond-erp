@@ -6311,9 +6311,12 @@ async function loadAiPolicy() {
 }
 // one step of the conversation: the provider's reply for the messages so far
 async function aiComplete(messages, ctx) {
-  if (cloudOn()) {
-    const r = await CloudAPI.call("fn", "ai", { base: ctx.base, context: ctx.context, tools: ctx.tools, messages });
-    return r.message;
+  if (cloudOn() && AI.cloudReady !== false) {
+    try { const r = await CloudAPI.call("fn", "ai", { base: ctx.base, context: ctx.context, tools: ctx.tools, messages }); return r.message; }
+    catch (e) {   // the workspace's ai function is not deployed yet: use the key installed on this device instead
+      if (!(e.status === 404 || /not found|could not find|PGRST202|NOT_FOUND/i.test(e.message || ""))) throw e;
+      AI.cloudReady = false;
+    }
   }
   const r = await api("POST", "/api/ai/complete", { messages });
   if (r.message) return r.message;
@@ -6345,7 +6348,7 @@ async function aiApi(method, path, body) {
   const r = await fetch(path, opt), ct = r.headers.get("content-type") || "";
   return { status: r.status, text: /json/.test(ct) ? await r.text() : `(${ct} — a file, not shown)` };
 }
-const AI = { thread: null, busy: false, ctx: null };
+const AI = { thread: null, busy: false, ctx: null, cloudReady: null };
 PAGES.assistant = async (view, parts) => {
   if (!S.ai) await loadAiPolicy();
   if (!S.ai || !S.ai.allowed) {
@@ -6484,6 +6487,7 @@ async function aiSettingsTab(view, head) {
   let cloud = null; if (cloudOn()) { try { cloud = await CloudAPI.call("rpc", "ai_settings_get", {}); } catch { cloud = { error: true }; } }
   const mods = (S.boot.enums.modules || []).filter(m => !["users", "settings"].includes(m));
   const hasKey = cloud && !cloud.error ? cloud.has_key : r.has_key;
+  if (cloud && cloud.error) AI.cloudReady = false;
   view.innerHTML = head + `<div class="card"><h2>${svg("spark")} ${esc(L2("AI assistant", "المساعد الذكي"))}</h2>
     <p class="muted">${esc(L2("Claude (by Anthropic) answers questions about your books and, if you allow it, prepares changes. It always acts as the person using it — with exactly their permissions — and never touches users, sign-in, licences, backups or these settings.",
       "Claude (من Anthropic) يجيب عن أسئلة حول دفاترك، ويُعد التعديلات إن سمحت بذلك. يعمل دائماً بصفة الشخص الذي يستخدمه وبصلاحياته فقط، ولا يقترب من المستخدمين أو الدخول أو التراخيص أو النسخ الاحتياطية أو هذه الإعدادات."))}</p>
@@ -6506,7 +6510,7 @@ async function aiSettingsTab(view, head) {
       <div class="muted" style="margin-top:6px">${esc(cloudOn() ? L2("With the shared workspace the key is kept in Supabase where only the assistant's server function can read it — never sent to browsers.", "مع مساحة العمل المشتركة يُحفظ المفتاح في Supabase حيث لا تقرؤه إلا دالة المساعد على الخادم — ولا يُرسل للمتصفحات أبداً.")
         : STATIC ? L2("Browser-only edition: the key is kept in this browser and used from this browser only.", "النسخة التي تعمل في المتصفح فقط: يُحفظ المفتاح في هذا المتصفح ويُستخدم منه فقط.")
         : L2("Kept on this computer only (never copied to the shared workspace or backups sent elsewhere).", "يُحفظ على هذا الكمبيوتر فقط."))} ${esc(L2("Get a key at console.anthropic.com → API keys.", "احصل على مفتاح من console.anthropic.com ← API keys."))}</div>
-      ${cloud && cloud.error ? `<div class="banner warn" style="margin-top:10px">${esc(L2("The workspace has not been updated for the assistant yet (it is updated automatically on the next deployment).", "لم تُحدَّث مساحة العمل للمساعد بعد (تُحدَّث تلقائياً في النشر القادم)."))}</div>` : ""}
+      ${cloud && cloud.error ? `<div class="banner warn" style="margin-top:10px">${esc(L2("The shared workspace has not been updated for the assistant yet, so the key is kept on this device and the assistant works from here (see docs/SUPABASE_SETUP.md to update the workspace).", "لم تُحدَّث مساحة العمل المشتركة للمساعد بعد، لذا يُحفظ المفتاح على هذا الجهاز ويعمل المساعد منه (راجع docs/SUPABASE_SETUP.md لتحديث مساحة العمل)."))}</div>` : ""}
       <div class="row" style="margin-top:14px"><button class="btn pri" type="submit">${t("save")}</button><a class="btn" href="#/assistant">${esc(L2("Open the assistant", "فتح المساعد"))}</a></div><div id="derr"></div></form></div>`;
   S.H.aiacc = el => { $("#aiusers").hidden = el.value !== "list"; };
   const save = async key => {
@@ -6514,8 +6518,8 @@ async function aiSettingsTab(view, head) {
     const body = { enabled: !!v.enabled, name: v.name, model: v.model, effort: v.effort, write: v.write, access: v.access, daily_limit: +v.daily_limit || 0,
       instructions: v.instructions, users: $$(".aiu:checked").map(x => x.value), blocked: $$(".aib:checked").map(x => x.value) };
     const saved = await api("PUT", "/api/ai-policy", body);
-    if (cloudOn()) await CloudAPI.call("rpc", "ai_settings_set", { p_settings: saved, p_key: key === undefined ? null : key });
-    else if (key !== undefined) await api("PUT", "/api/ai/key", { key });
+    if (cloudOn() && !(cloud && cloud.error)) await CloudAPI.call("rpc", "ai_settings_set", { p_settings: saved, p_key: key === undefined ? null : key });
+    else if (key !== undefined) await api("PUT", "/api/ai/key", { key });   // no workspace (or not updated yet): the key stays on this device
   };
   $("#aiform").addEventListener("submit", async e => { e.preventDefault();
     try { const k = $("#aikey").value.trim(); await save(k ? k : undefined); toast(t("saved")); await loadAiPolicy(); route(); }
