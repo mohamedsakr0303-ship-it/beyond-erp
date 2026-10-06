@@ -1,12 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#065f46"/><stop offset=".5" stop-color="#10b981"/><stop offset="1" stop-color="#a7f3d0"/></linearGradient>
-    <linearGradient id="au" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fde68a"/><stop offset="1" stop-color="#d4a017"/></linearGradient>
-  </defs>
-  <rect x="64" y="318" width="52" height="130" rx="14" fill="url(#bg)" opacity=".5"/>
-  <rect x="134" y="236" width="52" height="212" rx="14" fill="url(#bg)" opacity=".78"/>
-  <rect x="204" y="64" width="66" height="384" rx="16" fill="url(#bg)"/>
-  <path d="M270 64 H334 a90 90 0 0 1 0 180 H270 V196 H330 a42 42 0 0 0 0 -84 H270 Z" fill="url(#bg)"/>
-  <path d="M270 244 H350 a102 102 0 0 1 0 204 H270 V400 H346 a54 54 0 0 0 0 -108 H270 Z" fill="url(#bg)"/>
-  <circle cx="99" cy="268" r="20" fill="url(#au)"/>
+  <defs><linearGradient id="g" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#065f46"/><stop offset=".5" stop-color="#10b981"/><stop offset="1" stop-color="#a7f3d0"/></linearGradient>
+    <linearGradient id="au" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fde68a"/><stop offset="1" stop-color="#d4a017"/></linearGradient></defs>
+  <rect x="72" y="320" width="50" height="128" rx="12" fill="url(#g)" opacity=".5"/>
+  <rect x="140" y="232" width="50" height="216" rx="12" fill="url(#g)" opacity=".78"/>
+  <circle cx="97" cy="276" r="19" fill="url(#au)"/>
+  <path fill-rule="evenodd" fill="url(#g)" d="M208.0 64.0 H326.0 A88.0 88.0 0 0 1 326.0 240.0 H336.0 A104.0 104.0 0 0 1 336.0 448.0 H208.0 Z M270.0 108.0 H314.5 A55.5 55.5 0 0 1 314.5 219.0 H270.0 Z M270.0 261.0 H324.5 A71.5 71.5 0 0 1 324.5 404.0 H270.0 Z"/>
 </svg>

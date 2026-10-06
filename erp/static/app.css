@@ -615,7 +615,7 @@ tr.click:hover td{background:color-mix(in srgb,var(--brand) 6%,transparent)}
 .thdel{position:absolute;top:2px;inset-inline-end:2px;width:22px;height:22px;border-radius:50%;background:var(--bad);color:#fff;font-size:.7em;display:flex;align-items:center;justify-content:center}
 .thsw{margin-top:8px}.thl{font-size:.8em;font-weight:700;color:var(--muted);margin-bottom:6px}
 .thgrid{display:grid;grid-template-columns:repeat(8,36px);gap:8px}
-.sw{all:unset;box-sizing:border-box;width:36px;height:36px;border-radius:8px;cursor:pointer;border:1px solid rgba(0,0,0,.12);position:relative;transition:transform .12s}
+.sw{all:unset;box-sizing:border-box;width:38px;height:38px;flex:none;border-radius:8px;cursor:pointer;border:1px solid rgba(0,0,0,.12);position:relative;transition:transform .12s}
 .sw:hover{transform:scale(1.08)}
 .sw.on{outline:3px solid var(--brand);outline-offset:2px}
 .sw.none{background:linear-gradient(135deg,transparent 46%,var(--bad) 46% 54%,transparent 54%),var(--panel)}
@@ -795,18 +795,18 @@ label.ppl.chk input{margin:0}
 
 /* on/off button: red when off, green when on; only the button is clickable */
 .sw-field{display:flex;flex-direction:column;align-items:flex-start;gap:6px}
-.sw{position:relative;display:inline-flex;width:fit-content;cursor:pointer;-webkit-tap-highlight-color:transparent}
-.sw input{position:absolute;opacity:0;width:1px;height:1px;margin:0;pointer-events:none}
+.tgl{position:relative;display:inline-flex;width:fit-content;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.tgl input{position:absolute;opacity:0;width:1px;height:1px;margin:0;pointer-events:none}
 .sw-ui{position:relative;display:inline-flex;align-items:center;width:96px;height:36px;border-radius:999px;background:#dc2626;
   box-shadow:inset 0 0 0 1px rgba(0,0,0,.08),0 2px 8px rgba(220,38,38,.35);transition:background .22s,box-shadow .22s;user-select:none}
 .sw-ui i{position:absolute;top:4px;inset-inline-start:4px;width:28px;height:28px;border-radius:50%;background:#fff;box-shadow:0 2px 6px rgba(0,0,0,.25);transition:inset-inline-start .22s cubic-bezier(.4,0,.2,1)}
 .sw-ui b{position:absolute;font-size:.8em;font-weight:800;color:#fff;letter-spacing:.3px;transition:opacity .18s}
 .sw-on{inset-inline-start:14px;opacity:0}.sw-off{inset-inline-end:14px;opacity:1}
-.sw input:checked+.sw-ui{background:#16a34a;box-shadow:inset 0 0 0 1px rgba(0,0,0,.08),0 2px 8px rgba(22,163,74,.35)}
-.sw input:checked+.sw-ui i{inset-inline-start:64px}
-.sw input:checked+.sw-ui .sw-on{opacity:1}.sw input:checked+.sw-ui .sw-off{opacity:0}
-.sw input:focus-visible+.sw-ui{outline:2px solid var(--brand);outline-offset:3px}
-.sw:active .sw-ui i{width:32px}
+.tgl input:checked+.sw-ui{background:#16a34a;box-shadow:inset 0 0 0 1px rgba(0,0,0,.08),0 2px 8px rgba(22,163,74,.35)}
+.tgl input:checked+.sw-ui i{inset-inline-start:64px}
+.tgl input:checked+.sw-ui .sw-on{opacity:1}.tgl input:checked+.sw-ui .sw-off{opacity:0}
+.tgl input:focus-visible+.sw-ui{outline:2px solid var(--brand);outline-offset:3px}
+.tgl:active .sw-ui i{width:32px}
 @media (prefers-reduced-motion:reduce){.sw-ui,.sw-ui i,.sw-ui b{transition:none}}
 .ai-face{object-fit:cover;border-radius:50%;box-shadow:0 0 0 2px color-mix(in srgb,var(--brand) 35%,transparent)}
 

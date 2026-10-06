@@ -910,7 +910,7 @@ function form(fields, cols = 2) {
     else if (f.type === "textarea") ctl = `<textarea ${attrs} rows="3">${esc(f.v)}</textarea>`;
     else if (f.type === "checkbox") return `<label class="f chk ${f.span || ""}"><input type="checkbox" ${attrs} ${f.v ? "checked" : ""}>${esc(f.l)}</label>`;
     // an on/off button: only the button itself switches (red = off, green = on)
-    else if (f.type === "switch") return `<div class="f sw-field ${f.span || ""}"><span>${esc(f.l)}</span><label class="sw"><input type="checkbox" role="switch" ${attrs} ${f.v ? "checked" : ""}><span class="sw-ui" aria-hidden="true"><i></i><b class="sw-on">${esc(f.on || L2("On", "مفعّل"))}</b><b class="sw-off">${esc(f.off || L2("Off", "متوقف"))}</b></span></label></div>`;
+    else if (f.type === "switch") return `<div class="f sw-field ${f.span || ""}"><span>${esc(f.l)}</span><label class="tgl"><input type="checkbox" role="switch" ${attrs} ${f.v ? "checked" : ""}><span class="sw-ui" aria-hidden="true"><i></i><b class="sw-on">${esc(f.on || L2("On", "مفعّل"))}</b><b class="sw-off">${esc(f.off || L2("Off", "متوقف"))}</b></span></label></div>`;
     else ctl = `<input type="${f.type || "text"}" ${attrs} value="${esc(f.v ?? "")}" ${f.list ? `list="${f.list}"` : ""} ${f.type === "number" ? `step="${f.step || "any"}" inputmode="decimal" class="num"` : ""}>`;
     return `<label class="f ${f.span || ""}">${esc(f.l)}${ctl}${f.help ? `<span class="muted" style="font-weight:400">${esc(f.help)}</span>` : ""}</label>`;
   }).join("") + `</div>`;
