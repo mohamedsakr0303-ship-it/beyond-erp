@@ -499,9 +499,15 @@ function brandBlock(st) {
   const logo = S.boot.app_logo && show !== "name" ? `<img class="brand-logo ${show === "logo" ? "only" : ""}" src="data:${S.boot.app_logo.mime};base64,${S.boot.app_logo.data}" alt="${esc(ap.app_name || st.company_name || "")}">` : "";
   const name = show !== "logo" || !logo ? `<b>${esc(ap.app_name || st.company_name || "BEYOND")}</b>` : "";
   const tag = ap.tagline_show === false ? "" : (ap.tagline != null ? ap.tagline : st.company_tagline || "");
-  const align = ["left", "center", "right"].includes(ap.brand_align) ? ap.brand_align : "", size = +ap.brand_logo_size || 0;
-  const style = (align ? `--brand-align:${align};` : "") + (size ? `--brand-logo:${Math.min(220, Math.max(24, size))}px;` : "");
-  return `<a href="#/dashboard" class="brand ${show === "logo" && logo ? "logo-only" : ""} ${align ? "al" : ""}" style="${style}" title="${esc(t("m_dashboard"))}">${logo}${name}${tag ? `<small>${esc(tag)}</small>` : ""}</a>`;
+  // each part (logo, name, tagline) has its own position and size; a blank position follows the logo's
+  const pos = v => (["left", "center", "right"].includes(v) ? v : ""), px = (v, lo, hi) => (+v ? Math.min(hi, Math.max(lo, +v)) : 0);
+  const la = pos(ap.brand_align), na = pos(ap.brand_name_align) || la, ta = pos(ap.brand_tag_align) || la;
+  const ls = px(ap.brand_logo_size, 24, 220), ns = px(ap.brand_name_size, 10, 40), ts = px(ap.brand_tag_size, 8, 28);
+  const css = (a, size) => (a ? `text-align:${a};` : "") + (size ? `font-size:${size}px;` : "");
+  const logoHtml = logo && (la || ls) ? `<span class="brand-logo-row" style="${la ? `text-align:${la};` : ""}${ls ? `--brand-logo:${ls}px;` : ""}">${logo}</span>` : logo;
+  const nameHtml = name && (na || ns) ? name.replace("<b>", `<b style="${css(na, ns)}">`) : name;
+  const tagHtml = tag ? `<small${ta || ts ? ` style="display:block;${css(ta, ts)}"` : ""}>${esc(tag)}</small>` : "";
+  return `<a href="#/dashboard" class="brand ${show === "logo" && logo ? "logo-only" : ""}" title="${esc(t("m_dashboard"))}">${logoHtml}${nameHtml}${tagHtml}</a>`;
 }
 // Every possible "+ New" item with its label and whether this user may use it
 function newMenuItems() {
@@ -2404,6 +2410,10 @@ PAGES.settings = async (view, parts, q) => {
         { k: "brand_align", l: L2("Sidebar logo position", "موضع الشعار أعلى القائمة"), type: "select", v: ap.brand_align || "",
           opts: [["", L2("Default", "الافتراضي")], ["left", L2("Left", "يسار")], ["center", L2("Centre", "وسط")], ["right", L2("Right", "يمين")]] },
         { k: "brand_logo_size", l: L2("Sidebar logo size (px, blank = automatic)", "حجم الشعار (بكسل، فارغ = تلقائي)"), type: "number", v: ap.brand_logo_size || "", ph: "70" },
+        { k: "brand_name_align", l: L2("Company name position", "موضع اسم الشركة"), type: "select", v: ap.brand_name_align || "", opts: [["", L2("Same as the logo", "مثل الشعار")], ["left", L2("Left", "يسار")], ["center", L2("Centre", "وسط")], ["right", L2("Right", "يمين")]] },
+        { k: "brand_name_size", l: L2("Company name size (px, blank = automatic)", "حجم اسم الشركة (بكسل، فارغ = تلقائي)"), type: "number", v: ap.brand_name_size || "", ph: "18" },
+        { k: "brand_tag_align", l: L2("Slogan position", "موضع الوصف"), type: "select", v: ap.brand_tag_align || "", opts: [["", L2("Same as the logo", "مثل الشعار")], ["left", L2("Left", "يسار")], ["center", L2("Centre", "وسط")], ["right", L2("Right", "يمين")]] },
+        { k: "brand_tag_size", l: L2("Slogan size (px, blank = automatic)", "حجم الوصف (بكسل، فارغ = تلقائي)"), type: "number", v: ap.brand_tag_size || "", ph: "12" },
         { k: "tagline", l: S.lang === "ar" ? "الوصف تحت الاسم" : "Tagline under the name", v: ap.tagline != null ? ap.tagline : (st.company_tagline || ""), ph: S.lang === "ar" ? "مثال: تصميم وتشطيب داخلي" : "e.g. Interior Design & Finishing" },
         { k: "tagline_show", l: S.lang === "ar" ? "إظهار الوصف" : "Show the tagline", type: "checkbox", v: ap.tagline_show !== false },
         { html: `<label class="f">${esc(L2("Colours", "الألوان"))}<a class="btn" href="#/settings?tab=theme">🎨 ${esc(L2("Open the Theme tab", "افتح تبويب السمات"))}</a></label>` },

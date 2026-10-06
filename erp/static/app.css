@@ -811,10 +811,9 @@ label.ppl.chk input{margin:0}
 .ai-face{object-fit:cover;border-radius:50%;box-shadow:0 0 0 2px color-mix(in srgb,var(--brand) 35%,transparent)}
 
 /* sidebar logo placement (Settings → Look) */
-.brand.al{text-align:var(--brand-align)}
-.brand.al .brand-logo{display:inline-block;margin:0 0 6px;vertical-align:top}
-.brand.al b,.brand.al small{text-align:var(--brand-align)}
-.brand[style*="--brand-logo"] .brand-logo{max-height:var(--brand-logo);max-width:100%}
+.brand-logo-row{display:block}
+.brand-logo-row .brand-logo{display:inline-block;margin:0 0 6px;vertical-align:top}
+.brand-logo-row[style*="--brand-logo"] .brand-logo{max-height:var(--brand-logo);max-width:100%}
 /* app icon choices */
 .icon-tiles{display:flex;flex-wrap:wrap;gap:10px}
 .icon-tile{all:unset;box-sizing:border-box;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:6px;width:116px;padding:12px 8px;border:2px solid var(--line);border-radius:14px;
