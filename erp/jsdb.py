@@ -51,8 +51,9 @@ def _plain(v):
 
 
 class Connection:
-    def __init__(self, runner):
+    def __init__(self, runner, closer=None):
         self._run = runner          # JS function (sql, params_json) -> result_json
+        self._closer = closer       # frees a scratch database (None for the books themselves)
         self.row_factory = None
         self.in_transaction = False
 
@@ -89,7 +90,15 @@ class Connection:
             self.execute("COMMIT")
 
     def close(self):
-        pass
+        if self._closer is not None:
+            closer, self._closer = self._closer, None
+            closer()
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:  # noqa: BLE001 — the browser may already be tearing down
+            pass
 
 
 class DatabaseError(Exception):
@@ -102,3 +111,10 @@ class IntegrityError(DatabaseError):
 
 def connect(runner):
     return Connection(runner)
+
+
+def scratch():
+    """A new, empty in-memory database (the browser's stand-in for sqlite3.connect(":memory:"))."""
+    import js
+    h = js.globalThis.beyondSqlScratch()
+    return Connection(h.run, h.close)

@@ -59,7 +59,9 @@ window.BEYOND_STATIC = true;
     let db = saved ? new SQL.Database(new Uint8Array(saved)) : new SQL.Database();
     db.run("PRAGMA foreign_keys = ON");
 
-    globalThis.beyondSqlRun = (sql, paramsJson) => {
+    // one runner per sql.js database: the books, or a throw-away scratch copy (see beyondSqlScratch)
+    const runOn = d => (sql, paramsJson) => {
+      const db = d();
       try {
         const params = JSON.parse(paramsJson);
         if (params === null) { db.exec(sql); return JSON.stringify({ rows: [], cols: [] }); }
@@ -73,6 +75,12 @@ window.BEYOND_STATIC = true;
           return JSON.stringify(out);
         } finally { st.free(); }
       } catch (e) { return JSON.stringify({ error: String(e && e.message || e) }); }
+    };
+    globalThis.beyondSqlRun = runOn(() => db);
+    // Python's Database(":memory:") — templates for a business type, the demo company… — gets its own empty database
+    globalThis.beyondSqlScratch = () => {
+      const tmp = new SQL.Database(); tmp.run("PRAGMA foreign_keys = ON");
+      return { run: runOn(() => tmp), close: () => { try { tmp.close(); } catch { /* already closed */ } } };
     };
     const exportDb = () => { const bytes = db.export(); db.run("PRAGMA foreign_keys = ON"); return bytes; };
     globalThis.beyondSqlExport = exportDb;

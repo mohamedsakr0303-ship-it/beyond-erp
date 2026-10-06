@@ -2409,34 +2409,61 @@ class Legacy(unittest.TestCase):
         self.assertTrue(all(ln["category"] for ln in x["lines"]))
 
 
+def _sqljs_runner(raw):
+    """sql.js's JSON contract (see web-src/bridge.js), emulated with real SQLite."""
+    import sqlite3
+
+    def runner(sql, params_json):
+        try:
+            params = json.loads(params_json)
+            if params is None:
+                raw.executescript(sql)
+                return json.dumps({"rows": [], "cols": []})
+            cur = raw.execute(sql, params)
+            rows = [list(r) for r in cur.fetchall()]
+            out = {"rows": rows, "cols": [d[0] for d in (cur.description or [])], "changes": raw.total_changes}
+            if sql.lstrip().upper().startswith(("INSERT", "REPLACE")):
+                out["lastId"] = cur.lastrowid
+            return json.dumps(out)
+        except sqlite3.Error as e:
+            return json.dumps({"error": str(e)})
+    return runner
+
+
 class BrowserAdapter(unittest.TestCase):
     def test_jsdb_adapter_runs_the_engine(self):
         """Emulate sql.js's JSON contract with real SQLite and run the engine through erp.jsdb."""
         import sqlite3
         from erp import jsdb
-        raw = sqlite3.connect(":memory:", isolation_level=None)
-
-        def runner(sql, params_json):
-            try:
-                params = json.loads(params_json)
-                if params is None:
-                    raw.executescript(sql)
-                    return json.dumps({"rows": [], "cols": []})
-                cur = raw.execute(sql, params)
-                rows = [list(r) for r in cur.fetchall()]
-                out = {"rows": rows, "cols": [d[0] for d in (cur.description or [])], "changes": raw.total_changes}
-                if sql.lstrip().upper().startswith(("INSERT", "REPLACE")):
-                    out["lastId"] = cur.lastrowid
-                return json.dumps(out)
-            except sqlite3.Error as e:
-                return json.dumps({"error": str(e)})
-
-        db = Database("/tmp/x.sqlite3", connection=jsdb.connect(runner))
+        db = Database("/tmp/x.sqlite3", connection=jsdb.connect(_sqljs_runner(sqlite3.connect(":memory:", isolation_level=None))))
         db.x("INSERT INTO business_units(code,name) VALUES ('B','Unit')")
         a.record_collection(db, {"bu_code": "B", "amount": 100})
         a.record_expense(db, {"description": "rent", "amount": 40})
         self.assertEqual(a.income_statement(db)["net_profit"], 60.0)
         self.assertTrue(all(c["ok"] for c in a.audit(db)))
+
+    def test_scratch_books_in_the_browser(self):
+        """The browser has no sqlite3: Database(":memory:") (business-type templates, the demo company) must use a
+        scratch sql.js database instead of failing with AttributeError."""
+        import sqlite3
+        import types
+        from unittest import mock
+        from erp import db as dbmod, industries, jsdb
+        made, closed = [], []
+
+        def scratch():
+            made.append(1)
+            return types.SimpleNamespace(run=_sqljs_runner(sqlite3.connect(":memory:", isolation_level=None)),
+                                         close=lambda: closed.append(1))
+        fake_js = types.SimpleNamespace(globalThis=types.SimpleNamespace(beyondSqlScratch=scratch))
+        with mock.patch.object(dbmod, "sqlite3", None), mock.patch.dict(sys.modules, {"js": fake_js}):
+            db2 = Database(":memory:")
+            self.assertIsInstance(db2.conn, jsdb.Connection)
+            industries.apply(db2, "contracting")
+            self.assertEqual(db2.setting("business_type"), "contracting")
+            self.assertTrue(db2.one("SELECT 1 x FROM accounts WHERE code='5025'"))
+            db2.close()
+        self.assertEqual((len(made), len(closed)), (1, 1))
 
 
 class RentalsLanguageAssets(unittest.TestCase):

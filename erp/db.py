@@ -1180,6 +1180,9 @@ class Database:
         self.lock = threading.RLock()
         if connection is not None:  # browser build: sqlite3-compatible adapter over sql.js
             self.conn = connection
+        elif sqlite3 is None and str(path) == ":memory:":  # browser build: a scratch sql.js database
+            from . import jsdb
+            self.conn = jsdb.scratch()
         else:
             self.conn = sqlite3.connect(str(path), check_same_thread=False, isolation_level=None)
             self.conn.row_factory = sqlite3.Row
