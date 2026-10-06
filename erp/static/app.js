@@ -872,6 +872,8 @@ function form(fields, cols = 2) {
     if (f.type === "select") ctl = `<select ${attrs}>${(f.opts || []).map(o => { const [v, l] = Array.isArray(o) ? o : [o, tl(o)]; return `<option value="${esc(v)}" ${String(v) === String(f.v ?? "") ? "selected" : ""}>${esc(l)}</option>`; }).join("")}</select>`;
     else if (f.type === "textarea") ctl = `<textarea ${attrs} rows="3">${esc(f.v)}</textarea>`;
     else if (f.type === "checkbox") return `<label class="f chk ${f.span || ""}"><input type="checkbox" ${attrs} ${f.v ? "checked" : ""}>${esc(f.l)}</label>`;
+    // an on/off button: only the button itself switches (red = off, green = on)
+    else if (f.type === "switch") return `<div class="f sw-field ${f.span || ""}"><span>${esc(f.l)}</span><label class="sw"><input type="checkbox" role="switch" ${attrs} ${f.v ? "checked" : ""}><span class="sw-ui" aria-hidden="true"><i></i><b class="sw-on">${esc(f.on || L2("On", "مفعّل"))}</b><b class="sw-off">${esc(f.off || L2("Off", "متوقف"))}</b></span></label></div>`;
     else ctl = `<input type="${f.type || "text"}" ${attrs} value="${esc(f.v ?? "")}" ${f.list ? `list="${f.list}"` : ""} ${f.type === "number" ? `step="${f.step || "any"}" inputmode="decimal" class="num"` : ""}>`;
     return `<label class="f ${f.span || ""}">${esc(f.l)}${ctl}${f.help ? `<span class="muted" style="font-weight:400">${esc(f.help)}</span>` : ""}</label>`;
   }).join("") + `</div>`;
@@ -6320,6 +6322,14 @@ async function aiComplete(messages, ctx) {
   }
   const r = await api("POST", "/api/ai/complete", { messages });
   if (r.message) return r.message;
+  if (r.provider === "openai") {   // browser-only edition, any other provider: the page calls it, the engine translates
+    let res;
+    try { res = await fetch(r.url, { method: "POST", headers: r.headers, body: JSON.stringify(r.body) }); }
+    catch { throw new Error(L2("Could not reach the AI provider from this browser (it may not allow browser access) — use the desktop app or the shared workspace.", "تعذّر الوصول إلى مزوّد الذكاء الاصطناعي من هذا المتصفح (قد لا يسمح بذلك) — استخدم تطبيق سطح المكتب أو مساحة العمل المشتركة.")); }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(L2("The AI provider refused the request", "رفض مزوّد الذكاء الاصطناعي الطلب") + ` (${res.status})` + (data && data.error ? ": " + (data.error.message || data.error) : ""));
+    return (await api("POST", "/api/ai/convert", { response: data })).message;
+  }
   // browser-only edition: the page calls Claude itself with the official SDK (loaded on first use)
   const mod = await import("https://esm.sh/@anthropic-ai/sdk@0");
   const Anthropic = mod.default || mod.Anthropic;
@@ -6366,7 +6376,7 @@ PAGES.assistant = async (view, parts) => {
       <div class="ch-list ai-list" id="ailist"></div>
       <div class="ch-comp"><div class="ch-inbox"><textarea id="aitext" rows="1" placeholder="${esc(L2("Ask about your books, or ask for a change… e.g. “Which clients owe us the most?”", "اسأل عن دفاترك أو اطلب تعديلاً… مثال: «من أكثر العملاء مديونية لنا؟»"))}"></textarea></div>
         <button class="btn pri icbtn ch-send" data-a="aisend" aria-label="${esc(L2("Send", "إرسال"))}">${svg("send")}</button></div>
-      <div class="muted ai-foot">${esc(L2("What the assistant reads is sent to Anthropic (Claude) to answer you. Check important figures in the reports.", "ما يقرؤه المساعد يُرسل إلى Anthropic (Claude) للإجابة. راجع الأرقام المهمة في التقارير."))}${S.ai.policy.daily_limit ? " · " + esc(L2("Today", "اليوم")) + ` ${S.ai.used_today}/${S.ai.policy.daily_limit}` : ""}</div></section></div>`;
+      <div class="muted ai-foot">${esc(L2("What the assistant reads is sent to the AI provider your company chose, to answer you. Check important figures in the reports.", "ما يقرؤه المساعد يُرسل إلى مزوّد الذكاء الاصطناعي الذي اختارته شركتك للإجابة. راجع الأرقام المهمة في التقارير."))}${S.ai.policy.daily_limit ? " · " + esc(L2("Today", "اليوم")) + ` ${S.ai.used_today}/${S.ai.policy.daily_limit}` : ""}</div></section></div>`;
   const ta = $("#aitext");
   ta.addEventListener("input", () => { ta.style.height = "auto"; ta.style.height = Math.min(ta.scrollHeight, 200) + "px"; });
   ta.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing && matchMedia("(pointer: fine)").matches) { e.preventDefault(); S.H.aisend(); } });
@@ -6515,12 +6525,15 @@ async function aiSettingsTab(view, head) {
   const hasKey = cloud && !cloud.error ? cloud.has_key : r.has_key;
   if (cloud && cloud.error) AI.cloudReady = false;
   view.innerHTML = head + `<div class="card"><h2>${svg("spark")} ${esc(L2("AI assistant", "المساعد الذكي"))}</h2>
-    <p class="muted">${esc(L2("Claude (by Anthropic) answers questions about your books and, if you allow it, prepares changes. It always acts as the person using it — with exactly their permissions — and never touches users, sign-in, licences, backups or these settings.",
-      "Claude (من Anthropic) يجيب عن أسئلة حول دفاترك، ويُعد التعديلات إن سمحت بذلك. يعمل دائماً بصفة الشخص الذي يستخدمه وبصلاحياته فقط، ولا يقترب من المستخدمين أو الدخول أو التراخيص أو النسخ الاحتياطية أو هذه الإعدادات."))}</p>
+    <p class="muted">${esc(L2("An AI model of your choice (Claude, or any other provider) answers questions about your books and, if you allow it, prepares changes — every change is checked and reviewed before it is saved. It always acts as the person using it — with exactly their permissions — and never touches users, sign-in, licences, backups or these settings.",
+      "نموذج ذكاء اصطناعي تختاره (Claude أو أي مزوّد آخر) يجيب عن أسئلة حول دفاترك، ويُعد التعديلات إن سمحت بذلك — وكل تعديل يُفحص ويُراجع قبل حفظه. يعمل دائماً بصفة الشخص الذي يستخدمه وبصلاحياته فقط، ولا يقترب من المستخدمين أو الدخول أو التراخيص أو النسخ الاحتياطية أو هذه الإعدادات."))}</p>
     <form id="aiform">${form([
-      { k: "enabled", l: L2("Switched on", "مفعّل"), type: "checkbox", v: p.enabled },
+      { k: "enabled", l: L2("AI assistant", "المساعد الذكي"), type: "switch", v: p.enabled, on: L2("On", "يعمل"), off: L2("Off", "متوقف") },
       { k: "name", l: L2("Assistant's name", "اسم المساعد"), v: p.name },
-      { k: "model", l: L2("Model", "النموذج"), type: "select", opts: r.models, v: p.model },
+      { k: "provider", l: L2("AI provider", "مزوّد الذكاء الاصطناعي"), type: "select", opts: (r.providers || []).map(x => [x.id, x.label]), v: p.provider, change: "aiprov" },
+      { html: `<label class="f" id="aimodelsel">${esc(L2("Model", "النموذج"))}<select name="model_claude">${r.models.map(([v, l]) => `<option value="${esc(v)}" ${p.model === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
+        <label class="f" id="aimodeltxt">${esc(L2("Model name (exactly as the provider writes it)", "اسم النموذج (كما يكتبه المزوّد تماماً)"))}<input name="model_other" value="${esc(p.provider === "anthropic" ? "" : p.model)}" autocomplete="off"></label>` },
+      { html: `<label class="f" id="aibase">${esc(L2("Provider address (OpenAI-compatible)", "عنوان المزوّد (متوافق مع OpenAI)"))}<input name="base_url" value="${esc(p.base_url || "")}" placeholder="https://…/v1" autocomplete="off"></label>`, span: "span2" },
       { k: "effort", l: L2("Thoroughness", "مستوى التفكير"), type: "select", opts: [["low", L2("Quick", "سريع")], ["medium", L2("Balanced (recommended)", "متوازن (مستحسن)")], ["high", L2("Thorough", "متعمّق")]], v: p.effort },
       { k: "write", l: L2("Changing data", "تعديل البيانات"), type: "select", opts: [["off", L2("Never — read and advise only", "أبداً — قراءة ونصح فقط")], ["confirm", L2("Check every change, then the person reviews and approves it", "فحص كل تعديل ثم يراجعه الشخص ويوافق عليه")]], v: p.write },
       { k: "daily_limit", l: L2("Requests per person per day (0 = no limit)", "عدد الطلبات لكل شخص يومياً (0 = بلا حد)"), type: "number", v: p.daily_limit },
@@ -6530,18 +6543,29 @@ async function aiSettingsTab(view, head) {
       <div id="aiusers" ${p.access === "list" ? "" : "hidden"}><h3>${esc(L2("People who can use it", "الأشخاص المسموح لهم"))}</h3><div class="chkgrid">${ppl.filter(x => x.active).map(x => `<label class="f chk"><input type="checkbox" class="aiu" value="${esc(x.username)}" ${p.users.includes(x.username) ? "checked" : ""}>${avatar(x, 22)} ${esc(x.name)}</label>`).join("")}</div></div>
       <h3>${esc(L2("Sections it must never use", "أقسام يُمنع استخدامها"))}</h3><div class="chkgrid">${mods.map(m => `<label class="f chk"><input type="checkbox" class="aib" value="${m}" ${p.blocked.includes(m) ? "checked" : ""}>${esc(modName(m))}</label>`).join("")}</div>
       <h3>${esc(L2("Provider key", "مفتاح المزوّد"))}</h3>
-      <div class="row"><span class="chip ${hasKey ? "ok" : "bad"}">${esc(hasKey ? L2("Installed", "مثبّت") : L2("Not installed", "غير مثبّت"))}</span>
+      <div class="row"><span class="chip ${hasKey || (p.provider !== "anthropic" && /localhost|127\.0\.0\.1/.test(p.base_url || "")) ? "ok" : "bad"}">${esc(hasKey ? L2("Installed", "مثبّت") : p.provider !== "anthropic" && /localhost|127\.0\.0\.1/.test(p.base_url || "") ? L2("Not needed (local model)", "غير مطلوب (نموذج محلي)") : L2("Not installed", "غير مثبّت"))}</span>
         <input class="in" type="password" name="key" autocomplete="off" placeholder="${esc(L2("Anthropic API key (sk-ant-…) — leave empty to keep", "مفتاح Anthropic API (sk-ant-…) — اتركه فارغاً للإبقاء"))}" style="max-width:420px" data-skip="1" id="aikey">
         ${hasKey ? `<button class="btn" type="button" data-a="aikeydel">${esc(L2("Remove key", "إزالة المفتاح"))}</button>` : ""}</div>
       <div class="muted" style="margin-top:6px">${esc(cloudOn() ? L2("With the shared workspace the key is kept in Supabase where only the assistant's server function can read it — never sent to browsers.", "مع مساحة العمل المشتركة يُحفظ المفتاح في Supabase حيث لا تقرؤه إلا دالة المساعد على الخادم — ولا يُرسل للمتصفحات أبداً.")
         : STATIC ? L2("Browser-only edition: the key is kept in this browser and used from this browser only.", "النسخة التي تعمل في المتصفح فقط: يُحفظ المفتاح في هذا المتصفح ويُستخدم منه فقط.")
-        : L2("Kept on this computer only (never copied to the shared workspace or backups sent elsewhere).", "يُحفظ على هذا الكمبيوتر فقط."))} ${esc(L2("Get a key at console.anthropic.com → API keys.", "احصل على مفتاح من console.anthropic.com ← API keys."))}</div>
+        : L2("Kept on this computer only (never copied to the shared workspace or backups sent elsewhere).", "يُحفظ على هذا الكمبيوتر فقط."))} ${esc(L2("Claude: get a key at console.anthropic.com → API keys. Other providers: from their own console. Local models (Ollama, LM Studio) work from the desktop app without a key.", "Claude: احصل على مفتاح من console.anthropic.com ← API keys. المزوّدون الآخرون: من لوحة التحكم الخاصة بهم. النماذج المحلية (Ollama وLM Studio) تعمل من تطبيق سطح المكتب دون مفتاح."))}</div>
       ${cloud && cloud.error ? `<div class="banner warn" style="margin-top:10px">${esc(L2("The shared workspace has not been updated for the assistant yet, so the key is kept on this device and the assistant works from here (see docs/SUPABASE_SETUP.md to update the workspace).", "لم تُحدَّث مساحة العمل المشتركة للمساعد بعد، لذا يُحفظ المفتاح على هذا الجهاز ويعمل المساعد منه (راجع docs/SUPABASE_SETUP.md لتحديث مساحة العمل)."))}</div>` : ""}
       <div class="row" style="margin-top:14px"><button class="btn pri" type="submit">${t("save")}</button><a class="btn" href="#/assistant">${esc(L2("Open the assistant", "فتح المساعد"))}</a></div><div id="derr"></div></form></div>`;
   S.H.aiacc = el => { $("#aiusers").hidden = el.value !== "list"; };
+  const provs = r.providers || [];
+  const showProv = fill => {
+    const id = $("#aiform [name=provider]").value, pr = provs.find(x => x.id === id) || {}, claude = id === "anthropic";
+    $("#aimodelsel").hidden = !claude; $("#aimodeltxt").hidden = claude; $("#aibase").hidden = claude;
+    $("#aiform [name=effort]").closest("label").hidden = !claude;
+    if (fill && !claude) { $("#aiform [name=base_url]").value = pr.base_url || ""; $("#aiform [name=model_other]").placeholder = pr.model || ""; }
+    $("#aikey").placeholder = claude ? L2("Anthropic API key (sk-ant-…) — leave empty to keep", "مفتاح Anthropic API (sk-ant-…) — اتركه فارغاً للإبقاء")
+      : /localhost|127\.0\.0\.1/.test($("#aiform [name=base_url]").value) ? L2("Local model: no key needed", "نموذج محلي: لا يحتاج مفتاحاً") : L2("The provider's API key — leave empty to keep", "مفتاح API الخاص بالمزوّد — اتركه فارغاً للإبقاء");
+  };
+  S.H.aiprov = () => showProv(true);
+  showProv(false);
   const save = async key => {
     const v = readForm($("#aiform"));
-    const body = { enabled: !!v.enabled, name: v.name, model: v.model, effort: v.effort, write: v.write, access: v.access, daily_limit: +v.daily_limit || 0,
+    const body = { enabled: !!v.enabled, name: v.name, provider: v.provider, base_url: v.base_url, model: v.provider === "anthropic" ? v.model_claude : v.model_other, effort: v.effort, write: v.write, access: v.access, daily_limit: +v.daily_limit || 0,
       instructions: v.instructions, users: $$(".aiu:checked").map(x => x.value), blocked: $$(".aib:checked").map(x => x.value) };
     const saved = await api("PUT", "/api/ai-policy", body);
     if (cloudOn() && !(cloud && cloud.error)) await CloudAPI.call("rpc", "ai_settings_set", { p_settings: saved, p_key: key === undefined ? null : key });

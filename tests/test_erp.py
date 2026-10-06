@@ -2753,3 +2753,65 @@ class ChatProfilesAssistant(unittest.TestCase):
         # conversations are private to their author
         st, th = self.call("acc", "POST", "/api/ai/threads", {"title": "t", "messages": [{"role": "user", "content": "hi"}]})
         self.assertEqual(self.call("boss", "GET", f"/api/ai/threads/{th['id']}")[0], 400)
+
+
+class AssistantAnyProvider(unittest.TestCase):
+    """Other AI providers through the OpenAI-style chat-completions API: settings, translation both ways, errors."""
+
+    def test_openai_compatible_round_trip(self):
+        import threading as th
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+        from erp import ai
+        seen = []
+
+        class H(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers["content-length"])))
+                seen.append((self.path, self.headers.get("Authorization"), body))
+                if len(seen) == 1:
+                    msg = {"role": "assistant", "content": None, "tool_calls": [
+                        {"id": "c1", "type": "function", "function": {"name": "erp_read", "arguments": "{\"path\": \"/api/accounts\"}"}}]}
+                    fin = "tool_calls"
+                else:
+                    msg, fin = {"role": "assistant", "content": "Here you go."}, "stop"
+                out = json.dumps({"model": body["model"], "choices": [{"message": msg, "finish_reason": fin}]}).encode()
+                self.send_response(200)
+                self.send_header("content-type", "application/json")
+                self.send_header("content-length", str(len(out)))
+                self.end_headers()
+                self.wfile.write(out)
+        srv = HTTPServer(("127.0.0.1", 0), H)
+        th.Thread(target=srv.serve_forever, daemon=True).start()
+        db = Database(":memory:")
+        auth.create_user(db, {"username": "boss", "password": "secret123", "full_name": "Boss"}, first=True)
+        u = auth.public_user(db.one("SELECT * FROM users WHERE id=1"))
+        with self.assertRaises(a.ValidationError):
+            ai.save_policy(db, u, {"enabled": True, "provider": "custom", "base_url": "ftp://x", "model": "m"})
+        ai.save_policy(db, u, {"enabled": True, "provider": "ollama", "base_url": f"http://127.0.0.1:{srv.server_port}/v1",
+                               "model": "llama3.1:8b", "instructions": "Be brief."})
+        m = ai.complete(db, u, {"messages": [{"role": "user", "content": "hi"}]})
+        self.assertEqual(m["stop_reason"], "tool_use")
+        self.assertEqual(m["content"][0], {"type": "tool_use", "id": "c1", "name": "erp_read", "input": {"path": "/api/accounts"}})
+        path, authz, body = seen[0]
+        self.assertEqual((path, authz, body["model"]), ("/v1/chat/completions", None, "llama3.1:8b"))   # local model: no key
+        self.assertEqual(body["messages"][0]["role"], "system")
+        self.assertIn("Be brief.", body["messages"][0]["content"])
+        self.assertEqual({t["function"]["name"] for t in body["tools"]}, {"erp_find", "erp_read", "erp_write"})
+        # the tool result goes back as a "tool" message tied to the call
+        msgs = [{"role": "user", "content": "hi"}, {"role": "assistant", "content": m["content"]},
+                {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "c1", "content": "[]"}]}]
+        ai.key_set(db, u, "sk-test-0123456789abcdefghij")
+        m2 = ai.complete(db, u, {"messages": msgs})
+        self.assertEqual((m2["stop_reason"], m2["content"][0]["text"]), ("end_turn", "Here you go."))
+        b2 = seen[1][2]["messages"]
+        self.assertEqual(b2[2]["tool_calls"][0]["id"], "c1")
+        self.assertEqual((b2[3]["role"], b2[3]["tool_call_id"]), ("tool", "c1"))
+        self.assertEqual(seen[1][1], "Bearer sk-test-0123456789abcdefghij")
+        srv.shutdown()
+        # a provider that cannot be reached gives a clear message
+        ai.save_policy(db, u, {"base_url": "http://127.0.0.1:9/v1"})
+        with self.assertRaises(ai.AIError):
+            ai.complete(db, u, {"messages": [{"role": "user", "content": "hi"}]})

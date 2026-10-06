@@ -30,7 +30,24 @@ MODELS = [("claude-opus-5-5", "Claude Opus 5.5 — most capable (recommended)"),
           ("claude-haiku-4-5", "Claude Haiku 4.5 — quickest, lowest cost")]
 EFFORTS = ("low", "medium", "high")
 WRITE_MODES = ("off", "confirm")   # every change is checked and reviewed; there is no "change directly"
-DEFAULT_POLICY = {"enabled": False, "provider": "anthropic", "model": "claude-opus-5-5", "effort": "medium",
+# Any other provider: almost every one offers the same "chat completions" API (OpenAI's format), so one adapter covers
+# them all — pick a preset or type the provider's address and model name. Local models (Ollama, LM Studio) need no key.
+PROVIDERS = [
+    {"id": "anthropic", "label": "Anthropic — Claude", "base_url": "", "model": "claude-opus-5-5"},
+    {"id": "openai", "label": "OpenAI", "base_url": "https://api.openai.com/v1", "model": "gpt-…"},
+    {"id": "gemini", "label": "Google Gemini", "base_url": "https://generativelanguage.googleapis.com/v1beta/openai", "model": "gemini-…"},
+    {"id": "mistral", "label": "Mistral", "base_url": "https://api.mistral.ai/v1", "model": "mistral-large-latest"},
+    {"id": "deepseek", "label": "DeepSeek", "base_url": "https://api.deepseek.com/v1", "model": "deepseek-chat"},
+    {"id": "xai", "label": "xAI — Grok", "base_url": "https://api.x.ai/v1", "model": "grok-…"},
+    {"id": "groq", "label": "Groq", "base_url": "https://api.groq.com/openai/v1", "model": ""},
+    {"id": "openrouter", "label": "OpenRouter (hundreds of models)", "base_url": "https://openrouter.ai/api/v1", "model": "provider/model"},
+    {"id": "together", "label": "Together AI", "base_url": "https://api.together.xyz/v1", "model": ""},
+    {"id": "ollama", "label": "Ollama (local, on this computer)", "base_url": "http://localhost:11434/v1", "model": "llama3.1"},
+    {"id": "lmstudio", "label": "LM Studio (local)", "base_url": "http://localhost:1234/v1", "model": ""},
+    {"id": "custom", "label": "Other — any OpenAI-compatible address", "base_url": "", "model": ""},
+]
+OPENAI_STYLE = {x["id"] for x in PROVIDERS} - {"anthropic"}
+DEFAULT_POLICY = {"enabled": False, "provider": "anthropic", "base_url": "", "model": "claude-opus-5-5", "effort": "medium",
                   "access": "all", "users": [], "write": "confirm", "blocked": ["payroll"], "daily_limit": 100,
                   "instructions": "", "name": "Claude"}
 # never reachable through the assistant, whatever the policy says
@@ -87,8 +104,27 @@ def save_policy(db, user, d):
     p = policy(db)
     if "enabled" in d:
         p["enabled"] = bool(d["enabled"])
-    if d.get("model") in {m for m, _ in MODELS}:
-        p["model"] = d["model"]
+    if d.get("provider") in {x["id"] for x in PROVIDERS}:
+        p["provider"] = d["provider"]
+    if p["provider"] == "anthropic":
+        p["base_url"] = ""
+        if d.get("model") in {m for m, _ in MODELS}:
+            p["model"] = d["model"]
+        elif p["model"] not in {m for m, _ in MODELS}:
+            p["model"] = MODELS[0][0]
+    else:
+        if "base_url" in d:
+            u = acc.text(d["base_url"]).rstrip("/")
+            if not re.match(r"^https?://[\w.\-]+(:\d+)?(/[\w.\-~%/]*)?$", u) or len(u) > 300:
+                raise AIError("Enter the provider's address, e.g. https://api.openai.com/v1")
+            p["base_url"] = u
+        if "model" in d:
+            m = acc.text(d["model"])
+            if not re.match(r"^[\w.:/@\-]{1,160}$", m):
+                raise AIError("Enter the model name exactly as the provider writes it")
+            p["model"] = m
+        if not p["base_url"]:
+            raise AIError("Enter the provider's address")
     if d.get("effort") in EFFORTS:
         p["effort"] = d["effort"]
     if d.get("access") in ("all", "list"):
@@ -424,6 +460,8 @@ def request_params(db, user, d):
         raise AIError(f"Daily limit reached ({p['daily_limit']} requests) — try again tomorrow")
     params = {"model": p["model"], "max_tokens": 16000, "system": system_blocks(p, context(db, user)),
               "tools": tools(p), "messages": _clean_messages(d.get("messages"))}
+    if p["provider"] != "anthropic":
+        return p, params
     if not p["model"].startswith("claude-haiku"):
         params["thinking"] = {"type": "adaptive"}
         params["output_config"] = {"effort": p["effort"]}
@@ -432,9 +470,102 @@ def request_params(db, user, d):
     return p, params
 
 
+# ------------------------------------------------------------------ any other provider (OpenAI-style chat completions)
+# The conversation is always kept in one shape (content blocks: text, tool_use, tool_result); these two functions
+# translate a request to the chat-completions format and the reply back, so the rest of the assistant is the same.
+def to_openai(params):
+    text = lambda c: c if isinstance(c, str) else "\n".join(b.get("text", "") for b in c if isinstance(b, dict) and b.get("type") == "text")
+    msgs = [{"role": "system", "content": "\n\n".join(b["text"] for b in params["system"])}]
+    for m in params["messages"]:
+        c = m["content"]
+        if m["role"] == "user":
+            if isinstance(c, str):
+                msgs.append({"role": "user", "content": c})
+                continue
+            for b in c:
+                if b.get("type") == "tool_result":
+                    out = b.get("content")
+                    msgs.append({"role": "tool", "tool_call_id": b["tool_use_id"],
+                                 "content": out if isinstance(out, str) else json.dumps(out, ensure_ascii=False)})
+            t = text(c)
+            if t:
+                msgs.append({"role": "user", "content": t})
+        else:
+            calls = [{"id": b["id"], "type": "function", "function": {"name": b["name"], "arguments": json.dumps(b.get("input") or {}, ensure_ascii=False)}}
+                     for b in (c if isinstance(c, list) else []) if b.get("type") == "tool_use"]
+            msg = {"role": "assistant", "content": text(c) or None}
+            if calls:
+                msg["tool_calls"] = calls
+            msgs.append(msg)
+    return {"model": params["model"], "messages": msgs,
+            "tools": [{"type": "function", "function": {"name": t["name"], "description": t["description"], "parameters": t["input_schema"]}}
+                      for t in params["tools"]]}
+
+
+def from_openai(resp):
+    if not isinstance(resp, dict) or not resp.get("choices"):
+        err = (resp or {}).get("error") if isinstance(resp, dict) else None
+        raise AIError("The AI provider sent no answer" + (f": {err.get('message') if isinstance(err, dict) else err}" if err else ""))
+    ch = resp["choices"][0]
+    m = ch.get("message") or {}
+    content = []
+    if m.get("content"):
+        content.append({"type": "text", "text": m["content"] if isinstance(m["content"], str) else json.dumps(m["content"])})
+    for i, tc in enumerate(m.get("tool_calls") or []):
+        f = tc.get("function") or {}
+        try:
+            args = json.loads(f.get("arguments") or "{}")
+        except ValueError:
+            args = {}
+        content.append({"type": "tool_use", "id": tc.get("id") or f"call_{i}", "name": f.get("name") or "", "input": args})
+    reason = {"tool_calls": "tool_use", "function_call": "tool_use", "length": "max_tokens", "content_filter": "refusal"}.get(
+        ch.get("finish_reason"), "end_turn")
+    if reason != "tool_use" and any(b["type"] == "tool_use" for b in content):
+        reason = "tool_use"
+    return {"role": "assistant", "content": content or [{"type": "text", "text": ""}], "stop_reason": reason,
+            "model": resp.get("model") or ""}
+
+
+def _openai_request(p, key, params):
+    headers = {"Content-Type": "application/json"}
+    if key:
+        headers["Authorization"] = "Bearer " + key
+    if "openrouter.ai" in p["base_url"]:
+        headers["X-Title"] = "Beyond ERP"
+    return p["base_url"].rstrip("/") + "/chat/completions", headers, to_openai(params)
+
+
+def _complete_openai(db, user, p, params):
+    import urllib.error
+    import urllib.request
+    key = _local(db).local_get(db, "ai_key")
+    url, headers, body = _openai_request(p, key, params)
+    req = urllib.request.Request(url, data=json.dumps(body).encode(), headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=300) as r:
+            resp = json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        try:
+            msg = json.loads(e.read().decode("utf-8")).get("error")
+            msg = msg.get("message") if isinstance(msg, dict) else msg
+        except Exception:  # noqa: BLE001
+            msg = ""
+        if e.code in (401, 403):
+            raise AIError("The AI provider refused the key — a super administrator should check it in Settings → AI assistant")
+        if e.code == 429:
+            raise AIError("The AI provider is busy (rate limit) — try again in a minute")
+        raise AIError(f"The AI provider refused the request ({e.code}){': ' + str(msg) if msg else ''}")
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        raise AIError(f"Could not reach the AI provider at {p['base_url']} — {getattr(e, 'reason', e)}")
+    _count(db, user)
+    return from_openai(resp)
+
+
 def complete(db, user, d):
-    """Desktop/server edition: call Claude with the key installed on this device (official Python SDK)."""
+    """Desktop/server edition: call the provider with the key installed on this device (Claude: official Python SDK)."""
     p, params = request_params(db, user, d)
+    if p["provider"] != "anthropic":
+        return _complete_openai(db, user, p, params)
     key = _local(db).local_get(db, "ai_key")
     if not key:
         raise AIError("No AI provider key is installed yet — a super administrator adds it in Settings → AI assistant")
@@ -464,10 +595,14 @@ def prepare_for_browser(db, user, d):
     with the key installed in this browser (only people allowed to use the assistant receive it)."""
     p, params = request_params(db, user, d)
     key = _local(db).local_get(db, "ai_key")
+    if p["provider"] != "anthropic":
+        url, headers, body = _openai_request(p, key, params)
+        _count(db, user)
+        return {"provider": "openai", "url": url, "headers": headers, "body": body}
     if not key:
         raise AIError("No AI provider key is installed yet — a super administrator adds it in Settings → AI assistant")
     _count(db, user)
-    return {"params": params, "key": key}
+    return {"provider": "anthropic", "params": params, "key": key}
 
 
 # ------------------------------------------------------------------ conversations on this device

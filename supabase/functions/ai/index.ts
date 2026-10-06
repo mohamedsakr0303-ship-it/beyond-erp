@@ -36,6 +36,37 @@ async function call(method: string, path: string, body?: unknown, headers: Recor
 }
 
 const MODELS = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5"];
+
+// Any other provider speaks the OpenAI-style "chat completions" API: translate the request there and the reply back,
+// so the page always sees the same message shape (text / tool_use blocks). Mirrors to_openai / from_openai in erp/ai.py.
+const textOf = (c: any) => typeof c === "string" ? c : (Array.isArray(c) ? c.filter((b: any) => b?.type === "text").map((b: any) => b.text || "").join("\n") : "");
+function toOpenAI(p: any) {
+  const msgs: any[] = [{ role: "system", content: p.system.map((b: any) => b.text).join("\n\n") }];
+  for (const m of p.messages) {
+    if (m.role === "user") {
+      if (typeof m.content === "string") { msgs.push({ role: "user", content: m.content }); continue; }
+      for (const b of m.content || []) if (b?.type === "tool_result")
+        msgs.push({ role: "tool", tool_call_id: b.tool_use_id, content: typeof b.content === "string" ? b.content : JSON.stringify(b.content) });
+      const t = textOf(m.content); if (t) msgs.push({ role: "user", content: t });
+    } else {
+      const calls = (Array.isArray(m.content) ? m.content : []).filter((b: any) => b?.type === "tool_use")
+        .map((b: any) => ({ id: b.id, type: "function", function: { name: b.name, arguments: JSON.stringify(b.input || {}) } }));
+      msgs.push({ role: "assistant", content: textOf(m.content) || null, ...(calls.length ? { tool_calls: calls } : {}) });
+    }
+  }
+  return { model: p.model, messages: msgs,
+           tools: p.tools.map((t: any) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.input_schema } })) };
+}
+function fromOpenAI(r: any) {
+  const ch = r?.choices?.[0]; if (!ch) throw new Error("The AI provider sent no answer" + (r?.error ? ": " + (r.error.message || r.error) : ""));
+  const m = ch.message || {}, content: any[] = [];
+  if (m.content) content.push({ type: "text", text: typeof m.content === "string" ? m.content : JSON.stringify(m.content) });
+  (m.tool_calls || []).forEach((tc: any, i: number) => { let input = {}; try { input = JSON.parse(tc.function?.arguments || "{}"); } catch { /* bad JSON */ }
+    content.push({ type: "tool_use", id: tc.id || "call_" + i, name: tc.function?.name || "", input }); });
+  let stop = ({ tool_calls: "tool_use", function_call: "tool_use", length: "max_tokens", content_filter: "refusal" } as any)[ch.finish_reason] || "end_turn";
+  if (content.some(b => b.type === "tool_use")) stop = "tool_use";
+  return { role: "assistant", content: content.length ? content : [{ type: "text", text: "" }], stop_reason: stop, model: r.model || "" };
+}
 const TOOLS = ["erp_find", "erp_read", "erp_write"];
 const MAX_REQUEST = 30_000_000;
 
@@ -65,7 +96,8 @@ Deno.serve(async (req) => {
   const row = cfg.ok && cfg.data.length ? cfg.data[0] : null;
   const s: any = row?.settings || {};
   if (!row || !s.enabled) return fail(403, "The AI assistant is switched off for this company");
-  if (!row.api_key) return fail(400, "No AI provider key is installed yet — a super administrator adds it in Settings → AI assistant");
+  const other = s.provider && s.provider !== "anthropic";
+  if (!row.api_key && !other) return fail(400, "No AI provider key is installed yet — a super administrator adds it in Settings → AI assistant");
   if (!isSuper && s.access === "list") {
     const p = await call("GET", `/rest/v1/people?select=username&email=eq.${enc(caller)}&limit=1`);
     const username = String(p.ok && p.data.length ? p.data[0].username || "" : "").toLowerCase();
@@ -82,7 +114,7 @@ Deno.serve(async (req) => {
   const messages = Array.isArray(b.messages) ? b.messages : [];
   if (!messages.length || messages[0]?.role !== "user" || messages.some((m: any) => !["user", "assistant"].includes(m?.role)))
     return fail(400, "Malformed conversation");
-  const model = MODELS.includes(s.model) ? s.model : "claude-opus-5-5";
+  const model = other ? String(s.model || "") : (MODELS.includes(s.model) ? s.model : "claude-opus-5-5");
   const write = ["off", "confirm", "auto"].includes(s.write) ? s.write : "confirm";
   const tools = (Array.isArray(b.tools) ? b.tools : [])
     .filter((t: any) => t && TOOLS.includes(t.name) && !(t.name === "erp_write" && write === "off"));
@@ -100,6 +132,24 @@ Deno.serve(async (req) => {
     params.fallbacks = "default";   // a declined request is re-run on Anthropic's recommended fallback model
   }
 
+  if (other) {   // any other provider, at the address the super administrator set
+    const base = String(s.base_url || "").replace(/\/+$/, "");
+    if (!/^https:\/\//.test(base)) return fail(400, "Set the provider's https address in Settings → AI assistant (local addresses only work from the desktop app)");
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (row.api_key) headers.Authorization = "Bearer " + row.api_key;
+    let r: Response;
+    try { r = await fetch(base + "/chat/completions", { method: "POST", headers, body: JSON.stringify(toOpenAI(params)) }); }
+    catch { return fail(502, "Could not reach the AI provider — try again"); }
+    const data = await r.json().catch(() => ({}));
+    if (r.status === 401 || r.status === 403) return fail(400, "The AI provider refused the key — a super administrator should check it in Settings → AI assistant");
+    if (r.status === 429) return fail(429, "The AI provider is busy (rate limit) — try again in a minute");
+    if (!r.ok) return fail(400, `The AI provider refused the request (${r.status})${data?.error ? ": " + (data.error.message || data.error) : ""}`);
+    let message;
+    try { message = fromOpenAI(data); } catch (e: any) { return fail(502, e.message); }
+    await call("POST", "/rest/v1/ai_usage?on_conflict=company_id,email,day", { company_id: company, email: caller, day, calls: calls + 1 },
+               { ...svc, Prefer: "resolution=merge-duplicates" });
+    return reply(200, { message });
+  }
   const client = new Anthropic({ apiKey: row.api_key });
   let message: any;
   try {

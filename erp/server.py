@@ -151,7 +151,7 @@ def bootstrap(ctx):
     base["profile"] = chat.profile(db, user["id"])
     pol = ai.policy(db)
     base["ai"] = {"allowed": ai.allowed(pol, user), "used_today": ai.used_today(db, user), "has_key": ai.has_key(db),
-                  "models": ai.MODELS, "policy": pol if user.get("is_super") else {k: pol[k] for k in ("enabled", "name", "write", "model", "daily_limit")}}
+                  "models": ai.MODELS, "providers": ai.PROVIDERS, "policy": pol if user.get("is_super") else {k: pol[k] for k in ("enabled", "name", "write", "model", "daily_limit")}}
     sync = getattr(ctx.app, "cloud", None)
     base.update({
         "cloud": {"joined": bool(sync and sync.active)},
@@ -2929,7 +2929,7 @@ def ai_policy_get(ctx):
     from . import ai
     p = ai.policy(ctx.db)
     out = {"policy": p if ctx.user.get("is_super") else {k: p[k] for k in ("enabled", "name", "write", "model", "daily_limit")},
-           "allowed": ai.allowed(p, ctx.user), "models": ai.MODELS, "used_today": ai.used_today(ctx.db, ctx.user),
+           "allowed": ai.allowed(p, ctx.user), "models": ai.MODELS, "providers": ai.PROVIDERS, "used_today": ai.used_today(ctx.db, ctx.user),
            "has_key": ai.has_key(ctx.db)}
     return ok(out)
 
@@ -2972,6 +2972,13 @@ def ai_complete(ctx):
     if getattr(ctx.app, "static", False):    # browser-only: the page calls the provider itself
         return ok(ai.prepare_for_browser(ctx.db, ctx.user, ctx.body))
     return ok({"message": ai.complete(ctx.db, ctx.user, ctx.body)})
+
+
+@route("POST", "/api/ai/convert")
+def ai_convert(ctx):
+    """Browser-only edition with another provider: turn the provider's reply into the assistant's message shape."""
+    from . import ai
+    return ok({"message": ai.from_openai(ctx.body.get("response"))})
 
 
 @route("POST", "/api/ai/preview")
