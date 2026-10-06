@@ -41,7 +41,8 @@ from . import db as _db
 LOCAL_ONLY = [r"POST /api/login", r"POST /api/logout", r"POST /api/setup", r"PUT /api/me/password",
               r"POST /api/maintenance", r"POST /api/offers-preview", r"POST /api/einvoice/test",
               r"POST /api/einvoice/submit", r"POST /api/einvoice/\d+/refresh", r"POST /api/einvoice/\d+/cancel",
-              r"POST /api/[\w-]+-preview(?:/[\w-]+)?", r"\w+ /api/cloud/.*"]
+              r"POST /api/[\w-]+-preview(?:/[\w-]+)?", r"\w+ /api/cloud/.*",
+              r"\w+ /api/ai/.*"]   # the assistant's key, requests and conversations stay on the device
 _LOCAL_RX = re.compile("^(?:" + "|".join(LOCAL_ONLY) + ")$")
 ETA_CALLS = re.compile(r"^POST /api/einvoice/(?:submit|(\d+)/(?:refresh|cancel))$")
 SNAPSHOT_EVERY = 300          # changes between automatic workspace copies
@@ -233,7 +234,7 @@ def ensure_app_user(db, email, admin=False):
 
 # ------------------------------------------------------------------ snapshots (server edition; the browser does
 # the same in JavaScript on its sql.js image)
-LOCAL_TABLES = ("cloud_local", "sessions")   # left out of workspace copies
+LOCAL_TABLES = ("cloud_local", "sessions", "ai_threads", "ai_usage")   # left out of workspace copies (device-only)
 
 
 def _keep_on_restore(db):

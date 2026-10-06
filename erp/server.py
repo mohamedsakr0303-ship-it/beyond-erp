@@ -88,8 +88,9 @@ def settings_dict(db):
     return out
 
 
-# changes allowed without a licence: signing in / out, own password, entering the licence, previews (nothing saved)
-LICENCE_FREE = re.compile(r"^/api/(login|logout|me/password|licence|[\w-]+-preview(/[\w-]+)?)$")
+# changes allowed without a licence: signing in / out, own password and profile, entering the licence, previews (nothing
+# saved), chat and the assistant's own conversations (the books stay read-only; the assistant's changes still need one)
+LICENCE_FREE = re.compile(r"^/api/(login|logout|me/password|me/profile|licence|chat/.+|ai/.+|[\w-]+-preview(/[\w-]+)?)$")
 
 
 @route("GET", "/api/licence")
@@ -135,6 +136,11 @@ def bootstrap(ctx):
         base["licence"] = {k: lst.get(k) for k in ("enabled", "state", "can_write", "days_left", "problem", "warning", "updates_until")}
         if lst.get("licence"):
             base["licence"]["licensee"] = lst["licence"].get("company")
+    from . import ai, chat
+    base["profile"] = chat.profile(db, user["id"])
+    pol = ai.policy(db)
+    base["ai"] = {"allowed": ai.allowed(pol, user), "used_today": ai.used_today(db, user), "has_key": ai.has_key(db),
+                  "models": ai.MODELS, "policy": pol if user.get("is_super") else {k: pol[k] for k in ("enabled", "name", "write", "model", "daily_limit")}}
     sync = getattr(ctx.app, "cloud", None)
     base.update({
         "cloud": {"joined": bool(sync and sync.active)},
@@ -2778,6 +2784,224 @@ def my_password(ctx):
     return ok()
 
 
+# ================================================================ people, profiles and chat (erp/chat.py)
+@route("GET", "/api/me/profile")
+def my_profile(ctx):
+    from . import chat
+    return ok(chat.profile(ctx.db, ctx.user["id"]))
+
+
+@route("PUT", "/api/me/profile")
+def my_profile_save(ctx):
+    from . import chat
+    return ok(chat.save_profile(ctx.db, ctx.user["id"], ctx.body))
+
+
+@route("GET", "/api/people")
+def people_list(ctx):
+    from . import chat
+    return ok(chat.people(ctx.db))
+
+
+@route("GET", "/api/people/<uid>")
+def person(ctx, uid):
+    from . import chat
+    p = next((x for x in chat.people(ctx.db) if x["id"] == int(uid)), None)
+    if not p:
+        raise LookupError("No such person")
+    prof = chat.profile(ctx.db, p["id"])
+    return ok({**p, "bio": prof["bio"], "phone": prof["phone"]})
+
+
+@route("GET", "/api/chat/rooms")
+def chat_rooms(ctx):
+    from . import chat
+    return ok({"rooms": chat.rooms(ctx.db, ctx.user), "max_mb": chat.MAX_MESSAGE_FILES_MB})
+
+
+@route("POST", "/api/chat/rooms")
+def chat_room_new(ctx):
+    from . import chat
+    rid = chat.create_room(ctx.db, ctx.user, ctx.body)
+    ctx.log("chat.room.create", ctx.body.get("name", ""))
+    return ok({"id": rid})
+
+
+@route("PUT", "/api/chat/rooms/<rid>")
+def chat_room_edit(ctx, rid):
+    from . import chat
+    chat.update_room(ctx.db, ctx.user, rid, ctx.body)
+    ctx.log("chat.room.edit", rid)
+    return ok({"id": int(rid)})
+
+
+@route("POST", "/api/chat/rooms/<rid>/archive")
+def chat_room_archive(ctx, rid):
+    from . import chat
+    chat.archive_room(ctx.db, ctx.user, rid, ctx.body.get("archived", True) not in (False, 0, "0", "false"))
+    ctx.log("chat.room.archive", rid)
+    return ok()
+
+
+@route("DELETE", "/api/chat/rooms/<rid>")
+def chat_room_delete(ctx, rid):
+    from . import chat
+    r = chat.delete_room(ctx.db, ctx.user, rid)
+    ctx.log("chat.room.delete", r["name"])
+    return ok()
+
+
+@route("POST", "/api/chat/dm")
+def chat_dm(ctx):
+    from . import chat
+    return ok({"id": chat.direct(ctx.db, ctx.user, ctx.body.get("user_id") or 0)})
+
+
+@route("GET", "/api/chat/rooms/<rid>/messages")
+def chat_messages(ctx, rid):
+    from . import chat
+    return ok(chat.messages(ctx.db, ctx.user, rid, ctx.q.get("after"), ctx.q.get("before"), ctx.q.get("limit")))
+
+
+@route("POST", "/api/chat/rooms/<rid>/messages")
+def chat_send(ctx, rid):
+    from . import chat
+    return ok({"id": chat.send(ctx.db, ctx.user, rid, ctx.body)})
+
+
+@route("POST", "/api/chat/rooms/<rid>/read")
+def chat_read(ctx, rid):
+    from . import chat
+    chat._need_read(ctx.db, ctx.user, rid)
+    chat.mark_read(ctx.db, ctx.user, rid, ctx.body.get("last"))
+    return ok()
+
+
+@route("PUT", "/api/chat/messages/<mid>")
+def chat_edit(ctx, mid):
+    from . import chat
+    chat.edit(ctx.db, ctx.user, mid, ctx.body)
+    return ok()
+
+
+@route("DELETE", "/api/chat/messages/<mid>")
+def chat_remove(ctx, mid):
+    from . import chat
+    chat.remove(ctx.db, ctx.user, mid)
+    return ok()
+
+
+@route("GET", "/api/chat/files/<fid>")
+def chat_file(ctx, fid):
+    from . import chat
+    name, mime, data = chat.file(ctx.db, ctx.user, fid)
+    return download(data, name, mime)
+
+
+@route("GET", "/api/chat/updates")
+def chat_updates(ctx):
+    from . import chat
+    return ok(chat.updates(ctx.db, ctx.user, ctx.q.get("since")))
+
+
+@route("GET", "/api/chat/rooms/<rid>/export")
+def chat_export(ctx, rid):
+    from . import chat
+    data, name = chat.export_zip(ctx.db, ctx.user, rid, ctx.db.setting("company_name") or "")
+    ctx.log("chat.export", rid)
+    return download(data, name, "application/zip")
+
+
+# ================================================================ AI assistant (erp/ai.py)
+@route("GET", "/api/ai-policy")
+def ai_policy_get(ctx):
+    from . import ai
+    p = ai.policy(ctx.db)
+    out = {"policy": p if ctx.user.get("is_super") else {k: p[k] for k in ("enabled", "name", "write", "model", "daily_limit")},
+           "allowed": ai.allowed(p, ctx.user), "models": ai.MODELS, "used_today": ai.used_today(ctx.db, ctx.user),
+           "has_key": ai.has_key(ctx.db)}
+    return ok(out)
+
+
+@route("PUT", "/api/ai-policy")
+def ai_policy_put(ctx):
+    from . import ai
+    p = ai.save_policy(ctx.db, ctx.user, ctx.body)
+    ctx.log("ai.policy", "on" if p["enabled"] else "off")
+    return ok(p)
+
+
+@route("PUT", "/api/ai/key")
+def ai_key_put(ctx):
+    from . import ai
+    ai.key_set(ctx.db, ctx.user, ctx.body.get("key"))
+    ctx.log("ai.key", "set" if ctx.body.get("key") else "removed")
+    return ok({"has_key": ai.has_key(ctx.db)})
+
+
+@route("GET", "/api/ai/context")
+def ai_context(ctx):
+    from . import ai
+    p = ai.policy(ctx.db)
+    if not ai.allowed(p, ctx.user):
+        raise PermissionError("The AI assistant is switched off for you")
+    return ok({"base": ai.base_prompt(p), "context": ai.context(ctx.db, ctx.user), "tools": ai.tools(p),
+               "write": p["write"], "name": p["name"]})
+
+
+@route("GET", "/api/ai/catalog")
+def ai_catalog(ctx):
+    from . import ai
+    return ok(ai.catalog(ROUTES, ctx.user, ctx.q.get("q"), ctx.q.get("limit")))
+
+
+@route("POST", "/api/ai/complete")
+def ai_complete(ctx):
+    from . import ai
+    if getattr(ctx.app, "static", False):    # browser-only: the page calls the provider itself
+        return ok(ai.prepare_for_browser(ctx.db, ctx.user, ctx.body))
+    return ok({"message": ai.complete(ctx.db, ctx.user, ctx.body)})
+
+
+@route("POST", "/api/ai/params")
+def ai_params(ctx):
+    """The request for the workspace's ai function: same policy, built here so the page cannot change it."""
+    from . import ai
+    p, params = ai.request_params(ctx.db, ctx.user, ctx.body)
+    return ok({"params": params})
+
+
+@route("GET", "/api/ai/threads")
+def ai_threads(ctx):
+    from . import ai
+    return ok(ai.threads(ctx.db, ctx.user))
+
+
+@route("GET", "/api/ai/threads/<tid>")
+def ai_thread(ctx, tid):
+    from . import ai
+    return ok(ai.thread(ctx.db, ctx.user, tid))
+
+
+@route("POST", "/api/ai/threads")
+def ai_thread_new(ctx):
+    from . import ai
+    return ok({"id": ai.save_thread(ctx.db, ctx.user, ctx.body)})
+
+
+@route("PUT", "/api/ai/threads/<tid>")
+def ai_thread_save(ctx, tid):
+    from . import ai
+    return ok({"id": ai.save_thread(ctx.db, ctx.user, ctx.body, tid)})
+
+
+@route("DELETE", "/api/ai/threads/<tid>")
+def ai_thread_del(ctx, tid):
+    from . import ai
+    ai.delete_thread(ctx.db, ctx.user, tid)
+    return ok()
+
+
 @route("GET", "/api/audit", "users.audit")
 def audit_log(ctx):
     limit, offset = page(ctx.q)
@@ -3170,6 +3394,24 @@ def cloud_member_set(ctx):
                        or {"ok": True})
 
 
+# chat between companies and the AI assistant on the shared workspace (supabase/migrations/*_chat_links_ai.sql,
+# supabase/functions/ai): the same calls the browser edition makes from bridge.js
+CLOUD_RPCS = {"my_super", "set_member_super", "chat_link_list", "chat_link_create", "chat_link_accept", "chat_link_end",
+              "chat_link_messages", "chat_link_file", "chat_link_send", "chat_link_edit", "chat_link_read",
+              "ai_settings_get", "ai_settings_set"}
+
+
+@route("POST", "/api/cloud/call")
+def cloud_passthrough(ctx):
+    c = _cloud(ctx)
+    kind, name, params = ctx.body.get("kind"), ctx.body.get("name"), ctx.body.get("params") or {}
+    if kind == "rpc" and name in CLOUD_RPCS:
+        return _cloud_call(lambda: {"result": c.rpc(name, {"p_company": c._co(), **params})})
+    if kind == "fn" and name == "ai":
+        return _cloud_call(lambda: {"result": c.client()._call("POST", "/functions/v1/ai", {**params, "company": c._co()}, c.token())})
+    raise acc.ValidationError("Unknown workspace call")
+
+
 @route("PUT", "/api/cloud/account")
 def cloud_account(ctx):
     """Create / update a person's workspace sign-in account (supabase/functions/manage-user)."""
@@ -3299,6 +3541,11 @@ def handle(app, method, target, headers, raw=b"", as_user=None, dry=False):
                 continue
             if not public and not user:
                 return ok({"error": "Please sign in"}, 401)
+            if headers.get("x-ai-call") == "1" and as_user is None:   # a call the AI assistant makes for this person
+                from . import ai
+                ai.check_call(db, user, method, url.path)
+                if ai.route_blocked(db, module):
+                    return ok({"error": "The AI assistant may not use this section (super administrator's setting)"}, 403)
             if module and not auth.can(user, module, level):
                 return ok({"error": "You do not have permission for this"}, 403)
             if (method != "GET" and as_user is None and getattr(app, "licensing", False) and not public
@@ -3313,7 +3560,7 @@ def handle(app, method, target, headers, raw=b"", as_user=None, dry=False):
             return fn(ctx, **match.groupdict())
         return ok({"error": "Not found"}, 404)
     except PermissionError as e:
-        return ok({"error": str(e) if isinstance(e, SuperOnly) else "You do not have permission for this"}, 403)
+        return ok({"error": str(e) or "You do not have permission for this"}, 403)
     except (acc.ValidationError, LookupError, ValueError, json.JSONDecodeError) as e:
         return ok({"error": str(e)}, 400)
     except Exception as e:  # noqa: BLE001

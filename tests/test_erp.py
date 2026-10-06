@@ -2595,3 +2595,127 @@ class Extracts(unittest.TestCase):
         x = d2.one("SELECT * FROM extracts WHERE number='XT-1'")
         self.assertEqual((x["seq_no"], x["project"], x["prev_paid"]), (1, "اجورا", 6500000))
         self.assertEqual(d2.one("SELECT pct FROM extract_lines WHERE extract_id=? AND description='ايجار'", (x["id"],))["pct"], 0.5)
+
+
+class ChatProfilesAssistant(unittest.TestCase):
+    """Chat rooms and their members, edit-until-seen, files, mentions, export; profiles; the AI assistant's policy."""
+
+    def setUp(self):
+        from erp.server import handle
+        self.handle = handle
+        self.app = type("App", (), {"static": False})()
+        self.app.db = self.db = Database(":memory:")
+        auth.create_user(self.db, {"username": "boss", "password": "secret123", "full_name": "Boss"}, first=True)
+        auth.create_user(self.db, {"username": "acc", "password": "secret123", "full_name": "Accountant",
+                                   "perms": {"accounting": "edit"}})
+        auth.create_user(self.db, {"username": "eng", "password": "secret123", "full_name": "Engineer"})
+        self.tok = {u: auth.login(self.db, u, "secret123")[0] for u in ("boss", "acc", "eng")}
+
+    def call(self, who, method, url, body=None, **headers):
+        h = {"x-requested-with": "BeyondERP", "x-session": self.tok[who], "content-type": "application/json", **headers}
+        r = self.handle(self.app, method, url, h, json.dumps(body).encode() if body is not None else b"")
+        try:
+            return r.status, json.loads(r.body)
+        except ValueError:
+            return r.status, r.body
+
+    def test_rooms_members_and_privacy(self):
+        self.assertEqual(self.call("acc", "POST", "/api/chat/rooms", {"name": "x"})[0], 403)   # super administrators only
+        st, r = self.call("boss", "POST", "/api/chat/rooms", {"name": "Accountants", "members": [2]})
+        self.assertEqual(st, 200)
+        rid = r["id"]
+        self.assertEqual([x["name"] for x in self.call("eng", "GET", "/api/chat/rooms")[1]["rooms"]], ["General"])
+        self.assertEqual(self.call("eng", "GET", f"/api/chat/rooms/{rid}/messages")[0], 403)
+        self.assertEqual(self.call("eng", "POST", f"/api/chat/rooms/{rid}/messages", {"body": "hi"})[0], 403)
+        self.assertEqual(self.call("acc", "POST", f"/api/chat/rooms/{rid}/messages", {"body": "hi"})[0], 200)
+        # removing a member takes the room away from them; the history stays
+        self.call("boss", "PUT", f"/api/chat/rooms/{rid}", {"members": [1]})
+        self.assertEqual(self.call("acc", "GET", f"/api/chat/rooms/{rid}/messages")[0], 403)
+        self.assertEqual(len(self.call("boss", "GET", f"/api/chat/rooms/{rid}/messages")[1]["messages"]), 1)
+        # archived rooms are read-only; General cannot be archived or deleted
+        self.call("boss", "POST", f"/api/chat/rooms/{rid}/archive", {"archived": True})
+        self.assertEqual(self.call("boss", "POST", f"/api/chat/rooms/{rid}/messages", {"body": "x"})[0], 403)
+        self.assertEqual(self.call("boss", "POST", "/api/chat/rooms/1/archive", {})[0], 400)
+        self.assertEqual(self.call("boss", "DELETE", "/api/chat/rooms/1")[0], 400)
+
+    def test_edit_until_seen_mentions_files_export(self):
+        st, m = self.call("boss", "POST", "/api/chat/rooms/1/messages",
+                          {"body": "hi @acc and @all", "files": [{"name": "a.txt", "mime": "text/plain", "data": "aGVsbG8="}]})
+        self.assertEqual(st, 200)
+        self.assertEqual(self.call("boss", "PUT", f"/api/chat/messages/{m['id']}", {"body": "hello @acc"})[0], 200)
+        self.assertEqual(self.call("acc", "PUT", f"/api/chat/messages/{m['id']}", {"body": "hack"})[0], 403)
+        up = self.call("acc", "GET", "/api/chat/updates?since=0")[1]
+        self.assertTrue(up["messages"][0]["mention"])
+        self.assertEqual(up["unread"], 1)
+        msgs = self.call("acc", "GET", "/api/chat/rooms/1/messages")[1]["messages"]
+        self.assertEqual(msgs[0]["files"][0]["name"], "a.txt")
+        self.assertEqual(self.call("acc", "GET", f"/api/chat/files/{msgs[0]['files'][0]['id']}")[1], b"hello")
+        self.call("acc", "POST", "/api/chat/rooms/1/read", {"last": m["id"]})
+        st, err = self.call("boss", "PUT", f"/api/chat/messages/{m['id']}", {"body": "too late"})
+        self.assertEqual(st, 400)
+        self.assertIn("seen", err["error"])
+        self.assertEqual(self.call("acc", "GET", "/api/chat/updates?since=0")[1]["unread"], 0)
+        st, dm = self.call("eng", "POST", "/api/chat/dm", {"user_id": 2})
+        self.assertEqual(self.call("eng", "POST", "/api/chat/dm", {"user_id": 2})[1]["id"], dm["id"])   # one room per pair
+        self.assertEqual(self.call("boss", "GET", f"/api/chat/rooms/{dm['id']}/messages")[0], 403)      # private, even for the super administrator
+        r = self.handle(self.app, "GET", "/api/chat/rooms/1/export", {"x-requested-with": "BeyondERP", "x-session": self.tok["boss"]}, b"")
+        import io
+        import zipfile
+        names = zipfile.ZipFile(io.BytesIO(r.body)).namelist()
+        self.assertIn("transcript.html", names)
+        self.assertTrue(any(n.startswith("files/") and n.endswith("a.txt") for n in names))
+        self.assertEqual(self.call("acc", "GET", "/api/chat/rooms/1/export")[0], 403)
+
+    def test_profile_defaults_and_prefs(self):
+        p = self.call("eng", "GET", "/api/me/profile")[1]
+        self.assertEqual(p["prefs"]["nav_mode"], "click")            # menus open on click unless the person chooses hover
+        self.assertEqual(p["prefs"]["notify"]["level"], "all")
+        p = self.call("eng", "PUT", "/api/me/profile", {"job_title": "Site engineer", "prefs": {"nav_mode": "hover",
+                      "notify": {"level": "rooms", "rooms": [1], "mode": "vibrate"}}})[1]
+        self.assertEqual((p["job_title"], p["prefs"]["nav_mode"], p["prefs"]["notify"]["mode"]), ("Site engineer", "hover", "vibrate"))
+        self.assertEqual(self.call("eng", "PUT", "/api/me/profile", {"avatar": "javascript:alert(1)"})[0], 400)
+        boot = self.call("eng", "GET", "/api/bootstrap")[1]
+        self.assertEqual(boot["profile"]["prefs"]["nav_mode"], "hover")
+        self.assertIn("Site engineer", [x["job_title"] for x in self.call("acc", "GET", "/api/people")[1]])
+
+    def test_assistant_policy_and_permissions(self):
+        from erp import ai, cloud
+        aih = {"x-ai-call": "1"}
+        self.assertEqual(self.call("acc", "GET", "/api/accounts", **aih)[0], 403)              # switched off
+        self.assertEqual(self.call("acc", "PUT", "/api/ai-policy", {"enabled": True})[0], 403)  # super administrators only
+        self.call("boss", "PUT", "/api/ai-policy", {"enabled": True, "write": "off", "blocked": ["payroll"]})
+        self.assertEqual(self.call("acc", "GET", "/api/accounts", **aih)[0], 200)
+        self.assertEqual(self.call("boss", "GET", "/api/users", **aih)[0], 403)                 # never user management
+        self.assertEqual(self.call("boss", "PUT", "/api/ai-policy", {"enabled": False}, **aih)[0], 403)
+        self.assertEqual(self.call("boss", "GET", "/api/payroll/runs", **aih)[0], 403)     # blocked section
+        # read-only policy: no changes at all, and no change tool offered
+        self.assertEqual(self.call("acc", "POST", "/api/bus", {"code": "X", "name": "X"}, **aih)[0], 403)
+        self.assertNotIn("erp_write", [t["name"] for t in self.call("acc", "GET", "/api/ai/context")[1]["tools"]])
+        # changes allowed: still only what the person may do themselves
+        self.call("boss", "PUT", "/api/ai-policy", {"write": "confirm"})
+        self.assertEqual(self.call("eng", "POST", "/api/bus", {"code": "X", "name": "X"}, **aih)[0], 403)
+        self.assertEqual(self.call("boss", "POST", "/api/bus", {"code": "X", "name": "X"}, **aih)[0], 200)
+        # who may use it
+        self.call("boss", "PUT", "/api/ai-policy", {"access": "list", "users": ["acc"]})
+        self.assertEqual(self.call("eng", "GET", "/api/ai/context")[0], 403)
+        self.assertEqual(self.call("acc", "GET", "/api/ai/context")[0], 200)
+        # the request is built on the server: model, instructions and tools from the policy, never from the page
+        self.call("boss", "PUT", "/api/ai-policy", {"instructions": "Always answer in Arabic.", "model": "claude-opus-5-5"})
+        params = self.call("acc", "POST", "/api/ai/params", {"messages": [{"role": "user", "content": "hi"}], "model": "x"})[1]["params"]
+        self.assertEqual(params["model"], "claude-opus-5-5")
+        self.assertIn("Always answer in Arabic.", params["system"][0]["text"])
+        self.assertEqual(params["thinking"], {"type": "adaptive"})
+        self.assertEqual(self.call("acc", "POST", "/api/ai/params", {"messages": [{"role": "system", "content": "x"}]})[0], 400)
+        # the key and the conversations stay on the device: never replicated to the workspace
+        self.assertFalse(cloud.replicated("PUT", "/api/ai/key"))
+        self.assertFalse(cloud.replicated("POST", "/api/ai/threads"))
+        self.assertTrue(cloud.replicated("PUT", "/api/ai-policy"))
+        self.assertIn("ai_threads", cloud.LOCAL_TABLES)
+        self.assertEqual(self.call("acc", "PUT", "/api/ai/key", {"key": "sk-ant-x" * 5})[0], 403)
+        self.call("boss", "PUT", "/api/ai/key", {"key": "sk-ant-test-0123456789abcdef"})
+        self.assertNotIn("sk-ant", json.dumps(self.call("boss", "GET", "/api/ai-policy")[1]))
+        self.assertNotIn("sk-ant", json.dumps(self.call("boss", "GET", "/api/bootstrap")[1]))
+        self.assertTrue(ai.has_key(self.db))
+        # conversations are private to their author
+        st, th = self.call("acc", "POST", "/api/ai/threads", {"title": "t", "messages": [{"role": "user", "content": "hi"}]})
+        self.assertEqual(self.call("boss", "GET", f"/api/ai/threads/{th['id']}")[0], 400)

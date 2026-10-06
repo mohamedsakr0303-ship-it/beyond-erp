@@ -1,0 +1,482 @@
+"""Chat between the people of a company, and everyone's profile.
+
+Rooms
+-----
+* **General** (id 1): everyone signed in to the company; no permission needed.
+* **Rooms** the super administrator creates (partners, accountants, engineers, sales…) for the people they choose;
+  only members read and write. The super administrator can rename a room, change who is in it, archive it (kept,
+  read-only) or delete it, and export any room with its files.
+* **Direct messages** between two people.
+
+A message can be edited (or taken back) by its author until someone else has seen it; the super administrator can
+remove any message. Files of any type travel with the message (base64), pictures with a small preview.
+
+Every change here is an ordinary API call, so with the shared workspace it reaches every device like any other change.
+"""
+import base64
+import html
+import io
+import json
+import re
+import zipfile
+
+from . import accounting as acc
+
+GENERAL = 1
+MAX_MESSAGE_FILES_MB = 15          # all files of one message (the request limit is 25 MB of base64)
+MAX_BODY_CHARS = 20000
+MENTION_RX = re.compile(r"(?<![\w@])@([\w.\-]+)", re.UNICODE)
+
+
+class ChatError(acc.ValidationError):
+    pass
+
+
+# ------------------------------------------------------------------ people
+PROFILE_FIELDS = ("display_name", "job_title", "department", "phone", "bio", "status")
+DEFAULT_PREFS = {"nav_mode": "click",
+                 "notify": {"level": "all", "rooms": [], "mode": "sound", "desktop": True}}
+
+
+def profile(db, uid):
+    p = db.one("SELECT * FROM user_profiles WHERE user_id=?", (uid,)) or {"user_id": uid}
+    out = {k: p.get(k) or "" for k in PROFILE_FIELDS + ("avatar",)}
+    try:
+        prefs = json.loads(p.get("prefs") or "{}")
+    except ValueError:
+        prefs = {}
+    merged = {**DEFAULT_PREFS, **prefs}
+    merged["notify"] = {**DEFAULT_PREFS["notify"], **(prefs.get("notify") or {})}
+    out["prefs"] = merged
+    return out
+
+
+def save_profile(db, uid, d):
+    cur = profile(db, uid)
+    vals = {k: acc.text(d[k])[:500] if k in d else cur[k] for k in PROFILE_FIELDS}
+    avatar = cur["avatar"]
+    if "avatar" in d:
+        avatar = d["avatar"] or ""
+        if avatar and not re.match(r"^data:image/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$", avatar):
+            raise ChatError("The picture must be a PNG, JPEG, WebP or GIF image")
+        if len(avatar) > 400_000:
+            raise ChatError("The picture is too large — choose a smaller one")
+    prefs = cur["prefs"]
+    if isinstance(d.get("prefs"), dict):
+        new = d["prefs"]
+        if new.get("nav_mode") in ("hover", "click"):
+            prefs["nav_mode"] = new["nav_mode"]
+        n = new.get("notify")
+        if isinstance(n, dict):
+            if n.get("level") in ("all", "mentions", "rooms", "none"):
+                prefs["notify"]["level"] = n["level"]
+            if n.get("mode") in ("sound", "vibrate", "silent"):
+                prefs["notify"]["mode"] = n["mode"]
+            if "desktop" in n:
+                prefs["notify"]["desktop"] = bool(n["desktop"])
+            if isinstance(n.get("rooms"), list):
+                prefs["notify"]["rooms"] = [int(x) for x in n["rooms"] if str(x).lstrip("-").isdigit()][:200]
+    db.x("""INSERT INTO user_profiles(user_id, display_name, job_title, department, phone, bio, status, avatar, prefs, updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(user_id) DO UPDATE SET display_name=excluded.display_name, job_title=excluded.job_title,
+              department=excluded.department, phone=excluded.phone, bio=excluded.bio, status=excluded.status,
+              avatar=excluded.avatar, prefs=excluded.prefs, updated_at=excluded.updated_at""",
+         (uid, *[vals[k] for k in PROFILE_FIELDS], avatar, json.dumps(prefs), acc.now_iso()))
+    return profile(db, uid)
+
+
+def people(db):
+    """Everyone in the company (for chat, mentions and avatars): never permissions or contact details of others
+    beyond what a colleague would see on a business card."""
+    rows = db.q("""SELECT u.id, u.username, u.full_name, u.is_admin, u.is_super, u.active,
+                          p.display_name, p.job_title, p.department, p.status, p.avatar
+                   FROM users u LEFT JOIN user_profiles p ON p.user_id=u.id ORDER BY u.full_name, u.username""")
+    return [{"id": r["id"], "username": r["username"], "name": r["display_name"] or r["full_name"] or r["username"],
+             "job_title": r["job_title"] or "", "department": r["department"] or "", "status": r["status"] or "",
+             "avatar": r["avatar"] or "", "active": bool(r["active"]),
+             "role": "super" if r["is_super"] else "admin" if r["is_admin"] else "user"} for r in rows]
+
+
+# ------------------------------------------------------------------ rooms
+def _room(db, rid):
+    r = db.one("SELECT * FROM chat_rooms WHERE id=?", (int(rid),))
+    if not r:
+        raise LookupError("No such chat room")
+    return r
+
+
+def _members(db, rid):
+    return [r["user_id"] for r in db.q("SELECT user_id FROM chat_members WHERE room_id=? ORDER BY user_id", (rid,))]
+
+
+def can_read(db, user, room):
+    if room["kind"] == "general":
+        return True
+    if room["kind"] == "room" and user.get("is_super"):
+        return True              # the super administrator manages and exports every room
+    return bool(db.one("SELECT 1 FROM chat_members WHERE room_id=? AND user_id=?", (room["id"], user["id"])))
+
+
+def can_write(db, user, room):
+    if room["archived_at"]:
+        return False
+    if room["kind"] == "general":
+        return True
+    return bool(db.one("SELECT 1 FROM chat_members WHERE room_id=? AND user_id=?", (room["id"], user["id"])))
+
+
+def _need_read(db, user, rid):
+    room = _room(db, rid)
+    if not can_read(db, user, room):
+        raise PermissionError()
+    return room
+
+
+def _need_super(user):
+    if not user.get("is_super"):
+        raise PermissionError("Only a super administrator can manage chat rooms")
+
+
+def rooms(db, user):
+    """The rooms this person can open, newest activity first, with unread counts and the last message."""
+    uid = user["id"]
+    rows = db.q("""SELECT r.*, (SELECT MAX(id) FROM chat_messages m WHERE m.room_id=r.id) AS last_id,
+                          COALESCE((SELECT last_read FROM chat_reads x WHERE x.room_id=r.id AND x.user_id=?), 0) AS my_read
+                   FROM chat_rooms r ORDER BY r.id""", (uid,))
+    out = []
+    names = {p["id"]: p for p in people(db)}
+    for r in rows:
+        if not can_read(db, user, r):
+            continue
+        members = _members(db, r["id"])
+        last = db.one("""SELECT m.id, m.user_id, m.body, m.created_at, m.deleted_at,
+                                (SELECT COUNT(*) FROM chat_files f WHERE f.message_id=m.id) AS files
+                         FROM chat_messages m WHERE m.id=?""", (r["last_id"],)) if r["last_id"] else None
+        unread = db.one("SELECT COUNT(*) n FROM chat_messages WHERE room_id=? AND id>? AND COALESCE(user_id,0)<>? "
+                        "AND deleted_at IS NULL", (r["id"], r["my_read"], uid))["n"]
+        mention = sum(1 for m in db.q("SELECT mentions FROM chat_messages WHERE room_id=? AND id>? AND COALESCE(user_id,0)<>? "
+                                      "AND deleted_at IS NULL AND mentions<>'[]'", (r["id"], r["my_read"], uid))
+                      if {uid, -1} & set(json.loads(m["mentions"] or "[]")))
+        name = r["name"]
+        other = None
+        if r["kind"] == "dm":
+            other = next((m for m in members if m != uid), uid)
+            name = (names.get(other) or {}).get("name", "?")
+        out.append({"id": r["id"], "kind": r["kind"], "name": name, "topic": r["topic"] or "", "icon": r["icon"] or "",
+                    "members": members, "other": other, "archived": bool(r["archived_at"]),
+                    "member": r["kind"] == "general" or uid in members, "can_write": can_write(db, user, r),
+                    "unread": unread, "mentions": mention, "last_id": r["last_id"] or 0, "my_read": r["my_read"],
+                    "last": last and {"user_id": last["user_id"], "at": last["created_at"],
+                                      "text": "" if last["deleted_at"] else (last["body"] or "")[:140],
+                                      "files": last["files"], "deleted": bool(last["deleted_at"])}})
+    out.sort(key=lambda x: (x["kind"] != "general", -(x["last_id"] or 0), x["name"].lower()))
+    return out
+
+
+def _clean_members(db, ids):
+    ids = sorted({int(i) for i in ids or [] if str(i).isdigit()})
+    if ids:
+        have = {r["id"] for r in db.q(f"SELECT id FROM users WHERE id IN ({','.join('?' * len(ids))})", ids)}
+        ids = [i for i in ids if i in have]
+    return ids
+
+
+def create_room(db, user, d):
+    _need_super(user)
+    name = acc.text(d.get("name"))[:80]
+    if not name:
+        raise ChatError("Give the room a name")
+    if db.one("SELECT 1 FROM chat_rooms WHERE kind='room' AND lower(name)=lower(?) AND archived_at IS NULL", (name,)):
+        raise ChatError("A room with this name already exists")
+    now = acc.now_iso()
+    rid = db.x("INSERT INTO chat_rooms(kind, name, topic, icon, created_by, created_at) VALUES ('room',?,?,?,?,?)",
+               (name, acc.text(d.get("topic"))[:300], acc.text(d.get("icon"))[:8], user["id"], now)).lastrowid
+    for uid in set(_clean_members(db, d.get("members"))) | {user["id"]}:
+        db.x("INSERT OR IGNORE INTO chat_members(room_id, user_id, added_by, added_at) VALUES (?,?,?,?)", (rid, uid, user["id"], now))
+    return rid
+
+
+def update_room(db, user, rid, d):
+    _need_super(user)
+    room = _room(db, rid)
+    if room["kind"] == "dm":
+        raise ChatError("Direct messages cannot be changed")
+    sets, vals = [], []
+    for k, n in (("name", 80), ("topic", 300), ("icon", 8)):
+        if k in d:
+            v = acc.text(d[k])[:n]
+            if k == "name" and not v:
+                raise ChatError("Give the room a name")
+            sets.append(f"{k}=?")
+            vals.append(v)
+    if sets and room["kind"] == "room":
+        db.x(f"UPDATE chat_rooms SET {', '.join(sets)} WHERE id=?", (*vals, room["id"]))
+    elif sets:   # General keeps its name; only the topic and icon change
+        keep = [(s, v) for s, v in zip(sets, vals) if not s.startswith("name")]
+        if keep:
+            db.x(f"UPDATE chat_rooms SET {', '.join(s for s, _ in keep)} WHERE id=?", (*[v for _, v in keep], room["id"]))
+    if "members" in d and room["kind"] == "room":
+        want = set(_clean_members(db, d["members"]))
+        have = set(_members(db, room["id"]))
+        now = acc.now_iso()
+        for uid in want - have:
+            db.x("INSERT OR IGNORE INTO chat_members(room_id, user_id, added_by, added_at) VALUES (?,?,?,?)",
+                 (room["id"], uid, user["id"], now))
+        for uid in have - want:
+            db.x("DELETE FROM chat_members WHERE room_id=? AND user_id=?", (room["id"], uid))
+    return room["id"]
+
+
+def archive_room(db, user, rid, archived=True):
+    _need_super(user)
+    room = _room(db, rid)
+    if room["kind"] == "general":
+        raise ChatError("The general room cannot be archived")
+    db.x("UPDATE chat_rooms SET archived_at=?, archived_by=? WHERE id=?",
+         (acc.now_iso() if archived else None, user["id"] if archived else None, room["id"]))
+
+
+def delete_room(db, user, rid):
+    _need_super(user)
+    room = _room(db, rid)
+    if room["kind"] == "general":
+        raise ChatError("The general room cannot be deleted")
+    db.x("DELETE FROM chat_rooms WHERE id=?", (room["id"],))
+    return room
+
+
+def direct(db, user, other_id):
+    other = db.one("SELECT id FROM users WHERE id=? AND active=1", (int(other_id),))
+    if not other:
+        raise ChatError("No such person")
+    a, b = sorted((user["id"], other["id"]))
+    key = f"{a}:{b}"
+    r = db.one("SELECT id FROM chat_rooms WHERE dm_key=?", (key,))
+    if r:
+        return r["id"]
+    now = acc.now_iso()
+    rid = db.x("INSERT INTO chat_rooms(kind, name, dm_key, created_by, created_at) VALUES ('dm','',?,?,?)",
+               (key, user["id"], now)).lastrowid
+    for uid in {a, b}:
+        db.x("INSERT OR IGNORE INTO chat_members(room_id, user_id, added_by, added_at) VALUES (?,?,?,?)", (rid, uid, user["id"], now))
+    return rid
+
+
+# ------------------------------------------------------------------ messages
+def _seen_by_others(db, msg):
+    return [r["user_id"] for r in db.q("SELECT user_id FROM chat_reads WHERE room_id=? AND last_read>=? AND user_id<>?",
+                                       (msg["room_id"], msg["id"], msg["user_id"] or 0))]
+
+
+def _mentions(db, room, body):
+    names = {m.group(1).lower() for m in MENTION_RX.finditer(body or "")}
+    if not names:
+        return []
+    out = []
+    if names & {"all", "everyone", "الكل"}:
+        out.append(-1)
+    for u in db.q("SELECT id, username FROM users WHERE active=1"):
+        if u["username"].lower() in names:
+            out.append(u["id"])
+    return out
+
+
+def _files_in(d):
+    files, total = [], 0
+    for f in d.get("files") or []:
+        data = str(f.get("data") or "")
+        if data.startswith("data:"):
+            data = data.split(",", 1)[1] if "," in data else ""
+        try:
+            raw = base64.b64decode(data, validate=True)
+        except (ValueError, TypeError):
+            raise ChatError(f"Could not read the file {f.get('name') or ''}")
+        total += len(raw)
+        thumb = str(f.get("thumb") or "")
+        if thumb and (not thumb.startswith("data:image/") or len(thumb) > 200_000):
+            thumb = ""
+        files.append({"name": acc.text(f.get("name") or "file")[:200] or "file",
+                      "mime": acc.text(f.get("mime") or "application/octet-stream")[:120] or "application/octet-stream",
+                      "size": len(raw), "data": data, "thumb": thumb})
+    if total > MAX_MESSAGE_FILES_MB * 1024 * 1024:
+        raise ChatError(f"Files are limited to {MAX_MESSAGE_FILES_MB} MB per message")
+    return files
+
+
+def send(db, user, rid, d):
+    room = _room(db, rid)
+    if not can_write(db, user, room):
+        raise PermissionError("This room is archived" if room["archived_at"] else "You are not a member of this room")
+    body = str(d.get("body") or "").strip()[:MAX_BODY_CHARS]
+    files = _files_in(d)
+    if not body and not files:
+        raise ChatError("Write a message or attach a file")
+    reply_to = d.get("reply_to")
+    if reply_to and not db.one("SELECT 1 FROM chat_messages WHERE id=? AND room_id=?", (int(reply_to), room["id"])):
+        reply_to = None
+    mid = db.x("INSERT INTO chat_messages(room_id, user_id, body, mentions, reply_to, created_at) VALUES (?,?,?,?,?,?)",
+               (room["id"], user["id"], body, json.dumps(_mentions(db, room, body)), reply_to and int(reply_to),
+                acc.now_iso())).lastrowid
+    for f in files:
+        db.x("INSERT INTO chat_files(message_id, name, mime, size, thumb, data) VALUES (?,?,?,?,?,?)",
+             (mid, f["name"], f["mime"], f["size"], f["thumb"], f["data"]))
+    mark_read(db, user, room["id"], mid)
+    return mid
+
+
+def _msg(db, mid):
+    m = db.one("SELECT * FROM chat_messages WHERE id=?", (int(mid),))
+    if not m:
+        raise LookupError("No such message")
+    return m
+
+
+def edit(db, user, mid, d):
+    m = _msg(db, mid)
+    room = _room(db, m["room_id"])
+    if m["user_id"] != user["id"]:
+        raise PermissionError("Only the author can edit a message")
+    if m["deleted_at"]:
+        raise ChatError("This message was removed")
+    if room["archived_at"]:
+        raise ChatError("This room is archived")
+    if _seen_by_others(db, m):
+        raise ChatError("Someone has already seen this message — it can no longer be edited")
+    body = str(d.get("body") or "").strip()[:MAX_BODY_CHARS]
+    if not body and not db.one("SELECT 1 FROM chat_files WHERE message_id=?", (m["id"],)):
+        raise ChatError("A message cannot be empty")
+    db.x("UPDATE chat_messages SET body=?, mentions=?, edited_at=? WHERE id=?",
+         (body, json.dumps(_mentions(db, room, body)), acc.now_iso(), m["id"]))
+
+
+def remove(db, user, mid):
+    m = _msg(db, mid)
+    if not user.get("is_super"):
+        if m["user_id"] != user["id"]:
+            raise PermissionError("Only the author or a super administrator can remove a message")
+        if _seen_by_others(db, m):
+            raise ChatError("Someone has already seen this message — ask a super administrator to remove it")
+    db.x("UPDATE chat_messages SET body='', mentions='[]', deleted_at=? WHERE id=?", (acc.now_iso(), m["id"]))
+    db.x("DELETE FROM chat_files WHERE message_id=?", (m["id"],))
+
+
+def mark_read(db, user, rid, last):
+    last = int(last or 0)
+    db.x("""INSERT INTO chat_reads(room_id, user_id, last_read, at) VALUES (?,?,?,?)
+            ON CONFLICT(room_id, user_id) DO UPDATE SET last_read=MAX(last_read, excluded.last_read), at=excluded.at""",
+         (int(rid), user["id"], last, acc.now_iso()))
+
+
+def messages(db, user, rid, after=0, before=0, limit=60):
+    room = _need_read(db, user, rid)
+    limit = max(1, min(int(limit or 60), 200))
+    w, p = ["room_id=?"], [room["id"]]
+    if after:
+        w.append("id>?")
+        p.append(int(after))
+    if before:
+        w.append("id<?")
+        p.append(int(before))
+    order = "ASC" if after else "DESC"
+    rows = db.q(f"SELECT * FROM chat_messages WHERE {' AND '.join(w)} ORDER BY id {order} LIMIT ?", p + [limit])
+    if order == "DESC":
+        rows.reverse()
+    ids = [r["id"] for r in rows]
+    files = {}
+    if ids:
+        for f in db.q(f"SELECT id, message_id, name, mime, size, thumb FROM chat_files WHERE message_id IN "
+                      f"({','.join('?' * len(ids))}) ORDER BY id", ids):
+            files.setdefault(f["message_id"], []).append({k: f[k] for k in ("id", "name", "mime", "size", "thumb")})
+    reads = {r["user_id"]: r["last_read"] for r in db.q("SELECT user_id, last_read FROM chat_reads WHERE room_id=?", (room["id"],))}
+    out = []
+    for r in rows:
+        seen = [u for u, last in reads.items() if last >= r["id"] and u != r["user_id"]]
+        out.append({"id": r["id"], "user_id": r["user_id"], "body": r["body"], "reply_to": r["reply_to"],
+                    "mentions": json.loads(r["mentions"] or "[]"), "at": r["created_at"], "edited": r["edited_at"],
+                    "deleted": bool(r["deleted_at"]), "files": files.get(r["id"], []), "seen_by": seen,
+                    "editable": r["user_id"] == user["id"] and not seen and not r["deleted_at"] and not room["archived_at"]})
+    return {"room": {"id": room["id"], "kind": room["kind"], "archived": bool(room["archived_at"]),
+                     "can_write": can_write(db, user, room)},
+            "messages": out, "more": bool(rows) and not after and len(rows) == limit}
+
+
+def file(db, user, fid):
+    f = db.one("SELECT f.*, m.room_id FROM chat_files f JOIN chat_messages m ON m.id=f.message_id WHERE f.id=?", (int(fid),))
+    if not f:
+        raise LookupError("No such file")
+    _need_read(db, user, f["room_id"])
+    return f["name"], f["mime"], base64.b64decode(f["data"])
+
+
+def updates(db, user, since=0):
+    """New messages for this person since a message id (for notifications), and the unread total."""
+    since = int(since or 0)
+    mine = rooms(db, user)
+    visible = {r["id"]: r for r in mine if r["member"] or r["kind"] == "general"}
+    rows = []
+    if visible:
+        ids = list(visible)
+        rows = db.q(f"""SELECT id, room_id, user_id, body, mentions, created_at,
+                               (SELECT COUNT(*) FROM chat_files f WHERE f.message_id=m.id) AS files
+                        FROM chat_messages m WHERE id>? AND room_id IN ({','.join('?' * len(ids))})
+                          AND COALESCE(user_id,0)<>? AND deleted_at IS NULL ORDER BY id LIMIT 50""",
+                    [since, *ids, user["id"]])
+    last = db.one("SELECT MAX(id) m FROM chat_messages")["m"] or 0
+    out = []
+    for r in rows:
+        men = json.loads(r["mentions"] or "[]")
+        room = visible[r["room_id"]]
+        out.append({"id": r["id"], "room_id": r["room_id"], "room": room["name"], "kind": room["kind"],
+                    "user_id": r["user_id"], "text": (r["body"] or "")[:200], "files": r["files"],
+                    "mention": user["id"] in men or (-1 in men), "at": r["created_at"]})
+    return {"last": last, "messages": out,
+            "unread": sum(r["unread"] for r in mine if r["member"] or r["kind"] == "general"),
+            "mentions": sum(r["mentions"] for r in mine)}
+
+
+# ------------------------------------------------------------------ export
+def export_zip(db, user, rid, company=""):
+    """A room's whole history: transcript (HTML and text), the raw messages (JSON) and every file."""
+    _need_super(user)
+    room = _room(db, rid)
+    names = {p["id"]: p["name"] for p in people(db)}
+    msgs = db.q("SELECT * FROM chat_messages WHERE room_id=? ORDER BY id", (room["id"],))
+    files = {}
+    for f in db.q("SELECT f.* FROM chat_files f JOIN chat_messages m ON m.id=f.message_id WHERE m.room_id=? ORDER BY f.id",
+                  (room["id"],)):
+        files.setdefault(f["message_id"], []).append(f)
+    title = room["name"] if room["kind"] != "dm" else "Direct messages: " + " & ".join(names.get(u, "?") for u in _members(db, room["id"]))
+    buf = io.BytesIO()
+    txt, rows, data = [], [], []
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for m in msgs:
+            who = names.get(m["user_id"], "?")
+            fl = []
+            for f in files.get(m["id"], []):
+                safe = re.sub(r"[^\w.\- ()؀-ۿ]+", "_", f["name"]) or "file"
+                path = f"files/{f['id']}-{safe}"
+                z.writestr(path, base64.b64decode(f["data"]))
+                fl.append({"name": f["name"], "path": path, "mime": f["mime"], "size": f["size"]})
+            body = "(removed)" if m["deleted_at"] else m["body"]
+            txt.append(f"[{m['created_at']}] {who}: {body}" + (" (edited)" if m["edited_at"] else "")
+                       + "".join(f"\n    📎 {f['path']}" for f in fl))
+            rows.append(f"<div class='m'><div class='h'><b>{html.escape(who)}</b> <span>{html.escape(m['created_at'])}"
+                        f"{' · edited' if m['edited_at'] else ''}</span></div><div class='b'>{html.escape(body).replace(chr(10), '<br>')}</div>"
+                        + "".join(f"<div class='f'>📎 <a href='{html.escape(f['path'])}'>{html.escape(f['name'])}</a>"
+                                  + (f"<br><img src='{html.escape(f['path'])}'>" if f["mime"].startswith("image/") else "")
+                                  + "</div>" for f in fl) + "</div>")
+            data.append({"id": m["id"], "author": who, "author_id": m["user_id"], "at": m["created_at"], "body": body,
+                         "edited_at": m["edited_at"], "removed": bool(m["deleted_at"]), "reply_to": m["reply_to"], "files": fl})
+        head = f"{company} — {title}" if company else title
+        z.writestr("transcript.txt", f"{head}\nExported {acc.now_iso()}\n\n" + "\n".join(txt))
+        z.writestr("transcript.html", "<!doctype html><meta charset='utf-8'><title>" + html.escape(head) + "</title>"
+                   "<style>body{font-family:system-ui,'Segoe UI',Tahoma,sans-serif;max-width:860px;margin:24px auto;padding:0 16px;color:#1f2937}"
+                   ".m{border-bottom:1px solid #e5e7eb;padding:10px 0}.h span{color:#6b7280;font-size:.85em}.b{white-space:normal;margin-top:4px}"
+                   ".f{margin-top:6px}img{max-width:420px;border-radius:8px;margin-top:6px}</style>"
+                   f"<h1>{html.escape(head)}</h1><p>Exported {html.escape(acc.now_iso())} · {len(msgs)} messages</p>" + "".join(rows))
+        z.writestr("messages.json", json.dumps({"room": {"id": room["id"], "kind": room["kind"], "name": title,
+                                                         "topic": room["topic"], "archived_at": room["archived_at"]},
+                                                "members": [names.get(u, "?") for u in _members(db, room["id"])],
+                                                "messages": data}, ensure_ascii=False, indent=1))
+    safe = re.sub(r"[^\w\-]+", "_", title).strip("_")[:60] or "chat"
+    return buf.getvalue(), f"Chat_{safe}_{acc.today()}.zip"

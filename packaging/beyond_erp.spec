@@ -13,7 +13,7 @@ a = Analysis([str(ROOT / "run.py")], pathex=[str(ROOT)],
              datas=[(str(ROOT / "erp" / "static"), "erp/static")] +
                    ([(str(ROOT / "erp" / "workspace_preset.json"), "erp")] if (ROOT / "erp" / "workspace_preset.json").exists() else []) +
                    ([(str(ROOT / "erp" / "licence_public.txt"), "erp")] if (ROOT / "erp" / "licence_public.txt").exists() else []),
-             hiddenimports=collect_submodules("erp") + collect_submodules("openpyxl"),
+             hiddenimports=collect_submodules("erp") + collect_submodules("openpyxl") + collect_submodules("anthropic"),  # AI assistant
              excludes=["tkinter", "PIL", "numpy", "pytest"])
 pyz = PYZ(a.pure)
 exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name="BeyondERP", console=not mac,

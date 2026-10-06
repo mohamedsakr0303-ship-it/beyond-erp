@@ -926,6 +926,87 @@ CREATE TABLE IF NOT EXISTS offers (
     status TEXT NOT NULL DEFAULT 'Draft',
     content TEXT NOT NULL DEFAULT '{}'
 );
+
+-- People: a profile per user (picture, title, contact) and their personal preferences (menu, notifications).
+CREATE TABLE IF NOT EXISTS user_profiles (
+    user_id      INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    display_name TEXT DEFAULT '',
+    job_title    TEXT DEFAULT '',
+    department   TEXT DEFAULT '',
+    phone        TEXT DEFAULT '',
+    bio          TEXT DEFAULT '',
+    status       TEXT DEFAULT '',
+    avatar       TEXT DEFAULT '',              -- data: URL of a small square picture (resized in the browser)
+    prefs        TEXT NOT NULL DEFAULT '{}',   -- {"nav_mode": "click", "notify": {...}}
+    updated_at   TEXT
+);
+
+-- Chat inside the company: the general room (id 1, everyone), rooms the super administrator creates for chosen
+-- people, and direct messages between two people. Files are kept with the message (base64).
+CREATE TABLE IF NOT EXISTS chat_rooms (
+    id          INTEGER PRIMARY KEY,
+    kind        TEXT NOT NULL DEFAULT 'room',  -- general | room | dm
+    name        TEXT NOT NULL DEFAULT '',
+    topic       TEXT DEFAULT '',
+    icon        TEXT DEFAULT '',
+    dm_key      TEXT UNIQUE,                   -- "<low id>:<high id>" for direct messages
+    created_by  INTEGER,
+    created_at  TEXT,
+    archived_at TEXT,
+    archived_by INTEGER
+);
+CREATE TABLE IF NOT EXISTS chat_members (
+    room_id  INTEGER NOT NULL REFERENCES chat_rooms(id) ON DELETE CASCADE,
+    user_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    added_by INTEGER,
+    added_at TEXT,
+    PRIMARY KEY (room_id, user_id)
+);
+CREATE TABLE IF NOT EXISTS chat_messages (
+    id         INTEGER PRIMARY KEY,
+    room_id    INTEGER NOT NULL REFERENCES chat_rooms(id) ON DELETE CASCADE,
+    user_id    INTEGER,
+    body       TEXT NOT NULL DEFAULT '',
+    mentions   TEXT NOT NULL DEFAULT '[]',    -- user ids; -1 = everyone in the room (@all)
+    reply_to   INTEGER,
+    created_at TEXT NOT NULL,
+    edited_at  TEXT,
+    deleted_at TEXT
+);
+CREATE INDEX IF NOT EXISTS chat_messages_room ON chat_messages(room_id, id);
+CREATE TABLE IF NOT EXISTS chat_files (
+    id         INTEGER PRIMARY KEY,
+    message_id INTEGER NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
+    name       TEXT NOT NULL DEFAULT 'file',
+    mime       TEXT NOT NULL DEFAULT 'application/octet-stream',
+    size       INTEGER NOT NULL DEFAULT 0,
+    thumb      TEXT DEFAULT '',               -- small preview for pictures (data: URL)
+    data       TEXT NOT NULL DEFAULT ''       -- base64
+);
+CREATE TABLE IF NOT EXISTS chat_reads (
+    room_id   INTEGER NOT NULL REFERENCES chat_rooms(id) ON DELETE CASCADE,
+    user_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    last_read INTEGER NOT NULL DEFAULT 0,
+    at        TEXT,
+    PRIMARY KEY (room_id, user_id)
+);
+
+-- The AI assistant on this device (desktop edition without the shared workspace; with the workspace the settings
+-- and the provider key live in Supabase). Conversations stay on the device and are never replicated.
+CREATE TABLE IF NOT EXISTS ai_threads (
+    id         INTEGER PRIMARY KEY,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title      TEXT NOT NULL DEFAULT '',
+    messages   TEXT NOT NULL DEFAULT '[]',    -- the Messages API conversation, kept exactly as exchanged
+    created_at TEXT,
+    updated_at TEXT
+);
+CREATE TABLE IF NOT EXISTS ai_usage (
+    user_id INTEGER NOT NULL,
+    day     TEXT NOT NULL,
+    calls   INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (user_id, day)
+);
 """
 
 # (code, name, type, subtype, role)
@@ -1211,6 +1292,8 @@ class Database:
 
     def _migrate(self):
         """Additive, idempotent upgrades for databases created by older versions."""
+        # the general chat room has a fixed id so every device of a shared workspace agrees on it
+        self.conn.execute("INSERT OR IGNORE INTO chat_rooms(id, kind, name, created_at) VALUES (1, 'general', 'General', datetime('now'))")
         have = self._add_cols("accounts", [("name_ar", "TEXT DEFAULT ''")])
         self._add_cols("rental_lines", [("cost", "INTEGER NOT NULL DEFAULT 0")])
         self._add_cols("users", [("is_super", "INTEGER NOT NULL DEFAULT 0")])

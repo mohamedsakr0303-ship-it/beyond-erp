@@ -76,15 +76,18 @@ async function staticApi(method, path, body, raw) {
 async function openApi(url, newTab) {
   if (!STATIC) { if (newTab) window.open(url, "_blank", "noopener"); else location.href = url; return; }
   const w = newTab ? window.open("", "_blank") : null;
+  const busy = document.createElement("div"); busy.className = "toast busy";
+  busy.innerHTML = `<i class="spin"></i>${esc(L2("Preparing your file… you can keep working", "جارٍ تجهيز الملف… يمكنك متابعة العمل"))}`;
+  document.body.appendChild(busy);
   try {
-    const r = await window.__beyondFetch("GET", url, staticHeaders(), null);
+    const r = window.__beyondDownload ? await window.__beyondDownload(url, staticHeaders()) : await window.__beyondFetch("GET", url, staticHeaders(), null);
     if (r.status >= 400) { let m = ""; try { m = JSON.parse(new TextDecoder().decode(r.body)).error; } catch { /* binary */ } throw new Error(m || `HTTP ${r.status}`); }
     const blob = new Blob([r.body], { type: r.ctype });
     const href = URL.createObjectURL(blob);
     if (r.filename) { const a = document.createElement("a"); a.href = href; a.download = r.filename; document.body.appendChild(a); a.click(); a.remove(); if (w) w.close(); }
     else if (w) w.location = href; else window.open(href, "_blank");
     setTimeout(() => URL.revokeObjectURL(href), 60000);
-  } catch (e) { if (w) w.close(); fail(e); }
+  } catch (e) { if (w) w.close(); fail(e); } finally { busy.remove(); }
 }
 document.addEventListener("click", e => {
   const a = e.target.closest('a[href^="/api/"]');
@@ -105,7 +108,10 @@ const qs = o => Object.entries(o).filter(([, v]) => v !== "" && v != null && v !
 const LV = ["none", "view", "add", "edit"];
 // "section" or "section.screen"; a screen falls back to its section, a section counts if any of its screens is granted
 const levelOf = key => {
-  const u = S.boot && S.boot.user; if (!u) return "none"; if (u.is_admin) return "edit";
+  const u = S.boot && S.boot.user; if (!u) return "none";
+  if (key === "chat") return "edit";                                       // chat needs no permission
+  if (key === "chat.ai") return S.ai && S.ai.allowed ? "edit" : "none";   // the assistant: super administrator's policy
+  if (u.is_admin) return "edit";
   const p = u.perms;
   if (key.includes(".")) return LV.includes(p[key]) ? p[key] : (p[key.split(".")[0]] || "none");
   let best = p[key] || "none";
@@ -117,6 +123,13 @@ const can = (mod, lvl = "view") => LV.indexOf(levelOf(mod)) >= LV.indexOf(lvl);
 // ---------------------------------------------------------- appearance
 // ---------------------------------------------------------- line icons (24×24, stroke) — bundled, so they work offline
 const IC = {
+  upload: '<path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/>',
+  download: '<path d="M12 4v12M7 11l5 5 5-5"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/>',
+  chat: '<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20.5l1.4-4.9A8 8 0 1 1 21 12z"/><path d="M8.5 11h7M8.5 14h4"/>',
+  spark: '<path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>',
+  attach: '<path d="M21 11.5l-8.5 8.5a5.5 5.5 0 0 1-7.8-7.8l9-9a3.7 3.7 0 0 1 5.2 5.2l-9 9a1.8 1.8 0 0 1-2.6-2.6l8.3-8.3"/>',
+  smile: '<circle cx="12" cy="12" r="9"/><path d="M8.5 14.5a4.5 4.5 0 0 0 7 0"/><path d="M9 9.5h.01M15 9.5h.01"/>',
+  send: '<path d="M4 12l16-8-6 16-2.5-6.5z"/><path d="M11.5 13.5L20 4"/>',
   home: '<path d="M3 10.5 12 3l9 7.5V21a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/>',
   grid: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
   brief: '<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M3 13h18"/>',
@@ -175,7 +188,7 @@ const IC = {
   alert: '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0zM12 9v4M12 17h.01"/>',
   check: '<path d="M20 6 9 17l-5-5"/>', x: '<path d="M18 6 6 18M6 6l12 12"/>',
 };
-const ROUTE_IC = { dashboard: "grid", bus: "brief", offers: "mail", receipts: "in", invoices: "file", receivables: "inbox", parties: "users",
+const ROUTE_IC = { dashboard: "grid", chat: "chat", assistant: "spark", profile: "user", bus: "brief", offers: "mail", receipts: "in", invoices: "file", receivables: "inbox", parties: "users",
   products: "box", sales: "cart", installments: "clock", subs: "repeat", boqs: "list", prices: "tag", pos: "clip", costs: "hammer", expenses: "receipt",
   payments: "out", payables: "wallet", contacts: "phone", negotiations: "scale", stock: "boxes", moves: "swap", warehouses: "store", rentals: "building",
   rentfleet: "layers", rentcalc: "calc", payruns: "cash", employees: "user", crew: "ruler", payroll: "pen", payset: "gear", "assets-overview": "pie",
@@ -210,13 +223,18 @@ const inkOn = c => { const n = parseInt(c.slice(1), 16), r = n >> 16, g = (n >> 
   return 0.2126 * L(r) + 0.7152 * L(g) + 0.0722 * L(b) > 0.42 ? "#1e2430" : "#ffffff"; };
 const customThemes = () => [...((S.boot.settings.appearance || {}).custom_themes || []), ...store.get("customThemes", [])];
 // mine (this browser) → the company's default → the built-in default
+const isDark = () => { const m = store.get("theme", "auto"); return m === "dark" || (m !== "light" && matchMedia("(prefers-color-scheme: dark)").matches); };
+const themeTitle = () => { const m = store.get("theme", "auto");
+  return m === "auto" ? L2("Light / dark — following this device (tap to choose)", "فاتح / داكن — حسب إعداد الجهاز (اضغط للاختيار)")
+    : m === "dark" ? L2("Dark mode (tap for light)", "الوضع الداكن (اضغط للفاتح)") : L2("Light mode (tap for dark)", "الوضع الفاتح (اضغط للداكن)"); };
+// the device switches between light and dark (e.g. at sunset): follow it while the person has not chosen
+try { matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { if (store.get("theme", "auto") === "auto" && S.boot && S.boot.user) renderShell(), route(); }); } catch { /* old browsers */ }
 function activeTheme() { return store.get("themeCfg", null) || (S.boot && S.boot.settings && (S.boot.settings.appearance || {}).theme) || null; }
 function applyTheme(th) {
   const de = document.documentElement, st = de.style;
   ["--sb-bg", "--sb-ink", "--nav-bg", "--nav-ink", "--top-bg", "--top-ink"].forEach(v => st.removeProperty(v));
   ["nav", "top"].forEach(k => { delete de.dataset[k]; });
   if (!th) return;
-  if (store.get("theme", "") === "" && th.mode) { if (th.mode === "auto") de.removeAttribute("data-theme"); else de.setAttribute("data-theme", th.mode); }
   if (hexOk(th.primary)) { st.setProperty("--brand", th.primary); st.setProperty("--accent", th.primary); }
   if (hexOk(th.sidebar)) { de.dataset.sidebar = "custom"; st.setProperty("--sb-bg", th.sidebar); st.setProperty("--sb-ink", inkOn(th.sidebar)); }
   if (hexOk(th.nav)) { de.dataset.nav = "custom"; st.setProperty("--nav-bg", th.nav); st.setProperty("--nav-ink", inkOn(th.nav)); }
@@ -390,7 +408,7 @@ function renderShell() {
       <span class="spacer"></span>
       <span id="syncdot" class="chip" style="display:none"></span>
       <div class="dd bell"><button class="btn icbtn" aria-label="${esc(L2("Alerts", "التنبيهات"))}">${svg("bell")}<b class="badge" id="bellc" hidden></b></button><div class="dd-menu" id="bellmenu"><div class="muted" style="padding:10px">${t("loading")}</div></div></div>
-      <button class="icbtn hide-sm" data-a="theme" title="${esc(t("theme"))}">${svg(dark ? "sun" : "moon")}</button>
+      <button class="icbtn themebtn" data-a="theme" title="${esc(themeTitle())}" aria-label="${esc(themeTitle())}">${svg(dark ? "sun" : "moon")}</button>
       <button class="icbtn langbtn" data-a="lang" title="${esc(L2("Language — switch to العربية", "اللغة — التبديل إلى English"))}">${svg("globe")}<span>${ar ? "EN" : "ع"}</span></button>
       <div class="dd newdd"><button class="btn pri newbtn" aria-label="${esc(t("new"))}">${svg("plus")}<span class="lbl">${t("new")}</span></button><div class="dd-menu" id="newmenu"></div></div>
     </header><div id="billbar"></div><main class="content" id="view"></main></div>
@@ -478,7 +496,8 @@ S.GLOBAL_H = {
     const open = new Set(store.get("navOpen", "").split(",").filter(Boolean)); w.classList.toggle("open");
     if (w.classList.contains("open")) open.add(el.dataset.g); else open.delete(el.dataset.g); store.set("navOpen", [...open].join(",")); },
   lang: () => { store.set("lang", S.lang === "ar" ? "en" : "ar"); applyLook(); renderShell(); route(); },
-  theme: () => { const order = ["auto", "light", "dark"]; store.set("theme", order[(order.indexOf(store.get("theme", "auto")) + 1) % 3]); applyLook(); renderShell(); route(); },
+  // one tap switches between light and dark from what is showing now (device setting by default); the choice is kept
+  theme: () => { store.set("theme", isDark() ? "light" : "dark"); applyLook(); renderShell(); route(); },
   logout: async () => { await api("POST", "/api/logout").catch(() => {}); store.set("token", "");
     if (STATIC && window.BeyondCloud) window.BeyondCloud.signout(); location.hash = ""; S.boot.user = null; renderAuth(); },
   pw: () => drawer(t("change_pw"), form([{ k: "current", l: t("current_pw"), type: "password" }, { k: "new", l: t("new_pw"), type: "password" }]),
@@ -489,9 +508,15 @@ S.GLOBAL_H = {
     if (S.navCount > 0) history.back(); else location.hash = "#/" + (parent || "dashboard"); },
   closeDrawer: () => closeDrawer(),
 };
-// Menu groups open on hover (default) or on click — a per-person choice in Settings → Appearance → My view.
+// Menu groups open on click (default) or on hover — a per-person choice (My profile / Settings → Appearance → My view),
+// kept with the person's profile so it follows them to every device.
 // Touch screens have no hover, so they always open groups by tapping.
-const navMode = () => store.get("navMode", "hover") === "click" ? "click" : "hover";
+const navMode = () => (((S.boot || {}).profile || {}).prefs || {}).nav_mode === "hover" ? "hover" : "click";   // click by default
+function saveNavMode(m) {
+  if (m === navMode()) return;
+  const p = S.boot.profile || (S.boot.profile = { prefs: {} }); p.prefs = { ...(p.prefs || {}), nav_mode: m };
+  api("PUT", "/api/me/profile", { prefs: { nav_mode: m } }).then(r => { S.boot.profile = r; }).catch(fail);
+}
 const hoverNav = () => navMode() === "hover" && matchMedia("(hover:hover) and (pointer:fine)").matches;
 document.addEventListener("click", e => { if (!e.target.closest(".grp-wrap.fly")) $$(".grp-wrap.fly").forEach(x => x.classList.remove("fly")); });
 function renderNav(active) {
@@ -535,6 +560,7 @@ const CloudAPI = STATIC ? {
   companies: () => window.BeyondCloud.companies(), createCompany: n => window.BeyondCloud.createCompany(n), joinCompany: c => window.BeyondCloud.joinCompany(c),
   renameCompany: n => window.BeyondCloud.renameCompany(n), newInviteCode: () => window.BeyondCloud.newInviteCode(), removeMember: e => window.BeyondCloud.removeMember(e),
   chooseCompany: id => window.BeyondCloud.chooseCompany(id),
+  call: (kind, name, params) => window.BeyondCloud.call(kind, name, params),
 } : {
   status: () => api("GET", "/api/cloud"), config: (url, key) => api("PUT", "/api/cloud/config", { url, key }),
   signin: (email, password, create) => api("POST", "/api/cloud/signin", { email, password, create }), info: () => api("GET", "/api/cloud/info"),
@@ -546,6 +572,7 @@ const CloudAPI = STATIC ? {
   joinCompany: code => api("POST", "/api/cloud/company", { action: "join", code }), renameCompany: name => api("POST", "/api/cloud/company", { action: "rename", name }),
   newInviteCode: () => api("POST", "/api/cloud/company", { action: "code" }).then(r => r.invite_code), removeMember: email => api("POST", "/api/cloud/company", { action: "remove", email }),
   chooseCompany: id => api("POST", "/api/cloud/company", { action: "choose", company: id }).then(() => false),
+  call: (kind, name, params) => api("POST", "/api/cloud/call", { kind, name, params }).then(r => r.result),
 };
 const cloudOn = () => STATIC ? !!(window.BeyondCloud && window.BeyondCloud.joined()) : !!(S.boot && S.boot.cloud && S.boot.cloud.joined);
 
@@ -2261,7 +2288,7 @@ const DOC_FONTS = ["Arial", "Calibri", "Tahoma", "Segoe UI", "Times New Roman", 
 PAGES.settings = async (view, parts, q) => {
   const tabs = [["company", "tab_company", can("settings.company")], ["docs", "tab_docs", can("settings.branding")], ["look", "tab_look", true], ["theme", "tab_theme", true],
     ["menus", "tab_menus", can("settings.menus")], ["system", "tab_system", can("settings.system") || S.boot.user.is_admin],
-    ["workspace", "tab_workspace", S.boot.user.is_admin || cloudOn()]].filter(x => x[2]);
+    ["workspace", "tab_workspace", S.boot.user.is_admin || cloudOn()], ["ai", "tab_ai", !!S.boot.user.is_super]].filter(x => x[2]);
   const tab = tabs.find(x => x[0] === q.tab) ? q.tab : tabs[0][0];
   const head = `<div class="tabs">${tabs.map(([k, l]) => `<a href="#/settings?tab=${k}" class="${k === tab ? "on" : ""}">${t(l)}</a>`).join("")}</div>`;
   const st = S.boot.settings;
@@ -2330,8 +2357,8 @@ PAGES.settings = async (view, parts, q) => {
         { k: "corners", l: t("corners"), type: "select", opts: [["rounded", t("cr_rounded")], ["square", t("cr_square")]], v: ap.corners || "rounded" },
         { html: `<label class="f">${t("app_logo")} — ${t("al_custom")}<input type="file" id="aplogo" accept="image/*"></label>` }], 3)}
         ${ed ? `<div class="row" style="margin-top:10px"><button class="btn pri" data-a="apsave">${t("save")}</button></div>` : ""}</div>` : ""}`;
-    S.H.mysave = () => { store.set("lang", $("#my_lang").value); store.set("font", $("#my_font").value); store.set("fontSize", $("#my_size").value); store.set("theme", $("#my_theme").value); store.set("navMode", $("#my_navmode").value); applyLook(); renderShell(); route(); };
-    S.H.myreset = () => { ["font", "fontSize"].forEach(k => store.set(k, "")); store.set("theme", "auto"); store.set("navMode", "hover"); applyLook(); renderShell(); route(); };
+    S.H.mysave = () => { store.set("lang", $("#my_lang").value); store.set("font", $("#my_font").value); store.set("fontSize", $("#my_size").value); store.set("theme", $("#my_theme").value); saveNavMode($("#my_navmode").value); applyLook(); renderShell(); route(); };
+    S.H.myreset = () => { ["font", "fontSize"].forEach(k => store.set(k, "")); store.set("theme", "auto"); saveNavMode("click"); applyLook(); renderShell(); route(); };
     let noAccent = !ap.accent;
     S.H.apnoacc = () => { noAccent = true; toast(t("default")); };
     const ac = $("[name=accent]"); if (ac) ac.addEventListener("input", () => { noAccent = false; });
@@ -2342,6 +2369,7 @@ PAGES.settings = async (view, parts, q) => {
   }
   if (tab === "workspace") return workspaceTab(view, head);
   if (tab === "theme") return themeTab(view, head);
+  if (tab === "ai") return aiSettingsTab(view, head);
   if (tab === "menus") {
     const menuKeys = window.MENU.flatMap(([g, items]) => [g, ...items.map(i => i[0])]);
     const labels = st.menu_labels || {}, ed = can("settings.menus", "edit");
@@ -2528,6 +2556,9 @@ PAGES.users = async (view) => {
     // shared workspace: create / update their sign-in account so they can sign in with username + password now
     try {
       const r = await CloudAPI.manageUser({ username: body.username, email: v.email, password: v.password, full_name: v.full_name, active: v.active !== false });
+      // the workspace keeps its own list of super administrators (chat between companies, the AI assistant's key)
+      if (S.boot.user.is_super && !!v.is_super !== !!u.is_super)
+        await CloudAPI.call("rpc", "set_member_super", { p_email: v.email || `${body.username}@users.beyond-erp.invalid`, p_super: !!v.is_super }).catch(() => {});
       toast(u.id ? t("saved") : (ar ? `تم — يمكن لـ ${body.username} تسجيل الدخول الآن باسم المستخدم وكلمة المرور.` : `Done — ${body.username} can sign in now with their username and password.`));
       return r;
     } catch (e) {
@@ -5787,5 +5818,711 @@ PAGES.industry = async (view) => {
     mountAttach($(".attbox", view));
   };
 });
+
+// ================================================================== people, chat, notifications, AI assistant
+/* Beyond ERP — people, chat, notifications and the AI assistant (loaded after app.js, same helpers).
+   Works the same in every edition: desktop/server (fetch), browser-only (the Python engine in the page) and the shared
+   workspace (changes replicate like any other; chat between companies and the assistant's key live in Supabase). */
+
+// ================================================================== shared helpers
+const C2 = { people: null, peopleAt: 0, blobs: new Map(), last: 0 };
+const me = () => S.boot.user;
+const isSuper = () => !!(S.boot.user && S.boot.user.is_super);
+async function loadPeople(force) {
+  if (!force && C2.people && Date.now() - C2.peopleAt < 60000) return C2.people;
+  try { C2.people = await api("GET", "/api/people"); C2.peopleAt = Date.now(); } catch { C2.people = C2.people || []; }
+  return C2.people;
+}
+const personById = id => (C2.people || []).find(p => p.id === id) || { id, name: "?", username: "", avatar: "" };
+const hue = s => { let h = 0; for (const c of String(s)) h = (h * 31 + c.charCodeAt(0)) % 360; return h; };
+function avatar(p, size = 36) {
+  const nm = (p && (p.name || p.username)) || "?";
+  if (p && p.avatar) return `<img class="av" style="width:${size}px;height:${size}px" src="${esc(p.avatar)}" alt="">`;
+  const ini = nm.trim().split(/\s+/).map(w => w[0]).join("").slice(0, 2).toUpperCase();
+  return `<span class="av" style="width:${size}px;height:${size}px;font-size:${Math.round(size * .38)}px;background:hsl(${hue(nm)} 55% 46%)">${esc(ini)}</span>`;
+}
+const fmtTime = iso => { if (!iso) return ""; const d = new Date(String(iso).replace(" ", "T")); if (isNaN(d)) return String(iso);
+  const today = new Date().toDateString() === d.toDateString();
+  return today ? d.toLocaleTimeString(S.lang === "ar" ? "ar-EG" : undefined, { hour: "2-digit", minute: "2-digit" })
+    : d.toLocaleString(S.lang === "ar" ? "ar-EG" : undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }); };
+const dayOf = iso => String(iso || "").slice(0, 10);
+const sizeTxt = n => n > 1048576 ? (n / 1048576).toFixed(1) + " MB" : n > 1024 ? Math.round(n / 1024) + " KB" : n + " B";
+// text → safe HTML with links, @mentions and line breaks
+function richText(s, mentionIds = []) {
+  let h = esc(s || "");
+  h = h.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
+  h = h.replace(/(^|[\s(])@([\w.\-\u0600-\u06FF]+)/g, (m, pre, nm) => `${pre}<b class="mention${(C2.people || []).some(p => p.username.toLowerCase() === nm.toLowerCase() && p.id === me().id) || /^(all|everyone|الكل)$/i.test(nm) ? " me" : ""}">@${nm}</b>`);
+  return h.replace(/\n/g, "<br>");
+}
+// a protected file (chat attachment) as a link the browser can show: same request in every edition
+async function apiBlobUrl(path) {
+  if (C2.blobs.has(path)) return C2.blobs.get(path);
+  let blob;
+  if (STATIC) { const r = await window.__beyondFetch("GET", path, staticHeaders(), null); if (r.status >= 400) throw new Error("HTTP " + r.status); blob = new Blob([r.body], { type: r.ctype }); }
+  else { const r = await fetch(path, { credentials: "same-origin", headers: { "X-Requested-With": "BeyondERP" } }); if (!r.ok) throw new Error("HTTP " + r.status); blob = await r.blob(); }
+  const u = URL.createObjectURL(blob); C2.blobs.set(path, u); return u;
+}
+const b64ToBlob = (b64, mime) => { const bin = atob(b64), a = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i); return new Blob([a], { type: mime || "application/octet-stream" }); };
+function saveBlob(blob, name) { const u = URL.createObjectURL(blob), a = document.createElement("a"); a.href = u; a.download = name || "file"; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 60000); }
+// a picked / pasted file → {name, mime, size, data (base64), thumb (pictures)}
+function readFile(file) {
+  return new Promise((ok, bad) => {
+    const fr = new FileReader();
+    fr.onerror = () => bad(new Error("Could not read " + file.name));
+    fr.onload = async () => {
+      const url = String(fr.result), data = url.split(",")[1] || "";
+      let thumb = "";
+      if (/^image\/(png|jpe?g|gif|webp|bmp)/.test(file.type)) { try { thumb = await shrinkPic(url, 420, "image/jpeg", .78); } catch { thumb = ""; } }
+      ok({ name: file.name || "pasted.png", mime: file.type || "application/octet-stream", size: file.size, data, thumb });
+    };
+    fr.readAsDataURL(file);
+  });
+}
+function shrinkPic(src, max, type = "image/jpeg", q = .85, square = false) {
+  return new Promise((ok, bad) => {
+    const img = new Image();
+    img.onload = () => {
+      let sx = 0, sy = 0, sw = img.width, sh = img.height;
+      if (square) { const m = Math.min(sw, sh); sx = (sw - m) / 2; sy = (sh - m) / 2; sw = sh = m; }
+      const k = Math.min(1, max / Math.max(sw, sh)), w = Math.max(1, Math.round(sw * k)), h = Math.max(1, Math.round(sh * k));
+      const c = document.createElement("canvas"); c.width = w; c.height = h;
+      const g = c.getContext("2d"); if (type === "image/jpeg") { g.fillStyle = "#fff"; g.fillRect(0, 0, w, h); }
+      g.drawImage(img, sx, sy, sw, sh, 0, 0, w, h); ok(c.toDataURL(type, q));
+    };
+    img.onerror = () => bad(new Error("not an image")); img.src = src;
+  });
+}
+const EMOJIS = "😀 😁 😂 🤣 😊 😍 😘 😎 🤔 😅 😇 🙂 😉 😢 😭 😡 😱 🥳 😴 🤝 👍 👎 👏 🙏 💪 👌 ✌️ 👋 🙌 🤞 ✅ ❌ ⚠️ ❗ ❓ 💯 🔥 ⭐ 🎉 🎯 📌 📎 📝 📊 📈 📉 💰 💵 🧾 🏦 🏗️ 🧱 🔧 🛠️ 🚚 📦 🏠 🏢 ⏰ 📅 ☕ 🍽️ ❤️ 💚 💙 🌙 ☀️".split(" ");
+
+// ================================================================== my profile
+PAGES.profile = async view => {
+  const [prof] = await Promise.all([api("GET", "/api/me/profile"), loadPeople(true)]);
+  let rooms = []; try { rooms = (await api("GET", "/api/chat/rooms")).rooms; } catch { /* chat unavailable */ }
+  const u = me(), n = prof.prefs.notify, ar = S.lang === "ar";
+  const perm = typeof Notification === "undefined" ? "unsupported" : Notification.permission;
+  const canVibe = "vibrate" in navigator;
+  view.innerHTML = `<div class="prof-grid">
+    <div class="card prof-card">
+      <div class="prof-av" id="pav">${avatar({ ...u, name: prof.display_name || u.full_name || u.username, avatar: prof.avatar }, 112)}</div>
+      <div class="row" style="justify-content:center;gap:8px"><label class="btn">${svg("upload")} ${esc(L2("Change picture", "تغيير الصورة"))}<input type="file" id="pavf" accept="image/*" hidden></label>
+        ${prof.avatar ? `<button class="btn" data-a="pavdel">${esc(L2("Remove", "إزالة"))}</button>` : ""}</div>
+      <h2 style="text-align:center;margin:12px 0 2px">${esc(prof.display_name || u.full_name || u.username)}</h2>
+      <div class="muted" style="text-align:center">@${esc(u.username)} · ${esc(u.is_super ? L2("Super admin", "مدير عام") : u.is_admin ? L2("Administrator", "مدير النظام") : L2("User", "مستخدم"))}</div>
+      ${prof.status ? `<div class="chip" style="margin:10px auto 0;display:table">${esc(prof.status)}</div>` : ""}
+      <div class="row" style="justify-content:center;margin-top:14px"><a class="btn" href="#/chat">${svg("chat")} ${esc(L2("Open chat", "فتح المحادثات"))}</a><button class="btn" data-a="pw">${esc(L2("Change password", "تغيير كلمة المرور"))}</button></div>
+    </div>
+    <div>
+      <div class="card"><h2>${esc(L2("About me", "عني"))}</h2>
+        <form id="pform">${form([
+          { k: "display_name", l: L2("Name shown to colleagues", "الاسم الظاهر للزملاء"), v: prof.display_name, ph: u.full_name || u.username },
+          { k: "job_title", l: L2("Job title", "المسمى الوظيفي"), v: prof.job_title, ph: L2("e.g. Site engineer", "مثال: مهندس موقع") },
+          { k: "department", l: L2("Department / team", "القسم / الفريق"), v: prof.department },
+          { k: "phone", l: L2("Phone", "الهاتف"), v: prof.phone },
+          { k: "status", l: L2("Status", "الحالة"), v: prof.status, ph: L2("e.g. On site until 3 pm", "مثال: في الموقع حتى ٣ م") },
+          { k: "bio", l: L2("About", "نبذة"), type: "textarea", v: prof.bio, span: "span2" }], 2)}
+          <div class="row" style="margin-top:10px"><button class="btn pri" type="submit">${t("save")}</button></div></form></div>
+      <div class="card"><h2>${esc(L2("Menu", "القائمة"))}</h2>
+        <div class="grid g2"><label class="f">${esc(L2("Menu groups open on", "فتح مجموعات القائمة عند"))}<select data-change="pnav">${[["click", L2("Click — stay open until clicked again", "النقر — تبقى مفتوحة حتى النقر مرة أخرى")], ["hover", L2("Hover — open while the mouse is over them", "المرور — تفتح أثناء مرور الماوس")]].map(([v, l]) => `<option value="${v}" ${navMode() === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
+        <label class="f">${esc(L2("Light / dark", "فاتح / داكن"))}<select data-change="pmode">${[["auto", L2("Follow this device", "حسب إعداد الجهاز")], ["light", L2("Light", "فاتح")], ["dark", L2("Dark", "داكن")]].map(([v, l]) => `<option value="${v}" ${store.get("theme", "auto") === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label></div>
+        <div class="muted" style="margin-top:6px">${esc(L2("Colours and saved themes: Settings → Theme.", "الألوان والسمات المحفوظة: الإعدادات ← السمات."))} <a href="#/settings?tab=theme">${esc(L2("Open", "فتح"))}</a></div></div>
+      <div class="card" id="notifcard"><h2>${esc(L2("Notifications", "الإشعارات"))}</h2>
+        <div class="grid g2">
+          <label class="f">${esc(L2("Notify me about", "أبلغني عن"))}<select id="nlevel" data-change="nsave">${[["all", L2("Every new message", "كل رسالة جديدة")], ["mentions", L2("Only @mentions and direct messages", "الإشارات @ والرسائل المباشرة فقط")], ["rooms", L2("Only the rooms I pick (and @mentions)", "الغرف التي أختارها فقط (والإشارات @)")], ["none", L2("Nothing (badges only)", "لا شيء (العدّاد فقط)")]].map(([v, l]) => `<option value="${v}" ${n.level === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
+          <label class="f">${esc(L2("Alert", "التنبيه"))}<select id="nmode" data-change="nsave">${[["sound", L2("Sound", "صوت")], ["vibrate", L2("Vibrate only", "اهتزاز فقط") + (canVibe ? "" : L2(" (not on this device)", " (غير مدعوم على هذا الجهاز)"))], ["silent", L2("Silent", "صامت")]].map(([v, l]) => `<option value="${v}" ${n.mode === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
+        </div>
+        <div id="nrooms" ${n.level === "rooms" ? "" : "hidden"} style="margin-top:8px"><div class="muted">${esc(L2("Rooms that notify me:", "الغرف التي تنبهني:"))}</div>
+          <div class="chkgrid">${rooms.filter(r => r.kind !== "dm").map(r => `<label class="f chk"><input type="checkbox" class="nroom" value="${r.id}" data-change="nsave" ${n.rooms.includes(r.id) ? "checked" : ""}>${esc(r.name)}</label>`).join("") || `<span class="muted">—</span>`}</div></div>
+        <label class="f chk" style="margin-top:10px"><input type="checkbox" id="ndesk" data-change="nsave" ${n.desktop ? "checked" : ""}>${esc(L2("Pop-up notifications on this computer / phone", "إشعارات منبثقة على هذا الجهاز"))}</label>
+        <div class="row" style="margin-top:8px">${perm === "granted" ? `<span class="chip ok">${esc(L2("Allowed on this device", "مسموح على هذا الجهاز"))}</span>`
+          : perm === "unsupported" ? `<span class="chip">${esc(L2("This browser cannot show pop-up notifications", "هذا المتصفح لا يدعم الإشعارات المنبثقة"))}</span>`
+          : perm === "denied" ? `<span class="chip bad">${esc(L2("Blocked in the browser's site settings", "محظورة في إعدادات الموقع بالمتصفح"))}</span>`
+          : `<button class="btn" data-a="nallow">${esc(L2("Allow on this device", "السماح على هذا الجهاز"))}</button>`}
+          <button class="btn" data-a="ntest">${esc(L2("Test", "تجربة"))}</button></div>
+        <div class="muted" style="margin-top:8px;font-size:.88em">${esc(L2("Alerts arrive while the app is open (also in a background tab or the installed app). Phones: install the web app (Add to Home screen) for pop-ups; vibration works on Android, not on iPhone.",
+          "تصل التنبيهات أثناء فتح التطبيق (حتى في تبويب بالخلفية أو التطبيق المثبت). على الهاتف: ثبّت التطبيق (إضافة إلى الشاشة الرئيسية) للإشعارات المنبثقة؛ الاهتزاز يعمل على أندرويد وليس على آيفون."))}</div></div>
+    </div></div>`;
+  $("#pform").addEventListener("submit", async e => { e.preventDefault();
+    try { S.boot.profile = await api("PUT", "/api/me/profile", readForm(e.target)); C2.people = null; toast(t("saved")); route(); } catch (err) { fail(err); } });
+  $("#pavf").addEventListener("change", async e => { const f = e.target.files[0]; if (!f) return;
+    try { const src = await new Promise((ok, bad) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = bad; r.readAsDataURL(f); });
+      const small = await shrinkPic(src, 256, "image/jpeg", .86, true);
+      S.boot.profile = await api("PUT", "/api/me/profile", { avatar: small }); C2.people = null; toast(t("saved")); renderShell(); route(); } catch (err) { fail(err); } });
+  S.H.pavdel = async () => { S.boot.profile = await api("PUT", "/api/me/profile", { avatar: "" }); C2.people = null; renderShell(); route(); };
+  S.H.pnav = el => { saveNavMode(el.value); setTimeout(() => { renderShell(); route(); }, 150); };
+  S.H.pmode = el => { store.set("theme", el.value); applyLook(); renderShell(); route(); };
+  S.H.nsave = async () => {
+    const level = $("#nlevel").value; $("#nrooms").hidden = level !== "rooms";
+    const notify = { level, mode: $("#nmode").value, desktop: $("#ndesk").checked, rooms: $$(".nroom:checked").map(x => +x.value) };
+    try { S.boot.profile = await api("PUT", "/api/me/profile", { prefs: { notify } }); toast(t("saved")); } catch (err) { fail(err); }
+  };
+  S.H.nallow = async () => { try { await Notification.requestPermission(); } catch { /* ignored */ } route(); };
+  S.H.ntest = () => alertPerson({ title: L2("Test notification", "إشعار تجريبي"), body: L2("This is how new messages will reach you.", "هكذا ستصلك الرسائل الجديدة."), href: "#/chat", force: true });
+};
+
+// ================================================================== notifications (every screen)
+let beepCtx = null;
+function beep() {
+  try {
+    beepCtx = beepCtx || new (window.AudioContext || window.webkitAudioContext)();
+    const t0 = beepCtx.currentTime;
+    [[880, 0], [1320, .12]].forEach(([f, d]) => { const o = beepCtx.createOscillator(), g = beepCtx.createGain(); o.type = "sine"; o.frequency.value = f;
+      g.gain.setValueAtTime(.0001, t0 + d); g.gain.exponentialRampToValueAtTime(.18, t0 + d + .02); g.gain.exponentialRampToValueAtTime(.0001, t0 + d + .2);
+      o.connect(g); g.connect(beepCtx.destination); o.start(t0 + d); o.stop(t0 + d + .22); });
+  } catch { /* no audio */ }
+}
+async function alertPerson(n) {
+  const prefs = ((S.boot.profile || {}).prefs || {}).notify || { mode: "sound", desktop: true };
+  if (prefs.mode === "sound") beep();
+  if (prefs.mode === "vibrate" || (prefs.mode === "sound" && /Android|iPhone|iPad/i.test(navigator.userAgent))) { try { navigator.vibrate && navigator.vibrate([140, 70, 140]); } catch { /* not supported */ } }
+  const away = document.hidden || !location.hash.startsWith("#/chat");
+  if (prefs.desktop && (away || n.force) && typeof Notification !== "undefined" && Notification.permission === "granted") {
+    const opts = { body: n.body, icon: "icon-192.png", badge: "icon-192.png", tag: n.tag || "berp-chat", renotify: true, silent: prefs.mode !== "sound", data: { href: n.href } };
+    try {
+      const reg = navigator.serviceWorker && await Promise.race([navigator.serviceWorker.getRegistration(), new Promise(r => setTimeout(() => r(null), 800))]);
+      if (reg && reg.showNotification) await reg.showNotification(n.title, opts);
+      else { const x = new Notification(n.title, opts); x.onclick = () => { window.focus(); if (n.href) location.hash = n.href; x.close(); }; }
+    } catch { /* phones without the installed app */ }
+  }
+  if (!document.hidden) toast(`${n.title}: ${n.body}`.slice(0, 160));
+}
+if (navigator.serviceWorker) navigator.serviceWorker.addEventListener("message", e => { if (e.data && e.data.href) location.hash = e.data.href; });
+
+const notifyKey = () => "chatLast:" + ((S.boot && S.boot.user && S.boot.user.id) || 0);
+async function pollChat() {
+  if (!S.boot || !S.boot.user) return;
+  let d;
+  const since = store.get(notifyKey(), 0);
+  try { d = await api("GET", "/api/chat/updates?since=" + since); } catch { return; }
+  if (!since) { store.set(notifyKey(), d.last); return setChatBadge(d.unread, d.mentions); }   // first visit: nothing old pops up
+  const prefs = ((S.boot.profile || {}).prefs || {}).notify || { level: "all", rooms: [] };
+  await loadPeople();
+  const open = (location.hash.match(/^#\/chat\/(\d+)/) || [])[1];
+  for (const m of d.messages) {
+    const direct = m.kind === "dm" || m.mention;
+    const want = prefs.level === "all" || (prefs.level === "mentions" && direct) || (prefs.level === "rooms" && (direct || (prefs.rooms || []).includes(m.room_id)));
+    if (!want || (String(m.room_id) === open && !document.hidden)) continue;
+    const who = personById(m.user_id).name;
+    alertPerson({ title: m.kind === "dm" ? who : `${who} · ${m.room}`, body: m.text || (m.files ? "📎 " + L2("File", "ملف") : ""), href: "#/chat/" + m.room_id, tag: "room" + m.room_id });
+  }
+  store.set(notifyKey(), Math.max(d.last, since));
+  setChatBadge(d.unread, d.mentions);
+  if (cloudOn()) pollLinks();
+}
+let linkUnread = 0;
+async function pollLinks() {
+  if (C2.linkAt && Date.now() - C2.linkAt < 25000) return;
+  C2.linkAt = Date.now();
+  try { const links = await CloudAPI.call("rpc", "chat_link_list", {}); const n = (links || []).reduce((a, l) => a + (l.unread || 0), 0);
+    if (n > linkUnread && C2.linkInit) alertPerson({ title: L2("Message from another company", "رسالة من شركة أخرى"), body: (links.find(l => l.unread) || {}).other || "", href: "#/chat" });
+    linkUnread = n; C2.linkInit = true; setChatBadge(); } catch { /* workspace not upgraded or offline */ }
+}
+function setChatBadge(unread, mentions) {
+  if (unread != null) C2.unread = unread;
+  if (mentions != null) C2.mentions = mentions;
+  const n = (C2.unread || 0) + linkUnread;
+  $$('.nav a[href="#/chat"]').forEach(a => { let b = $(".nbadge", a); if (!b) { b = document.createElement("b"); b.className = "nbadge"; a.appendChild(b); }
+    b.hidden = !n; b.textContent = n > 99 ? "99+" : n; b.classList.toggle("at", !!C2.mentions); });
+  const base = document.title.replace(/^\(\d+\+?\) /, ""); document.title = n ? `(${n > 99 ? "99+" : n}) ${base}` : base;
+}
+setInterval(() => { if (!document.hidden || Math.random() < .5) pollChat(); }, 8000);
+
+// keep the chat badge and the profile picture in the shell
+const _renderNav = renderNav;
+renderNav = function (active) { _renderNav(active); setChatBadge(); };   // eslint-disable-line no-func-assign
+const _renderShell = renderShell;
+renderShell = function () {   // eslint-disable-line no-func-assign
+  _renderShell();
+  const p = S.boot.profile || {}, u = me();
+  const av = $(".ucard .avatar"); if (av && p.avatar) av.outerHTML = `<img class="avatar av" src="${esc(p.avatar)}" alt="">`;
+  const um = $(".ucard .dd-menu"); if (um && !$('a[href="#/profile"]', um)) um.insertAdjacentHTML("afterbegin", `<a href="#/profile">${svg("user")} ${esc(L2("My profile", "ملفي الشخصي"))}</a>`);
+  if (!C2.started) { C2.started = true; setTimeout(pollChat, 1200); }
+  void u;
+};
+
+// ================================================================== chat
+const CH = { room: null, msgs: [], timer: null, pending: [], editing: null, link: null };
+PAGES.chat = async (view, parts, q) => {
+  clearInterval(CH.timer);
+  await loadPeople();
+  const isLink = parts[1] === "link", rid = isLink ? null : +parts[1] || null, lid = isLink ? parts[2] : null;
+  let data; try { data = await api("GET", "/api/chat/rooms"); } catch (e) { view.innerHTML = `<div class="banner err">${esc(e.message)}</div>`; return; }
+  let links = []; if (cloudOn()) { try { links = await CloudAPI.call("rpc", "chat_link_list", {}) || []; } catch { links = null; } }
+  const rooms = data.rooms;
+  const open = rid ? rooms.find(r => r.id === rid) : null;
+  const sec = (title, list, extra = "") => list.length || extra ? `<div class="chl-sec">${esc(title)}${extra}</div>` + list.join("") : "";
+  const item = r => { const other = r.kind === "dm" ? personById(r.other) : null;
+    const ic = r.kind === "dm" ? avatar(other, 34) : `<span class="chl-ic">${esc(r.icon || (r.kind === "general" ? "#" : "◆"))}</span>`;
+    const last = r.last ? (r.last.deleted ? L2("Message removed", "رسالة محذوفة") : (r.last.user_id === me().id ? L2("You: ", "أنت: ") : "") + (r.last.text || (r.last.files ? "📎 " + L2("File", "ملف") : ""))) : (r.topic || "");
+    return `<a class="chl-item ${open && open.id === r.id ? "on" : ""}" href="#/chat/${r.id}">${ic}<span class="chl-t"><b>${esc(r.name)}</b><small>${esc(last)}</small></span>${r.unread ? `<span class="chl-n ${r.mentions ? "at" : ""}">${r.mentions ? "@" : r.unread}</span>` : ""}</a>`; };
+  const linkItem = l => `<a class="chl-item ${lid === l.id ? "on" : ""}" href="#/chat/link/${l.id}"><span class="chl-ic co">${svg("building")}</span><span class="chl-t"><b>${esc(l.other || L2("Waiting for the other company", "بانتظار الشركة الأخرى"))}</b><small>${esc(l.status === "pending" ? L2("Code not used yet", "الرمز لم يُستخدم بعد") : l.status === "ended" ? L2("Ended — history kept", "انتهت — السجل محفوظ") : L2("Between companies", "بين الشركات"))}</small></span>${l.unread ? `<span class="chl-n">${l.unread}</span>` : ""}</a>`;
+  const live = rooms.filter(r => !r.archived);
+  const listHtml = `<div class="chl-head"><input class="in" id="chq" placeholder="${esc(L2("Search chats…", "ابحث في المحادثات…"))}" data-input="chq">
+      <div class="row" style="gap:6px;margin-top:8px"><button class="btn" data-a="chdm">${svg("plus")} ${esc(L2("Message someone", "راسل شخصاً"))}</button>${isSuper() ? `<button class="btn" data-a="chnew">${svg("plus")} ${esc(L2("Room", "غرفة"))}</button>` : ""}</div></div>
+    <div class="chl-list">
+      ${sec(L2("Rooms", "الغرف"), live.filter(r => r.kind !== "dm").map(item))}
+      ${sec(L2("Direct messages", "رسائل مباشرة"), live.filter(r => r.kind === "dm").map(item))}
+      ${cloudOn() ? sec(L2("Other companies", "شركات أخرى"), (links || []).map(linkItem), isSuper() ? ` <button class="lnk" data-a="lnknew">${esc(L2("+ connect", "+ ربط"))}</button>` : "") + (links === null ? `<div class="muted chl-note">${esc(L2("Chat between companies needs the latest workspace update.", "المحادثة بين الشركات تحتاج آخر تحديث لمساحة العمل."))}</div>` : "")
+        : `<div class="muted chl-note">${esc(L2("Chat with other companies works when this company uses the shared workspace (Settings → Workspace).", "المحادثة مع شركات أخرى تعمل عند استخدام مساحة العمل المشتركة (الإعدادات ← مساحة العمل)."))}</div>`}
+      ${sec(L2("Archived", "مؤرشفة"), rooms.filter(r => r.archived).map(item))}
+    </div>`;
+  view.innerHTML = `<div class="chat ${rid || lid ? "has-room" : ""}"><aside class="chl">${listHtml}</aside><section class="chv" id="chv">${rid || lid ? `<div class="muted" style="padding:20px">${t("loading")}</div>` : `<div class="ch-empty">${svg("chat")}<h2>${esc(L2("Pick a conversation", "اختر محادثة"))}</h2><p class="muted">${esc(L2("General is for everyone in the company. Rooms are for the people the super administrator adds.", "الغرفة العامة لكل من في الشركة، والغرف الأخرى لمن يضيفهم المدير العام."))}</p></div>`}</section></div>`;
+  S.H.chq = el => { const v = el.value.toLowerCase(); $$(".chl-item").forEach(a => { a.style.display = a.textContent.toLowerCase().includes(v) ? "" : "none"; }); };
+  S.H.chdm = () => {
+    const ppl = (C2.people || []).filter(p => p.active && p.id !== me().id);
+    drawer(L2("Message someone", "راسل شخصاً"), `<input class="in" placeholder="${esc(L2("Search people…", "ابحث عن شخص…"))}" data-input="pplq"><div class="ppl-list">${ppl.map(p => `<button type="button" class="ppl" data-a="chdmgo" data-id="${p.id}">${avatar(p, 38)}<span><b>${esc(p.name)}</b><small>${esc([p.job_title, p.department].filter(Boolean).join(" · ") || "@" + p.username)}</small></span></button>`).join("") || `<div class="muted">—</div>`}</div>`, null, { readOnly: true });
+  };
+  S.H.pplq = el => { const v = el.value.toLowerCase(); $$(".ppl").forEach(b => { b.style.display = b.textContent.toLowerCase().includes(v) ? "" : "none"; }); };
+  S.H.chdmgo = async el => { try { const r = await api("POST", "/api/chat/dm", { user_id: +el.dataset.id }); closeDrawer(true); location.hash = "#/chat/" + r.id; } catch (e) { fail(e); } };
+  S.H.chnew = () => roomDrawer(null);
+  S.H.lnknew = () => linkDrawer();
+  if (open) return openRoom(open, rooms);
+  if (lid && links) { const l = links.find(x => x.id === lid); if (l) return openLink(l); }
+  if (rid || lid) $("#chv").innerHTML = `<div class="banner err">${esc(L2("This conversation is not available to you.", "هذه المحادثة غير متاحة لك."))}</div>`;
+};
+
+function roomDrawer(r) {
+  const ppl = (C2.people || []).filter(p => p.active || (r && r.members.includes(p.id)));
+  const mem = new Set(r ? r.members : [me().id]);
+  drawer(r ? L2("Room settings", "إعدادات الغرفة") : L2("New room", "غرفة جديدة"), form([
+    { k: "name", l: L2("Name", "الاسم"), v: r ? r.name : "", req: 1, ph: L2("e.g. Partners, Accountants, Site team", "مثال: الشركاء، المحاسبون، فريق الموقع"), dis: r && r.kind === "general" },
+    { k: "icon", l: L2("Icon (an emoji)", "الأيقونة (رمز تعبيري)"), v: r ? r.icon : "", ph: "🏗️" },
+    { k: "topic", l: L2("What it is for", "الغرض منها"), v: r ? r.topic : "", span: "span2" }]) +
+    (r && r.kind === "general" ? `<div class="muted">${esc(L2("Everyone in the company is in General.", "كل من في الشركة موجود في الغرفة العامة."))}</div>` :
+    `<h3 style="margin:14px 0 6px">${esc(L2("Members", "الأعضاء"))}</h3><input class="in" placeholder="${esc(L2("Search people…", "ابحث عن شخص…"))}" data-input="pplq2">
+     <div class="ppl-list">${ppl.map(p => `<label class="ppl chk"><input type="checkbox" name="m_${p.id}" ${mem.has(p.id) ? "checked" : ""}>${avatar(p, 32)}<span><b>${esc(p.name)}</b><small>${esc(p.job_title || "@" + p.username)}</small></span></label>`).join("")}</div>`) + `<div id="derr"></div>`,
+    async v => {
+      const members = Object.keys(v).filter(k => k.startsWith("m_") && v[k]).map(k => +k.slice(2));
+      const body = { name: v.name, icon: v.icon, topic: v.topic, members };
+      if (r) await api("PUT", "/api/chat/rooms/" + r.id, body); else { const x = await api("POST", "/api/chat/rooms", body); location.hash = "#/chat/" + x.id; }
+      toast(t("saved"));
+    });
+  S.H.pplq2 = el => { const v = el.value.toLowerCase(); $$(".ppl").forEach(b => { b.style.display = b.textContent.toLowerCase().includes(v) ? "" : "none"; }); };
+}
+
+function msgHtml(m, prev, opts = {}) {
+  const p = opts.person ? opts.person(m) : personById(m.user_id), mine = opts.mine ? opts.mine(m) : m.user_id === me().id;
+  const grouped = prev && (opts.mine ? opts.mine(prev) === mine && (opts.person ? opts.person(prev).name === p.name : prev.user_id === m.user_id) : prev.user_id === m.user_id) && dayOf(prev.at) === dayOf(m.at) && !prev.deleted;
+  const day = !prev || dayOf(prev.at) !== dayOf(m.at) ? `<div class="ch-day"><span>${esc(new Date(String(m.at).replace(" ", "T")).toLocaleDateString(S.lang === "ar" ? "ar-EG" : undefined, { weekday: "long", month: "long", day: "numeric" }))}</span></div>` : "";
+  const files = (m.files || []).map(f => {
+    const key = opts.fileKey ? opts.fileKey(m, f) : "/api/chat/files/" + f.id;
+    return f.thumb ? `<button class="ch-img" data-a="chfile" data-k="${esc(key)}" data-name="${esc(f.name)}" data-mime="${esc(f.mime)}" title="${esc(f.name)}"><img src="${esc(f.thumb)}" alt="${esc(f.name)}"></button>`
+      : `<button class="ch-file" data-a="chfile" data-k="${esc(key)}" data-name="${esc(f.name)}" data-mime="${esc(f.mime)}">${svg("file")}<span><b>${esc(f.name)}</b><small>${esc(sizeTxt(f.size || 0))}</small></span></button>`; }).join("");
+  const seen = mine && !m.deleted ? (opts.seenTxt ? opts.seenTxt(m) : m.seen_by && m.seen_by.length ? `<span class="ch-seen" title="${esc(m.seen_by.map(id => personById(id).name).join(", "))}">✓✓ ${esc(L2("Seen", "شوهدت"))}${m.seen_by.length > 1 ? " · " + m.seen_by.length : ""}</span>` : `<span class="ch-seen">✓</span>`) : "";
+  const tools = m.editable && !m.deleted ? `<span class="ch-tools"><button class="lnk" data-a="chedit" data-id="${m.id}">${esc(L2("Edit", "تعديل"))}</button><button class="lnk" data-a="chdel" data-id="${m.id}">${esc(L2("Delete", "حذف"))}</button></span>`
+    : (isSuper() && !m.deleted && !opts.noSuperDelete ? `<span class="ch-tools"><button class="lnk" data-a="chdel" data-id="${m.id}">${esc(L2("Remove", "إزالة"))}</button></span>` : "");
+  return day + `<div class="ch-msg ${mine ? "mine" : ""} ${grouped && !day ? "grouped" : ""}" data-id="${m.id}">
+    ${mine ? "" : `<div class="ch-av">${grouped && !day ? "" : avatar(p, 34)}</div>`}
+    <div class="ch-b">${grouped && !day ? "" : `<div class="ch-h"><b>${esc(mine ? L2("You", "أنت") : p.name)}</b><span>${esc(fmtTime(m.at))}</span></div>`}
+      <div class="ch-bubble ${m.deleted ? "del" : ""}">${m.deleted ? `<i>${esc(L2("Message removed", "تم حذف الرسالة"))}</i>` : richText(m.body)}${files ? `<div class="ch-files">${files}</div>` : ""}</div>
+      <div class="ch-meta">${grouped && !day ? `<span>${esc(fmtTime(m.at))}</span>` : ""}${m.edited ? `<span>${esc(L2("edited", "معدّلة"))}</span>` : ""}${seen}${tools}</div></div></div>`;
+}
+
+function composerHtml(canWrite, why) {
+  if (!canWrite) return `<div class="ch-closed">${esc(why)}</div>`;
+  return `<div class="ch-pending" id="chpend"></div>
+    <div class="ch-comp"><div class="dd ch-emo"><button class="btn icbtn" type="button" aria-label="Emoji">${svg("smile")}</button><div class="dd-menu emo-grid">${EMOJIS.map(e => `<button type="button" data-a="chemo" data-e="${e}">${e}</button>`).join("")}</div></div>
+      <label class="icbtn" title="${esc(L2("Attach files", "إرفاق ملفات"))}">${svg("attach")}<input type="file" id="chfiles" multiple hidden></label>
+      <div class="ch-inbox"><textarea id="chtext" rows="1" placeholder="${esc(L2("Write a message… (@ to mention, paste pictures)", "اكتب رسالة… (@ للإشارة، الصق الصور)"))}"></textarea><div class="ch-at" id="chat" hidden></div></div>
+      <button class="btn pri icbtn ch-send" data-a="chsend" aria-label="${esc(L2("Send", "إرسال"))}">${svg("send")}</button></div>`;
+}
+
+// the composer: emoji, files (pick / paste / drop), @mentions, Enter to send, editing an unseen message
+function wireComposer(send, people) {
+  const ta = $("#chtext"); if (!ta) return;
+  CH.pending = []; CH.editing = null;
+  const grow = () => { ta.style.height = "auto"; ta.style.height = Math.min(ta.scrollHeight, 180) + "px"; };
+  const drawPend = () => { $("#chpend").innerHTML = (CH.editing ? `<span class="chip">${esc(L2("Editing a message", "تعديل رسالة"))} <button class="lnk" data-a="chcancel">×</button></span>` : "") + CH.pending.map((f, i) =>
+    `<span class="chip">${f.thumb ? `<img src="${esc(f.thumb)}" alt="">` : svg("file")} ${esc(f.name)} · ${esc(sizeTxt(f.size))} <button class="lnk" data-a="chunpend" data-i="${i}">×</button></span>`).join(""); };
+  const add = async files => { for (const f of files) { try { CH.pending.push(await readFile(f)); } catch (e) { fail(e); } } drawPend(); };
+  $("#chfiles").addEventListener("change", e => { add([...e.target.files]); e.target.value = ""; });
+  ta.addEventListener("paste", e => { const fs = [...(e.clipboardData && e.clipboardData.files || [])]; if (fs.length) { e.preventDefault(); add(fs); } });
+  const zone = $("#chv"); zone.addEventListener("dragover", e => { e.preventDefault(); zone.classList.add("drop"); });
+  zone.addEventListener("dragleave", () => zone.classList.remove("drop"));
+  zone.addEventListener("drop", e => { e.preventDefault(); zone.classList.remove("drop"); add([...e.dataTransfer.files]); });
+  let atIdx = 0;
+  const atBox = $("#chat");
+  const atMatch = () => { const m = ta.value.slice(0, ta.selectionStart).match(/(^|\s)@([\w.\-\u0600-\u06FF]*)$/); return m ? m[2].toLowerCase() : null; };
+  const showAt = () => {
+    const q = atMatch(); if (q == null) { atBox.hidden = true; return; }
+    const list = [{ username: "all", name: L2("Everyone here", "كل الموجودين"), id: -1 }, ...people()].filter(p => p.username.toLowerCase().includes(q) || (p.name || "").toLowerCase().includes(q)).slice(0, 7);
+    if (!list.length) { atBox.hidden = true; return; }
+    atIdx = Math.min(atIdx, list.length - 1);
+    atBox.innerHTML = list.map((p, i) => `<button type="button" class="${i === atIdx ? "on" : ""}" data-a="chatpick" data-u="${esc(p.username)}">${p.id > 0 ? avatar(p, 22) : "👥"} <b>${esc(p.name)}</b> <small>@${esc(p.username)}</small></button>`).join("");
+    atBox.hidden = false;
+  };
+  const pick = u => { const pos = ta.selectionStart, before = ta.value.slice(0, pos).replace(/@([\w.\-\u0600-\u06FF]*)$/, "@" + u + " "); ta.value = before + ta.value.slice(pos); ta.focus(); ta.selectionStart = ta.selectionEnd = before.length; atBox.hidden = true; };
+  S.H.chatpick = el => pick(el.dataset.u);
+  ta.addEventListener("input", () => { grow(); atIdx = 0; showAt(); });
+  ta.addEventListener("keydown", e => {
+    if (!atBox.hidden) {
+      const btns = $$("button", atBox);
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); atIdx = (atIdx + (e.key === "ArrowDown" ? 1 : btns.length - 1)) % btns.length; showAt(); return; }
+      if ((e.key === "Enter" || e.key === "Tab") && btns[atIdx]) { e.preventDefault(); pick(btns[atIdx].dataset.u); return; }
+      if (e.key === "Escape") { atBox.hidden = true; return; }
+    }
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing && matchMedia("(pointer: fine)").matches) { e.preventDefault(); S.H.chsend(); }
+  });
+  S.H.chemo = el => { const p = ta.selectionStart || ta.value.length; ta.value = ta.value.slice(0, p) + el.dataset.e + ta.value.slice(p); ta.focus(); ta.selectionStart = ta.selectionEnd = p + el.dataset.e.length; $$(".dd.open").forEach(d => d.classList.remove("open")); };
+  S.H.chunpend = el => { CH.pending.splice(+el.dataset.i, 1); drawPend(); };
+  S.H.chcancel = () => { CH.editing = null; ta.value = ""; grow(); drawPend(); };
+  S.H.chsend = async () => {
+    const body = ta.value.trim(); if (!body && !CH.pending.length) return;
+    const btn = $(".ch-send"); btn.disabled = true;
+    try { await send(body, CH.pending, CH.editing); ta.value = ""; CH.pending = []; CH.editing = null; grow(); drawPend(); }
+    catch (e) { fail(e); } finally { btn.disabled = false; ta.focus(); }
+  };
+  CH.startEdit = (id, text) => { CH.editing = id; ta.value = text; grow(); drawPend(); ta.focus(); };
+  if (matchMedia("(pointer: fine)").matches) ta.focus();
+}
+
+async function openRoom(room, rooms) {
+  const box = $("#chv");
+  const members = room.kind === "general" ? (C2.people || []).filter(p => p.active) : room.members.map(personById);
+  const title = room.kind === "dm" ? personById(room.other) : null;
+  box.innerHTML = `<div class="ch-top"><a class="icbtn ch-back" href="#/chat">${BACK_ICON}</a>
+      ${room.kind === "dm" ? avatar(title, 38) : `<span class="chl-ic big">${esc(room.icon || (room.kind === "general" ? "#" : "◆"))}</span>`}
+      <div class="ch-tt"><b>${esc(room.name)}</b><small>${esc(room.kind === "dm" ? (title.job_title || "@" + title.username) : room.topic || `${members.length} ${L2("members", "أعضاء")}`)}</small></div>
+      <div class="ch-mem">${members.slice(0, 5).map(p => avatar(p, 26)).join("")}${members.length > 5 ? `<span class="av more">+${members.length - 5}</span>` : ""}</div>
+      ${isSuper() && room.kind !== "dm" ? `<div class="dd"><button class="btn icbtn" aria-label="${esc(L2("Room options", "خيارات الغرفة"))}">⋯</button><div class="dd-menu">
+        <button data-a="chroomset">${esc(L2("Room settings & members", "إعدادات الغرفة والأعضاء"))}</button>
+        <button data-a="chexport">${esc(L2("Export history (zip with files)", "تصدير السجل (ملف مضغوط مع الملفات)"))}</button>
+        ${room.kind === "room" ? `<button data-a="charch">${esc(room.archived ? L2("Restore from archive", "استعادة من الأرشيف") : L2("Archive (keep, read-only)", "أرشفة (تُحفظ، للقراءة فقط)"))}</button>
+        <button data-a="chdelroom" class="danger">${esc(L2("Delete room and history", "حذف الغرفة وسجلها"))}</button>` : ""}</div></div>` : ""}</div>
+    <div class="ch-list" id="chlist"><div class="muted" style="padding:20px">${t("loading")}</div></div>
+    ${composerHtml(room.can_write, room.archived ? L2("This room is archived — read-only.", "هذه الغرفة مؤرشفة — للقراءة فقط.") : L2("You can read this room but you are not a member.", "يمكنك قراءة هذه الغرفة لكنك لست عضواً فيها."))}`;
+  CH.room = room; CH.msgs = []; CH.more = false;
+  const list = $("#chlist");
+  const draw = keepScroll => {
+    const atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 80;
+    const h0 = list.scrollHeight;
+    list.innerHTML = (CH.more ? `<div style="text-align:center;padding:8px"><button class="btn" data-a="chmore">${esc(L2("Earlier messages", "رسائل أقدم"))}</button></div>` : "") +
+      (CH.msgs.length ? CH.msgs.map((m, i) => msgHtml(m, CH.msgs[i - 1])).join("") : `<div class="ch-empty small">${esc(L2("No messages yet — say hello 👋", "لا توجد رسائل بعد — ابدأ بالتحية 👋"))}</div>`);
+    if (keepScroll === "top") list.scrollTop = list.scrollHeight - h0; else if (atBottom || keepScroll === "bottom") list.scrollTop = list.scrollHeight;
+  };
+  const markRead = () => { const last = CH.msgs.length ? CH.msgs[CH.msgs.length - 1].id : 0;
+    if (last > (room.my_read || 0) && !document.hidden) { room.my_read = last; api("POST", `/api/chat/rooms/${room.id}/read`, { last }).then(() => pollChat()).catch(() => {}); } };
+  const load = async () => {
+    const r = await api("GET", `/api/chat/rooms/${room.id}/messages?limit=60`);
+    CH.msgs = r.messages; CH.more = r.more; draw("bottom"); markRead();
+  };
+  const refresh = async () => {
+    if (CH.room !== room || !document.body.contains(list)) return clearInterval(CH.timer);
+    try { const r = await api("GET", `/api/chat/rooms/${room.id}/messages?limit=60`);   // edits, deletions and seen marks change older messages too
+      const sig = x => JSON.stringify(x.map(m => [m.id, m.body, m.edited, m.deleted, m.seen_by.length, m.editable]));
+      const newer = r.messages.filter(m => !CH.msgs.some(x => x.id === m.id));
+      if (sig(r.messages) !== sig(CH.msgs.slice(-r.messages.length)) || newer.length) {
+        const older = CH.msgs.filter(m => m.id < (r.messages[0] || { id: 0 }).id); CH.msgs = [...older, ...r.messages]; draw(); markRead(); }
+    } catch { /* offline */ }
+  };
+  await load();
+  CH.timer = setInterval(refresh, 3500);
+  S.H.chmore = async () => { const r = await api("GET", `/api/chat/rooms/${room.id}/messages?before=${CH.msgs[0].id}&limit=60`); CH.msgs = [...r.messages, ...CH.msgs]; CH.more = r.more; draw("top"); };
+  S.H.chfile = async el => { try { const u = await apiBlobUrl(el.dataset.k); if (/^image\//.test(el.dataset.mime)) openViewer(u, el.dataset.name); else { const a = document.createElement("a"); a.href = u; a.download = el.dataset.name; document.body.appendChild(a); a.click(); a.remove(); } } catch (e) { fail(e); } };
+  S.H.chedit = el => { const m = CH.msgs.find(x => x.id === +el.dataset.id); if (m) CH.startEdit(m.id, m.body); };
+  S.H.chdel = async el => { if (!confirm(L2("Delete this message?", "حذف هذه الرسالة؟"))) return; try { await api("DELETE", "/api/chat/messages/" + el.dataset.id); await refresh(); } catch (e) { fail(e); } };
+  S.H.chroomset = () => roomDrawer(room);
+  S.H.chexport = () => openApi(`/api/chat/rooms/${room.id}/export`);
+  S.H.charch = async () => { try { await api("POST", `/api/chat/rooms/${room.id}/archive`, { archived: !room.archived }); route(); } catch (e) { fail(e); } };
+  S.H.chdelroom = async () => {
+    const word = L2("DELETE", "حذف");
+    if (prompt(L2(`This deletes "${room.name}" and all its messages and files for everyone. Export it first if you may need it.\nType ${word} to confirm.`, `سيتم حذف "${room.name}" وكل رسائلها وملفاتها للجميع. صدّرها أولاً إن احتجت إليها.\nاكتب ${word} للتأكيد.`)) !== word) return;
+    try { await api("DELETE", "/api/chat/rooms/" + room.id); location.hash = "#/chat"; } catch (e) { fail(e); }
+  };
+  wireComposer(async (body, files, editing) => {
+    if (editing) await api("PUT", "/api/chat/messages/" + editing, { body });
+    else await api("POST", `/api/chat/rooms/${room.id}/messages`, { body, files });
+    await refresh(); list.scrollTop = list.scrollHeight;
+  }, () => (room.kind === "general" ? (C2.people || []).filter(p => p.active) : room.members.map(personById)).filter(p => p.id !== me().id));
+  void rooms;
+}
+function openViewer(src, name) {
+  const bg = document.createElement("div"); bg.className = "viewer";
+  bg.innerHTML = `<img src="${esc(src)}" alt="${esc(name)}"><div class="viewer-bar"><a class="btn" href="${esc(src)}" download="${esc(name)}">${svg("download")} ${esc(L2("Download", "تنزيل"))}</a><button class="btn" type="button">${esc(t("close"))}</button></div>`;
+  bg.addEventListener("click", e => { if (e.target === bg || e.target.closest("button")) bg.remove(); });
+  document.body.appendChild(bg);
+}
+
+// ------------------------------------------------------------------ chat between companies (shared workspace)
+function linkDrawer() {
+  drawer(L2("Connect with another company", "الربط مع شركة أخرى"), `
+    <p class="muted">${esc(L2("Both companies must use the shared workspace. One super administrator makes a one-time code (valid 48 hours) and gives it to the other company's super administrator, who enters it. Either side can end the connection at any time; the history stays readable for both.",
+      "يجب أن تستخدم الشركتان مساحة العمل المشتركة. ينشئ مدير عام رمزاً لمرة واحدة (صالح ٤٨ ساعة) ويعطيه للمدير العام في الشركة الأخرى ليدخله. يمكن لأي طرف إنهاء الربط في أي وقت، ويبقى السجل متاحاً للطرفين."))}</p>
+    <div class="card" style="margin:10px 0"><h3>${esc(L2("Give a code", "إعطاء رمز"))}</h3><button class="btn pri" type="button" data-a="lnkmake">${esc(L2("Make a code", "إنشاء رمز"))}</button><div id="lnkcode" style="margin-top:10px"></div></div>
+    <div class="card"><h3>${esc(L2("Enter a code you received", "إدخال رمز وصلك"))}</h3><div class="row"><input class="in" id="lnkin" placeholder="XXXXX-XXXXX-XXXXX-XXXXX" style="max-width:300px;font-family:monospace"><button class="btn pri" type="button" data-a="lnkaccept">${esc(L2("Connect", "ربط"))}</button></div></div><div id="derr"></div>`,
+    null, { readOnly: true });
+  S.H.lnkmake = async () => { try { const r = await CloudAPI.call("rpc", "chat_link_create", {});
+    $("#lnkcode").innerHTML = `<div class="code-big">${esc(r.code)}</div><div class="muted">${esc(L2("Valid until", "صالح حتى"))} ${esc(fmtTime(r.expires))} · ${esc(L2("works once", "يعمل مرة واحدة"))}</div><button class="btn" type="button" data-a="lnkcopy" data-c="${esc(r.code)}">${esc(L2("Copy", "نسخ"))}</button>`; } catch (e) { $("#derr").innerHTML = `<div class="banner err">${esc(e.message)}</div>`; } };
+  S.H.lnkcopy = el => { navigator.clipboard && navigator.clipboard.writeText(el.dataset.c); toast(L2("Copied", "تم النسخ")); };
+  S.H.lnkaccept = async () => { try { const r = await CloudAPI.call("rpc", "chat_link_accept", { p_code: $("#lnkin").value }); closeDrawer(true); toast(L2("Connected with ", "تم الربط مع ") + r.other); location.hash = "#/chat/link/" + r.id; } catch (e) { $("#derr").innerHTML = `<div class="banner err">${esc(e.message)}</div>`; } };
+}
+
+async function openLink(l) {
+  const box = $("#chv"), active = l.status === "active";
+  box.innerHTML = `<div class="ch-top"><a class="icbtn ch-back" href="#/chat">${BACK_ICON}</a><span class="chl-ic big co">${svg("building")}</span>
+      <div class="ch-tt"><b>${esc(l.other || L2("Waiting for the other company", "بانتظار الشركة الأخرى"))}</b><small>${esc(active ? L2("Chat between companies · both sides can read the history", "محادثة بين الشركات · السجل متاح للطرفين")
+        : l.status === "pending" ? L2("The code has not been used yet", "لم يُستخدم الرمز بعد") : L2("Ended", "انتهت") + " " + fmtTime(l.ended_at) + (l.ended_by_us ? L2(" by your company", " من شركتك") : L2(" by the other company", " من الشركة الأخرى")))}</small></div>
+      ${isSuper() && l.status !== "ended" ? `<button class="btn danger" data-a="lnkend">${esc(l.status === "pending" ? L2("Withdraw code", "سحب الرمز") : L2("End connection", "إنهاء الربط"))}</button>` : ""}</div>
+    <div class="ch-list" id="chlist"></div>
+    ${composerHtml(active, l.status === "pending" ? L2("Waiting for the other company to enter the code.", "بانتظار إدخال الشركة الأخرى للرمز.") : L2("This connection has ended — the history stays readable.", "انتهى هذا الربط — يبقى السجل متاحاً للقراءة."))}`;
+  CH.room = l; CH.msgs = [];
+  const list = $("#chlist");
+  const conv = m => ({ id: m.id, user_id: m.mine ? me().id : 0, body: m.body, at: m.at, edited: m.edited, deleted: m.deleted, files: m.files, editable: m.mine && !m.seen && !m.deleted && active, seen: m.seen, ours: m.ours, sender: m.sender_name, mine: m.mine });
+  const opts = { person: m => ({ name: (m.sender || "?") + (m.ours ? "" : " · " + (l.other || "")), avatar: "" }), mine: m => m.mine, noSuperDelete: true,
+    seenTxt: m => m.seen ? `<span class="ch-seen">✓✓ ${esc(L2("Seen", "شوهدت"))}</span>` : `<span class="ch-seen">✓</span>`, fileKey: (m, f) => `${m.id}:${f.i}` };
+  const draw = () => { const atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 80;
+    list.innerHTML = CH.msgs.length ? CH.msgs.map((m, i) => msgHtml(m, CH.msgs[i - 1], opts)).join("") : `<div class="ch-empty small">${esc(L2("No messages yet.", "لا توجد رسائل بعد."))}</div>`;
+    if (atBottom) list.scrollTop = list.scrollHeight; };
+  const load = async first => {
+    if (l.status === "pending") return draw();
+    try { const r = (await CloudAPI.call("rpc", "chat_link_messages", { p_link: l.id, p_after: 0, p_limit: 120 }) || []).map(conv);
+      const sig = x => JSON.stringify(x.map(m => [m.id, m.body, m.edited, m.deleted, m.seen]));
+      if (first || sig(r) !== sig(CH.msgs)) { CH.msgs = r; draw(); if (first) list.scrollTop = list.scrollHeight; }
+      const last = r.length ? r[r.length - 1].id : 0;
+      if (last && last > (C2["lr" + l.id] || 0) && !document.hidden) { C2["lr" + l.id] = last; CloudAPI.call("rpc", "chat_link_read", { p_link: l.id, p_last: last }).catch(() => {}); }
+    } catch (e) { list.innerHTML = `<div class="banner err">${esc(e.message)}</div>`; }
+  };
+  await load(true);
+  clearInterval(CH.timer); CH.timer = setInterval(() => { if (CH.room !== l || !document.body.contains(list)) return clearInterval(CH.timer); load(); }, 5000);
+  S.H.chfile = async el => { const [mid, i] = el.dataset.k.split(":");
+    try { const f = await CloudAPI.call("rpc", "chat_link_file", { p_message: +mid, p_index: +i }); const blob = b64ToBlob(f.data, f.mime);
+      if (/^image\//.test(f.mime)) openViewer(URL.createObjectURL(blob), f.name); else saveBlob(blob, f.name); } catch (e) { fail(e); } };
+  S.H.chedit = el => { const m = CH.msgs.find(x => x.id === +el.dataset.id); if (m) CH.startEdit(m.id, m.body); };
+  S.H.chdel = async el => { if (!confirm(L2("Delete this message?", "حذف هذه الرسالة؟"))) return;
+    try { await CloudAPI.call("rpc", "chat_link_edit", { p_message: +el.dataset.id, p_body: "", p_delete: true }); load(); } catch (e) { fail(e); } };
+  S.H.lnkend = async () => { if (!confirm(l.status === "pending" ? L2("Withdraw this code?", "سحب هذا الرمز؟") : L2("End this connection? Nobody can write any more; both companies keep the history.", "إنهاء هذا الربط؟ لن يتمكن أحد من الكتابة، وتحتفظ الشركتان بالسجل."))) return;
+    try { await CloudAPI.call("rpc", "chat_link_end", { p_link: l.id }); route(); } catch (e) { fail(e); } };
+  wireComposer(async (body, files, editing) => {
+    if (editing) await CloudAPI.call("rpc", "chat_link_edit", { p_message: editing, p_body: body, p_delete: false });
+    else {
+      const total = files.reduce((a, f) => a + f.size, 0); if (total > 15 * 1048576) throw new Error(L2("Files are limited to 15 MB per message", "حجم الملفات محدود بـ 15 ميجابايت لكل رسالة"));
+      const prof = S.boot.profile || {};
+      await CloudAPI.call("rpc", "chat_link_send", { p_link: l.id, p_body: body, p_files: files, p_name: prof.display_name || me().full_name || me().username });
+    }
+    await load(); list.scrollTop = list.scrollHeight;
+  }, () => []);
+}
+
+// ================================================================== the AI assistant
+const _applyLook = applyLook;
+applyLook = function () { if (S.boot && S.boot.ai && !S.aiFresh) S.ai = S.boot.ai; _applyLook(); };   // eslint-disable-line no-func-assign
+async function loadAiPolicy() {
+  try { S.ai = await api("GET", "/api/ai-policy"); S.aiFresh = true; } catch { S.ai = null; }
+  if (S.boot && S.boot.user) { const { parts } = parseHash(); renderNav(parts.join("/")); }
+}
+// one step of the conversation: the provider's reply for the messages so far
+async function aiComplete(messages, ctx) {
+  if (cloudOn()) {
+    const r = await CloudAPI.call("fn", "ai", { base: ctx.base, context: ctx.context, tools: ctx.tools, messages });
+    return r.message;
+  }
+  const r = await api("POST", "/api/ai/complete", { messages });
+  if (r.message) return r.message;
+  // browser-only edition: the page calls Claude itself with the official SDK (loaded on first use)
+  const mod = await import("https://esm.sh/@anthropic-ai/sdk@0");
+  const Anthropic = mod.default || mod.Anthropic;
+  const client = new Anthropic({ apiKey: r.key, dangerouslyAllowBrowser: true });
+  try { return JSON.parse(JSON.stringify(await client.beta.messages.create(r.params))); }
+  catch (e) {
+    if (e instanceof Anthropic.AuthenticationError) throw new Error(L2("The AI provider refused the key — a super administrator should check it in Settings → AI assistant", "رفض مزوّد الذكاء الاصطناعي المفتاح — يراجعه المدير العام في الإعدادات ← المساعد الذكي"));
+    if (e instanceof Anthropic.RateLimitError) throw new Error(L2("The AI provider is busy — try again in a minute", "مزوّد الذكاء الاصطناعي مشغول — حاول بعد دقيقة"));
+    if (e instanceof Anthropic.APIConnectionError) throw new Error(L2("Could not reach the AI provider — check the internet connection", "تعذّر الوصول إلى مزوّد الذكاء الاصطناعي — تحقق من الاتصال"));
+    if (e instanceof Anthropic.APIError) throw new Error(L2("The AI provider refused the request: ", "رفض مزوّد الذكاء الاصطناعي الطلب: ") + e.message);
+    throw e;
+  }
+}
+// the assistant's calls: as the signed-in person, marked so the ERP applies the assistant's policy on top of their rights
+async function aiApi(method, path, body) {
+  if (!/^\/api\//.test(path)) throw new Error("Only /api/ paths");
+  if (STATIC) {
+    const h = { ...staticHeaders(), "x-ai-call": "1" }; let payload = null;
+    if (body !== undefined && method !== "GET") { payload = JSON.stringify(body); h["content-type"] = "application/json"; }
+    const r = await window.__beyondFetch(method, path, h, payload);
+    const txt = new TextDecoder().decode(r.body);
+    return { status: r.status, text: /json/.test(r.ctype || "") ? txt : `(${r.ctype}, ${r.body.length} bytes — a file, not shown)` };
+  }
+  const opt = { method, credentials: "same-origin", headers: { "X-Requested-With": "BeyondERP", "X-AI-Call": "1" } };
+  if (body !== undefined && method !== "GET") { opt.body = JSON.stringify(body); opt.headers["Content-Type"] = "application/json"; }
+  const r = await fetch(path, opt), ct = r.headers.get("content-type") || "";
+  return { status: r.status, text: /json/.test(ct) ? await r.text() : `(${ct} — a file, not shown)` };
+}
+const AI = { thread: null, busy: false, ctx: null };
+PAGES.assistant = async (view, parts) => {
+  if (!S.ai) await loadAiPolicy();
+  if (!S.ai || !S.ai.allowed) {
+    view.innerHTML = `<div class="card ch-empty">${svg("spark")}<h2>${esc(L2("The AI assistant is not switched on for you", "المساعد الذكي غير مفعّل لك"))}</h2><p class="muted">${esc(L2("A super administrator installs and sets it up in Settings → AI assistant.", "يقوم المدير العام بتثبيته وإعداده من الإعدادات ← المساعد الذكي."))}</p>${isSuper() ? `<a class="btn pri" href="#/settings?tab=ai">${esc(L2("Set it up", "إعداده"))}</a>` : ""}</div>`;
+    return;
+  }
+  const threads = await api("GET", "/api/ai/threads");
+  const tid = +parts[1] || null;
+  AI.thread = tid ? await api("GET", "/api/ai/threads/" + tid).catch(() => null) : null;
+  if (!AI.thread) AI.thread = { id: null, title: "", messages: [] };
+  const name = (S.ai.policy && S.ai.policy.name) || "Claude";
+  view.innerHTML = `<div class="chat ai ${tid ? "has-room" : ""}"><aside class="chl"><div class="chl-head"><a class="btn pri" href="#/assistant" style="width:100%;justify-content:center">${svg("plus")} ${esc(L2("New conversation", "محادثة جديدة"))}</a></div>
+      <div class="chl-list">${threads.map(th => `<a class="chl-item ${th.id === tid ? "on" : ""}" href="#/assistant/${th.id}"><span class="chl-ic">${svg("spark")}</span><span class="chl-t"><b>${esc(th.title)}</b><small>${esc(fmtTime(th.updated_at))}</small></span><button class="lnk" data-a="aidel" data-id="${th.id}" title="${esc(L2("Delete", "حذف"))}">×</button></a>`).join("") || `<div class="muted chl-note">${esc(L2("Your conversations stay on this device.", "محادثاتك تبقى على هذا الجهاز."))}</div>`}</div></aside>
+    <section class="chv"><div class="ch-top"><a class="icbtn ch-back" href="#/assistant">${BACK_ICON}</a><span class="chl-ic big ai-ic">${svg("spark")}</span><div class="ch-tt"><b>${esc(name)}</b><small>${esc(L2("Works with your own access only", "يعمل بصلاحياتك أنت فقط"))} · ${esc(S.ai.policy.write === "off" ? L2("read-only", "قراءة فقط") : S.ai.policy.write === "auto" ? L2("can change data", "يمكنه تعديل البيانات") : L2("asks before any change", "يستأذن قبل أي تعديل"))}</small></div></div>
+      <div class="ch-list ai-list" id="ailist"></div>
+      <div class="ch-comp"><div class="ch-inbox"><textarea id="aitext" rows="1" placeholder="${esc(L2("Ask about your books, or ask for a change… e.g. “Which clients owe us the most?”", "اسأل عن دفاترك أو اطلب تعديلاً… مثال: «من أكثر العملاء مديونية لنا؟»"))}"></textarea></div>
+        <button class="btn pri icbtn ch-send" data-a="aisend" aria-label="${esc(L2("Send", "إرسال"))}">${svg("send")}</button></div>
+      <div class="muted ai-foot">${esc(L2("What the assistant reads is sent to Anthropic (Claude) to answer you. Check important figures in the reports.", "ما يقرؤه المساعد يُرسل إلى Anthropic (Claude) للإجابة. راجع الأرقام المهمة في التقارير."))}${S.ai.policy.daily_limit ? " · " + esc(L2("Today", "اليوم")) + ` ${S.ai.used_today}/${S.ai.policy.daily_limit}` : ""}</div></section></div>`;
+  const ta = $("#aitext");
+  ta.addEventListener("input", () => { ta.style.height = "auto"; ta.style.height = Math.min(ta.scrollHeight, 200) + "px"; });
+  ta.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing && matchMedia("(pointer: fine)").matches) { e.preventDefault(); S.H.aisend(); } });
+  S.H.aisend = () => aiSend(ta.value.trim(), ta);
+  S.H.aidel = async el => { if (!confirm(L2("Delete this conversation?", "حذف هذه المحادثة؟"))) return; await api("DELETE", "/api/ai/threads/" + el.dataset.id); location.hash = "#/assistant"; route(); };
+  S.H.aiok = el => { const w = AI.waiting && AI.waiting[el.dataset.id]; if (w) w(true); };
+  S.H.aino = el => { const w = AI.waiting && AI.waiting[el.dataset.id]; if (w) w(false); };
+  aiDraw();
+  if (matchMedia("(pointer: fine)").matches) ta.focus();
+};
+// minimal, safe Markdown: paragraphs, **bold**, `code`, lists, headings, tables
+function md(src) {
+  const lines = String(src || "").split("\n"); let out = "", i = 0;
+  const inline = s => esc(s).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/`([^`]+)`/g, "<code>$1</code>");
+  while (i < lines.length) {
+    const l = lines[i];
+    if (/^```/.test(l)) { const buf = []; i++; while (i < lines.length && !/^```/.test(lines[i])) buf.push(lines[i++]); i++; out += `<pre>${esc(buf.join("\n"))}</pre>`; continue; }
+    if (/^\s*\|.*\|\s*$/.test(l)) { const rows = []; while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) rows.push(lines[i++]);
+      const cells = r => r.trim().replace(/^\||\|$/g, "").split("|").map(c => c.trim());
+      const body = rows.filter(r => !/^\s*\|[\s:\-|]+\|\s*$/.test(r));
+      out += `<div class="tbl"><table><thead><tr>${cells(body[0] || "").map(c => `<th>${inline(c)}</th>`).join("")}</tr></thead><tbody>${body.slice(1).map(r => `<tr>${cells(r).map(c => `<td>${inline(c)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`; continue; }
+    if (/^\s*([-*]|\d+\.)\s+/.test(l)) { const tag = /^\s*\d+\./.test(l) ? "ol" : "ul", buf = []; while (i < lines.length && /^\s*([-*]|\d+\.)\s+/.test(lines[i])) buf.push(lines[i++].replace(/^\s*([-*]|\d+\.)\s+/, ""));
+      out += `<${tag}>${buf.map(x => `<li>${inline(x)}</li>`).join("")}</${tag}>`; continue; }
+    const h = l.match(/^(#{1,4})\s+(.*)/); if (h) { out += `<h4>${inline(h[2])}</h4>`; i++; continue; }
+    if (!l.trim()) { i++; continue; }
+    const buf = []; while (i < lines.length && lines[i].trim() && !/^(```|\s*\||\s*([-*]|\d+\.)\s+|#{1,4}\s)/.test(lines[i])) buf.push(lines[i++]);
+    out += `<p>${buf.map(inline).join("<br>")}</p>`;
+  }
+  return out;
+}
+function aiDraw() {
+  const list = $("#ailist"); if (!list) return;
+  const msgs = AI.thread.messages, results = {};
+  msgs.forEach(m => { if (m.role === "user" && Array.isArray(m.content)) m.content.forEach(b => { if (b.type === "tool_result") results[b.tool_use_id] = b; }); });
+  let h = "";
+  if (!msgs.length) h = `<div class="ch-empty">${svg("spark")}<h2>${esc(L2("How can I help?", "كيف يمكنني المساعدة؟"))}</h2><div class="ai-sugg">${[
+    L2("What is our cash position and what do we owe this month?", "ما وضع النقدية لدينا وما المستحق علينا هذا الشهر؟"),
+    L2("Which projects made the most profit this year?", "ما أكثر المشروعات ربحاً هذا العام؟"),
+    L2("List unpaid sales invoices older than 30 days", "اعرض فواتير المبيعات غير المحصلة الأقدم من ٣٠ يوماً"),
+    L2("Summarise this month's expenses by type", "لخّص مصروفات هذا الشهر حسب النوع")].map(s => `<button class="btn" data-a="aisugg">${esc(s)}</button>`).join("")}</div></div>`;
+  for (const m of msgs) {
+    if (m.role === "user") {
+      if (typeof m.content === "string") h += `<div class="ch-msg mine"><div class="ch-b"><div class="ch-bubble">${richText(m.content)}</div></div></div>`;
+      continue;
+    }
+    for (const b of m.content || []) {
+      if (b.type === "text" && b.text) h += `<div class="ch-msg ai-msg"><div class="ch-av"><span class="av ai-av">${svg("spark")}</span></div><div class="ch-b"><div class="ch-bubble md">${md(b.text)}</div></div></div>`;
+      if (b.type === "tool_use") {
+        const r = results[b.id], inp = b.input || {};
+        const label = b.name === "erp_find" ? L2("Looked for: ", "بحث عن: ") + (inp.query || "") : b.name === "erp_read" ? L2("Read ", "قرأ ") + (inp.path || "") : (inp.summary || inp.path || "");
+        if (b.name === "erp_write" && !r) {
+          h += `<div class="ai-act ask"><b>${esc(L2("Change requested", "تعديل مطلوب"))}</b><div>${esc(inp.summary || "")}</div><details><summary>${esc(L2("Details", "التفاصيل"))}</summary><code>${esc(inp.method)} ${esc(inp.path)}</code><pre>${esc(inp.body_json || "")}</pre></details>
+            <div class="row"><button class="btn pri" data-a="aiok" data-id="${esc(b.id)}">${esc(L2("Approve", "موافقة"))}</button><button class="btn" data-a="aino" data-id="${esc(b.id)}">${esc(L2("Decline", "رفض"))}</button></div></div>`;
+        } else {
+          const bad = r && (r.is_error || /declined|رفض/.test(String(r.content)));
+          h += `<div class="ai-act ${b.name === "erp_write" ? (bad ? "no" : "done") : ""}">${b.name === "erp_write" ? (bad ? "✕ " : "✓ ") : "· "}${esc(label)}</div>`;
+        }
+      }
+    }
+  }
+  if (AI.busy) h += `<div class="ai-act"><i class="spin"></i> ${esc(L2("Working…", "جارٍ العمل…"))}</div>`;
+  list.innerHTML = h; list.scrollTop = list.scrollHeight;
+  S.H.aisugg = el => { const ta = $("#aitext"); ta.value = el.textContent; S.H.aisend(); };
+}
+async function aiTool(b) {
+  const inp = b.input || {};
+  const cut = s => (s.length > 40000 ? s.slice(0, 40000) + "\n…(cut — narrow the request with filters)" : s);
+  try {
+    if (b.name === "erp_find") return { type: "tool_result", tool_use_id: b.id, content: JSON.stringify(await api("GET", "/api/ai/catalog?" + qs({ q: inp.query || "", limit: 40 }))) };
+    if (b.name === "erp_read") { const r = await aiApi("GET", String(inp.path || "")); return { type: "tool_result", tool_use_id: b.id, content: cut(`HTTP ${r.status}\n${r.text}`), is_error: r.status >= 400 }; }
+    if (b.name === "erp_write") {
+      let body; try { body = JSON.parse(inp.body_json || "{}"); } catch { return { type: "tool_result", tool_use_id: b.id, content: "body_json is not valid JSON", is_error: true }; }
+      if (!["POST", "PUT", "DELETE"].includes(inp.method)) return { type: "tool_result", tool_use_id: b.id, content: "method must be POST, PUT or DELETE", is_error: true };
+      if (S.ai.policy.write === "confirm") {
+        AI.busy = false; aiDraw();
+        const okd = await new Promise(res => { AI.waiting = { ...(AI.waiting || {}), [b.id]: res }; });
+        delete AI.waiting[b.id]; AI.busy = true;
+        if (!okd) return { type: "tool_result", tool_use_id: b.id, content: "The person declined this change. Do not retry it; ask what they want instead." };
+      }
+      const r = await aiApi(inp.method, String(inp.path || ""), body);
+      return { type: "tool_result", tool_use_id: b.id, content: cut(`HTTP ${r.status}\n${r.text}`), is_error: r.status >= 400 };
+    }
+    return { type: "tool_result", tool_use_id: b.id, content: "Unknown tool", is_error: true };
+  } catch (e) { return { type: "tool_result", tool_use_id: b.id, content: "Error: " + e.message, is_error: true }; }
+}
+async function aiSave() {
+  const th = AI.thread, first = th.messages.find(m => m.role === "user" && typeof m.content === "string");
+  const title = (first ? first.content : "Conversation").slice(0, 80);
+  if (th.id) await api("PUT", "/api/ai/threads/" + th.id, { title, messages: th.messages });
+  else { th.id = (await api("POST", "/api/ai/threads", { title, messages: th.messages })).id; history.replaceState(null, "", "#/assistant/" + th.id); }
+}
+async function aiSend(text, ta) {
+  if (!text || AI.busy) return;
+  const th = AI.thread; ta.value = ""; ta.style.height = "auto";
+  th.messages.push({ role: "user", content: text });
+  AI.busy = true; aiDraw();
+  try {
+    AI.ctx = AI.ctx && AI.ctx.at > Date.now() - 600000 ? AI.ctx : { ...(await api("GET", "/api/ai/context")), at: Date.now() };
+    for (let step = 0; step < 24; step++) {
+      const msg = await aiComplete(th.messages, AI.ctx);
+      th.messages.push({ role: "assistant", content: msg.content });   // kept exactly as returned (thinking blocks included)
+      aiDraw();
+      if (msg.stop_reason === "refusal") { th.messages.push({ role: "user", content: L2("(The request was declined by the AI provider's safety checks.)", "(رفضت فحوص الأمان لدى مزوّد الذكاء الاصطناعي هذا الطلب.)") }); break; }
+      if (msg.stop_reason !== "tool_use") break;
+      const results = [];
+      for (const b of msg.content.filter(x => x.type === "tool_use")) results.push(await aiTool(b));
+      th.messages.push({ role: "user", content: results });
+      aiDraw(); await aiSave();
+    }
+  } catch (e) { fail(e); th.messages.push({ role: "assistant", content: [{ type: "text", text: "⚠️ " + e.message }] }); }
+  finally { AI.busy = false; aiDraw(); try { await aiSave(); } catch { /* kept on screen */ } loadAiPolicy(); }
+}
+
+// ------------------------------------------------------------------ Settings → AI assistant (super administrators)
+const modName = m => { const k = (window.MENU || []).find(([, items]) => items.some(i => i[2] === m || i[2].startsWith(m + "."))); return k ? t(k[0]) : m; };
+async function aiSettingsTab(view, head) {
+  const r = await api("GET", "/api/ai-policy"); const p = r.policy, ppl = await loadPeople(true);
+  let cloud = null; if (cloudOn()) { try { cloud = await CloudAPI.call("rpc", "ai_settings_get", {}); } catch { cloud = { error: true }; } }
+  const mods = (S.boot.enums.modules || []).filter(m => !["users", "settings"].includes(m));
+  const hasKey = cloud && !cloud.error ? cloud.has_key : r.has_key;
+  view.innerHTML = head + `<div class="card"><h2>${svg("spark")} ${esc(L2("AI assistant", "المساعد الذكي"))}</h2>
+    <p class="muted">${esc(L2("Claude (by Anthropic) answers questions about your books and, if you allow it, prepares changes. It always acts as the person using it — with exactly their permissions — and never touches users, sign-in, licences, backups or these settings.",
+      "Claude (من Anthropic) يجيب عن أسئلة حول دفاترك، ويُعد التعديلات إن سمحت بذلك. يعمل دائماً بصفة الشخص الذي يستخدمه وبصلاحياته فقط، ولا يقترب من المستخدمين أو الدخول أو التراخيص أو النسخ الاحتياطية أو هذه الإعدادات."))}</p>
+    <form id="aiform">${form([
+      { k: "enabled", l: L2("Switched on", "مفعّل"), type: "checkbox", v: p.enabled },
+      { k: "name", l: L2("Assistant's name", "اسم المساعد"), v: p.name },
+      { k: "model", l: L2("Model", "النموذج"), type: "select", opts: r.models, v: p.model },
+      { k: "effort", l: L2("Thoroughness", "مستوى التفكير"), type: "select", opts: [["low", L2("Quick", "سريع")], ["medium", L2("Balanced (recommended)", "متوازن (مستحسن)")], ["high", L2("Thorough", "متعمّق")]], v: p.effort },
+      { k: "write", l: L2("Changing data", "تعديل البيانات"), type: "select", opts: [["off", L2("Never — read and advise only", "أبداً — قراءة ونصح فقط")], ["confirm", L2("Ask the person to approve each change (recommended)", "يطلب موافقة الشخص على كل تعديل (مستحسن)")], ["auto", L2("Make changes directly", "يعدّل مباشرة")]], v: p.write },
+      { k: "daily_limit", l: L2("Requests per person per day (0 = no limit)", "عدد الطلبات لكل شخص يومياً (0 = بلا حد)"), type: "number", v: p.daily_limit },
+      { k: "access", l: L2("Who can use it", "من يمكنه استخدامه"), type: "select", opts: [["all", L2("Everyone in the company", "كل من في الشركة")], ["list", L2("Only the people ticked below", "فقط الأشخاص المحددون أدناه")]], v: p.access, change: "aiacc" },
+      { k: "instructions", l: L2("Standing instructions (how it should deal with people's requests)", "تعليمات دائمة (كيف يتعامل مع طلبات الأشخاص)"), type: "textarea", v: p.instructions, span: "span2",
+        ph: L2("e.g. Always answer in Arabic. Never record payments above 50,000 without asking for the invoice number.", "مثال: أجب دائماً بالعربية. لا تسجل دفعات أكبر من 50,000 دون طلب رقم الفاتورة.") }])}
+      <div id="aiusers" ${p.access === "list" ? "" : "hidden"}><h3>${esc(L2("People who can use it", "الأشخاص المسموح لهم"))}</h3><div class="chkgrid">${ppl.filter(x => x.active).map(x => `<label class="f chk"><input type="checkbox" class="aiu" value="${esc(x.username)}" ${p.users.includes(x.username) ? "checked" : ""}>${avatar(x, 22)} ${esc(x.name)}</label>`).join("")}</div></div>
+      <h3>${esc(L2("Sections it must never use", "أقسام يُمنع استخدامها"))}</h3><div class="chkgrid">${mods.map(m => `<label class="f chk"><input type="checkbox" class="aib" value="${m}" ${p.blocked.includes(m) ? "checked" : ""}>${esc(modName(m))}</label>`).join("")}</div>
+      <h3>${esc(L2("Provider key", "مفتاح المزوّد"))}</h3>
+      <div class="row"><span class="chip ${hasKey ? "ok" : "bad"}">${esc(hasKey ? L2("Installed", "مثبّت") : L2("Not installed", "غير مثبّت"))}</span>
+        <input class="in" type="password" name="key" autocomplete="off" placeholder="${esc(L2("Anthropic API key (sk-ant-…) — leave empty to keep", "مفتاح Anthropic API (sk-ant-…) — اتركه فارغاً للإبقاء"))}" style="max-width:420px" data-skip="1" id="aikey">
+        ${hasKey ? `<button class="btn" type="button" data-a="aikeydel">${esc(L2("Remove key", "إزالة المفتاح"))}</button>` : ""}</div>
+      <div class="muted" style="margin-top:6px">${esc(cloudOn() ? L2("With the shared workspace the key is kept in Supabase where only the assistant's server function can read it — never sent to browsers.", "مع مساحة العمل المشتركة يُحفظ المفتاح في Supabase حيث لا تقرؤه إلا دالة المساعد على الخادم — ولا يُرسل للمتصفحات أبداً.")
+        : STATIC ? L2("Browser-only edition: the key is kept in this browser and used from this browser only.", "النسخة التي تعمل في المتصفح فقط: يُحفظ المفتاح في هذا المتصفح ويُستخدم منه فقط.")
+        : L2("Kept on this computer only (never copied to the shared workspace or backups sent elsewhere).", "يُحفظ على هذا الكمبيوتر فقط."))} ${esc(L2("Get a key at console.anthropic.com → API keys.", "احصل على مفتاح من console.anthropic.com ← API keys."))}</div>
+      ${cloud && cloud.error ? `<div class="banner warn" style="margin-top:10px">${esc(L2("The workspace has not been updated for the assistant yet (it is updated automatically on the next deployment).", "لم تُحدَّث مساحة العمل للمساعد بعد (تُحدَّث تلقائياً في النشر القادم)."))}</div>` : ""}
+      <div class="row" style="margin-top:14px"><button class="btn pri" type="submit">${t("save")}</button><a class="btn" href="#/assistant">${esc(L2("Open the assistant", "فتح المساعد"))}</a></div><div id="derr"></div></form></div>`;
+  S.H.aiacc = el => { $("#aiusers").hidden = el.value !== "list"; };
+  const save = async key => {
+    const v = readForm($("#aiform"));
+    const body = { enabled: !!v.enabled, name: v.name, model: v.model, effort: v.effort, write: v.write, access: v.access, daily_limit: +v.daily_limit || 0,
+      instructions: v.instructions, users: $$(".aiu:checked").map(x => x.value), blocked: $$(".aib:checked").map(x => x.value) };
+    const saved = await api("PUT", "/api/ai-policy", body);
+    if (cloudOn()) await CloudAPI.call("rpc", "ai_settings_set", { p_settings: saved, p_key: key === undefined ? null : key });
+    else if (key !== undefined) await api("PUT", "/api/ai/key", { key });
+  };
+  $("#aiform").addEventListener("submit", async e => { e.preventDefault();
+    try { const k = $("#aikey").value.trim(); await save(k ? k : undefined); toast(t("saved")); await loadAiPolicy(); route(); }
+    catch (err) { $("#derr").innerHTML = `<div class="banner err">${esc(err.message)}</div>`; } });
+  S.H.aikeydel = async () => { if (!confirm(L2("Remove the provider key? The assistant stops working until a new key is added.", "إزالة مفتاح المزوّد؟ سيتوقف المساعد حتى يُضاف مفتاح جديد."))) return;
+    try { await save(""); toast(t("saved")); route(); } catch (err) { fail(err); } };
+}
+
 (window.__beyondReady || Promise.resolve()).then(boot, () => {});
 })();

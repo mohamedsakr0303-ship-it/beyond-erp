@@ -12,3 +12,13 @@ self.addEventListener("fetch", e => {
     return res;
   }).catch(() => caches.match(r, { ignoreSearch: true }).then(hit => hit || (r.mode === "navigate" ? caches.match("./") : Response.error()))));
 });
+// chat notifications: tapping one opens (or focuses) the app on that conversation
+self.addEventListener("notificationclick", e => {
+  e.notification.close();
+  const href = (e.notification.data && e.notification.data.href) || "#/chat";
+  e.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(list => {
+    const win = list.find(c => c.url.startsWith(self.registration.scope));
+    if (win) { win.postMessage({ href }); return win.focus(); }
+    return self.clients.openWindow(self.registration.scope + href);
+  }));
+});

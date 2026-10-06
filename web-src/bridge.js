@@ -270,7 +270,7 @@ def cloud_new_books(name, email):
       const gz = async (bytes, dir) => new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(dir ? new CompressionStream("gzip") : new DecompressionStream("gzip"))).arrayBuffer());
       const toB64 = bytes => { let s = ""; for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)); return btoa(s); };
       async function makeSnapshot() {
-        const copy = new SQL.Database(exportDb()); copy.run("DELETE FROM cloud_local"); copy.run("DELETE FROM sessions"); copy.run("VACUUM");
+        const copy = new SQL.Database(exportDb()); ["cloud_local", "sessions", "ai_threads", "ai_usage"].forEach(t => { try { copy.run("DELETE FROM " + t); } catch { /* older books */ } }); copy.run("VACUUM");
         const bytes = copy.export(); copy.close(); return toB64(await gz(bytes, true));
       }
       async function restoreSnapshot(b64) {
@@ -512,9 +512,118 @@ def cloud_new_books(name, email):
           dirty = true; await persist();   // keep the session through page reloads
           return r;
         },
+        // chat between companies and the AI assistant (supabase/migrations/*_chat_links_ai.sql, supabase/functions/ai)
+        async call(kind, name, params) {
+          const RPCS = ["my_super", "set_member_super", "chat_link_list", "chat_link_create", "chat_link_accept", "chat_link_end",
+            "chat_link_messages", "chat_link_file", "chat_link_send", "chat_link_edit", "chat_link_read", "ai_settings_get", "ai_settings_set"];
+          if (kind === "rpc" && RPCS.includes(name)) return rpc(name, { p_company: co(), ...(params || {}) });
+          if (kind === "fn" && name === "ai") return req("POST", "/functions/v1/ai", { ...(params || {}), company: co() }, await token());
+          throw new Error("Unknown workspace call");
+        },
         write, startPolling,
       };
     })();
+
+    // ---------- downloads in the background: Excel, PDF and Word files are built by a second copy of the engine in a
+    // Web Worker, on a snapshot of the books, so the page stays responsive while a large workbook is made (a minute
+    // or more on a slow laptop). Opened from disk (file://) browsers refuse workers; the page then builds them itself.
+    function workerMain() {
+      let SQL = null, db = null, run = null;
+      self.onmessage = async e => {
+        const m = e.data;
+        if (m.init) {
+          try {
+            const B = m.blobs, realFetch = self.fetch.bind(self);
+            self.fetch = (input, init) => {
+              const url = typeof input === "string" ? input : (input && (input.url || input.href)) || String(input);
+              const name = decodeURIComponent(url.split(/[?#]/)[0].split("/").pop());
+              if (B[name]) return Promise.resolve(new Response(B[name], { status: 200, headers: { "Content-Type": name.endsWith(".wasm") ? "application/wasm" : "application/octet-stream" } }));
+              return realFetch(input, init);
+            };
+            importScripts(m.base + "sql-wasm.js");
+            SQL = await self.initSqlJs({ locateFile: f => m.base + f, wasmBinary: B["sql-wasm.wasm"] });
+            self.beyondSqlRun = (sql, paramsJson) => {
+              try {
+                const params = JSON.parse(paramsJson);
+                if (params === null) { db.exec(sql); return JSON.stringify({ rows: [], cols: [] }); }
+                const st = db.prepare(sql);
+                try {
+                  if (params.length) st.bind(params);
+                  const rows = []; while (st.step()) rows.push(st.get());
+                  const out = { rows, cols: st.getColumnNames(), changes: db.getRowsModified() };
+                  if (/^\s*(INSERT|REPLACE)/i.test(sql)) out.lastId = db.exec("SELECT last_insert_rowid()")[0].values[0][0];
+                  return JSON.stringify(out);
+                } finally { st.free(); }
+              } catch (err) { return JSON.stringify({ error: String(err && err.message || err) }); }
+            };
+            self.beyondSqlScratch = () => { const tmp = new SQL.Database(); tmp.run("PRAGMA foreign_keys = ON");
+              const runTmp = (sql, pj) => { const keep = db; db = tmp; try { return self.beyondSqlRun(sql, pj); } finally { db = keep; } };
+              return { run: runTmp, close: () => { try { tmp.close(); } catch { /* closed */ } } }; };
+            importScripts(m.base + "pyodide/pyodide.js");
+            const py = await self.loadPyodide({ indexURL: m.base + "pyodide/" });
+            py.unpackArchive(B["erp.zip"].buffer, "zip", { extractDir: "/app" });
+            for (const w of m.wheels) py.unpackArchive(B[w].buffer, "wheel");
+            py.runPython(`
+import os, sys, json
+os.environ["BEYOND_ERP_STATIC"] = "1"
+os.environ["BEYOND_ERP_NO_WAL"] = "1"
+sys.path.insert(0, "/app")
+import js
+from erp import jsdb
+from erp.db import Database
+from erp.server import handle
+
+class WorkerApp:
+    static = True
+    db = None
+    def backups(self):
+        return []
+
+APP = WorkerApp()
+
+def worker_call(method, url, headers_json):
+    if APP.db is None:
+        APP.db = Database("/tmp/beyond-erp.sqlite3", connection=jsdb.connect(js.beyondSqlRun))
+    r = handle(APP, method, url, json.loads(headers_json), b"")
+    return [r.status, r.ctype, r.filename or "", r.body, json.dumps(r.headers)]
+`);
+            run = py.globals.get("worker_call");
+            self.postMessage({ ready: true });
+          } catch (err) { self.postMessage({ fatal: String(err && err.message || err) }); }
+          return;
+        }
+        try {
+          if (db) db.close();
+          db = new SQL.Database(new Uint8Array(m.db)); db.run("PRAGMA foreign_keys = ON");
+          const out = run(m.method, m.url, JSON.stringify(m.headers)), arr = out.toJs(); out.destroy();
+          const body = arr[3] instanceof Uint8Array ? arr[3] : new Uint8Array(arr[3] || []);
+          self.postMessage({ id: m.id, reply: { status: arr[0], ctype: arr[1], filename: arr[2], body, headers: JSON.parse(arr[4]) } }, [body.buffer]);
+        } catch (err) { self.postMessage({ id: m.id, error: String(err && err.message || err) }); }
+      };
+    }
+    let heavy = null, heavyBroken = location.protocol === "file:" || typeof Worker === "undefined";
+    const heavyWorker = () => heavy || (heavy = new Promise((ok, bad) => {
+      const w = new Worker(URL.createObjectURL(new Blob([`"use strict";(${workerMain.toString()})();`], { type: "text/javascript" })));
+      const waiting = new Map(); let seq = 0;
+      const call = (method, url, headers) => new Promise((res, rej) => { const id = ++seq; waiting.set(id, { res, rej });
+        const snap = exportDb(); w.postMessage({ id, method, url, headers, db: snap }, [snap.buffer]); });
+      w.onmessage = e => { const m = e.data;
+        if (m.ready) return ok(call);
+        if (m.fatal) { heavyBroken = true; w.terminate(); return bad(new Error(m.fatal)); }
+        const p = waiting.get(m.id); if (!p) return; waiting.delete(m.id); m.error ? p.rej(new Error(m.error)) : p.res(m.reply); };
+      w.onerror = e => { heavyBroken = true; waiting.forEach(p => p.rej(new Error("worker stopped"))); waiting.clear(); bad(new Error(e.message || "worker failed")); };
+      w.postMessage({ init: true, base: new URL(V, location.href).href, blobs: BLOBS, wheels: window.BEYOND_WHEELS || [] });
+    }));
+    // a download (GET) for the person signed in here: in the worker when possible, else on the page
+    window.__beyondDownload = async (url, headers) => {
+      const h = {}; Object.entries(headers || {}).forEach(([k, v]) => { h[k.toLowerCase()] = v; });
+      h["x-beyond-static"] = "1";
+      if (!heavyBroken) {
+        try { return await (await heavyWorker())("GET", url, h); }
+        catch (e) { console.warn("Background downloads unavailable — building on the page", e); heavyBroken = true; }
+      }
+      return localRun("GET", url, h, null);
+    };
 
     window.__beyondFetch = async (method, url, headers, body) => {
       const h = {}; Object.entries(headers || {}).forEach(([k, v]) => { h[k.toLowerCase()] = v; });

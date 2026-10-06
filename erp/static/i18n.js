@@ -8,7 +8,8 @@ window.I18N = {
   g_stock: ["Inventory", "المخزون"], g_hr: ["Human Resources", "الموارد البشرية"], g_equity: ["Equity", "حقوق الملكية"],
   g_tax: ["Tax & E-invoicing", "الضرائب والفاتورة الإلكترونية"], g_acc: ["Accounting", "المحاسبة"], g_rep: ["Financial Reports", "التقارير المالية"], g_sys: ["System", "النظام"],
   // ---- menus
-  m_dashboard: ["Dashboard", "لوحة التحكم"], m_bus: ["Business Units (Cost Centres)", "وحدات الأعمال (مراكز التكلفة)"],
+  m_dashboard: ["Dashboard", "لوحة التحكم"], m_chat: ["Chat", "المحادثات"], m_assistant: ["AI assistant", "المساعد الذكي"],
+  m_profile: ["My profile", "ملفي الشخصي"], tab_ai: ["AI assistant", "المساعد الذكي"], m_bus: ["Business Units (Cost Centres)", "وحدات الأعمال (مراكز التكلفة)"],
   m_receipts: ["Receipt Vouchers", "سندات القبض"], m_invoices: ["Sales Invoices / Progress Billings", "فواتير المبيعات / المستخلصات"],
   m_receivables: ["Accounts Receivable", "أرصدة المدينين"],
   m_boqs: ["Bills of Quantities", "المقايسات"], m_prices: ["Price List (Unit Rates)", "قائمة الأسعار (فئات البنود)"],
@@ -194,7 +195,7 @@ window.SUBTYPE_LABELS = {
 };
 // sidebar: [group, [ [menuKey, route, module, icon], ... ]]
 window.MENU = [
-  ["g_home", [["m_dashboard", "dashboard", "dashboard", "◧"]]],
+  ["g_home", [["m_dashboard", "dashboard", "dashboard", "◧"], ["m_chat", "chat", "chat", "💬"], ["m_assistant", "assistant", "chat.ai", "✦"]]],
   ["g_bu", [["m_bus", "bus", "business_units.units", "▦"]]],
   ["g_sales", [["m_offers", "offers", "sales.offers", "✉"], ["m_receipts", "receipts", "sales.receipts", "↘"], ["m_invoices", "invoices", "sales.invoices", "▤"], ["m_extracts", "extracts", "sales.extracts", "▦"], ["m_receivables", "receivables", "sales.receivables", "⇲"], ["m_parties", "parties", "sales.parties", "☏"]]],
   ["g_shop", [["m_products", "products", "shop.products", "◫"], ["m_sales_orders", "sales", "shop.orders", "⛁"], ["m_installments", "installments", "shop.installments", "⏲"], ["m_subs", "subs", "shop.subscriptions", "↻"]]],

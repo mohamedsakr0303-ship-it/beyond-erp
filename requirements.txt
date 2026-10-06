@@ -1,2 +1,4 @@
 # Optional: only needed for Excel (.xlsx) import/export. Everything else is the Python standard library.
 openpyxl>=3.1,<4
+# Optional: only needed for the AI assistant on the desktop/server edition (the official Anthropic SDK).
+anthropic>=1.0,<2

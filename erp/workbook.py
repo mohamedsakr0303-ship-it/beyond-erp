@@ -96,6 +96,24 @@ def q(name):
     return f"'{name}'"
 
 
+_STYLE_CACHE = {}
+
+
+def _cached(cls):
+    """Same arguments, same style object: a workbook sets the same few fonts/fills on hundreds of thousands of
+    cells, and building a new openpyxl object for each one was most of the time spent making a workbook."""
+    def make(*a, **k):
+        key = (cls, a, tuple(sorted(k.items())))
+        try:
+            return _STYLE_CACHE[key]
+        except KeyError:
+            obj = _STYLE_CACHE[key] = cls(*a, **k)
+            return obj
+        except TypeError:   # an argument that cannot be a dictionary key
+            return cls(*a, **k)
+    return make
+
+
 def build_workbook(db, template=False, data=None, hide=None, lang="en", extend=None, cover_extra=None):
     """The Excel workbook. lang="ar": right-to-left with Arabic sheet names and labels (imports back the same).
     extend(wb) -> [sheet names]: add a company's own sheets before the cover is drawn (they are placed after the
@@ -104,6 +122,7 @@ def build_workbook(db, template=False, data=None, hide=None, lang="en", extend=N
     from openpyxl import Workbook
     from openpyxl.comments import Comment
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    Alignment, Border, Font, PatternFill, Side = (_cached(c) for c in (Alignment, Border, Font, PatternFill, Side))
     from openpyxl.utils import get_column_letter as L
     from openpyxl.workbook.defined_name import DefinedName
     from openpyxl.worksheet.datavalidation import DataValidation
@@ -1038,6 +1057,7 @@ def classic_style(wb, company):
     """The look of the original BEYOND workbook: 'COMPANY | SHEET' titles in 16 pt navy, Arial 11 body,
     tall navy header rows, and the brown cover page. Only fonts, fills and heights change — never values."""
     from openpyxl.styles import Font, PatternFill
+    Font, PatternFill = _cached(Font), _cached(PatternFill)
     brand = (company or "BEYOND DESIGN").upper()
     for ws in wb.worksheets:
         if ws.title == "Lists":

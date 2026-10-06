@@ -19,3 +19,7 @@ verify_jwt = false
 # subscription payments: Paymob's callback carries no JWT (it is checked by HMAC); the checkout checks the caller's token itself
 [functions.billing]
 verify_jwt = false
+
+# the AI assistant: checks the caller's token itself, then calls the provider with the company's key (kept in ai_config)
+[functions.ai]
+verify_jwt = false
