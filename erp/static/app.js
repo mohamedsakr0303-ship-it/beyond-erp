@@ -651,7 +651,7 @@ async function renderAuth() {
       <label class="f chk"><input type="checkbox" data-change="pwshow">${S.lang === "ar" ? "إظهار كلمة المرور" : "Show password"}</label>`}
       ${setup ? `<label class="f chk"><input type="checkbox" name="demo">${S.lang === "ar" ? "ابدأ بشركة تجريبية (بيانات وهمية لكل الشاشات — للتجربة والتدريب، ويمكن مسحها لاحقاً)" : "Start with a demo company (sample data on every screen — for testing and training; erase it any time)"}</label>` : ""}
       <button class="btn pri" type="submit">${setup ? t("save") : t("sign_in")}</button>
-      <button class="btn" type="button" data-a="lang2">${t("language")}</button></form></div>`;
+      <button class="btn" type="button" data-a="lang2">${t("switch_lang")}</button></form></div>`;
   S.H = { lang2: () => { store.set("lang", S.lang === "ar" ? "en" : "ar"); renderAuth(); } };
   pwWire($("#lf"));
   $("#lf").addEventListener("submit", async e => {

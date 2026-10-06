@@ -80,7 +80,7 @@ window.I18N = {
   loading: ["Loading…", "جارٍ التحميل…"], saved: ["Saved.", "تم الحفظ."], posted: ["Posted.", "تم الترحيل."], nothing: ["Nothing here yet.", "لا توجد بيانات بعد."],
   confirm_delete: ["Delete this permanently?", "حذف نهائي؟"], prev: ["‹ Previous", "‹ السابق"], next: ["Next ›", "التالي ›"],
   showing: ["Showing", "عرض"], of: ["of", "من"], view_only: ["View only", "عرض فقط"], logout: ["Sign out", "تسجيل الخروج"],
-  language: ["العربية", "English"], lang_label: ["Language", "اللغة"], theme: ["Theme", "المظهر"], lines: ["Lines", "البنود"], created_by: ["by", "بواسطة"],
+  switch_lang: ["العربية", "English"], lang_label: ["Language", "اللغة"], theme: ["Theme", "المظهر"], lines: ["Lines", "البنود"], created_by: ["by", "بواسطة"],
   // ---- dashboard
   cash: ["Cash & bank", "النقدية والبنوك"], receivable: ["Accounts receivable", "المدينون"], payable: ["Accounts payable", "الدائنون"],
   accrued: ["Accrued payroll & expenses", "مستحقات"], advances: ["Client advances", "دفعات العملاء المقدمة"], inventory: ["Inventory", "المخزون"],
