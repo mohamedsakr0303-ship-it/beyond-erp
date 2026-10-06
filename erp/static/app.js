@@ -304,7 +304,7 @@ function renderShell() {
       <span id="syncdot" class="chip" style="display:none"></span>
       <div class="dd bell"><button class="btn icbtn" aria-label="${esc(L2("Alerts", "التنبيهات"))}">${svg("bell")}<b class="badge" id="bellc" hidden></b></button><div class="dd-menu" id="bellmenu"><div class="muted" style="padding:10px">${t("loading")}</div></div></div>
       <button class="icbtn hide-sm" data-a="theme" title="${esc(t("theme"))}">${svg(dark ? "sun" : "moon")}</button>
-      <button class="icbtn langbtn" data-a="lang" title="${esc(t("language"))}">${svg("globe")}<span>${ar ? "EN" : "ع"}</span></button>
+      <button class="icbtn langbtn" data-a="lang" title="${esc(L2("Language — switch to العربية", "اللغة — التبديل إلى English"))}">${svg("globe")}<span>${ar ? "EN" : "ع"}</span></button>
       <div class="dd newdd"><button class="btn pri newbtn" aria-label="${esc(t("new"))}">${svg("plus")}<span class="lbl">${t("new")}</span></button><div class="dd-menu" id="newmenu"></div></div>
     </header><div id="billbar"></div><main class="content" id="view"></main></div>
     <nav class="bottombar">
@@ -2117,7 +2117,7 @@ PAGES.settings = async (view, parts, q) => {
   if (tab === "look") {
     const ap = st.appearance || {}, ed = can("settings.branding", "edit");
     view.innerHTML = head + `<div class="card"><h2>${t("my_view")}</h2><div class="grid g4">
-        <label class="f">${t("language")}<select id="my_lang"><option value="en">English</option><option value="ar" ${S.lang === "ar" ? "selected" : ""}>العربية</option></select></label>
+        <label class="f">${t("lang_label")}<select id="my_lang"><option value="en">English</option><option value="ar" ${S.lang === "ar" ? "selected" : ""}>العربية</option></select></label>
         <label class="f">${t("font_family")}<select id="my_font"><option value="">${t("default")}</option>${FONTS.map(f => `<option ${store.get("font", "") === f ? "selected" : ""}>${f}</option>`).join("")}</select></label>
         <label class="f">${t("font_size")} <input id="my_size" type="range" min="11" max="22" value="${store.get("fontSize", "") || st.font_size || 15}"></label>
         <label class="f">${t("theme")}<select id="my_theme">${["auto", "light", "dark"].map(x => `<option ${store.get("theme", "auto") === x ? "selected" : ""}>${x}</option>`).join("")}</select></label></div>
