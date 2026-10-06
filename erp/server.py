@@ -143,6 +143,10 @@ def bootstrap(ctx):
                                   "regional")}}
     if not user:
         return ok(base)
+    from . import demo as _demo
+    # a new company's first steps (start empty / with the demo / from an import) until they are done — shown again
+    # after signing back in if the setup was left half-way
+    base["onboarding"] = bool(user.get("is_admin")) and db.setting("onboarding") != "done" and _demo.is_empty(db)
     if getattr(ctx.app, "licensing", False):
         from . import licence
         lst = licence.status(db)
@@ -2616,6 +2620,18 @@ def template_sheet(ctx):
     return download(importkit.template_xlsx(ctx.db, name, ctx.q.get("lang") or "en", demo_rows), fname + ".xlsx", XLSX)
 
 
+@route("POST", "/api/onboarding")
+def onboarding_done(ctx):
+    """The new company's first steps are finished (optionally with a business type set up)."""
+    if not ctx.user["is_admin"]:
+        raise PermissionError()
+    kind = ctx.body.get("business_type")
+    if kind:
+        industries.apply(ctx.db, kind, True)
+    ctx.db.set_setting("onboarding", "done")
+    return ok()
+
+
 @route("GET", "/api/demo")
 def demo_info(ctx):
     from . import demo
@@ -2640,6 +2656,7 @@ def demo_load(ctx):
             if v:
                 ctx.db.set_setting(k, v)
     r = demo.load(ctx.db, ctx.user["username"])
+    ctx.db.set_setting("onboarding", "done")
     ctx.log("demo.load", json.dumps(r["counts"])[:300])
     return ok(r)
 
@@ -2729,6 +2746,8 @@ def do_import(ctx):
     except interchange.ImportErrors as e:
         return ok({"ok": False, "error": str(e), "errors": e.errors}, 400)
     res["notes"] = data.get("_notes", [])
+    if not dry:
+        ctx.db.set_setting("onboarding", "done")
     ctx.log("import" + (".dry" if dry else ""), json.dumps(res["counts"]))
     return ok(res)
 

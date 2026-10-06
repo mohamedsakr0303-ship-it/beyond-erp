@@ -333,7 +333,8 @@ document.addEventListener("click", e => {
   }
   if (app && e.target.closest("a.brand")) app.classList.remove("menu");
   const el = e.target.closest("[data-a]");
-  if (el && S.H[el.dataset.a]) { e.preventDefault(); S.H[el.dataset.a](el, e); return; }
+  if (el && S.H[el.dataset.a]) { if (!el.closest(".drawer")) S.lastClick = { a: el.dataset.a, ds: { ...el.dataset }, value: el.value, hash: location.hash, at: Date.now() };
+    e.preventDefault(); S.H[el.dataset.a](el, e); return; }
   const dd = e.target.closest(".dd > .btn");
   $$(".dd.open").forEach(d => { if (!dd || d !== dd.parentElement) d.classList.remove("open"); });
   if (dd) { e.preventDefault(); dd.parentElement.classList.toggle("open"); }
@@ -376,6 +377,7 @@ async function route() {
   view.className = "page"; view.innerHTML = `<div class="empty">${t("loading")}</div>`;
   host.replaceChildren(view);
   try { await page(view, parts, q); } catch (e) { view.innerHTML = `<div class="banner err">${esc(e.message)}</div>`; }
+  if (view.isConnected) { if ($("[data-a=xsave]", view)) Drafts.track(view, $("h1,h2", view)?.textContent || t("m_invoices"), { page: true }); Drafts.banner(view); }
   if (parts.length === 1) addImportMenu(view, parts[0]).catch(() => {});
   stackify(view);
   if (view.isConnected) window.scrollTo(0, 0);
@@ -388,6 +390,94 @@ function stackify(root) {
     $$("tbody tr", tb).forEach(tr => [...tr.children].forEach((td, i) => { if (heads[i] && !td.dataset.l) td.dataset.l = heads[i]; }));
   });
 }
+
+// ----------------------------------------------------------------- drafts
+// What someone is typing in an entry panel (or on the invoice page) is kept on this device as they type, so a power
+// cut, a crash or a closed tab loses nothing. Saving / posting or pressing Cancel ends the draft. After signing back in
+// the screen it belongs to shows it (Continue / Discard), its menu item has a dot, and the top bar lists them all.
+const Drafts = {
+  key: () => "drafts." + ((S.boot && S.boot.user && S.boot.user.username) || "") + "." + ((S.boot && S.boot.settings && S.boot.settings.company_name) || ""),
+  all() { const v = store.get(Drafts.key(), []); return Array.isArray(v) ? v : []; },
+  put(list) { store.set(Drafts.key(), list.slice(-40)); Drafts.badge(); },
+  fields(box) {   // every field in order; repeated names (lines) keep their position
+    const seen = {};
+    return $$("input,select,textarea", box).filter(el => !["file", "hidden", "button", "submit", "password"].includes(el.type) && !el.closest("[data-nodraft]") && !el.disabled)
+      .map(el => { const n = el.name || el.id || el.className || "?"; const i = seen[n] = (seen[n] ?? -1) + 1;
+        return { n, i, v: el.type === "checkbox" || el.type === "radio" ? !!el.checked : el.value }; });
+  },
+  track(box, title, opt = {}) {
+    if (!S.boot || !S.boot.user) return;
+    const opener = opt.page ? { hash: location.hash } : (S.lastClick && Date.now() - S.lastClick.at < 4000 ? S.lastClick : null);
+    if (!opener) return;   // opened in a way that cannot be repeated later
+    const menu = ($(".side a.on[href]") || {}).getAttribute?.("href") || "";   // the menu item it belongs to
+    box._draft = box._draft || { id: S.resumeDraft || ("d" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)), title, opener, hash: opener.hash || location.hash, menu };
+    S.resumeDraft = null;
+    let h;
+    const save = e => { if (e && !e.isTrusted) return; clearTimeout(h); h = setTimeout(() => {
+      if (!box.isConnected || box._draftDone) return;
+      const d = { ...box._draft, fields: Drafts.fields(box), at: new Date().toISOString() };
+      if (!d.fields.some(x => x.v !== "" && x.v !== false)) return;
+      Drafts.put([...Drafts.all().filter(x => x.id !== d.id), d]); }, 500); };
+    if (!box._draftWired) { box._draftWired = true; box.addEventListener("input", save); box.addEventListener("change", save); }
+  },
+  done(box) { if (!box) return; box._draftDone = true; if (box._draft) Drafts.put(Drafts.all().filter(x => x.id !== box._draft.id)); },
+  discard(id) { Drafts.put(Drafts.all().filter(x => x.id !== id)); },
+  async resume(id) {
+    const d = Drafts.all().find(x => x.id === id); if (!d) return;
+    if (location.hash !== d.hash) { location.hash = d.hash; await new Promise(r => setTimeout(r, 50)); await route(); }
+    let box;
+    if (d.opener.a) {   // reopen the panel the same way it was opened
+      const el = document.createElement("button"); Object.assign(el.dataset, d.opener.ds || {}); if (d.opener.value != null) el.value = d.opener.value;
+      S.resumeDraft = d.id; S.lastClick = { ...d.opener, at: Date.now() };
+      if (!S.H[d.opener.a]) return toast(L2("This draft cannot be reopened from here", "لا يمكن فتح هذه المسودة من هنا"), true);
+      await S.H[d.opener.a](el);
+      for (let i = 0; i < 40 && !(box = $(".drawer-bg #df")); i++) await new Promise(r => setTimeout(r, 50));
+    } else box = $("#view .page");
+    if (!box) return;
+    box._draft = { id: d.id, title: d.title, opener: d.opener, hash: d.hash, menu: d.menu };
+    await Drafts.fill(box, d.fields);
+    toast(L2("Draft restored — check it, then save or post", "تمت استعادة المسودة — راجعها ثم احفظ أو رحّل"));
+  },
+  async fill(box, fields) {
+    // put values in the fields that exist; while saved lines have no row yet, add one and fill again (some editors
+    // drop empty rows when adding, so each row is filled before the next is added)
+    const need = {}; fields.forEach(x => { need[x.n] = Math.max(need[x.n] || 0, x.i + 1); });
+    const put = () => { const seen = {};
+      $$("input,select,textarea", box).forEach(el => { const n = el.name || el.id || el.className || "?"; const i = seen[n] = (seen[n] ?? -1) + 1;
+        const x = fields.find(f => f.n === n && f.i === i); if (!x || el.disabled || el._filled === x) return; el._filled = x;
+        if (el.type === "checkbox" || el.type === "radio") el.checked = !!x.v; else el.value = x.v;
+        el.dispatchEvent(new Event("input", { bubbles: true })); el.dispatchEvent(new Event("change", { bubbles: true })); });
+      return seen; };
+    let before = -1;
+    for (let k = 0; k < 120; k++) {
+      const seen = put(); const total = Object.values(seen).reduce((a, n) => a + n + 1, 0);
+      const short = Object.keys(need).some(n => (seen[n] ?? -1) + 1 < need[n]);
+      const add = $$("[data-a$=add]", box).find(b => !b.disabled);
+      if (!short || !add || !S.H[add.dataset.a] || total === before) break;
+      before = total; await S.H[add.dataset.a](add); await new Promise(r => setTimeout(r, 0));
+    }
+    put();
+  },
+  banner(view) {
+    const mine = Drafts.all().filter(d => d.hash === location.hash); if (!mine.length) return;
+    const b = document.createElement("div"); b.className = "banner info draft-bar";
+    b.innerHTML = mine.map(d => `<div class="row" style="gap:8px;align-items:center;flex-wrap:wrap">${svg("file")} <b>${esc(L2("Unsaved draft", "مسودة غير محفوظة"))}:</b> ${esc(d.title)}
+      <small class="muted">${esc(fmtTime(d.at))}</small><span class="spacer"></span><button class="btn sm pri" data-a="draftgo" data-id="${d.id}">${esc(L2("Continue", "متابعة"))}</button>
+      <button class="btn sm" data-a="draftdrop" data-id="${d.id}">${esc(L2("Discard", "تجاهل"))}</button></div>`).join("");
+    view.prepend(b);
+  },
+  badge() {   // a dot on the menu items that hold a draft, and the count in the top bar
+    const list = Drafts.all();
+    $$(".side a[href]").forEach(a => a.classList.toggle("has-draft", list.some(d => (d.menu || d.hash.split("?")[0]) === a.getAttribute("href"))));
+    const tb = $("#draftsbtn"); if (tb) { tb.hidden = !list.length; const c = $(".dcount", tb); if (c) c.textContent = list.length; }
+  },
+  list() {
+    const list = Drafts.all().slice().reverse();
+    drawer(L2("Drafts", "المسودات"), list.length ? `<div class="tbl"><table><tbody>${list.map(d => `<tr><td><b>${esc(d.title)}</b><div class="lines">${esc(d.hash.replace("#/", ""))} · ${esc(fmtTime(d.at))}</div></td>
+      <td style="white-space:nowrap"><button class="btn sm pri" type="button" data-a="draftgo" data-id="${d.id}">${esc(L2("Continue", "متابعة"))}</button> <button class="btn sm" type="button" data-a="draftdrop" data-id="${d.id}">${esc(L2("Discard", "تجاهل"))}</button></td></tr>`).join("")}</tbody></table></div>`
+      : `<p class="muted">${esc(L2("No drafts.", "لا توجد مسودات."))}</p>`, null, { readOnly: true });
+  },
+};
 
 // ----------------------------------------------------------------- shell
 function renderShell() {
@@ -409,6 +499,7 @@ function renderShell() {
       <span id="syncdot" class="chip" style="display:none"></span>
       <div class="dd bell"><button class="btn icbtn" aria-label="${esc(L2("Alerts", "التنبيهات"))}">${svg("bell")}<b class="badge" id="bellc" hidden></b></button><div class="dd-menu" id="bellmenu"><div class="muted" style="padding:10px">${t("loading")}</div></div></div>
       <button class="icbtn themebtn" data-a="theme" title="${esc(themeTitle())}" aria-label="${esc(themeTitle())}">${svg(dark ? "sun" : "moon")}</button>
+      <button class="icbtn draftsbtn" id="draftsbtn" data-a="drafts" hidden title="${esc(L2("Unsaved drafts", "مسودات غير محفوظة"))}">${svg("file")}<span class="dcount">0</span></button>
       <button class="icbtn langbtn" data-a="lang" title="${esc(L2("Language — switch to العربية", "اللغة — التبديل إلى English"))}">${svg("globe")}${ar ? "<span>EN</span>" : `<span lang="ar">عربي</span>`}</button>
       <div class="dd newdd"><button class="btn pri newbtn" aria-label="${esc(t("new"))}">${svg("plus")}<span class="lbl">${t("new")}</span></button><div class="dd-menu" id="newmenu"></div></div>
     </header><div id="billbar"></div><main class="content" id="view"></main></div>
@@ -523,6 +614,10 @@ function newMenuItems() {
   }).filter(Boolean);
 }
 S.GLOBAL_H = {
+  drafts: () => Drafts.list(),
+  draftgo: el => { closeDrawer(true); Drafts.resume(el.dataset.id); },
+  draftdrop: el => { if (!confirm(L2("Discard this draft? What was typed is lost.", "تجاهل هذه المسودة؟ سيُفقد ما كُتب."))) return;
+    Drafts.discard(el.dataset.id); const bar = el.closest(".draft-bar > div, tr"); if (bar) bar.remove(); $$(".draft-bar").forEach(b => { if (!b.children.length) b.remove(); }); },
   menu: () => { const app = $(".app"); if (innerWidth <= 900) app.classList.toggle("menu"); else { app.classList.toggle("mini"); store.set("navMini", app.classList.contains("mini") ? "1" : ""); } },
   palette: () => openPalette(),
   bellopen: () => { const b = $(".bell"); if (b) { b.classList.add("open"); loadAlerts(true); } },
@@ -543,7 +638,7 @@ S.GLOBAL_H = {
   coswitch: () => companySwitcher(),
   goback: () => { const h = parseHash().parts; const parent = { bu: "bus", invoice: "invoices", boq: "boqs", offer: "offers", offertypes: "offers", report: "dashboard", loan: "loans", cust: "custody", rental: "rentals", product: "products", sale: "sales", bankstmt: "bankrec", extract: "extracts" }[h[0]];
     if (S.navCount > 0) history.back(); else location.hash = "#/" + (parent || "dashboard"); },
-  closeDrawer: () => closeDrawer(),
+  closeDrawer: () => { const f = $(".drawer-bg #df"); if (f) Drafts.done(f); closeDrawer(); },   // Cancel / back: the person chose to drop it
 };
 // Menu groups open on click (default) or on hover — a per-person choice (My profile / Settings → Appearance → My view),
 // kept with the person's profile so it follows them to every device.
@@ -761,15 +856,20 @@ function renderCompanyGate(info, msg, kind = "err") {
     <p class="muted center">${esc(info.email || C.email())}</p><div id="lerr">${msg ? `<div class="banner ${kind}">${esc(msg)}</div>` : ""}</div>
     ${live.length ? `<div class="co-list">${live.map(c => `<button class="btn oauth" type="button" data-a="copick" data-id="${esc(c.id)}"><span class="co-ic">${esc((c.name || "?").trim().charAt(0).toUpperCase())}</span><span>${esc(c.name)}</span>${c.is_admin ? `<span class="chip">${t("admin")}</span>` : ""}</button>`).join("")}</div>` : ""}
     ${pending.length ? `<div class="banner info">${ar ? "بانتظار الموافقة: " : "Waiting for approval: "}${pending.map(c => esc(c.name)).join(", ")}</div>` : ""}
-    <details class="co-more" ${live.length ? "" : "open"}><summary>${ar ? "الانضمام إلى شركة برمز دعوة" : "Join a company with an invite code"}</summary>
-      <form id="cojoin" class="row"><input name="code" required autocapitalize="characters" autocomplete="off" placeholder="${ar ? "رمز الدعوة (8 أحرف)" : "Invite code (8 letters)"}" style="flex:1;text-transform:uppercase"><button class="btn pri" type="submit">${ar ? "طلب الانضمام" : "Ask to join"}</button></form>
-      <p class="muted" style="font-size:.8em;margin:4px 0 0">${ar ? "اطلب الرمز من مسؤول الشركة (الإعدادات ← مساحة العمل)." : "Get it from the company's administrator (Settings → Workspace)."}</p></details>
-    <details class="co-more" ${live.length || pending.length ? "" : "open"}><summary>${ar ? "إنشاء شركة جديدة" : "Create a new company"}</summary>
-      <form id="conew" class="grid"><input name="name" required maxlength="120" placeholder="${ar ? "اسم الشركة" : "Company name"}">
-        <label class="f chk"><input type="checkbox" name="mine">${ar ? "ابدأ بدفاتر هذا الجهاز (بدلاً من دفاتر فارغة)" : "Start from the books on this device (instead of empty books)"}</label>
-        <button class="btn" type="submit">${ar ? "إنشاء — ستكون مسؤولها" : "Create — you become its administrator"}</button></form></details>
+    <label class="f co-what">${ar ? "ماذا تريد أن تفعل؟" : "What would you like to do?"}<select id="cowhat">
+      <option value="create" ${live.length || pending.length ? "" : "selected"}>${ar ? "إنشاء شركة جديدة" : "Create a new company"}</option>
+      <option value="join" ${live.length || pending.length ? "selected" : ""}>${ar ? "الانضمام برمز دعوة" : "Join with an invite code"}</option></select></label>
+    <form id="conew" class="co-pane row" data-pane="create"><input name="name" required maxlength="120" placeholder="${ar ? "اسم الشركة" : "Company name"}" style="flex:1">
+      <button class="btn pri" type="submit">${ar ? "إنشاء" : "Create"}</button></form>
+    <form id="cojoin" class="co-pane row" data-pane="join"><input name="code" required autocapitalize="characters" autocomplete="off" placeholder="${ar ? "رمز الدعوة (8 أحرف)" : "Invite code (8 letters)"}" style="flex:1;text-transform:uppercase">
+      <button class="btn pri" type="submit">${ar ? "طلب الانضمام" : "Ask to join"}</button></form>
+    <p class="muted co-hint" id="cohint"></p>
     <p class="center" style="margin-top:14px;font-size:.85em"><a href="#" data-a="coout">${t("logout")}</a></p></div>`;
   const show = (m, k = "err") => { $("#lerr").innerHTML = `<div class="banner ${k}">${esc(m)}</div>`; };
+  const pane = () => { const w = $("#cowhat").value; $$(".co-pane").forEach(f => { f.hidden = f.dataset.pane !== w; });
+    $("#cohint").textContent = w === "join" ? (ar ? "اطلب الرمز من مسؤول الشركة (الإعدادات ← مساحة العمل)." : "Get the code from the company's administrator (Settings → Workspace).")
+      : (ar ? "تصبح مسؤولها، ثم تختار: دفاتر فارغة، شركة تجريبية، أو استيراد بياناتك." : "You become its administrator, then choose: empty books, the demo company, or your own data."); };
+  $("#cowhat").addEventListener("change", pane); pane();
   const open = id => { if (C.chooseCompany(id)) location.reload(); else cloudEnter({ ...info, needs_company: false, is_member: true }).catch(e => show(e.message)); };
   S.H = { copick: el => { show(ar ? "جارٍ فتح الشركة…" : "Opening the company…", "info"); open(el.dataset.id); },
     coout: () => { C.signout(); renderCloudAuth(); } };
@@ -779,9 +879,84 @@ function renderCompanyGate(info, msg, kind = "err") {
     catch (x) { show(x.message); } });
   $("#conew").addEventListener("submit", async e => { e.preventDefault(); const v = Object.fromEntries(new FormData(e.target)); const btn = $("button", e.target); btn.disabled = true;
     try {
-      if (v.mine) { await C.claim(v.name.trim()); return cloudEnter(await C.info()); }
-      const c = await C.createCompany(v.name.trim()); open(c.id);
+      const c = await C.createCompany(v.name.trim()); open(c.id);   // the setup card inside offers the start options
     } catch (x) { show(x.message); btn.disabled = false; } });
+}
+
+// A new company's first step: start with empty books, the demo company, or the company's own data (a file in any
+// format the app reads, or a Google Sheets link). Shown until one is done, so a setup left half-way comes back here.
+async function renderOnboarding() {
+  const ar = S.lang === "ar"; applyLook();
+  let types = []; try { types = (await api("GET", "/api/industries")).types; } catch { /* no business types */ }
+  const sheets = await impSheets();
+  $("#root").innerHTML = `<div class="login auth onb"><h1 class="center">${ar ? "جهّز دفاترك" : "Set up your books"}</h1>
+    <p class="muted center">${esc(S.boot.settings.company_name || "")}</p><div id="lerr"></div>
+    <div class="grid onb-grid">
+      <label class="f">${ar ? "ابدأ بـ" : "Start with"}<select id="obstart">
+        <option value="clean">${ar ? "دفاتر فارغة" : "A clean slate (empty books)"}</option>
+        <option value="demo">${ar ? "الشركة التجريبية (بيانات وهمية للتجربة)" : "The demo company (sample data to try things)"}</option>
+        <option value="import">${ar ? "بياناتي (استيراد)" : "My own data (import)"}</option></select></label>
+      <label class="f" data-ob="clean import">${ar ? "نوع النشاط" : "Business type"}<select id="obtype"><option value="">${ar ? "عام / لاحقاً" : "General / decide later"}</option>
+        ${types.map(x => `<option value="${esc(x.key)}">${esc(ar ? x.name_ar : x.name)}</option>`).join("")}</select></label>
+      <div class="f" data-ob="import">${ar ? "من" : "From"}<div class="row" style="gap:6px"><select id="obsrc" style="flex:none;width:auto">
+          <option value="file">${ar ? "ملف (Excel / JSON / CSV)" : "A file (Excel / JSON / CSV)"}</option><option value="link">${ar ? "رابط Google Sheets" : "A Google Sheets link"}</option></select>
+        <div class="dd"><button class="btn" type="button">${svg("download")} ${ar ? "القوالب" : "Templates"} ▾</button><div class="dd-menu">
+          <button type="button" data-a="obtpl">${ar ? "قالب الاستيراد الكامل (Excel)" : "Full import template (Excel)"}</button>
+          <button type="button" data-a="obtpl" data-lang="ar">${ar ? "القالب الكامل بالعربية" : "Full template in Arabic"}</button>
+          <button type="button" data-a="obtpl" data-type="1">${ar ? "قالب لنوع النشاط المختار" : "Template for the business type chosen above"}</button></div></div></div></div>
+      <input data-ob="import" data-src="file" type="file" id="obfile" accept=".xlsx,.xlsm,.json,.csv">
+      <input data-ob="import" data-src="link" type="url" id="oburl" dir="ltr" placeholder="https://docs.google.com/spreadsheets/d/…">
+      <label class="f" data-ob="import" id="obcsv" hidden>${ar ? "ورقة ملف CSV" : "The CSV is the sheet"}<select id="obsheet">${sheets.map(x => `<option value="${esc(x.name)}">${esc(sheetLabel(x.name))}</option>`).join("")}</select></label>
+    </div>
+    <div id="obres"></div>
+    <div class="row" style="margin-top:12px;gap:8px"><button class="btn pri" data-a="obgo" style="flex:1">${ar ? "متابعة" : "Continue"}</button>
+      <button class="btn" data-a="oblater" title="${esc(ar ? "تظهر هذه الخطوة مرة أخرى عند الدخول" : "This step shows again next time you sign in")}">${ar ? "لاحقاً" : "Later"}</button></div>
+    <p class="center" style="margin-top:12px;font-size:.85em"><a href="#" data-a="oblogout">${t("logout")}</a></p></div>`;
+  const kind = () => $("#obstart").value, src = () => $("#obsrc").value;
+  const sync = () => { $$("[data-ob]").forEach(el => { el.hidden = !el.dataset.ob.split(" ").includes(kind()) || (el.dataset.src && el.dataset.src !== src()); });
+    const f = $("#obfile").files[0]; $("#obcsv").hidden = !(kind() === "import" && src() === "file" && f && /\.csv$/i.test(f.name));
+    $("#obres").innerHTML = ""; $(".onb [data-a=obgo]").textContent = kind() === "import" ? (ar ? "فحص البيانات" : "Check my data") : (ar ? "متابعة" : "Continue"); };
+  ["obstart", "obsrc", "obfile"].forEach(id => $("#" + id).addEventListener("change", sync)); sync();
+  const fail2 = m => { $("#lerr").innerHTML = `<div class="banner err">${esc(m)}</div>`; };
+  const busy = (on, label) => { const b = $(".onb [data-a=obgo]"); b.disabled = on; if (label) b.textContent = label; };
+  const finish = async () => { await api("POST", "/api/onboarding", { business_type: $("#obtype").value }); S.cache = {}; await boot(); };
+  let checked = null;   // the file that passed the check, imported on the second press
+  const upload = async (dry) => {
+    let file = src() === "link" ? await fetchGoogleSheet($("#oburl").value.trim()) : $("#obfile").files[0];
+    if (!file) throw new Error(ar ? "اختر ملفاً أو الصق رابطاً" : "Choose a file or paste a link");
+    const ext = (file.name.split(".").pop() || "").toLowerCase(), fmt = ["json", "csv"].includes(ext) ? ext : "xlsx";
+    const r = await api("POST", "/api/import?" + qs({ format: fmt, mode: "replace", dry_run: dry ? 1 : "", sheet: fmt === "csv" ? $("#obsheet").value : "" }), undefined, await file.arrayBuffer());
+    return { r, file };
+  };
+  S.H = {
+    obtpl: el => { $$(".dd.open").forEach(d => d.classList.remove("open"));
+      const ty = el.dataset.type ? $("#obtype").value : "";
+      if (el.dataset.type && !ty) return fail2(ar ? "اختر نوع النشاط أولاً" : "Choose the business type first");
+      openApi("/api/templates/workbook?" + qs({ type: ty, lang: el.dataset.lang || S.lang })); },
+    oblater: () => { S.skipSetup = true; boot(); },
+    oblogout: async () => { await api("POST", "/api/logout").catch(() => {}); store.set("token", "");
+      if (STATIC && window.BeyondCloud) window.BeyondCloud.signout(); S.boot.user = null; renderAuth(); },
+    obgo: async () => {
+      $("#lerr").innerHTML = "";
+      try {
+        if (kind() === "clean") { busy(true); return await finish(); }
+        if (kind() === "demo") { busy(true, ar ? "جارٍ تجهيز الشركة التجريبية…" : "Setting up the demo company…"); await api("POST", "/api/demo", {}); return await finish(); }
+        if (checked) { busy(true, ar ? "جارٍ الاستيراد…" : "Importing…"); const { r } = await upload(false); checked = null;
+          toast(Object.entries(r.counts).map(([k, v]) => `${k}: ${v}`).slice(0, 4).join(" · ")); return await finish(); }
+        busy(true, ar ? "جارٍ الفحص…" : "Checking…");
+        const { r } = await upload(true); checked = true;
+        $("#obres").innerHTML = `<div class="banner ok">${ar ? "الفحص ناجح — لم يتغير شيء بعد." : "Check passed — nothing has changed yet."}</div>
+          <div class="tbl onb-counts"><table><tbody>${Object.entries(r.counts).map(([k, v]) => `<tr><td>${esc(sheetLabel(k))}</td><td class="num">${v}</td></tr>`).join("")}</tbody></table></div>
+          ${(r.notes || []).slice(0, 3).map(n => `<div class="banner info" style="margin-top:6px">${esc(n)}</div>`).join("")}`;
+        busy(false, ar ? "استيراد الآن" : "Import now");
+      } catch (e) {
+        checked = null; busy(false); sync();
+        const errs = (e.data && e.data.errors) || [];
+        $("#obres").innerHTML = `<div class="banner err">${esc(e.message)}</div>${errs.length ? `<div class="tbl onb-counts"><table><tbody>${errs.slice(0, 8).map(x => `<tr><td>${esc(x.sheet)} · ${x.row}</td><td>${esc(x.error)}</td></tr>`).join("")}</tbody></table></div>` : ""}`;
+      }
+    },
+  };
+  ["obfile", "oburl", "obsheet"].forEach(id => $("#" + id).addEventListener("change", () => { checked = null; sync(); }));
 }
 
 async function renderAuth() {
@@ -809,7 +984,6 @@ async function renderAuth() {
       <label class="f">${t("username")}<input name="username" autocomplete="username" required></label>
       ${setup ? pwFields(true).replace(/minlength="6"/g, 'minlength="8"') : `<label class="f">${t("password")}<input name="password" type="password" autocomplete="current-password" required minlength="1"></label>
       <label class="f chk"><input type="checkbox" data-change="pwshow">${S.lang === "ar" ? "إظهار كلمة المرور" : "Show password"}</label>`}
-      ${setup ? `<label class="f chk"><input type="checkbox" name="demo">${S.lang === "ar" ? "ابدأ بشركة تجريبية (بيانات وهمية لكل الشاشات — للتجربة والتدريب، ويمكن مسحها لاحقاً)" : "Start with a demo company (sample data on every screen — for testing and training; erase it any time)"}</label>` : ""}
       <button class="btn pri" type="submit">${setup ? t("save") : t("sign_in")}</button>
       <button class="btn" type="button" data-a="lang2">${t("switch_lang")}</button></form></div>`;
   S.H = { lang2: () => { store.set("lang", S.lang === "ar" ? "en" : "ar"); renderAuth(); } };
@@ -864,10 +1038,11 @@ function drawer(title, html, onSubmit, opts = {}) {
   bg.addEventListener("mousedown", e => { if (e.target === bg) closeDrawer(); });
   document.body.appendChild(bg);
   const f = $("#df", bg);
+  if (onSubmit && !opts.readOnly && !opts.noDraft) Drafts.track(f, title, opts.draft);
   f.addEventListener("submit", async e => {
     e.preventDefault();
     const btn = $("button[type=submit]", f); if (btn) btn.disabled = true;
-    try { const done = await onSubmit(readForm(f), f); if (done !== false) { closeDrawer(); route(); } }
+    try { const done = await onSubmit(readForm(f), f); if (done !== false) { Drafts.done(f); closeDrawer(); route(); } }
     catch (err) { $("#derr").innerHTML = `<div class="banner err">${esc(err.message)}</div>`; $("#derr").scrollIntoView({ block: "nearest", behavior: "smooth" }); }
     finally { if (btn) btn.disabled = false; }
   });
@@ -1728,7 +1903,7 @@ PAGES.invoice = async (view, parts, q) => {
   S.H.xboq = async el => { if (!el.value) return; const b = await api("GET", "/api/boqs/" + el.value); x = { ...x, ...header(), bu_id: b.bu_id, lines: b.lines.map(l => ({ ...l, contract_qty: l.qty, qty: 0 })) }; render(); };
   const save = async post => { const body = { ...header(), lines: readLines(), post };
     const r = isNew ? await api("POST", "/api/extracts", body) : await api("PUT", "/api/extracts/" + x.id, body);
-    toast(post ? t("posted") : t("saved")); location.hash = "#/invoice/" + r.id; if (!isNew) route(); };
+    Drafts.done(view); toast(post ? t("posted") : t("saved")); location.hash = "#/invoice/" + r.id; if (!isNew) route(); };
   S.H.xsave = () => save(false).catch(fail);
   S.H.xpost = () => save(true).catch(fail);
   S.H.xdel = async () => { if (!confirm(t("confirm_delete"))) return; await api("DELETE", "/api/extracts/" + x.id).catch(fail); location.hash = "#/invoices"; };
@@ -2809,6 +2984,7 @@ async function boot() {
   try { await refreshBoot(); } catch (e) { $("#root").innerHTML = `<div class="banner err">${esc(e.message)}</div>`; return; }
   applyLook();
   if (!S.boot.user) return renderAuth();
+  if (S.boot.onboarding && !S.skipSetup) return renderOnboarding();
   renderShell();
   route();
   fixCompanyName();
@@ -2995,8 +3171,11 @@ async function equityForm(action, pre = {}) {
       $$(".eqblock", f).forEach(b => { b.style.display = !def.blocks || def.blocks(v).includes(b.dataset.block) ? "" : "none"; });
       preview();
     };
+    let touched = false;   // nothing to preview (and nothing to complain about) until the person starts filling it in
+    f.addEventListener("input", e => { if (e.isTrusted) touched = true; }, true); f.addEventListener("change", e => { if (e.isTrusted) touched = true; }, true);
     const preview = debounce(async () => {
       const v = readForm(f); const box = $("#eqplan", f); if (!box) return;
+      if (!touched && !pre.partner && action !== "appropriate") { box.innerHTML = `<div class="muted">${esc(L2("What will be booked appears here as you fill the form.", "يظهر ما سيتم تسجيله هنا أثناء ملء النموذج."))}</div>`; return; }
       try { box.innerHTML = planHtml(await api("POST", "/api/equity-preview/" + action, def.body ? def.body(v, f) : v)); }
       catch (e) { box.innerHTML = `<div class="banner err">${esc(e.message)}</div>`; }
     });
@@ -4625,6 +4804,7 @@ async function saleForm(s, pre = {}) {
     await saveNewContacts(nc); toast(t("saved")); location.hash = "#/sale/" + r.id; closeDrawer(); return false; },
   { wide: true, submitLabel: L2("Save draft", "حفظ كمسودة"), onOpen: f => {
     const prev = debounce(async () => { const v = readForm(f), box = $("#plprev", f);
+      if (!lines.some(l => l.product_id || l.description)) { box.innerHTML = `<div class="muted">${esc(L2("The schedule appears here once a line is added.", "يظهر الجدول هنا بعد إضافة بند."))}</div>`; return; }
       try { const r = await api("POST", "/api/sales-preview", { date: v.date, vat_code: v.vat_code, wht_code: v.wht_code, lines: lines.filter(l => l.product_id || l.description).map(l => ({ ...l, description: l.description || "x" })), plan: getPlan() });
         S.cache.lastSched = r.schedule; box.innerHTML = previewHtml(r); } catch (e) { box.innerHTML = `<div class="banner err">${esc(e.message)}</div>`; } }, 300);
     const redraw = () => { $("#slt tbody", f).innerHTML = lineRows(); prev(); };
@@ -6157,7 +6337,7 @@ setInterval(() => { if (!document.hidden || Math.random() < .5) pollChat(); }, 8
 
 // keep the chat badge and the profile picture in the shell
 const _renderNav = renderNav;
-renderNav = function (active) { _renderNav(active); setChatBadge(); };   // eslint-disable-line no-func-assign
+renderNav = function (active) { _renderNav(active); setChatBadge(); Drafts.badge(); };   // eslint-disable-line no-func-assign
 const _renderShell = renderShell;
 renderShell = function () {   // eslint-disable-line no-func-assign
   _renderShell();

@@ -821,3 +821,19 @@ label.ppl.chk input{margin:0}
 .icon-tile img{width:64px;height:64px;object-fit:contain}
 .icon-tile.on{border-color:var(--brand);box-shadow:0 0 0 3px color-mix(in srgb,var(--brand) 25%,transparent)}
 .icon-tile[disabled]{cursor:default}
+
+/* sign-in gate and the new company's setup card: compact */
+.co-what{margin-top:6px}
+.co-pane{gap:8px;margin-top:8px}
+.co-hint{font-size:.8em;margin:6px 0 0}
+.onb-grid{gap:10px}
+.onb [hidden]{display:none !important}
+.onb .dd-menu{min-width:240px}
+.onb-counts{max-height:180px;overflow:auto;margin-top:6px}
+
+/* drafts kept on this device */
+.side a.has-draft{position:relative}
+.side a.has-draft::after{content:"";position:absolute;inset-inline-end:10px;top:50%;width:8px;height:8px;margin-top:-4px;border-radius:50%;background:#f59e0b;box-shadow:0 0 0 2px var(--panel)}
+.draftsbtn .dcount{font-size:.75em;font-weight:800;min-width:18px;height:18px;border-radius:9px;background:#f59e0b;color:#111;display:inline-flex;align-items:center;justify-content:center;padding:0 5px}
+.draft-bar{margin-bottom:12px}
+.draft-bar>div+div{margin-top:6px}

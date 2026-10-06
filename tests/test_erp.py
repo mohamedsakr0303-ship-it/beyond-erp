@@ -2730,6 +2730,16 @@ class ChatProfilesAssistant(unittest.TestCase):
         except ValueError:
             return r.status, r.body
 
+    def test_new_company_setup_until_done(self):
+        boot = lambda who: self.call(who, "GET", "/api/bootstrap")[1]   # noqa: E731
+        self.assertTrue(boot("boss")["onboarding"])        # an administrator of empty books gets the start options
+        self.assertFalse(boot("eng")["onboarding"])        # other people never do
+        self.assertEqual(self.call("eng", "POST", "/api/onboarding", {})[0], 403)
+        self.assertTrue(boot("boss")["onboarding"])        # still pending until a choice is finished (resume later)
+        self.assertEqual(self.call("boss", "POST", "/api/onboarding", {"business_type": "interior"})[0], 200)
+        self.assertFalse(boot("boss")["onboarding"])
+        self.assertEqual(self.db.setting("business_type"), "interior")
+
     def test_rooms_members_and_privacy(self):
         self.assertEqual(self.call("acc", "POST", "/api/chat/rooms", {"name": "x"})[0], 403)   # super administrators only
         st, r = self.call("boss", "POST", "/api/chat/rooms", {"name": "Accountants", "members": [2]})
