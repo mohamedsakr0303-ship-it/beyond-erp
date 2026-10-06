@@ -158,7 +158,14 @@ def _parse_clock(s):
 # ------------------------------------------------------------------ core: dry run, apply
 def prepare(app, method, target, headers, raw, user):
     """Dry-run a change as `user`; returns (reply, op or None). The database is left untouched."""
-    from .server import handle
+    from .server import handle, ok, route_module
+    if headers.get("x-ai-call") == "1":   # the assistant's change: same policy, check and review as without the workspace
+        from . import ai
+        path = urlparse(target).path
+        try:
+            ai.guard(app.db, user, method, path, raw, headers, route_module(method, path))
+        except PermissionError as e:
+            return ok({"error": str(e) or "Not allowed"}, 403), None
     conn = app.db.conn
     with app.db.lock:
         conn.execute("BEGIN IMMEDIATE")

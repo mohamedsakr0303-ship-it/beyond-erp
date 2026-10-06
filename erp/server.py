@@ -31,6 +31,17 @@ COOKIE = "beyond_session"
 ROUTES = []
 
 
+def route_module(method, path):
+    """The permission section of the API route that handles method + path (None when unknown or open to all)."""
+    m_doc = re.match(r"^/api/docs/(\w+)$", path)
+    if m_doc and m_doc.group(1) in DOCS:          # one route, the section depends on the document type
+        return DOCS[m_doc.group(1)][1]
+    for m, rx, module, level, public, fn in ROUTES:
+        if m == method and rx.match(path):
+            return module
+    return None
+
+
 def route(method, pattern, module=None, level="view", public=False):
     rx = re.compile("^" + re.sub(r"<(\w+)>", r"(?P<\1>[^/]+)", pattern) + "$")
 
@@ -2963,6 +2974,14 @@ def ai_complete(ctx):
     return ok({"message": ai.complete(ctx.db, ctx.user, ctx.body)})
 
 
+@route("POST", "/api/ai/preview")
+def ai_preview(ctx):
+    """Run a change the assistant proposes without saving it, and report what it would do (checks, numbers, entries)."""
+    from . import ai
+    method, path = str(ctx.body.get("method") or "").upper(), str(ctx.body.get("path") or "")
+    return ok(ai.preview(ctx.app, ctx.user, method, path, ctx.body.get("body"), route_module(method, urlparse(path).path)))
+
+
 @route("POST", "/api/ai/params")
 def ai_params(ctx):
     """The request for the workspace's ai function: same policy, built here so the page cannot change it."""
@@ -3543,9 +3562,7 @@ def handle(app, method, target, headers, raw=b"", as_user=None, dry=False):
                 return ok({"error": "Please sign in"}, 401)
             if headers.get("x-ai-call") == "1" and as_user is None:   # a call the AI assistant makes for this person
                 from . import ai
-                ai.check_call(db, user, method, url.path)
-                if ai.route_blocked(db, module):
-                    return ok({"error": "The AI assistant may not use this section (super administrator's setting)"}, 403)
+                ai.guard(db, user, method, url.path, raw, headers, route_module(method, url.path) or module)   # policy; changes only after check + review
             if module and not auth.can(user, module, level):
                 return ok({"error": "You do not have permission for this"}, 403)
             if (method != "GET" and as_user is None and getattr(app, "licensing", False) and not public

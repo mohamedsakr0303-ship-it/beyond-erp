@@ -6334,16 +6334,16 @@ async function aiComplete(messages, ctx) {
   }
 }
 // the assistant's calls: as the signed-in person, marked so the ERP applies the assistant's policy on top of their rights
-async function aiApi(method, path, body) {
+async function aiApi(method, path, body, review) {
   if (!/^\/api\//.test(path)) throw new Error("Only /api/ paths");
   if (STATIC) {
-    const h = { ...staticHeaders(), "x-ai-call": "1" }; let payload = null;
+    const h = { ...staticHeaders(), "x-ai-call": "1", ...(review ? { "x-ai-review": review } : {}) }; let payload = null;
     if (body !== undefined && method !== "GET") { payload = JSON.stringify(body); h["content-type"] = "application/json"; }
     const r = await window.__beyondFetch(method, path, h, payload);
     const txt = new TextDecoder().decode(r.body);
     return { status: r.status, text: /json/.test(r.ctype || "") ? txt : `(${r.ctype}, ${r.body.length} bytes — a file, not shown)` };
   }
-  const opt = { method, credentials: "same-origin", headers: { "X-Requested-With": "BeyondERP", "X-AI-Call": "1" } };
+  const opt = { method, credentials: "same-origin", headers: { "X-Requested-With": "BeyondERP", "X-AI-Call": "1", ...(review ? { "X-AI-Review": review } : {}) } };
   if (body !== undefined && method !== "GET") { opt.body = JSON.stringify(body); opt.headers["Content-Type"] = "application/json"; }
   const r = await fetch(path, opt), ct = r.headers.get("content-type") || "";
   return { status: r.status, text: /json/.test(ct) ? await r.text() : `(${ct} — a file, not shown)` };
@@ -6362,7 +6362,7 @@ PAGES.assistant = async (view, parts) => {
   const name = (S.ai.policy && S.ai.policy.name) || "Claude";
   view.innerHTML = `<div class="chat ai ${tid ? "has-room" : ""}"><aside class="chl"><div class="chl-head"><a class="btn pri" href="#/assistant" style="width:100%;justify-content:center">${svg("plus")} ${esc(L2("New conversation", "محادثة جديدة"))}</a></div>
       <div class="chl-list">${threads.map(th => `<a class="chl-item ${th.id === tid ? "on" : ""}" href="#/assistant/${th.id}"><span class="chl-ic">${svg("spark")}</span><span class="chl-t"><b>${esc(th.title)}</b><small>${esc(fmtTime(th.updated_at))}</small></span><button class="lnk" data-a="aidel" data-id="${th.id}" title="${esc(L2("Delete", "حذف"))}">×</button></a>`).join("") || `<div class="muted chl-note">${esc(L2("Your conversations stay on this device.", "محادثاتك تبقى على هذا الجهاز."))}</div>`}</div></aside>
-    <section class="chv"><div class="ch-top"><a class="icbtn ch-back" href="#/assistant">${BACK_ICON}</a><span class="chl-ic big ai-ic">${svg("spark")}</span><div class="ch-tt"><b>${esc(name)}</b><small>${esc(L2("Works with your own access only", "يعمل بصلاحياتك أنت فقط"))} · ${esc(S.ai.policy.write === "off" ? L2("read-only", "قراءة فقط") : S.ai.policy.write === "auto" ? L2("can change data", "يمكنه تعديل البيانات") : L2("asks before any change", "يستأذن قبل أي تعديل"))}</small></div></div>
+    <section class="chv"><div class="ch-top"><a class="icbtn ch-back" href="#/assistant">${BACK_ICON}</a><span class="chl-ic big ai-ic">${svg("spark")}</span><div class="ch-tt"><b>${esc(name)}</b><small>${esc(L2("Works with your own access only", "يعمل بصلاحياتك أنت فقط"))} · ${esc(S.ai.policy.write === "off" ? L2("read-only", "قراءة فقط") : L2("every change is checked, then you review it", "كل تعديل يُفحص ثم تراجعه أنت"))}</small></div></div>
       <div class="ch-list ai-list" id="ailist"></div>
       <div class="ch-comp"><div class="ch-inbox"><textarea id="aitext" rows="1" placeholder="${esc(L2("Ask about your books, or ask for a change… e.g. “Which clients owe us the most?”", "اسأل عن دفاترك أو اطلب تعديلاً… مثال: «من أكثر العملاء مديونية لنا؟»"))}"></textarea></div>
         <button class="btn pri icbtn ch-send" data-a="aisend" aria-label="${esc(L2("Send", "إرسال"))}">${svg("send")}</button></div>
@@ -6417,9 +6417,8 @@ function aiDraw() {
       if (b.type === "tool_use") {
         const r = results[b.id], inp = b.input || {};
         const label = b.name === "erp_find" ? L2("Looked for: ", "بحث عن: ") + (inp.query || "") : b.name === "erp_read" ? L2("Read ", "قرأ ") + (inp.path || "") : (inp.summary || inp.path || "");
-        if (b.name === "erp_write" && !r) {
-          h += `<div class="ai-act ask"><b>${esc(L2("Change requested", "تعديل مطلوب"))}</b><div>${esc(inp.summary || "")}</div><details><summary>${esc(L2("Details", "التفاصيل"))}</summary><code>${esc(inp.method)} ${esc(inp.path)}</code><pre>${esc(inp.body_json || "")}</pre></details>
-            <div class="row"><button class="btn pri" data-a="aiok" data-id="${esc(b.id)}">${esc(L2("Approve", "موافقة"))}</button><button class="btn" data-a="aino" data-id="${esc(b.id)}">${esc(L2("Decline", "رفض"))}</button></div></div>`;
+        if (b.name === "erp_write") {
+          h += reviewCard(b, inp, (AI.reviews || {})[b.id], r);
         } else {
           const bad = r && (r.is_error || /declined|رفض/.test(String(r.content)));
           h += `<div class="ai-act ${b.name === "erp_write" ? (bad ? "no" : "done") : ""}">${b.name === "erp_write" ? (bad ? "✕ " : "✓ ") : "· "}${esc(label)}</div>`;
@@ -6431,6 +6430,24 @@ function aiDraw() {
   list.innerHTML = h; list.scrollTop = list.scrollHeight;
   S.H.aisugg = el => { const ta = $("#aitext"); ta.value = el.textContent; S.H.aisend(); };
 }
+// the change the assistant proposes: what the ERP's checks found, what it does to the numbers, and the entries it posts
+function reviewCard(b, inp, rv, result) {
+  const head = `<b>${esc(L2("Proposed change", "تعديل مقترح"))}</b><div>${esc(inp.summary || "")}</div>`;
+  if (!rv || rv.checking) return `<div class="ai-act ask">${head}<div class="muted"><i class="spin"></i> ${esc(L2("Checking it against the books without saving anything…", "جارٍ فحصه على الدفاتر دون حفظ أي شيء…"))}</div></div>`;
+  const checks = `<ul class="rv-checks">${rv.checks.map(c => `<li class="${c.ok ? "ok" : "bad"}">${c.ok ? "✓" : "✕"} ${esc(c.label)}${c.detail ? `<small>${esc(c.detail)}</small>` : ""}</li>`).join("")}</ul>`;
+  const moved = rv.figures.filter(f => f.change);
+  const figs = rv.figures.length ? `<div class="tbl"><table><thead><tr><th>${esc(L2("Figure", "البند"))}</th><th class="num">${esc(L2("Now", "الآن"))}</th><th class="num">${esc(L2("After", "بعد"))}</th><th class="num">${esc(L2("Change", "التغيير"))}</th></tr></thead><tbody>${
+    (moved.length ? moved : rv.figures).map(f => `<tr><td>${esc(f.label)}</td><td class="num">${money(f.before)}</td><td class="num">${money(f.after)}</td><td class="num ${f.change < 0 ? "neg" : ""}">${f.change ? money(f.change) : "—"}</td></tr>`).join("")}</tbody></table></div>${moved.length ? "" : `<div class="muted">${esc(L2("No key figure changes.", "لا تتغير الأرقام الرئيسية."))}</div>`}` : "";
+  const ents = rv.entries.length ? rv.entries.map(e => `<div class="rv-entry"><b>${esc(e.status === "new" ? L2("New entry", "قيد جديد") : e.status === "removed" ? L2("Entry removed", "قيد محذوف") : L2("Entry changed", "قيد معدّل"))}</b> ${esc([e.ref, e.date, e.memo].filter(Boolean).join(" · "))}
+      ${e.lines.length ? `<div class="tbl"><table><tbody>${e.lines.map(l => `<tr><td>${esc(l.account)} ${esc(l.name)}</td><td class="num">${l.debit ? money(l.debit) : ""}</td><td class="num">${l.credit ? money(l.credit) : ""}</td></tr>`).join("")}</tbody></table></div>` : ""}</div>`).join("") : "";
+  const tbls = rv.tables && rv.tables.length ? `<div class="muted">${esc(L2("Records:", "السجلات:"))} ${rv.tables.map(t => `${esc(t.table)} ${t.before}→${t.after}`).join(" · ")}</div>` : "";
+  const state = result ? (rv.saved ? `<div class="chip ok">✓ ${esc(L2("Saved and posted after your review", "حُفظ ورُحّل بعد مراجعتك"))}</div>`
+      : `<div class="chip ${rv.ok ? "" : "bad"}">${esc(rv.ok ? L2("Not saved", "لم يُحفظ") : L2("Blocked by the checks — nothing was saved", "أوقفته الفحوص — لم يُحفظ شيء"))}</div>`)
+    : rv.ok ? `<div class="row"><button class="btn pri" data-a="aiok" data-id="${esc(b.id)}">${esc(L2("Save and post", "حفظ وترحيل"))}</button><button class="btn" data-a="aino" data-id="${esc(b.id)}">${esc(L2("Decline", "رفض"))}</button></div>` : "";
+  return `<div class="ai-act ask ${rv.ok ? "" : "blocked"}">${head}<h5>${esc(L2("Checks (nothing saved yet)", "الفحوص (لم يُحفظ شيء بعد)"))}</h5>${checks}
+    ${rv.ok ? `<h5>${esc(L2("Effect on the numbers", "الأثر على الأرقام"))}</h5>${figs}${ents ? `<h5>${esc(L2("Entries it will post", "القيود التي سيرحّلها"))}</h5>${ents}` : ""}${tbls}` : ""}
+    <details><summary>${esc(L2("Request details", "تفاصيل الطلب"))}</summary><code>${esc(inp.method)} ${esc(inp.path)}</code><pre>${esc(inp.body_json || "")}</pre></details>${state}</div>`;
+}
 async function aiTool(b) {
   const inp = b.input || {};
   const cut = s => (s.length > 40000 ? s.slice(0, 40000) + "\n…(cut — narrow the request with filters)" : s);
@@ -6440,14 +6457,23 @@ async function aiTool(b) {
     if (b.name === "erp_write") {
       let body; try { body = JSON.parse(inp.body_json || "{}"); } catch { return { type: "tool_result", tool_use_id: b.id, content: "body_json is not valid JSON", is_error: true }; }
       if (!["POST", "PUT", "DELETE"].includes(inp.method)) return { type: "tool_result", tool_use_id: b.id, content: "method must be POST, PUT or DELETE", is_error: true };
-      if (S.ai.policy.write === "confirm") {
-        AI.busy = false; aiDraw();
-        const okd = await new Promise(res => { AI.waiting = { ...(AI.waiting || {}), [b.id]: res }; });
-        delete AI.waiting[b.id]; AI.busy = true;
-        if (!okd) return { type: "tool_result", tool_use_id: b.id, content: "The person declined this change. Do not retry it; ask what they want instead." };
-      }
-      const r = await aiApi(inp.method, String(inp.path || ""), body);
-      return { type: "tool_result", tool_use_id: b.id, content: cut(`HTTP ${r.status}\n${r.text}`), is_error: r.status >= 400 };
+      // 1. the ERP runs the change without saving it and checks the result
+      AI.reviews = AI.reviews || {}; AI.reviews[b.id] = { checking: true }; aiDraw();
+      let rv; try { rv = await api("POST", "/api/ai/preview", { method: inp.method, path: String(inp.path || ""), body }); }
+      catch (e) { rv = { ok: false, checks: [{ key: "accepted", ok: false, label: L2("The ERP accepts the change", "يقبل النظام التعديل"), detail: e.message }], figures: [], entries: [], tables: [] }; }
+      AI.reviews[b.id] = rv;
+      const report = "Checks: " + rv.checks.map(c => `${c.ok ? "PASS" : "FAIL"} ${c.label}${c.detail ? " (" + c.detail + ")" : ""}`).join("; ") +
+        (rv.figures.length ? "\nEffect: " + rv.figures.filter(f => f.change).map(f => `${f.label} ${f.before} -> ${f.after}`).join("; ") : "");
+      if (!rv.ok) { aiDraw(); return { type: "tool_result", tool_use_id: b.id, content: "BLOCKED — nothing was saved.\n" + report + "\nFix the request and propose it again, or explain to the person.", is_error: true }; }
+      // 2. the person reviews the checks and the effect on the numbers, and approves
+      AI.busy = false; aiDraw();
+      const okd = await new Promise(res => { AI.waiting = { ...(AI.waiting || {}), [b.id]: res }; });
+      delete AI.waiting[b.id]; AI.busy = true;
+      if (!okd) return { type: "tool_result", tool_use_id: b.id, content: "The person reviewed the checked change and declined it — nothing was saved. Do not retry it; ask what they want instead.\n" + report };
+      // 3. saved and posted, carrying the review (the ERP refuses it if the books changed meanwhile)
+      const r = await aiApi(inp.method, String(inp.path || ""), body, rv.review);
+      AI.reviews[b.id].saved = r.status < 400;
+      return { type: "tool_result", tool_use_id: b.id, content: cut(`Saved after review. HTTP ${r.status}\n${r.text}\n${report}`), is_error: r.status >= 400 };
     }
     return { type: "tool_result", tool_use_id: b.id, content: "Unknown tool", is_error: true };
   } catch (e) { return { type: "tool_result", tool_use_id: b.id, content: "Error: " + e.message, is_error: true }; }
@@ -6496,7 +6522,7 @@ async function aiSettingsTab(view, head) {
       { k: "name", l: L2("Assistant's name", "اسم المساعد"), v: p.name },
       { k: "model", l: L2("Model", "النموذج"), type: "select", opts: r.models, v: p.model },
       { k: "effort", l: L2("Thoroughness", "مستوى التفكير"), type: "select", opts: [["low", L2("Quick", "سريع")], ["medium", L2("Balanced (recommended)", "متوازن (مستحسن)")], ["high", L2("Thorough", "متعمّق")]], v: p.effort },
-      { k: "write", l: L2("Changing data", "تعديل البيانات"), type: "select", opts: [["off", L2("Never — read and advise only", "أبداً — قراءة ونصح فقط")], ["confirm", L2("Ask the person to approve each change (recommended)", "يطلب موافقة الشخص على كل تعديل (مستحسن)")], ["auto", L2("Make changes directly", "يعدّل مباشرة")]], v: p.write },
+      { k: "write", l: L2("Changing data", "تعديل البيانات"), type: "select", opts: [["off", L2("Never — read and advise only", "أبداً — قراءة ونصح فقط")], ["confirm", L2("Check every change, then the person reviews and approves it", "فحص كل تعديل ثم يراجعه الشخص ويوافق عليه")]], v: p.write },
       { k: "daily_limit", l: L2("Requests per person per day (0 = no limit)", "عدد الطلبات لكل شخص يومياً (0 = بلا حد)"), type: "number", v: p.daily_limit },
       { k: "access", l: L2("Who can use it", "من يمكنه استخدامه"), type: "select", opts: [["all", L2("Everyone in the company", "كل من في الشركة")], ["list", L2("Only the people ticked below", "فقط الأشخاص المحددون أدناه")]], v: p.access, change: "aiacc" },
       { k: "instructions", l: L2("Standing instructions (how it should deal with people's requests)", "تعليمات دائمة (كيف يتعامل مع طلبات الأشخاص)"), type: "textarea", v: p.instructions, span: "span2",

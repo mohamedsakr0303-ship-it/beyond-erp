@@ -2688,13 +2688,47 @@ class ChatProfilesAssistant(unittest.TestCase):
         self.assertEqual(self.call("boss", "GET", "/api/users", **aih)[0], 403)                 # never user management
         self.assertEqual(self.call("boss", "PUT", "/api/ai-policy", {"enabled": False}, **aih)[0], 403)
         self.assertEqual(self.call("boss", "GET", "/api/payroll/runs", **aih)[0], 403)     # blocked section
+        self.assertEqual(self.call("boss", "POST", "/api/ai/preview", {"method": "POST", "path": "/api/docs/payroll", "body": {}})[0], 403)
         # read-only policy: no changes at all, and no change tool offered
         self.assertEqual(self.call("acc", "POST", "/api/bus", {"code": "X", "name": "X"}, **aih)[0], 403)
         self.assertNotIn("erp_write", [t["name"] for t in self.call("acc", "GET", "/api/ai/context")[1]["tools"]])
-        # changes allowed: still only what the person may do themselves
+        # changes allowed: still only what the person may do themselves, and only after the check and review
         self.call("boss", "PUT", "/api/ai-policy", {"write": "confirm"})
-        self.assertEqual(self.call("eng", "POST", "/api/bus", {"code": "X", "name": "X"}, **aih)[0], 403)
-        self.assertEqual(self.call("boss", "POST", "/api/bus", {"code": "X", "name": "X"}, **aih)[0], 200)
+        bu = {"code": "X", "name": "X"}
+        self.assertEqual(self.call("eng", "POST", "/api/bus", bu, **aih)[0], 403)
+        st, err = self.call("boss", "POST", "/api/bus", bu, **aih)
+        self.assertEqual(st, 403)                                                              # not reviewed: refused
+        self.assertIn("checked and reviewed", err["error"])
+        rv = self.call("eng", "POST", "/api/ai/preview", {"method": "POST", "path": "/api/bus", "body": bu})[1]
+        self.assertFalse(rv["ok"])                                                             # the engineer may not
+        self.assertNotIn("review", rv)
+        rv = self.call("boss", "POST", "/api/ai/preview", {"method": "POST", "path": "/api/bus", "body": bu})[1]
+        self.assertTrue(rv["ok"], rv["checks"])
+        self.assertIsNone(self.db.one("SELECT 1 FROM business_units WHERE code='X'"))         # the check saved nothing
+        rh = {**aih, "x-ai-review": rv["review"]}
+        self.assertEqual(self.call("boss", "POST", "/api/bus", {"code": "Y", "name": "Y"}, **rh)[0], 403)  # not what was reviewed
+        self.assertEqual(self.call("boss", "POST", "/api/bus", bu, **rh)[0], 200)
+        # a posting: the check shows the entry and its effect; books changed meanwhile → review again
+        a.record_collection(self.db, {"bu_code": "X", "amount": 100})
+        exp = {"description": "Office rent", "amount": 40, "date": a.today()}
+        rv = self.call("boss", "POST", "/api/ai/preview", {"method": "POST", "path": "/api/docs/expense", "body": exp})[1]
+        self.assertTrue(rv["ok"], rv["checks"])
+        self.assertEqual({c["key"] for c in rv["checks"]}, {"accepted", "balanced", "tb", "audit", "sheet"})
+        self.assertEqual(len([e for e in rv["entries"] if e["status"] == "new"]), 1)
+        self.assertTrue(any(f["key"] == "net_profit" and f["change"] == -40 for f in rv["figures"]), rv["figures"])
+        a.record_expense(self.db, {"description": "someone else", "amount": 5})
+        st, err = self.call("boss", "POST", "/api/docs/expense", exp, **{**aih, "x-ai-review": rv["review"]})
+        self.assertEqual(st, 403)
+        self.assertIn("changed since", err["error"])
+        # a change the ERP itself rejects is blocked at the check, with the reason
+        rv = self.call("boss", "POST", "/api/ai/preview", {"method": "POST", "path": "/api/docs/expense", "body": {"amount": -5}})[1]
+        self.assertFalse(rv["ok"])
+        self.assertFalse(rv["checks"][0]["ok"])
+        # the shared workspace path enforces the same rule
+        boss = auth.public_user(self.db.one("SELECT * FROM users WHERE username='boss'"))
+        r, op = cloud.prepare(self.app, "POST", "/api/bus", {"x-requested-with": "BeyondERP", "content-type": "application/json",
+                                                             "x-ai-call": "1"}, json.dumps({"code": "Z", "name": "Z"}).encode(), boss)
+        self.assertEqual((r.status, op), (403, None))
         # who may use it
         self.call("boss", "PUT", "/api/ai-policy", {"access": "list", "users": ["acc"]})
         self.assertEqual(self.call("eng", "GET", "/api/ai/context")[0], 403)
