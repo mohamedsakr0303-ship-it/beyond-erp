@@ -809,3 +809,16 @@ label.ppl.chk input{margin:0}
 .sw:active .sw-ui i{width:32px}
 @media (prefers-reduced-motion:reduce){.sw-ui,.sw-ui i,.sw-ui b{transition:none}}
 .ai-face{object-fit:cover;border-radius:50%;box-shadow:0 0 0 2px color-mix(in srgb,var(--brand) 35%,transparent)}
+
+/* sidebar logo placement (Settings → Look) */
+.brand.al{text-align:var(--brand-align)}
+.brand.al .brand-logo{display:inline-block;margin:0 0 6px;vertical-align:top}
+.brand.al b,.brand.al small{text-align:var(--brand-align)}
+.brand[style*="--brand-logo"] .brand-logo{max-height:var(--brand-logo);max-width:100%}
+/* app icon choices */
+.icon-tiles{display:flex;flex-wrap:wrap;gap:10px}
+.icon-tile{all:unset;box-sizing:border-box;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:6px;width:116px;padding:12px 8px;border:2px solid var(--line);border-radius:14px;
+  background:repeating-conic-gradient(color-mix(in srgb,var(--ink) 6%,transparent) 0 25%,transparent 0 50%) 0 0/14px 14px;font-size:.85em;font-weight:600}
+.icon-tile img{width:64px;height:64px;object-fit:contain}
+.icon-tile.on{border-color:var(--brand);box-shadow:0 0 0 3px color-mix(in srgb,var(--brand) 25%,transparent)}
+.icon-tile[disabled]{cursor:default}

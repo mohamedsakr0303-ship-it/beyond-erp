@@ -136,6 +136,8 @@ def bootstrap(ctx):
     base = {"version": __version__, "needs_setup": auth.needs_setup(db), "user": user,
             "workspace_preset": bool(workspace_preset() and getattr(ctx.app, "cloud", None) and not ctx.app.cloud.active),
             "app_logo": app_logo and {"mime": app_logo["mime"], "data": app_logo["data"]},
+            "app_icon": (lambda a: a and {"mime": a["mime"], "data": a["data"]})(branding.asset(db, "app_icon"))
+            if (look["appearance"] or {}).get("app_icon") == "custom" else None,
             "settings": {k: v for k, v in look.items()
                          if k in ("company_name", "company_tagline", "font_family", "font_size", "language", "appearance",
                                   "regional")}}

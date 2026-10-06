@@ -46,7 +46,7 @@ DEFAULTS = {
     "apply": {k: {"logo": lg, "wm": wm} for k, _, _, lg, wm in DOC_KINDS},
     "boq_notes": DEFAULT_BOQ_NOTES,
 }
-ASSET_KEYS = ("logo", "logo_raw", "watermark", "wm_image", "app_logo")
+ASSET_KEYS = ("logo", "logo_raw", "watermark", "wm_image", "app_logo", "app_icon")
 MAX_ASSET = 3 * 1024 * 1024  # base64 characters
 
 

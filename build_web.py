@@ -108,6 +108,7 @@ def build(make_zip=False):
     print("App")
     for f in ("app.css", "i18n.js", "app.js", "assistant.jpg"):
         shutil.copy(ROOT / "erp" / "static" / f, OUT / f)
+    shutil.copytree(ROOT / "erp" / "static" / "icons", OUT / "icons", dirs_exist_ok=True)   # app icon choices
     for f in (ROOT / "erp" / "static" / "vendor").glob("*"):   # fonts, 3D model viewer (loaded only when a model is shown)
         if f.is_dir():
             shutil.copytree(f, OUT / "vendor" / f.name, dirs_exist_ok=True)

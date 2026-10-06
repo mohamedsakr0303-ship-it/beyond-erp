@@ -251,6 +251,7 @@ def export_rows(db):
         po = get(db, r["id"])
         out.append({k: po[k] for k in ("code", "date", "supplier", "bu_code", "warehouse", "expected", "vat_code", "wht_code",
                                         "terms", "notes", "status", "created_by", "approved_by")}
+                   | {"approved_at": db.one("SELECT approved_at FROM purchase_orders WHERE id=?", (r["id"],))["approved_at"] or ""}
                    | {"lines": [{k: ln[k] for k in ("kind", "description", "item", "account", "qty", "unit", "rate")} for ln in po["lines"]],
                       "receipts": [{"line": rc["description"], "date": rc["date"], "qty": rc["qty"]} for rc in po["receipts"]
                                    if rc["status"] == "posted"]})
@@ -264,8 +265,8 @@ def import_rows(db, rows):
         if db.one("SELECT 1 FROM purchase_orders WHERE code=?", (o.get("code"),)):
             continue
         pid = save(db, {**o, "bu_code": o.get("bu_code"), "warehouse": o.get("warehouse") or None}, o.get("created_by") or "")
-        db.conn.execute("UPDATE purchase_orders SET status=?, approved_by=? WHERE id=?",
-                        (o.get("status") or "draft", o.get("approved_by") or "", pid))
+        db.conn.execute("UPDATE purchase_orders SET status=?, approved_by=?, approved_at=? WHERE id=?",
+                        (o.get("status") or "draft", o.get("approved_by") or "", o.get("approved_at") or "", pid))
         lines = {ln["description"]: ln["id"] for ln in db.q("SELECT id, description FROM po_lines WHERE po_id=?", (pid,))}
         used = set()
         for rc in o.get("receipts") or []:

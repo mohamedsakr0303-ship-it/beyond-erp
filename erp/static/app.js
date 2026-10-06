@@ -464,13 +464,44 @@ function openPalette() {
   draw(); setTimeout(() => inp.focus(), 0);
 }
 document.addEventListener("keydown", e => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k" && S.boot && S.boot.user) { e.preventDefault(); if (!$(".pal-bg")) openPalette(); } });
+// ---- the app icon (Settings → Look): built-in marks or the company's own, applied to the tab and the installable app
+const APP_ICONS = [["rising", "Rising B", "B الصاعد"], ["seal", "Seal", "الختم"], ["original", "Original", "الأصلية"]];
+const appIconKey = () => ((S.boot && S.boot.settings.appearance) || {}).app_icon || "rising";
+const appIconSrc = k => k === "custom" && S.boot.app_icon ? `data:${S.boot.app_icon.mime};base64,${S.boot.app_icon.data}` : `icons/${k === "original" ? "original.png" : (APP_ICONS.some(x => x[0] === k) ? k : "rising") + ".svg"}`;
+// a square PNG of the icon; "filled" puts it on the dark green backdrop phones need for full-bleed icons
+function iconPng(src, size, filled = false) {
+  return new Promise((ok, bad) => { const img = new Image(); img.onload = () => {
+    const c = document.createElement("canvas"); c.width = c.height = size; const g = c.getContext("2d");
+    if (filled) { const gr = g.createLinearGradient(0, 0, size, size); gr.addColorStop(0, "#064e3b"); gr.addColorStop(1, "#022c22"); g.fillStyle = gr; g.fillRect(0, 0, size, size); }
+    const pad = filled ? size * .2 : size * .04, box = size - 2 * pad, k = Math.min(box / (img.naturalWidth || box), box / (img.naturalHeight || box));
+    const w = (img.naturalWidth || box) * k, h = (img.naturalHeight || box) * k; g.drawImage(img, (size - w) / 2, (size - h) / 2, w, h); ok(c.toDataURL("image/png")); };
+    img.onerror = () => bad(new Error(L2("That file is not a picture", "هذا الملف ليس صورة"))); img.src = src; });
+}
+let _iconApplied = "";
+async function applyAppIcon() {
+  if (!S.boot || !S.boot.settings) return;
+  const k = appIconKey(), src = appIconSrc(k); if (_iconApplied === src) return; _iconApplied = src;
+  try {
+    const fav = $("#appicon"); if (fav) fav.href = await iconPng(src, 64);
+    if (k === "rising") return;   // the default icons ship with the app
+    let at = document.querySelector("link[rel=apple-touch-icon]"); if (at) at.href = await iconPng(src, 180, true);
+    const man = document.querySelector("link[rel=manifest]");
+    if (man) { const base = new URL("./", location.href).href;
+      const m = { name: "Beyond ERP", short_name: "Beyond ERP", start_url: base, scope: base, display: "standalone", background_color: "#04221a", theme_color: "#047857",
+        icons: [{ src: await iconPng(src, 192), sizes: "192x192", type: "image/png" }, { src: await iconPng(src, 512), sizes: "512x512", type: "image/png" },
+          { src: await iconPng(src, 512, true), sizes: "512x512", type: "image/png", purpose: "maskable" }] };
+      man.href = URL.createObjectURL(new Blob([JSON.stringify(m)], { type: "application/manifest+json" })); }
+  } catch { /* the default icon stays */ }
+}
 // Sidebar header: logo and/or name (Settings → Appearance → Sidebar shows), and an optional tagline
 function brandBlock(st) {
   const ap = st.appearance || {}, show = ap.brand_show || "logo_name";
   const logo = S.boot.app_logo && show !== "name" ? `<img class="brand-logo ${show === "logo" ? "only" : ""}" src="data:${S.boot.app_logo.mime};base64,${S.boot.app_logo.data}" alt="${esc(ap.app_name || st.company_name || "")}">` : "";
   const name = show !== "logo" || !logo ? `<b>${esc(ap.app_name || st.company_name || "BEYOND")}</b>` : "";
   const tag = ap.tagline_show === false ? "" : (ap.tagline != null ? ap.tagline : st.company_tagline || "");
-  return `<a href="#/dashboard" class="brand ${show === "logo" && logo ? "logo-only" : ""}" title="${esc(t("m_dashboard"))}">${logo}${name}${tag ? `<small>${esc(tag)}</small>` : ""}</a>`;
+  const align = ["left", "center", "right"].includes(ap.brand_align) ? ap.brand_align : "", size = +ap.brand_logo_size || 0;
+  const style = (align ? `--brand-align:${align};` : "") + (size ? `--brand-logo:${Math.min(220, Math.max(24, size))}px;` : "");
+  return `<a href="#/dashboard" class="brand ${show === "logo" && logo ? "logo-only" : ""} ${align ? "al" : ""}" style="${style}" title="${esc(t("m_dashboard"))}">${logo}${name}${tag ? `<small>${esc(tag)}</small>` : ""}</a>`;
 }
 // Every possible "+ New" item with its label and whether this user may use it
 function newMenuItems() {
@@ -2370,13 +2401,31 @@ PAGES.settings = async (view, parts, q) => {
         { k: "logo", l: t("app_logo"), type: "select", opts: [["", t("al_none")], ["document", t("al_doc")], ["custom", t("al_custom")]], v: ap.logo || "" },
         { k: "brand_show", l: S.lang === "ar" ? "أعلى القائمة الجانبية يعرض" : "Sidebar top shows", type: "select", v: ap.brand_show || "logo_name",
           opts: [["logo_name", S.lang === "ar" ? "الشعار والاسم" : "Logo and name"], ["logo", S.lang === "ar" ? "الشعار فقط" : "Logo only"], ["name", S.lang === "ar" ? "الاسم فقط" : "Name only"]] },
+        { k: "brand_align", l: L2("Sidebar logo position", "موضع الشعار أعلى القائمة"), type: "select", v: ap.brand_align || "",
+          opts: [["", L2("Default", "الافتراضي")], ["left", L2("Left", "يسار")], ["center", L2("Centre", "وسط")], ["right", L2("Right", "يمين")]] },
+        { k: "brand_logo_size", l: L2("Sidebar logo size (px, blank = automatic)", "حجم الشعار (بكسل، فارغ = تلقائي)"), type: "number", v: ap.brand_logo_size || "", ph: "70" },
         { k: "tagline", l: S.lang === "ar" ? "الوصف تحت الاسم" : "Tagline under the name", v: ap.tagline != null ? ap.tagline : (st.company_tagline || ""), ph: S.lang === "ar" ? "مثال: تصميم وتشطيب داخلي" : "e.g. Interior Design & Finishing" },
         { k: "tagline_show", l: S.lang === "ar" ? "إظهار الوصف" : "Show the tagline", type: "checkbox", v: ap.tagline_show !== false },
         { html: `<label class="f">${esc(L2("Colours", "الألوان"))}<a class="btn" href="#/settings?tab=theme">🎨 ${esc(L2("Open the Theme tab", "افتح تبويب السمات"))}</a></label>` },
         { k: "density", l: t("density"), type: "select", opts: [["comfortable", t("d_comfortable")], ["compact", t("d_compact")]], v: ap.density || "comfortable" },
         { k: "corners", l: t("corners"), type: "select", opts: [["rounded", t("cr_rounded")], ["square", t("cr_square")]], v: ap.corners || "rounded" },
         { html: `<div class="f">${t("app_logo")} — ${t("al_custom")}<input type="file" id="aplogo" accept="image/*"></div>` }], 3)}
-        ${ed ? `<div class="row" style="margin-top:10px"><button class="btn pri" data-a="apsave">${t("save")}</button></div>` : ""}</div>` : ""}`;
+        ${ed ? `<div class="row" style="margin-top:10px"><button class="btn pri" data-a="apsave">${t("save")}</button></div>` : ""}</div>` : ""}
+      <div class="card" id="iconcard"><h2>${esc(L2("App icon", "أيقونة التطبيق"))}</h2>
+        <p class="muted" style="margin-top:0">${esc(L2("The icon on phones and computers when the app is installed, and on the browser tab. Transparent — no white square.", "الأيقونة على الهاتف والكمبيوتر عند تثبيت التطبيق وفي تبويب المتصفح. بخلفية شفافة — بدون مربع أبيض."))}</p>
+        <div class="icon-tiles">${APP_ICONS.map(([k, en, ar]) => `<button type="button" class="icon-tile ${appIconKey() === k ? "on" : ""}" data-a="${isSuper() ? "icpick" : ""}" data-k="${k}" ${isSuper() ? "" : "disabled"}><img src="${esc(appIconSrc(k))}" alt=""><span>${esc(L2(en, ar))}</span></button>`).join("")}
+          ${S.boot.app_icon ? `<button type="button" class="icon-tile ${appIconKey() === "custom" ? "on" : ""}" data-a="${isSuper() ? "icpick" : ""}" data-k="custom"><img src="${esc(appIconSrc("custom"))}" alt=""><span>${esc(L2("Your own", "أيقونتك"))}</span></button>` : ""}</div>
+        <div class="row" style="gap:6px;flex-wrap:wrap;margin-top:10px">
+          ${isSuper() ? `<label class="btn" style="cursor:pointer">${svg("upload")} ${esc(L2("Upload your own (square PNG / SVG)", "رفع أيقونة خاصة (PNG / SVG مربعة)"))}<input type="file" id="icfile" accept="image/png,image/svg+xml,image/webp,image/jpeg" hidden></label>` : ""}
+          <button class="btn" type="button" data-a="icdl" data-s="512">${svg("download")} PNG 512</button><button class="btn" type="button" data-a="icdl" data-s="192">${svg("download")} PNG 192</button>
+          <button class="btn" type="button" data-a="icdl" data-s="1024">${svg("download")} PNG 1024</button><button class="btn" type="button" data-a="icdl" data-s="512" data-m="1">${svg("download")} ${esc(L2("Phone (filled) 512", "للهاتف (بخلفية) 512"))}</button></div>
+        <p class="muted" style="font-size:.85em">${esc(L2("Only super administrators can change it. A phone or computer that already installed the app keeps the old icon until the app is removed and installed again.", "يغيرها المدير العام فقط. الجهاز الذي ثبّت التطبيق سابقاً يحتفظ بالأيقونة القديمة حتى يُحذف التطبيق ويُثبّت من جديد."))}</p></div>`;
+    S.H.icpick = async el => { try { await api("PUT", "/api/settings", { appearance: { ...ap, app_icon: el.dataset.k } }); await refreshBoot(); applyAppIcon(); route(); toast(t("saved")); } catch (e) { fail(e); } };
+    S.H.icdl = async el => { try { const s = +el.dataset.s, url = await iconPng(appIconSrc(appIconKey()), s, !!el.dataset.m);
+      const a = document.createElement("a"); a.href = url; a.download = `app-icon-${el.dataset.m ? "filled-" : ""}${s}.png`; document.body.appendChild(a); a.click(); a.remove(); } catch (e) { fail(e); } };
+    const icf = $("#icfile"); if (icf) icf.addEventListener("change", async e => { const f = e.target.files[0]; if (!f) return;
+      try { const png = await iconPng(URL.createObjectURL(f), 512); await api("PUT", "/api/branding/image/app_icon", { mime: "image/png", data: png.split(",")[1] });
+        await api("PUT", "/api/settings", { appearance: { ...ap, app_icon: "custom" } }); await refreshBoot(); applyAppIcon(); route(); toast(t("saved")); } catch (err) { fail(err); } });
     S.H.mysave = () => { store.set("lang", $("#my_lang").value); store.set("font", $("#my_font").value); store.set("fontSize", $("#my_size").value); store.set("theme", $("#my_theme").value); saveNavMode($("#my_navmode").value); applyLook(); renderShell(); route(); };
     S.H.myreset = () => { ["font", "fontSize"].forEach(k => store.set(k, "")); store.set("theme", "auto"); saveNavMode("click"); applyLook(); renderShell(); route(); };
     let noAccent = !ap.accent;
@@ -6374,7 +6423,7 @@ async function openLink(l) {
 
 // ================================================================== the AI assistant
 const _applyLook = applyLook;
-applyLook = function () { if (S.boot && S.boot.ai && !S.aiFresh) S.ai = S.boot.ai; _applyLook(); };   // eslint-disable-line no-func-assign
+applyLook = function () { if (S.boot && S.boot.ai && !S.aiFresh) S.ai = S.boot.ai; _applyLook(); applyAppIcon(); };   // eslint-disable-line no-func-assign
 async function loadAiPolicy() {
   try { S.ai = await api("GET", "/api/ai-policy"); S.aiFresh = true; } catch { S.ai = null; }
   if (S.boot && S.boot.user) { const { parts } = parseHash(); renderNav(parts.join("/")); }

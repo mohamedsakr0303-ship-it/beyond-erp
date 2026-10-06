@@ -114,6 +114,22 @@ def _cached(cls):
     return make
 
 
+EXTRAS_SHEET = "_BeyondData"
+
+
+def _embed_extras(wb, db):
+    """What the sheets cannot hold (logos and icons, offers, loans, custody, rentals, sales, payroll, bank
+    reconciliation, recurring entries, purchase orders, services, ownership history, files…), as JSON in a very
+    hidden sheet, so importing this workbook back restores everything — exactly like a JSON backup."""
+    from . import interchange
+    blob = json.dumps(interchange.export_extras(db), ensure_ascii=False, default=str)
+    ws = wb.create_sheet(EXTRAS_SHEET)
+    ws["A1"] = "beyond-erp-extras-1"
+    for i in range(0, len(blob), 32000):          # an Excel cell holds 32,767 characters
+        ws.cell(2 + i // 32000, 1, blob[i:i + 32000])
+    ws.sheet_state = "veryHidden"
+
+
 def build_workbook(db, template=False, data=None, hide=None, lang="en", extend=None, cover_extra=None):
     """The Excel workbook. lang="ar": right-to-left with Arabic sheet names and labels (imports back the same).
     extend(wb) -> [sheet names]: add a company's own sheets before the cover is drawn (they are placed after the
@@ -997,6 +1013,8 @@ def build_workbook(db, template=False, data=None, hide=None, lang="en", extend=N
     if lang == "ar":
         from . import workbook_ar
         workbook_ar.localize(wb)
+    if not template:
+        _embed_extras(wb, db)
     wb.calculation.fullCalcOnLoad = True
     check_formula_limits(wb)
     buf = io.BytesIO()

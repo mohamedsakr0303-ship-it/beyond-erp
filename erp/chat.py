@@ -480,3 +480,88 @@ def export_zip(db, user, rid, company=""):
                                                 "messages": data}, ensure_ascii=False, indent=1))
     safe = re.sub(r"[^\w\-]+", "_", title).strip("_")[:60] or "chat"
     return buf.getvalue(), f"Chat_{safe}_{acc.today()}.zip"
+
+
+# ------------------------------------------------------------- backups (JSON export / the workbook's hidden data)
+def export_rows(db):
+    """Profiles and every conversation, with people by username (user numbers differ between installations)."""
+    names = {u["id"]: u["username"] for u in db.q("SELECT id, username FROM users")}
+    nm = lambda uid: names.get(uid, "") if uid else ""   # noqa: E731
+    profiles = [{"user": nm(p["user_id"]), **{k: p[k] for k in ("display_name", "job_title", "department", "phone", "bio",
+                                                                  "status", "avatar", "prefs", "updated_at")}}
+                for p in db.q("SELECT * FROM user_profiles") if nm(p["user_id"])]
+    rooms_out = []
+    for r in db.q("SELECT * FROM chat_rooms ORDER BY id"):
+        msgs = db.q("SELECT * FROM chat_messages WHERE room_id=? ORDER BY id", (r["id"],))
+        pos = {m["id"]: i for i, m in enumerate(msgs)}
+        files = {}
+        for f in db.q("SELECT f.* FROM chat_files f JOIN chat_messages m ON m.id=f.message_id WHERE m.room_id=? ORDER BY f.id", (r["id"],)):
+            files.setdefault(f["message_id"], []).append({k: f[k] for k in ("name", "mime", "size", "thumb", "data")})
+        rooms_out.append({
+            "kind": r["kind"], "name": r["name"], "topic": r["topic"], "icon": r["icon"],
+            "dm": [nm(int(x)) for x in (r["dm_key"] or "").split(":") if x.isdigit()],
+            "created_by": nm(r["created_by"]), "created_at": r["created_at"], "archived_at": r["archived_at"],
+            "archived_by": nm(r["archived_by"]),
+            "members": [nm(m["user_id"]) for m in db.q("SELECT user_id FROM chat_members WHERE room_id=?", (r["id"],)) if nm(m["user_id"])],
+            "messages": [{"user": nm(m["user_id"]), "body": m["body"],
+                          "mentions": [x if x == -1 else nm(x) for x in json.loads(m["mentions"] or "[]")],
+                          "reply_to": pos.get(m["reply_to"]), "created_at": m["created_at"], "edited_at": m["edited_at"],
+                          "deleted_at": m["deleted_at"], "files": files.get(m["id"], [])} for m in msgs],
+            "reads": {nm(x["user_id"]): pos[x["last_read"]] for x in db.q("SELECT * FROM chat_reads WHERE room_id=?", (r["id"],))
+                      if nm(x["user_id"]) and x["last_read"] in pos}})
+    return {"profiles": profiles, "rooms": rooms_out}
+
+
+def import_rows(db, data, mode, counts):
+    """Put back what export_rows wrote. People are matched by username; someone not in these books keeps their
+    messages without a name."""
+    ids = {u["username"]: u["id"] for u in db.q("SELECT id, username FROM users")}
+    uid = lambda n: ids.get(n) if n else None   # noqa: E731
+    for p in data.get("profiles") or []:
+        if isinstance(p, dict) and uid(p.get("user")):
+            db.conn.execute("INSERT OR REPLACE INTO user_profiles(user_id,display_name,job_title,department,phone,bio,status,avatar,prefs,updated_at) "
+                            "VALUES (?,?,?,?,?,?,?,?,?,?)", (uid(p["user"]), *[p.get(k) or "" for k in ("display_name", "job_title", "department",
+                                                                                                      "phone", "bio", "status", "avatar")],
+                                                             p.get("prefs") or "{}", p.get("updated_at")))
+    rooms_in = [r for r in data.get("rooms") or [] if isinstance(r, dict)]
+    if not rooms_in:
+        return
+    if mode != "replace" and db.one("SELECT 1 FROM chat_messages"):
+        return   # adding to books that already have conversations: keep theirs
+    for t in ("chat_reads", "chat_files", "chat_messages", "chat_members"):
+        db.conn.execute(f"DELETE FROM {t}")
+    db.conn.execute("DELETE FROM chat_rooms WHERE id<>1")
+    n = 0
+    for r in rooms_in:
+        if r.get("kind") == "general":
+            rid = 1
+            db.conn.execute("UPDATE chat_rooms SET name=?, topic=?, icon=? WHERE id=1", (r.get("name") or "General", r.get("topic") or "", r.get("icon") or ""))
+        else:
+            dm = [uid(x) for x in r.get("dm") or []]
+            if r.get("kind") == "dm" and (len(dm) != 2 or None in dm):
+                continue   # a direct conversation with someone who is not in these books
+            rid = db.conn.execute("INSERT INTO chat_rooms(kind,name,topic,icon,dm_key,created_by,created_at,archived_at,archived_by) VALUES (?,?,?,?,?,?,?,?,?)",
+                                  (r.get("kind") or "room", r.get("name") or "", r.get("topic") or "", r.get("icon") or "",
+                                   ":".join(str(x) for x in sorted(dm)) if r.get("kind") == "dm" else None, uid(r.get("created_by")),
+                                   r.get("created_at"), r.get("archived_at"), uid(r.get("archived_by")))).lastrowid
+        for m in r.get("members") or []:
+            if uid(m):
+                db.conn.execute("INSERT OR IGNORE INTO chat_members(room_id,user_id) VALUES (?,?)", (rid, uid(m)))
+        new_ids = []
+        for m in r.get("messages") or []:
+            mentions = [x if x == -1 else uid(x) for x in m.get("mentions") or []]
+            reply = m.get("reply_to")
+            mid = db.conn.execute("INSERT INTO chat_messages(room_id,user_id,body,mentions,reply_to,created_at,edited_at,deleted_at) VALUES (?,?,?,?,?,?,?,?)",
+                                  (rid, uid(m.get("user")), m.get("body") or "", json.dumps([x for x in mentions if x is not None]),
+                                   new_ids[reply] if isinstance(reply, int) and 0 <= reply < len(new_ids) else None,
+                                   m.get("created_at") or acc.now_iso(), m.get("edited_at"), m.get("deleted_at"))).lastrowid
+            new_ids.append(mid)
+            for f in m.get("files") or []:
+                db.conn.execute("INSERT INTO chat_files(message_id,name,mime,size,thumb,data) VALUES (?,?,?,?,?,?)",
+                                (mid, f.get("name") or "file", f.get("mime") or "application/octet-stream", int(f.get("size") or 0),
+                                 f.get("thumb") or "", f.get("data") or ""))
+            n += 1
+        for who, i in (r.get("reads") or {}).items():
+            if uid(who) and isinstance(i, int) and 0 <= i < len(new_ids):
+                db.conn.execute("INSERT OR REPLACE INTO chat_reads(room_id,user_id,last_read) VALUES (?,?,?)", (rid, uid(who), new_ids[i]))
+    counts["Chat messages"] = n

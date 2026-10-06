@@ -582,6 +582,54 @@ class Workspace(unittest.TestCase):
         self.nodes[1][0].cloud.configure(url, "anon")
 
 
+class ExportRoundTrip(unittest.TestCase):
+    """Everything exported (JSON backup or the Excel workbook) comes back the same: every module, settings,
+    appearance, logos and icon, partner terms, chat and profiles."""
+    SKIP = {"id", "created_at", "updated_at", "created_by", "entry_id", "ts", "history", "edited_at"}
+    LOCAL = {"sessions", "audit_log", "cloud_local", "ai_usage", "sqlite_sequence", "users", "ai_threads", "chat_members",
+             "chat_reads", "user_profiles"}
+
+    def rows(self, db, t):
+        import collections
+        cols = [c[1] for c in db.conn.execute(f"PRAGMA table_info({t})").fetchall()]
+        keep = [c for c in cols if c not in self.SKIP and not c.endswith("_id")]
+        return collections.Counter(json.dumps(list(r), default=str) for r in db.conn.execute(f"SELECT {','.join(keep) or '1'} FROM {t}"))
+
+    def people(self, db, order):
+        for n in order:
+            db.x("INSERT INTO users(username,pw_hash) VALUES (?,?)", (n, "x"))
+
+    def test_json_and_workbook_round_trip(self):
+        from erp import demo, chat, workbook
+        src = Database(":memory:")
+        demo.load(src, "admin")
+        src.set_setting("appearance", json.dumps({"app_name": "RT", "brand_align": "center", "app_icon": "seal"}))
+        src.conn.execute("INSERT OR REPLACE INTO assets(key,mime,w,h,data) VALUES ('app_icon','image/png',1,1,'AAAA')")
+        src.conn.execute("UPDATE partners SET salary=300000, drawings_interest=0.1, profit_share=0.5")
+        self.people(src, ["admin", "sara"])
+        admin, sara = (dict(src.one("SELECT * FROM users WHERE username=?", (n,))) for n in ("admin", "sara"))
+        chat.save_profile(src, sara["id"], {"display_name": "Sara K"})
+        chat.send(src, admin, 1, {"body": "Hello", "files": [{"name": "a.txt", "mime": "text/plain", "data": "aGk="}]})
+        chat.send(src, sara, chat.direct(src, admin, sara["id"]), {"body": "dm"})
+        path = str(Path(tempfile.mkdtemp()) / "wb.xlsx")
+        with open(path, "wb") as f:
+            f.write(workbook.build_workbook(src))
+        for label, data in (("json", interchange.read_json(interchange.to_json(src).encode())), ("xlsx", interchange.read_xlsx(path))):
+            dst = Database(":memory:")
+            self.people(dst, ["sara", "admin"])          # same people, other user numbers
+            interchange.import_data(dst, data, mode="replace", user="admin")
+            tables = [r[0] for r in src.conn.execute("SELECT name FROM sqlite_master WHERE type='table'") if r[0] not in self.LOCAL]
+            differ = {t for t in tables if self.rows(src, t) != self.rows(dst, t)}
+            # journal_entries: internal invoice-link numbers are renumbered; settings: defaults added; chat_rooms: the
+            # direct-message key holds user numbers
+            self.assertLessEqual(differ, {"journal_entries", "settings", "chat_rooms"}, label)
+            self.assertEqual(a.income_statement(src)["net_profit"], a.income_statement(dst)["net_profit"])
+            self.assertEqual(self.rows(src, "journal_lines"), self.rows(dst, "journal_lines"))
+            self.assertEqual(dst.one("SELECT data FROM assets WHERE key='app_icon'")["data"], "AAAA")
+            self.assertEqual([m["body"] for m in dst.q("SELECT body FROM chat_messages ORDER BY id")], ["Hello", "dm"])
+            self.assertEqual(dst.one("SELECT COUNT(*) n FROM chat_files")["n"], 1)
+
+
 class ProfitAppropriation(unittest.TestCase):
     """Sharing the year's profit: legal reserve → salaries + interest on capital → interest on drawings → the rest by
     the profit-sharing ratio, onto the partners' current accounts (capital untouched)."""

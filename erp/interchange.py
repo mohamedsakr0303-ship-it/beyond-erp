@@ -12,6 +12,7 @@ import csv
 import datetime as _dt
 import io
 import json
+import re
 
 from . import accounting as acc
 from . import bankrec, custody, loans, payroll, recurring, rentals, sales
@@ -116,6 +117,7 @@ SHEETS = [
               C("fee_pct", "Fee %", "نسبة الأتعاب", kind="pct", width=8),
               C("contract_value", "Contract Value", "قيمة العقد", kind="money"),
               C("overhead_pct", "Overhead Allocation %", "نسبة تحميل المصروفات المشتركة", kind="pct", width=10),
+              C("negotiation", "Negotiation Earnings", "أرباح التفاوض", width=12, choices=["", "keep", "pass"]),
               C("customer", "Customer", "العميل", width=24), C("notes", "Notes", "ملاحظات", width=24)]},
     {"name": "Parties", "ar": "العملاء والموردون", "module": "sales",
      "title": "Customers & suppliers master — tax registration numbers and addresses are needed for e-invoices",
@@ -250,11 +252,13 @@ SHEETS = [
               C("qty", "Qty", "الكمية", kind="num", width=8), C("unit", "Unit", "الوحدة", width=8),
               C("rate", "Unit Cost", "تكلفة الوحدة", kind="money"),
               C("savings", "Negotiation Discount", "خصم التفاوض", kind="money"),
+              C("negotiation", "Discount Kept As", "معالجة الخصم", width=10, choices=["", "keep", "pass"],
+                note="keep = company earnings (cost stays at full price) · pass = lower cost · blank = the business unit's rule"),
               C("paid", "Paid Now", "المدفوع", kind="money"), C("method", "Payment Method", "طريقة الدفع", choices=METHODS),
               C("paid_from", "Paid From", "دفع من حساب", kind="acct", role="bank"),
               C("payable_account", "Payable Account", "حساب الدائنين", kind="acct", role="ap"),
               C("vat_code", "VAT Code", "كود ض.ق.م", kind="tax", width=10), C("wht_code", "WHT Code", "كود خصم وتحصيل", kind="tax", width=10),
-              C("total", "Total Cost", "صافي التكلفة", kind="calc", calc="=ROUND(N({qty})*N({rate})-N({savings}),2)"),
+              C("total", "Total Cost", "صافي التكلفة", kind="calc", calc="=ROUND(N({qty})*N({rate})-IF({negotiation}=\"keep\",0,N({savings})),2)"),
               C("vat_amt", "Input VAT", "ض.ق.م المدخلات", kind="calc", calc="=ROUND({total}*" + TAXRATE("{vat_code}") + ",2)"),
               C("wht_amt", "WHT Withheld", "الخصم والتحصيل", kind="calc", calc="=ROUND({total}*" + TAXRATE("{wht_code}") + ",2)"),
               C("unpaid", "Unpaid", "المتبقي", kind="calc", calc="={total}+{vat_amt}-{wht_amt}-N({paid})"),
@@ -494,7 +498,7 @@ def export_data(db):
     for b in bus.values():
         out["Business Units"].append({k: b[k] for k in ("code", "name", "type", "location", "area", "start_date",
                                                          "status", "basis", "fee_pct", "overhead_pct", "customer",
-                                                         "notes")}
+                                                         "notes", "negotiation")}
                                      | {"contract_value": to_major(b["contract_value"])})
     for p in db.q("SELECT * FROM partners ORDER BY id"):
         out["Partners"].append({"name": p["name"], "default_share": p["default_share"],
@@ -666,7 +670,8 @@ def _entry_to_row(e, accounts):
         return "Direct Costs", base | s | taxes | {"account": dr[0]["account"], "description": e["memo"], "vendor": e["party"],
                                            "deal_ref": m.get("deal_ref", ""), "deal_status": m.get("deal_status", ""),
                                            "qty": m.get("qty"), "unit": m.get("unit", ""), "rate": m.get("rate"),
-                                           "savings": m.get("savings") or "", "method": m.get("method", "")}
+                                           "savings": m.get("savings") or "", "method": m.get("method", ""),
+                                           "negotiation": "pass" if m.get("savings") else ""}   # booked at the lower cost
     if k == "Operating Expense" and len(dr) == 1 and typ(dr[0]["account"]) == "Expense":
         s = split(cr)
         if s is None:
@@ -716,13 +721,16 @@ def _norm_header(h):
 def header_map(sheet, headers):
     """Map incoming header cells to column keys (accepts key, English label, or 'English / Arabic')."""
     lookup = {}
-    for c in sheet["cols"]:
-        lookup[f"{c['en']} / {c['ar']}".lower()] = c["key"]
-        lookup[c["key"].lower()] = c["key"]
-        lookup[c["en"].lower()] = c["key"]
-        lookup[c["ar"]] = c["key"]
-    return {i: lookup.get(str(h or "").strip().lower()) or lookup.get(_norm_header(h)) or lookup.get(str(h or "").strip())
-            for i, h in enumerate(headers)}
+    for c in sheet["cols"]:   # an input column wins over a calculated helper column with the same label
+        for k in (f"{c['en']} / {c['ar']}".lower(), c["key"].lower(), c["en"].lower(), c["ar"]):
+            lookup.setdefault(k, c["key"])
+    out, used = {}, set()
+    for i, h in enumerate(headers):
+        k = lookup.get(str(h or "").strip().lower()) or lookup.get(_norm_header(h)) or lookup.get(str(h or "").strip())
+        out[i] = k if k not in used else None   # the same column twice: the first one counts
+        if k:
+            used.add(k)
+    return out
 
 
 def _cell(v, col):
@@ -775,6 +783,14 @@ def read_xlsx(path):
     data = {}
     by_ar = {s["ar"]: s for s in SHEETS}
     for ws in wb.worksheets:
+        if ws.title == "_BeyondData":   # everything the sheets cannot hold (see workbook._embed_extras)
+            cells = [r[0] for r in ws.iter_rows(min_col=1, max_col=1, values_only=True)]
+            if cells and cells[0] == "beyond-erp-extras-1":
+                try:
+                    data["_extras"] = json.loads("".join(str(c) for c in cells[1:] if c))
+                except ValueError:
+                    pass
+            continue
         sheet = SHEET_BY_NAME.get(ws.title) or by_ar.get(ws.title.strip())   # English or Arabic workbook
         if not sheet:
             continue
@@ -836,7 +852,12 @@ def export_extras(db):
             "custodies": custody.export_rows(db), "rentals": rentals.export_rows(db), "payroll": payroll.export_rows(db),
             "sales": sales.export_rows(db), "bank": bankrec.export_rows(db), "recurring": recurring.export_rows(db),
             "entry_meta": _entry_meta_export(db), "attachments": _attachments_export(db),
-            "purchase_orders": _po_export(db), "services": _svc_export(db)}
+            "purchase_orders": _po_export(db), "services": _svc_export(db), "chat": _chat_export(db)}
+
+
+def _chat_export(db):
+    from . import chat
+    return chat.export_rows(db)
 
 
 def _svc_export(db):
@@ -876,18 +897,24 @@ def _entry_meta_import(db, rows):
     for e in db.q("SELECT e.id, e.date, e.kind, e.memo, e.party, e.ref, e.meta, (SELECT SUM(debit) FROM journal_lines WHERE entry_id=e.id) total "
                   "FROM journal_entries e WHERE e.status='posted' ORDER BY e.id"):
         pool.setdefault(json.dumps(_entry_fp(e)), []).append(e)
+    loose = {}   # the same entry re-created by a sheet that does not carry its party (e.g. a stock issue for a sale)
+    for k, q in pool.items():
+        f = json.loads(k)
+        loose.setdefault(json.dumps(f[:3] + f[4:]), []).extend(q)
     n = 0
     for r in rows or []:
         if not isinstance(r, dict) or not isinstance(r.get("fp"), list):
             continue
-        q = pool.get(json.dumps(r["fp"]))
+        q = pool.get(json.dumps(r["fp"])) or [e for e in loose.get(json.dumps(r["fp"][:3] + r["fp"][4:]), []) if not e.get("_used")]
+        q = [e for e in q if not e.get("_used")]
         if not q:
             continue
-        e = q.pop(0)
+        e = q[0]
+        e["_used"] = True
         cur = json.loads(e["meta"] or "{}")
         meta = {**(r.get("meta") or {}), **{k: v for k, v in cur.items() if v not in (None, "", {}, [])}}
-        db.conn.execute("UPDATE journal_entries SET meta=?, ref=? WHERE id=?",
-                        (json.dumps(meta, ensure_ascii=False), r.get("ref") or e["ref"] or "", e["id"]))
+        db.conn.execute("UPDATE journal_entries SET meta=?, ref=?, party=CASE WHEN party='' OR party IS NULL THEN ? ELSE party END WHERE id=?",
+                        (json.dumps(meta, ensure_ascii=False), r.get("ref") or e["ref"] or "", r["fp"][3] or "", e["id"]))
         n += 1
     return n
 
@@ -963,6 +990,9 @@ def _imp_extras(db, ex, mode, counts):
         if mode == "replace":
             db.conn.execute("DELETE FROM attachments")
         counts["Attached files"] = attachments.import_rows(db, ex["attachments"])
+    if isinstance(ex.get("chat"), dict):
+        from . import chat
+        chat.import_rows(db, ex["chat"], mode, counts)
     if ex.get("ownership_changes"):
         if mode == "replace":
             db.conn.execute("DELETE FROM ownership_changes")
@@ -1159,14 +1189,15 @@ def _imp_bu(db, r):
             acc.num(r.get("area"), "area"), acc.text(r.get("start_date")), acc.text(r.get("status")) or "In Progress",
             r.get("basis") if r.get("basis") in acc.BILLING_BASES else "Cost-Plus %", _pct(r.get("fee_pct")),
             to_minor(acc.num(r.get("contract_value"), "contract value")), _pct(r.get("overhead_pct")),
-            acc.text(r.get("notes"), maxlen=4000), acc.text(r.get("customer")))
+            acc.text(r.get("notes"), maxlen=4000), acc.text(r.get("customer")),
+            acc.text(r.get("negotiation")).lower() if acc.text(r.get("negotiation")).lower() in acc.NEGOTIATION_MODES else "")
     code = acc.text(r.get("code"), "code", required=True)
     if db.one("SELECT 1 FROM business_units WHERE code=?", (code,)):
         db.conn.execute("UPDATE business_units SET name=?,type=?,location=?,area=?,start_date=?,status=?,basis=?,"
-                        "fee_pct=?,contract_value=?,overhead_pct=?,notes=?,customer=? WHERE code=?", vals + (code,))
+                        "fee_pct=?,contract_value=?,overhead_pct=?,notes=?,customer=?,negotiation=? WHERE code=?", vals + (code,))
     else:
         db.conn.execute("INSERT INTO business_units(name,type,location,area,start_date,status,basis,fee_pct,"
-                        "contract_value,overhead_pct,notes,customer,code) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        "contract_value,overhead_pct,notes,customer,negotiation,code) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         vals + (code,))
 
 
@@ -1298,7 +1329,8 @@ def _imp_journal(db, rows, errors, counts, user):
         try:
             acc.record_journal(db, {"date": first.get("date"), "kind": first.get("kind") or "Journal Voucher",
                                     "bu_code": first.get("bu_code"), "party": first.get("party"),
-                                    "ref": first.get("ref") or v, "memo": first.get("memo"), "deal_ref": first.get("deal_ref"),
+                                    "ref": first.get("ref") or ("" if re.fullmatch(r"JV-\d+", v) else v), "memo": first.get("memo"),
+                                    "deal_ref": first.get("deal_ref"),
                                     "lines": [{"account": r.get("account"), "debit": r.get("debit"),
                                                "credit": r.get("credit"), "party": r.get("line_party")}
                                               for _, r in items]}, user)
