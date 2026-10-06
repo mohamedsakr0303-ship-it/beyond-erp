@@ -179,7 +179,7 @@ const ROUTE_IC = { dashboard: "grid", bus: "brief", offers: "mail", receipts: "i
   products: "box", sales: "cart", installments: "clock", subs: "repeat", boqs: "list", prices: "tag", pos: "clip", costs: "hammer", expenses: "receipt",
   payments: "out", payables: "wallet", contacts: "phone", negotiations: "scale", stock: "boxes", moves: "swap", warehouses: "store", rentals: "building",
   rentfleet: "layers", rentcalc: "calc", payruns: "cash", employees: "user", crew: "ruler", payroll: "pen", payset: "gear", "assets-overview": "pie",
-  cash: "wallet", assets: "truck", depreciation: "down", loans: "bank", custody: "coins", partners: "hands", taxcodes: "pct", "report/tax": "chart",
+  cash: "wallet", assets: "truck", depreciation: "down", loans: "bank", custody: "coins", partners: "hands", taxcodes: "pct", "report/tax": "chart", extracts: "clip",
   einvoice: "send", journal: "book", ledger: "bookopen", coa: "tree", bankrec: "compare", recurring: "repeat", budgets: "target",
   "report/partner_pack": "pack", "report/income_statement": "chart", "report/balance_sheet": "layers", "report/cash_flow": "swap",
   "report/trial_balance": "list", "report/bu_pnl": "pie", "budget-report": "target", aging: "hour", statement: "file", data: "updown",
@@ -187,6 +187,92 @@ const ROUTE_IC = { dashboard: "grid", bus: "brief", offers: "mail", receipts: "i
 const GROUP_IC = { g_home: "home", g_bu: "brief", g_sales: "in", g_shop: "cart", g_est: "list", g_buy: "out", g_stock: "boxes", g_rent: "building",
   g_hr: "users", g_assets: "pie", g_fin: "bank", g_equity: "hands", g_tax: "pct", g_acc: "book", g_rep: "chart", g_sys: "gear" };
 const svg = (name, cls = "") => `<svg class="i ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${IC[name] || IC.grid}</svg>`;
+
+// ---------------------------------------------------------- themes: ready-made sets + your own, per browser or company-wide
+const THEME_SWATCHES = ["#ffffff", "#6c1cf5", "#3b7d4f", "#4c0fb0", "#e03a4b", "#ff7f11", "#ffc107", "#20c997", "#17a2b8", "#956194", "#343a40", "#262626", "#4a85f0", "#52b52d"];
+const THEME_PRESETS = [
+  { id: "default", en: "Default", ar: "الافتراضي", mode: "auto", primary: "", nav: "", header: "", sidebar: "" },
+  { id: "evergreen", en: "Evergreen", ar: "أخضر دائم", mode: "light", primary: "#3b7d4f", nav: "#3b7d4f", header: "", sidebar: "#3b7d4f" },
+  { id: "graphite", en: "Graphite", ar: "جرافيت", mode: "light", primary: "#3b7d4f", nav: "#343a40", header: "#3b7d4f", sidebar: "" },
+  { id: "violet", en: "Violet", ar: "بنفسجي", mode: "light", primary: "#6c1cf5", nav: "#6c1cf5", header: "", sidebar: "" },
+  { id: "mint", en: "Mint", ar: "نعناعي", mode: "light", primary: "#20c997", nav: "", header: "", sidebar: "#20c997" },
+  { id: "night", en: "Night forest", ar: "غابة ليلية", mode: "dark", primary: "#3e9a64", nav: "#3b7d4f", header: "", sidebar: "#3b7d4f" },
+  { id: "crimson", en: "Crimson", ar: "قرمزي", mode: "light", primary: "#e03a4b", nav: "#e03a4b", header: "", sidebar: "" },
+  { id: "ocean", en: "Ocean", ar: "محيط", mode: "light", primary: "#4a85f0", nav: "#1e3a8a", header: "", sidebar: "#1e3a8a" },
+  { id: "midnight", en: "Midnight", ar: "منتصف الليل", mode: "dark", primary: "#5b9dff", nav: "#111827", header: "", sidebar: "#111827" },
+  { id: "sunset", en: "Sunset", ar: "غروب", mode: "light", primary: "#ff7f11", nav: "#262626", header: "", sidebar: "#262626" },
+  { id: "plum", en: "Plum", ar: "برقوقي", mode: "light", primary: "#956194", nav: "#956194", header: "#956194", sidebar: "" },
+];
+const hexOk = c => /^#[0-9a-fA-F]{6}$/.test(c || "");
+// text that stays readable on a colour: dark ink on light colours, white on dark ones
+const inkOn = c => { const n = parseInt(c.slice(1), 16), r = n >> 16, g = (n >> 8) & 255, b = n & 255;
+  const L = x => { x /= 255; return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4); };
+  return 0.2126 * L(r) + 0.7152 * L(g) + 0.0722 * L(b) > 0.42 ? "#1e2430" : "#ffffff"; };
+const customThemes = () => [...((S.boot.settings.appearance || {}).custom_themes || []), ...store.get("customThemes", [])];
+// mine (this browser) → the company's default → the built-in default
+function activeTheme() { return store.get("themeCfg", null) || (S.boot && S.boot.settings && (S.boot.settings.appearance || {}).theme) || null; }
+function applyTheme(th) {
+  const de = document.documentElement, st = de.style;
+  ["--sb-bg", "--sb-ink", "--nav-bg", "--nav-ink", "--top-bg", "--top-ink"].forEach(v => st.removeProperty(v));
+  ["nav", "top"].forEach(k => { delete de.dataset[k]; });
+  if (!th) return;
+  if (store.get("theme", "") === "" && th.mode) { if (th.mode === "auto") de.removeAttribute("data-theme"); else de.setAttribute("data-theme", th.mode); }
+  if (hexOk(th.primary)) { st.setProperty("--brand", th.primary); st.setProperty("--accent", th.primary); }
+  if (hexOk(th.sidebar)) { de.dataset.sidebar = "custom"; st.setProperty("--sb-bg", th.sidebar); st.setProperty("--sb-ink", inkOn(th.sidebar)); }
+  if (hexOk(th.nav)) { de.dataset.nav = "custom"; st.setProperty("--nav-bg", th.nav); st.setProperty("--nav-ink", inkOn(th.nav)); }
+  if (hexOk(th.header)) { de.dataset.top = "custom"; st.setProperty("--top-bg", th.header); st.setProperty("--top-ink", inkOn(th.header)); }
+}
+// a theme picked here sets the light / dark mode too (the top-bar button still switches it any time)
+function useTheme(th) { store.set("themeCfg", th); store.set("theme", th && th.mode && th.mode !== "auto" ? th.mode : "auto"); applyLook(); renderShell(); route(); }
+function themeCard(th, on, del) {
+  const p = th.primary || "#2f8a57", nav = th.nav || (th.mode === "dark" ? "#1b1c1c" : "#ffffff"), sb = th.sidebar || (th.mode === "dark" ? "#1b1c1c" : "#ffffff"),
+    hd = th.header || (th.mode === "dark" ? "#161717" : "#f5f6f8"), bg = th.mode === "dark" ? "#161717" : "#f5f6f8", card = th.mode === "dark" ? "#212222" : "#ffffff";
+  return `<button type="button" class="thc ${on ? "on" : ""}" data-a="thpick" data-id="${esc(th.id)}">
+    <span class="thp" style="--p:${p};--nav:${nav};--sb:${sb};--hd:${hd};--bg:${bg};--card:${card}"><i class="n"></i><i class="h"></i><i class="s"></i><i class="b"><b></b><b></b><b></b><u></u></i></span>
+    <span class="thn">${esc(S.lang === "ar" ? th.ar || th.en || th.name : th.en || th.name)}${on ? " ✓" : ""}</span>${del ? `<span class="thdel" data-a="thdel" data-id="${esc(th.id)}" title="${esc(t("delete"))}">✕</span>` : ""}</button>`;
+}
+async function themeTab(view, head) {
+  const ap = S.boot.settings.appearance || {}, admin = can("settings.branding", "edit");
+  const cur = activeTheme() || THEME_PRESETS[0];
+  let draft = { mode: cur.mode || "auto", primary: cur.primary || "", nav: cur.nav || "", header: cur.header || "", sidebar: cur.sidebar || "" };
+  const all = () => [...THEME_PRESETS, ...customThemes()];
+  const same = (a, b) => ["mode", "primary", "nav", "header", "sidebar"].every(k => (a[k] || "") === (b[k] || ""));
+  const sw = (key, label) => `<div class="thsw"><div class="thl">${esc(label)}</div><div class="thgrid">
+      <button type="button" class="sw none ${!draft[key] ? "on" : ""}" data-a="thset" data-k="${key}" data-v="" title="${esc(t("default"))}"></button>
+      ${THEME_SWATCHES.map(c => `<button type="button" class="sw ${draft[key] === c ? "on" : ""}" style="background:${c}" data-a="thset" data-k="${key}" data-v="${c}" title="${c}"></button>`).join("")}
+      <label class="sw pick" title="${esc(L2("Any colour", "أي لون"))}"><input type="color" data-input="thcol" data-k="${key}" value="${hexOk(draft[key]) ? draft[key] : "#3b7d4f"}"></label></div></div>`;
+  const draw = () => {
+    view.innerHTML = head + `<div class="card"><h2>${esc(L2("Ready-made themes", "سمات جاهزة"))}<span class="spacer"></span>${store.get("themeCfg", null) ? `<button class="btn sm" data-a="threset">${esc(L2("Back to the company default", "الرجوع لسمة الشركة"))}</button>` : ""}</h2>
+        <p class="muted">${esc(L2("Click one to use it on this device. The ☀/☾ button in the top bar still switches light and dark any time.", "اضغط على سمة لاستخدامها على هذا الجهاز. زر ☀/☾ أعلى الشاشة يبدل بين الفاتح والداكن في أي وقت."))}</p>
+        <div class="thgal">${all().map(th => themeCard(th, same(th, cur), !!th.custom)).join("")}</div></div>
+      <div class="card"><h2>${esc(L2("Build your own", "صمم سمتك"))}</h2>
+        <div class="grid g2"><label class="f">${esc(L2("Background", "الخلفية"))}<select data-change="thmode">${[["auto", L2("Follow the device", "حسب الجهاز")], ["light", L2("Light", "فاتح")], ["dark", L2("Dark", "داكن")]].map(([v, l]) => `<option value="${v}" ${draft.mode === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label><div></div>
+          ${sw("primary", L2("Primary colour", "اللون الأساسي"))}${sw("nav", L2("Navigation header", "رأس القائمة"))}${sw("header", L2("Header", "الشريط العلوي"))}${sw("sidebar", L2("Sidebar", "القائمة الجانبية"))}</div>
+        <p class="muted">${esc(L2("Changes show at once. Text colours adjust by themselves so everything stays readable.", "التغييرات تظهر فوراً، وألوان النص تتعدل تلقائياً لتبقى واضحة."))}</p>
+        <div class="row" style="margin-top:8px"><input id="thname" class="in" style="max-width:240px" placeholder="${esc(L2("Name for your theme", "اسم السمة"))}">
+          <button class="btn pri" data-a="thsave">${esc(L2("Save as custom theme", "حفظ كسمة خاصة"))}</button>
+          ${admin ? `<button class="btn" data-a="thcompany">${esc(L2("Use for everyone (company default)", "استخدامها للجميع (سمة الشركة)"))}</button>` : ""}</div></div>`;
+  };
+  const preview = () => { store.set("themeCfg", { ...draft }); store.set("theme", draft.mode === "auto" ? "auto" : draft.mode); applyLook(); };
+  Object.assign(S.H, {
+    thpick: (el, e) => { if (e && e.target.closest("[data-a=thdel]")) return; const th = all().find(x => x.id === el.dataset.id); if (!th) return;
+      useTheme(th.id === "default" ? null : { mode: th.mode, primary: th.primary, nav: th.nav, header: th.header, sidebar: th.sidebar, id: th.id }); },
+    threset: () => { store.set("themeCfg", null); store.set("theme", "auto"); applyLook(); renderShell(); route(); },
+    thset: el => { draft[el.dataset.k] = el.dataset.v; preview(); draw(); },
+    thcol: el => { draft[el.dataset.k] = el.value; preview(); },
+    thmode: el => { draft.mode = el.value; preview(); draw(); },
+    thdel: async el => { const id = el.dataset.id; store.set("customThemes", store.get("customThemes", []).filter(x => x.id !== id));
+      if ((ap.custom_themes || []).some(x => x.id === id) && admin) await api("PUT", "/api/settings", { appearance: { ...ap, custom_themes: ap.custom_themes.filter(x => x.id !== id) } }).catch(fail);
+      await refreshBoot(); route(); },
+    thsave: async () => { const name = ($("#thname").value || "").trim() || L2("My theme", "سمتي"); const th = { ...draft, id: "c" + Date.now().toString(36), name, en: name, ar: name, custom: true };
+      try { if (admin) await api("PUT", "/api/settings", { appearance: { ...(S.boot.settings.appearance || {}), custom_themes: [...(ap.custom_themes || []), th] } });
+        else store.set("customThemes", [...store.get("customThemes", []), th]);
+        await refreshBoot(); useTheme(th); toast(t("saved")); } catch (e) { fail(e); } },
+    thcompany: async () => { try { await api("PUT", "/api/settings", { appearance: { ...(S.boot.settings.appearance || {}), theme: { ...draft } } });
+      store.set("themeCfg", null); await refreshBoot(); applyLook(); renderShell(); route(); toast(t("saved")); } catch (e) { fail(e); } },
+  });
+  draw();
+}
 
 function applyLook() {
   const st = S.boot.settings || {};
@@ -204,6 +290,7 @@ function applyLook() {
   ["--brand", "--accent"].forEach(v => de.style.removeProperty(v));
   if (/^#[0-9a-fA-F]{6}$/.test(ap.accent || "")) { de.style.setProperty("--brand", ap.accent); de.style.setProperty("--accent", ap.accent); }
   de.dataset.sidebar = ap.sidebar || "light"; de.dataset.density = ap.density || "comfortable"; de.dataset.corners = ap.corners || "rounded";
+  applyTheme(activeTheme());
   document.title = (ap.app_name || ((st.company_name || "Beyond") + " ERP"));
 }
 // Settings → Menus presets: the sections a kind of business usually does not use (ticks only; nothing is saved until Save)
@@ -394,7 +481,7 @@ S.GLOBAL_H = {
     async v => { await api("PUT", "/api/me/password", v); toast(t("saved")); return true; }),
   quicknew: el => newItem(el.dataset.doc),
   coswitch: () => companySwitcher(),
-  goback: () => { const h = parseHash().parts; const parent = { bu: "bus", invoice: "invoices", boq: "boqs", offer: "offers", offertypes: "offers", report: "dashboard", loan: "loans", cust: "custody", rental: "rentals", product: "products", sale: "sales", bankstmt: "bankrec" }[h[0]];
+  goback: () => { const h = parseHash().parts; const parent = { bu: "bus", invoice: "invoices", boq: "boqs", offer: "offers", offertypes: "offers", report: "dashboard", loan: "loans", cust: "custody", rental: "rentals", product: "products", sale: "sales", bankstmt: "bankrec", extract: "extracts" }[h[0]];
     if (S.navCount > 0) history.back(); else location.hash = "#/" + (parent || "dashboard"); },
   closeDrawer: () => closeDrawer(),
 };
@@ -403,7 +490,7 @@ function renderNav(active) {
   let html = "", title = "", group = "";
   const open = new Set(store.get("navOpen", "").split(",").filter(Boolean));
   const parent = { bu: "bus", invoice: "invoices", boq: "boqs", offer: "offers", offertypes: "offers", loan: "loans", cust: "custody",
-    rental: "rentals", product: "products", sale: "sales", bankstmt: "bankrec" }[active.split("/")[0]];
+    rental: "rentals", product: "products", sale: "sales", bankstmt: "bankrec", extract: "extracts" }[active.split("/")[0]];
   for (const [g, items] of window.MENU) {
     const vis = items.filter(i => can(i[2]) && shown(i[2]));
     if (!vis.length) continue;
@@ -1394,6 +1481,105 @@ async function supplierDiscountForm(party, account, balance) {
 }
 
 // ---------------------------------------------------------- invoices & BOQ
+// ------------------------------------------------------ extracts (مستخلصات): create, follow up, adjust
+const XST = { draft: ["Draft", "مسودة", ""], unpaid: ["Issued — not paid", "صدر — لم يُحصّل", "warn"], part: ["Part paid", "محصل جزئياً", "warn"], paid: ["Paid", "محصل", "ok"] };
+const xstChip = k => { const v = XST[k] || XST.draft; return `<span class="chip ${v[2]}">${esc(L2(v[0], v[1]))}</span>`; };
+const xdocLang = () => store.get("xdocLang", (S.boot.settings.language || "ar") === "en" ? "en" : "ar");
+PAGES.extracts = async (view, parts, q) => {
+  const d = await api("GET", "/api/extracts-board?" + qs(q));
+  const add = can("sales.extracts", "add");
+  const k = (l, v, cls = "") => `<div class="kpi"><div class="l">${esc(l)}</div><div class="v ${cls}">${money(v)}</div></div>`;
+  S.H.xnext = async el => { try { const r = await api("POST", `/api/rentals/${el.dataset.r}/next-extract`, {}); toast(L2("Draft extract ready — check it and issue it", "تم تجهيز مسودة المستخلص — راجعها ثم أصدرها")); location.hash = "#/extract/" + r.id; } catch (e) { fail(e); } };
+  S.H.xnew = el => newExtract(el.dataset.bu ? +el.dataset.bu : null);
+  view.innerHTML = `<div class="toolbar">${add ? `<button class="btn pri" data-a="xnew">+ ${L2("New extract", "مستخلص جديد")}</button>` : ""}<span class="spacer"></span></div>
+    <div class="kpis">${k(L2("Billed (issued extracts)", "المفوتر (مستخلصات صادرة)"), d.totals.billed)}${k(L2("Collected", "المحصل"), d.totals.collected, "pos")}
+      ${k(L2("Clients owe", "المستحق على العملاء"), d.totals.owed, d.totals.owed > 0 ? "neg" : "")}<div class="kpi"><div class="l">${esc(L2("Drafts to issue", "مسودات للإصدار"))}</div><div class="v">${d.totals.drafts}</div></div></div>
+    <div class="xsites">${d.sites.map(s => { const p = s.billed ? Math.min(1, (s.collected || 0) / s.billed) : 0;
+      return `<div class="card xsite"><div class="xs-top"><span class="dot ${s.owed > 0 ? "warn" : "ok"}">${svg("building")}</span><div class="xs-t"><b>${esc(s.bu_name || s.bu_code)}</b><small>${esc(s.client || "")} · ${esc(s.bu_code || "")}${s.rental_code ? " · " + esc(s.rental_code) : ""}</small></div></div>
+        <div class="meter"><i style="width:${(p * 100).toFixed(0)}%"></i></div>
+        <div class="xs-nums"><span><small>${esc(L2("Billed", "المفوتر"))}</small><b>${money(s.billed)}</b></span><span><small>${esc(L2("Collected", "المحصل"))}</small><b>${money(s.collected || 0)}</b></span><span><small>${esc(L2("Owes", "المستحق"))}</small><b class="${s.owed > 0 ? "neg" : "pos"}">${money(s.owed || 0)}</b></span></div>
+        <div class="row" style="margin-top:10px">${s.next ? `<span class="chip">${esc(L2("next period from", "الفترة التالية من"))} ${fd(s.next.from)}</span>` : ""}<span class="spacer"></span>
+          ${add && s.rental_id ? `<button class="btn sm pri" data-a="xnext" data-r="${s.rental_id}">+ ${esc(L2("Next extract", "المستخلص التالي"))}</button>` : ""}
+          ${add && s.bu_id ? `<button class="btn sm" data-a="xnew" data-bu="${s.bu_id}">+ ${esc(L2("Blank", "فارغ"))}</button>` : ""}</div></div>`; }).join("") || ""}</div>` +
+    filterBar(q, ["q", ["select", "status", t("status"), [["draft", L2("Draft", "مسودة")], ["unpaid", L2("Not paid", "لم يُحصّل")], ["part", L2("Part paid", "محصل جزئياً")], ["paid", L2("Paid", "محصل")]]]]) +
+    `<div class="card">${d.rows.length ? `<div class="tbl stack"><table><thead><tr><th>${esc(L2("Number", "الرقم"))}</th><th>${esc(L2("Site", "الموقع"))}</th><th>#</th><th>${t("date")}</th><th>${esc(L2("Period", "الفترة"))}</th>
+      <th class="num">${esc(L2("This extract", "هذا المستخلص"))}</th><th class="num">${esc(L2("Due on the extract", "المستحق بالمستخلص"))}</th><th class="num">${esc(L2("Collected", "المحصل"))}</th><th>${t("status")}</th></tr></thead><tbody>
+      ${d.rows.map(x => `<tr class="click" data-href="#/extract/${x.id}"><td><b>${esc(x.number)}</b></td><td>${esc(x.work || x.bu_name)}<div class="lines">${esc(x.customer || "")}</div></td><td>${x.seq_no || ""}${x.final ? ` <span class="chip">${esc(L2("final", "ختامي"))}</span>` : ""}</td>
+        <td>${fd(x.date)}</td><td>${x.period_from ? `${fd(x.period_from)} → ${fd(x.period_to)}` : ""}</td><td class="num">${money(x.receivable)}</td><td class="num"><b>${money(x.due)}</b></td>
+        <td class="num">${x.status === "posted" ? money(x.collected) : ""}</td><td>${xstChip(x.pay_state)}</td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="empty">${esc(L2("No extracts yet. Use “Next extract” on a site, or “New extract”.", "لا توجد مستخلصات بعد. استخدم «المستخلص التالي» على موقع، أو «مستخلص جديد»."))}</div>`}</div>`;
+};
+async function newExtract(bu) {
+  const bus = S.boot.bus || [];
+  drawer(L2("New extract", "مستخلص جديد"), form([
+    { k: "bu_id", l: t("bu"), type: "select", opts: bus.map(b => [b.id, `${b.code} — ${b.name}`]), v: bu || (bus[0] && bus[0].id), req: 1 },
+    { k: "number", l: L2("Extract / invoice number", "رقم المستخلص / الفاتورة"), req: 1, ph: "EXT-…" }, { k: "date", l: t("date"), type: "date", v: today(), req: 1 },
+    { k: "customer", l: t("customer"), list: "parties" }]) + partyList("parties"),
+    async v => { const r = await api("POST", "/api/extracts", { ...v, lines: [{ description: L2("Works", "أعمال"), qty: 1, price: 0 }] }); location.hash = "#/extract/" + r.id; });
+}
+PAGES.extract = async (view, parts) => {
+  const x = await api("GET", `/api/extracts/${parts[1]}/detail`);
+  const ed = x.status !== "posted" && can("sales.extracts", "edit");
+  let lines = x.lines.map(l => ({ ...l, pct: l.pct == null ? 1 : l.pct }));
+  const num = (v, i, k, w = 90) => `<input class="num" type="number" step="any" data-skip="1" data-input="xl" data-i="${i}" data-k="${k}" value="${esc(v ?? "")}" style="width:${w}px" ${ed ? "" : "disabled"}>`;
+  const recalc = () => { const tot = lines.reduce((a, l) => a + (+l.qty || 0) * (+l.price || 0) * (l.pct === "" ? 1 : +l.pct), 0);
+    lines.forEach((l, i) => { const c = $(`#xa${i}`, view); if (c) c.textContent = money((+l.qty || 0) * (+l.price || 0) * (l.pct === "" ? 1 : +l.pct)); });
+    const prevAuto = $("#xprevauto", view), prevIn = $("[name=prev_paid]", view), dedIn = $("[name=deductions]", view);
+    // paid before: what is typed, else the amount worked out from the books (shown as the placeholder)
+    const prev = prevIn && prevIn.value !== "" ? +prevIn.value : (x.prev_auto ? x.prev : +(prevAuto && prevAuto.dataset.v) || 0);
+    const earlier = x.receivable_to_date - x.receivable, ded = dedIn ? +dedIn.value || 0 : x.deductions;
+    const due = earlier + tot + x.vat - x.wht - prev - ded;
+    $("#xtot", view).textContent = money(tot); $("#xtodate", view).textContent = money(earlier + tot); $("#xdue", view).textContent = money(due); };
+  const drawLines = () => { $("#xlines", view).innerHTML = `<table><thead><tr><th>#</th><th>${esc(L2("Description of works", "بيان الأعمال"))}</th><th>${t("unit")}</th><th class="num">%</th><th class="num">${esc(L2("Qty", "الكمية"))}</th><th class="num">${esc(L2("Rate", "الفئة"))}</th><th class="num">${esc(L2("Total", "الإجمالي"))}</th><th></th></tr></thead><tbody>
+    ${lines.map((l, i) => `<tr><td>${i + 1}</td><td><input data-skip="1" data-input="xl" data-i="${i}" data-k="description" value="${esc(l.description)}" ${ed ? "" : "disabled"} style="min-width:220px;width:100%"></td>
+      <td><input data-skip="1" data-input="xl" data-i="${i}" data-k="unit" value="${esc(l.unit || "")}" style="width:56px" ${ed ? "" : "disabled"}></td>
+      <td class="num">${num(l.pct === "" ? 100 : +(l.pct * 100).toFixed(2), i, "pctp", 60)}</td><td class="num">${num(l.qty, i, "qty", 74)}</td><td class="num">${num(l.price, i, "price", 86)}</td>
+      <td class="num" id="xa${i}"></td><td>${ed ? `<button type="button" class="btn sm" data-a="xup" data-i="${i}">↑</button><button type="button" class="btn sm danger" data-a="xdel" data-i="${i}">✕</button>` : ""}</td></tr>`).join("")}</tbody></table>
+    ${ed ? `<button type="button" class="btn sm" data-a="xadd">+ ${esc(L2("Line", "بند"))}</button>` : ""}`; recalc(); };
+  const body = () => ({ ...readForm($("#xhead", view)), bu_id: x.bu_id, vat_code: x.vat_code, wht_code: x.wht_code, boq_id: x.boq_id,
+    lines: lines.map(l => ({ ...l, pct: l.pct === "" ? 1 : l.pct })) });
+  Object.assign(S.H, {
+    xl: el => { const l = lines[+el.dataset.i], k = el.dataset.k; if (k === "pctp") l.pct = el.value === "" ? "" : (+el.value || 0) / 100; else l[k] = el.value; recalc(); },
+    xadd: () => { lines.push({ description: "", unit: "", qty: 1, price: 0, pct: 1, account: "" }); drawLines(); },
+    xdel: el => { lines.splice(+el.dataset.i, 1); drawLines(); },
+    xup: el => { const i = +el.dataset.i; if (i > 0) { [lines[i - 1], lines[i]] = [lines[i], lines[i - 1]]; drawLines(); } },
+    xsave: async () => { try { await api("PUT", "/api/extracts/" + x.id, body()); toast(t("saved")); route(); } catch (e) { fail(e); } },
+    xissue: async () => { if (!confirm(L2("Issue this extract? It is booked as a sales invoice (clients owe it).", "إصدار المستخلص؟ يُسجل كفاتورة مبيعات (مستحق على العميل)."))) return;
+      try { await api("PUT", "/api/extracts/" + x.id, { ...body(), post: true }); toast(L2("Issued", "تم الإصدار")); route(); } catch (e) { fail(e); } },
+    xreopen: async () => { if (!confirm(L2("Reopen to adjust? Its invoice entry is reversed (kept in the audit trail) and it becomes a draft.", "إعادة الفتح للتعديل؟ يُلغى قيد الفاتورة (ويبقى في سجل المراجعة) ويصبح المستخلص مسودة."))) return;
+      try { await api("POST", `/api/extracts/${x.id}/reopen`, {}); route(); } catch (e) { fail(e); } },
+    xdelete: async () => { if (!confirm(t("confirm_delete") || "Delete?")) return; try { await api("DELETE", "/api/extracts/" + x.id); location.hash = "#/extracts"; } catch (e) { fail(e); } },
+    xdoclang: el => store.set("xdocLang", el.value),
+    xprint: () => openApi(`/api/extracts/${x.id}/doc?` + qs({ format: "pdf", lang: xdocLang() })),
+    xexcel: () => openApi(`/api/extracts/${x.id}/doc?` + qs({ format: "xlsx", lang: xdocLang() })),
+  });
+  const rows = (l, v, cls = "") => `<div class="xsum-r ${cls}"><span>${esc(l)}</span><b ${v.id ? `id="${v.id}"` : ""}>${v.id ? "" : money(v)}</b></div>`;
+  view.innerHTML = `<div class="toolbar"><a class="btn" href="#/extracts">← ${esc(t("m_extracts"))}</a>${xstChip(x.pay_state)}<span class="spacer"></span>
+      <select class="in" style="width:auto" data-change="xdoclang"><option value="ar" ${xdocLang() === "ar" ? "selected" : ""}>العربية</option><option value="en" ${xdocLang() === "en" ? "selected" : ""}>English</option></select>
+      <button class="btn" data-a="xprint">🖨 ${esc(L2("Print / PDF", "طباعة / PDF"))}</button><button class="btn" data-a="xexcel">⬇ Excel</button>
+      ${ed ? `<button class="btn" data-a="xsave">${t("save")}</button><button class="btn pri" data-a="xissue">${esc(L2("Issue extract", "إصدار المستخلص"))}</button><button class="btn danger" data-a="xdelete">${t("delete")}</button>` : ""}
+      ${x.status === "posted" && can("sales.extracts", "edit") ? `<button class="btn" data-a="xreopen">✎ ${esc(L2("Reopen to adjust", "إعادة فتح للتعديل"))}</button>` : ""}</div>
+    ${x.rental ? `<div class="banner info">${esc(L2("Rental contract", "عقد التأجير"))} <a href="#/rental/${x.rental.rental_id}">${esc(x.rental.rental_code)}</a> · ${esc(L2("rent period", "فترة الإيجار"))} ${fd(x.rental.period_from)} → ${fd(x.rental.period_to)}</div>` : ""}
+    <div class="xgrid"><div><div class="card" id="xhead"><h2>${esc(L2("Extract", "المستخلص"))} ${esc(x.number)}</h2>${form([
+      { k: "number", l: L2("Extract / invoice number", "رقم المستخلص / الفاتورة"), v: x.number, req: 1, dis: !ed }, { k: "date", l: t("date"), type: "date", v: x.date, dis: !ed },
+      { k: "seq_no", l: L2("Extract no. (on the site)", "رقم المستخلص"), type: "number", v: x.seq_no || "", dis: !ed },
+      { k: "final", l: L2("Running or final", "جاري أم ختامي"), type: "select", opts: [["", L2("Running (جاري)", "جاري")], ["1", L2("Final (ختامي)", "ختامي")]], v: x.final ? "1" : "", dis: !ed },
+      { k: "project", l: L2("Project (header)", "المشروع"), v: x.project || "", dis: !ed }, { k: "work", l: L2("Work (header)", "الأعمال"), v: x.work || "", dis: !ed },
+      { k: "customer", l: t("customer"), v: x.customer || "", dis: !ed },
+      { k: "prev_paid", l: L2("Paid before (blank = from the books)", "ما سبق صرفه (فارغ = من الدفاتر)"), type: "number", v: x.prev_auto ? "" : x.prev, ph: money(x.prev), dis: !ed, input: "xrec" },
+      { k: "deductions", l: L2("Deductions", "خصومات"), type: "number", v: x.deductions || "", dis: !ed, input: "xrec" },
+      { k: "notes", l: L2("Notes on the extract", "ملاحظات المستخلص"), v: x.notes || "", dis: !ed, span: "spanall" }], 2)}<span id="xprevauto" data-v="${x.prev_auto ? x.prev : 0}" hidden></span></div>
+      <div class="card"><h2>${esc(L2("Works on this extract", "أعمال هذا المستخلص"))}</h2><div class="tbl" id="xlines"></div></div>
+      ${x.earlier.length ? `<div class="card"><h2>${esc(L2("Earlier extracts on this site (printed above this one)", "مستخلصات سابقة على الموقع (تُطبع قبل هذا)"))}</h2>${x.earlier.map(e => `<div class="row"><a href="#/extract/${e.id}"><b>${esc(e.number)}</b></a> · #${e.seq_no || ""}<span class="spacer"></span>${money(e.total)}</div>`).join("")}</div>` : ""}</div>
+    <div><div class="card xsum"><h2>${esc(L2("Totals", "الإجماليات"))}</h2>
+      ${rows(L2("This extract", "هذا المستخلص"), { id: "xtot" })}${rows(L2("Total works to date", "إجمالي الأعمال حتى تاريخه"), { id: "xtodate" })}
+      ${x.vat_to_date ? rows(L2("VAT", "ضريبة القيمة المضافة"), x.vat_to_date) : ""}${x.wht_to_date ? rows(L2("Withholding tax", "خصم من المنبع"), -x.wht_to_date) : ""}
+      ${rows(L2("Less paid before", "خصم ما سبق صرفه"), x.prev)}${x.deductions ? rows(L2("Deductions", "خصومات"), x.deductions) : ""}
+      ${rows(L2("AMOUNT DUE", "المستحق"), { id: "xdue" }, "big")}
+      ${x.status === "posted" ? `<h2 style="margin-top:16px">${esc(L2("Follow-up", "المتابعة"))}</h2>${rows(L2("Collected against it", "المحصل منه"), x.collected)}${rows(L2("Still owed", "المتبقي"), x.owed)}` : `<p class="muted">${esc(L2("Draft: not in the books until you issue it.", "مسودة: لا تدخل الدفاتر حتى تُصدرها."))}</p>`}</div></div></div>`;
+  S.H.xrec = () => recalc();
+  drawLines();
+};
 PAGES.invoices = async (view, parts, q) => {
   const rows = await api("GET", "/api/extracts?" + qs(q));
   view.innerHTML = `<div class="toolbar">${can("sales.invoices", "add") ? `<a class="btn pri" href="#/invoice/new">+ ${t("new")}</a>` : ""}<span class="spacer"></span>
@@ -2064,7 +2250,7 @@ const FONTS = ["system", "Nunito Sans", "Cairo", "Arial", "Tahoma", "Segoe UI", 
 const DOC_FONTS = ["Arial", "Calibri", "Tahoma", "Segoe UI", "Times New Roman", "Georgia", "Cairo", "Traditional Arabic", "Bodoni MT Black", "Bodoni MT", "Garamond", "Century Gothic"];
 
 PAGES.settings = async (view, parts, q) => {
-  const tabs = [["company", "tab_company", can("settings.company")], ["docs", "tab_docs", can("settings.branding")], ["look", "tab_look", true],
+  const tabs = [["company", "tab_company", can("settings.company")], ["docs", "tab_docs", can("settings.branding")], ["look", "tab_look", true], ["theme", "tab_theme", true],
     ["menus", "tab_menus", can("settings.menus")], ["system", "tab_system", can("settings.system") || S.boot.user.is_admin],
     ["workspace", "tab_workspace", S.boot.user.is_admin || cloudOn()]].filter(x => x[2]);
   const tab = tabs.find(x => x[0] === q.tab) ? q.tab : tabs[0][0];
@@ -2117,10 +2303,10 @@ PAGES.settings = async (view, parts, q) => {
   if (tab === "look") {
     const ap = st.appearance || {}, ed = can("settings.branding", "edit");
     view.innerHTML = head + `<div class="card"><h2>${t("my_view")}</h2><div class="grid g4">
-        <label class="f">${t("lang_label")}<select id="my_lang"><option value="en">English</option><option value="ar" ${S.lang === "ar" ? "selected" : ""}>العربية</option></select></label>
-        <label class="f">${t("font_family")}<select id="my_font"><option value="">${t("default")}</option>${FONTS.map(f => `<option ${store.get("font", "") === f ? "selected" : ""}>${f}</option>`).join("")}</select></label>
-        <label class="f">${t("font_size")} <input id="my_size" type="range" min="11" max="22" value="${store.get("fontSize", "") || st.font_size || 15}"></label>
-        <label class="f">${t("theme")}<select id="my_theme">${["auto", "light", "dark"].map(x => `<option ${store.get("theme", "auto") === x ? "selected" : ""}>${x}</option>`).join("")}</select></label></div>
+        <label class="f">${t("lang_label")}<select id="my_lang" data-change="mysave"><option value="en">English</option><option value="ar" ${S.lang === "ar" ? "selected" : ""}>العربية</option></select></label>
+        <label class="f">${t("font_family")}<select id="my_font" data-change="mysave"><option value="">${t("default")}</option>${FONTS.map(f => `<option ${store.get("font", "") === f ? "selected" : ""}>${f}</option>`).join("")}</select></label>
+        <label class="f">${t("font_size")} <input id="my_size" data-change="mysave" type="range" min="11" max="22" value="${store.get("fontSize", "") || st.font_size || 15}"></label>
+        <label class="f">${t("theme")}<select id="my_theme" data-change="mysave">${["auto", "light", "dark"].map(x => `<option ${store.get("theme", "auto") === x ? "selected" : ""}>${x}</option>`).join("")}</select></label></div>
         <div class="row" style="margin-top:10px"><button class="btn" data-a="mysave">${t("save")}</button><button class="btn" data-a="myreset">${t("clear")}</button></div></div>
       ${can("settings.branding") ? `<div class="card" id="apcard"><h2>${t("appearance")} — ${S.lang === "ar" ? "لكل المستخدمين" : "for everyone"}</h2>${form([
         { k: "app_name", l: t("app_name"), v: ap.app_name || "", ph: (st.company_name || "BEYOND") },
@@ -2129,8 +2315,7 @@ PAGES.settings = async (view, parts, q) => {
           opts: [["logo_name", S.lang === "ar" ? "الشعار والاسم" : "Logo and name"], ["logo", S.lang === "ar" ? "الشعار فقط" : "Logo only"], ["name", S.lang === "ar" ? "الاسم فقط" : "Name only"]] },
         { k: "tagline", l: S.lang === "ar" ? "الوصف تحت الاسم" : "Tagline under the name", v: ap.tagline != null ? ap.tagline : (st.company_tagline || ""), ph: S.lang === "ar" ? "مثال: تصميم وتشطيب داخلي" : "e.g. Interior Design & Finishing" },
         { k: "tagline_show", l: S.lang === "ar" ? "إظهار الوصف" : "Show the tagline", type: "checkbox", v: ap.tagline_show !== false },
-        { html: `<label class="f">${t("accent_col")}<span class="swatch"><input type="color" name="accent" value="${esc(ap.accent || "#1f3a5f")}"><button type="button" class="btn sm" data-a="apnoacc">${t("default")}</button></span></label>` },
-        { k: "sidebar", l: t("sidebar"), type: "select", opts: [["light", t("sb_light")], ["dark", t("sb_dark")], ["brand", t("sb_brand")]], v: ap.sidebar || "light" },
+        { html: `<label class="f">${esc(L2("Colours", "الألوان"))}<a class="btn" href="#/settings?tab=theme">🎨 ${esc(L2("Open the Theme tab", "افتح تبويب السمات"))}</a></label>` },
         { k: "density", l: t("density"), type: "select", opts: [["comfortable", t("d_comfortable")], ["compact", t("d_compact")]], v: ap.density || "comfortable" },
         { k: "corners", l: t("corners"), type: "select", opts: [["rounded", t("cr_rounded")], ["square", t("cr_square")]], v: ap.corners || "rounded" },
         { html: `<label class="f">${t("app_logo")} — ${t("al_custom")}<input type="file" id="aplogo" accept="image/*"></label>` }], 3)}
@@ -2142,10 +2327,11 @@ PAGES.settings = async (view, parts, q) => {
     const ac = $("[name=accent]"); if (ac) ac.addEventListener("input", () => { noAccent = false; });
     S.H.apsave = async () => { const v = readForm($("#apcard")); if (noAccent) v.accent = "";
       try { const f = $("#aplogo").files[0]; if (f) await api("PUT", "/api/branding/image/app_logo", await Img.fit(f, 300));
-        await api("PUT", "/api/settings", { appearance: v }); await refreshBoot(); applyLook(); renderShell(); route(); toast(t("saved")); } catch (e) { fail(e); } };
+        await api("PUT", "/api/settings", { appearance: { ...ap, ...v } }); await refreshBoot(); applyLook(); renderShell(); route(); toast(t("saved")); } catch (e) { fail(e); } };
     return;
   }
   if (tab === "workspace") return workspaceTab(view, head);
+  if (tab === "theme") return themeTab(view, head);
   if (tab === "menus") {
     const menuKeys = window.MENU.flatMap(([g, items]) => [g, ...items.map(i => i[0])]);
     const labels = st.menu_labels || {}, ed = can("settings.menus", "edit");

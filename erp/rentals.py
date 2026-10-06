@@ -1692,7 +1692,56 @@ def next_period(db, rid):
     return {"from": frm.isoformat(), "to": end.isoformat()}
 
 
-def invoice_lines(db, rid, frm, to, lang="en"):
+def _add_month(d):
+    y, m = d.year + (d.month == 12), d.month % 12 + 1
+    import calendar
+    return _dt.date(y, m, min(d.day, calendar.monthrange(y, m)[1]))
+
+
+def anniversary_to(frm):
+    """The client's extract periods run day to day: 5/10 → 5/11 is one month (booked to the 4th)."""
+    return (_add_month(_dt.date.fromisoformat(frm)) - _dt.timedelta(days=1)).isoformat()
+
+
+def _extract_months(frm, to):
+    """Whole months day-to-day, then the rest of the days over 30 (shown as the % on the extract)."""
+    a, b = _dt.date.fromisoformat(frm), _dt.date.fromisoformat(to) + _dt.timedelta(days=1)
+    n, cur = 0, a
+    while _add_month(cur) <= b:
+        cur, n = _add_month(cur), n + 1
+    return n + (b - cur).days / 30
+
+
+def _extract_lines(db, r, frm, to):
+    """Lines in the client's extract wording: the pieces on site × the monthly rate × the share of the month."""
+    from_s = f"{int(frm[8:])}/{int(frm[5:7])}/{frm[:4]}"
+    t2 = (_dt.date.fromisoformat(to) + _dt.timedelta(days=1)).isoformat()
+    to_s = f"{int(t2[8:])}/{int(t2[5:7])}/{t2[:4]}"
+    months = round(_extract_months(frm, to), 4)
+    span = (_dt.date.fromisoformat(to) - _dt.date.fromisoformat(frm)).days + 1
+    days = unit_days(db, r["id"], frm, to, {"_n": settings(db)["day_basis"] or 0})
+    out = []
+    for ln in db.q("SELECT * FROM rental_lines WHERE rental_id=? AND kind<>'charge' ORDER BY seq, id", (r["id"],)):
+        ud = days.get(ln["id"], 0)
+        if ud <= EPS or not ln["rate"]:
+            continue
+        units = round(ud / span, 2)
+        desc = ln["description"] or ""
+        desc = ("بال" + desc) if desc.startswith("شباك") else desc
+        out.append({"category": "إيجار", "item_no": "", "unit": "عدد", "description": f"ايجار {desc} مدة {from_s} الي {to_s}",
+                    "qty": units, "price": to_major(ln["rate"]), "pct": min(1.0, months) if months <= 1 else 1.0,
+                    "account": _role_or(db, "rental_revenue") or ""})
+        if months > 1:          # more than a month: the whole months at 100 %, the rest as its share
+            out[-1]["qty"] = round(units * months, 2)
+    charges = db.q("SELECT * FROM rental_charges WHERE rental_id=? AND extract_id IS NULL AND date<=? ORDER BY date, id", (r["id"], to))
+    for c in charges:
+        unit = "مق" if "نقل" in (c["description"] or "") else "ق"
+        out.append({"category": "مبالغ لمرة واحدة", "item_no": "", "unit": unit, "description": c["description"], "qty": c["qty"],
+                    "price": to_major(c["amount"]), "account": c["account"] or _charge_account(db, c["kind"]), "charge_id": c["id"]})
+    return out
+
+
+def invoice_lines(db, rid, frm, to, lang="en", style=""):
     r = get(db, rid)
     frm, to = acc.clean_date(frm, "from"), acc.clean_date(to, "to")
     if to < frm:
@@ -1700,6 +1749,9 @@ def invoice_lines(db, rid, frm, to, lang="en"):
     clash = db.one("SELECT period_from, period_to FROM rental_invoices WHERE rental_id=? AND period_from<=? AND period_to>=?", (r["id"], to, frm))
     if clash:
         raise ValidationError(f"Rent from {clash['period_from']} to {clash['period_to']} is already invoiced")
+    if style == "extract":
+        out = _extract_lines(db, r, frm, to)
+        return {"from": frm, "to": to, "lines": out, "total": round(sum(x["qty"] * x["price"] * x.get("pct", 1) for x in out), 2)}
     ar = lang == "ar"
     months_by = {"_n": settings(db)["day_basis"] or 0}
     days = unit_days(db, r["id"], frm, to, months_by)
@@ -1729,7 +1781,7 @@ def create_invoice(db, rid, d, user=""):
     r = get(db, rid)
     if r["status"] in ("quote", "cancelled"):
         raise ValidationError("Nothing to invoice yet")
-    period = invoice_lines(db, r["id"], d.get("from"), d.get("to"), d.get("lang") or r["lang"] or "en")
+    period = invoice_lines(db, r["id"], d.get("from"), d.get("to"), d.get("lang") or r["lang"] or "en", d.get("style") or "")
     if not period["lines"]:
         raise ValidationError("Nothing to invoice for this period")
     with db.tx():

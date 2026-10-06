@@ -551,3 +551,62 @@ tr.click:hover td{background:color-mix(in srgb,var(--brand) 6%,transparent)}
   .app.mini .grp-items a span{display:inline}
   .app.mini .fly-t{display:block;padding:6px 12px 8px;font-size:.72em;font-weight:800;text-transform:uppercase;letter-spacing:.7px;color:var(--muted)}
 }
+/* ---------------------------------------------------------------- extracts */
+.xsites{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px;margin-bottom:14px}
+.xsite{margin:0}
+.xs-top{display:flex;gap:12px;align-items:center;margin-bottom:12px}
+.xs-top .dot{display:inline-flex;align-items:center;justify-content:center;width:42px;height:42px;border-radius:50%;border:2px solid currentColor;flex:none}
+.xs-t{display:flex;flex-direction:column;min-width:0}.xs-t b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.xs-t small{color:var(--muted);font-size:.78em}
+.xs-nums{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.xs-nums span{display:flex;flex-direction:column}
+.xs-nums small{color:var(--muted);font-size:.74em;font-weight:600}.xs-nums b{direction:ltr;unicode-bidi:isolate}
+[dir=rtl] .xs-nums b{text-align:right}
+.xgrid{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:16px;align-items:start}
+.xsum{position:sticky;top:90px}
+.xsum-r{display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid var(--line)}
+.xsum-r span{color:var(--muted);font-weight:600;font-size:.88em}.xsum-r b{direction:ltr;unicode-bidi:isolate}
+.xsum-r.big{border:0;margin-top:6px;padding:12px 14px;border-radius:12px;background:color-mix(in srgb,var(--brand) 12%,transparent)}
+.xsum-r.big span{color:var(--ink);font-weight:800}.xsum-r.big b{font-size:1.25em;color:var(--brand)}
+#xlines input{padding:6px 8px}
+@media (max-width:1100px){.xgrid{grid-template-columns:minmax(0,1fr)}.xsum{position:static}}
+/* ---------------------------------------------------------------- themes: coloured sidebar / navigation header / header */
+:root[data-sidebar="custom"] .side{background:var(--sb-bg);color:var(--sb-ink);border-color:transparent;
+  --side:var(--sb-bg);--ink:var(--sb-ink);--side-ink:color-mix(in srgb,var(--sb-ink) 82%,transparent);--muted:color-mix(in srgb,var(--sb-ink) 62%,transparent);
+  --hover:color-mix(in srgb,var(--sb-ink) 10%,transparent);--line:color-mix(in srgb,var(--sb-ink) 16%,transparent);--side-active:color-mix(in srgb,var(--sb-ink) 16%,transparent)}
+:root[data-sidebar="custom"] .nav a.on,:root[data-sidebar="custom"] .grp-items a:hover,:root[data-sidebar="custom"] .app.mini .grp-wrap.has .grp{color:var(--sb-ink)}
+:root[data-sidebar="custom"] .grp-items a:hover .dash,:root[data-sidebar="custom"] .grp-items a.on .dash,:root[data-sidebar="custom"] .nav a.on::before{background:var(--sb-ink)}
+:root[data-sidebar="custom"] .ucard-btn{background:color-mix(in srgb,var(--sb-ink) 8%,transparent);border-color:transparent;color:var(--sb-ink)}
+:root[data-nav="custom"] .brand{background:var(--nav-bg);margin:-14px -14px 8px;padding:20px 22px 16px}
+:root[data-nav="custom"] .brand b,:root[data-nav="custom"] .brand small{color:var(--nav-ink)}
+:root[data-nav="custom"] .app.mini .brand{margin-inline:-12px}
+:root[data-top="custom"] .top{background:var(--top-bg);color:var(--top-ink);border-color:transparent;backdrop-filter:none}
+:root[data-top="custom"] .top .icbtn,:root[data-top="custom"] .top h1{color:var(--top-ink)}
+:root[data-top="custom"] .top .crumb{color:color-mix(in srgb,var(--top-ink) 70%,transparent)}
+:root[data-top="custom"] .top .search{background:color-mix(in srgb,var(--top-ink) 12%,transparent);border-color:transparent;color:color-mix(in srgb,var(--top-ink) 78%,transparent)}
+:root[data-top="custom"] .top .newbtn{background:var(--top-ink);color:var(--top-bg);border-color:transparent;box-shadow:none}
+:root[data-top="custom"] .top .badge{box-shadow:0 0 0 2px var(--top-bg)}
+/* theme gallery & builder */
+.thgal{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:14px}
+.thc{all:unset;box-sizing:border-box;position:relative;display:flex;flex-direction:column;gap:8px;padding:8px;border-radius:14px;border:2px solid var(--line);cursor:pointer;transition:border-color .15s,transform .15s}
+.thc:hover{transform:translateY(-2px);border-color:color-mix(in srgb,var(--brand) 50%,var(--line))}
+.thc.on{border-color:var(--brand);box-shadow:0 0 0 3px color-mix(in srgb,var(--brand) 20%,transparent)}
+.thp{position:relative;display:block;aspect-ratio:16/10;border-radius:10px;overflow:hidden;background:var(--bg);border:1px solid rgba(0,0,0,.08)}
+.thp i{position:absolute;display:block}
+.thp .n{left:0;top:0;width:26%;height:16%;background:var(--nav)}
+.thp .h{left:26%;right:0;top:0;height:16%;background:var(--hd);border-bottom:1px solid rgba(0,0,0,.06)}
+.thp .s{left:0;top:16%;bottom:0;width:26%;background:var(--sb);border-right:1px solid rgba(0,0,0,.06)}
+.thp .b{left:30%;right:4%;top:22%;bottom:6%;display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:1fr 1.4fr;gap:6%}
+.thp .b b{background:var(--card);border-radius:4px;box-shadow:0 1px 2px rgba(0,0,0,.08)}
+.thp .b u{grid-column:1/-1;background:var(--card);border-radius:4px;position:relative;box-shadow:0 1px 2px rgba(0,0,0,.08)}
+.thp .b u::after{content:"";position:absolute;left:8%;right:40%;bottom:22%;height:22%;border-radius:3px;background:var(--p)}
+.thp .b b:first-child{background:var(--p)}
+.thn{font-weight:700;font-size:.85em;text-align:center}
+.thdel{position:absolute;top:2px;inset-inline-end:2px;width:22px;height:22px;border-radius:50%;background:var(--bad);color:#fff;font-size:.7em;display:flex;align-items:center;justify-content:center}
+.thsw{margin-top:8px}.thl{font-size:.8em;font-weight:700;color:var(--muted);margin-bottom:6px}
+.thgrid{display:grid;grid-template-columns:repeat(8,36px);gap:8px}
+.sw{all:unset;box-sizing:border-box;width:36px;height:36px;border-radius:8px;cursor:pointer;border:1px solid rgba(0,0,0,.12);position:relative;transition:transform .12s}
+.sw:hover{transform:scale(1.08)}
+.sw.on{outline:3px solid var(--brand);outline-offset:2px}
+.sw.none{background:linear-gradient(135deg,transparent 46%,var(--bad) 46% 54%,transparent 54%),var(--panel)}
+.sw.pick{background:conic-gradient(red,yellow,lime,cyan,blue,magenta,red);overflow:hidden}
+.sw.pick input{opacity:0;width:100%;height:100%;cursor:pointer;border:0;padding:0}
+@media (max-width:560px){.thgrid{grid-template-columns:repeat(6,36px)}.thgal{grid-template-columns:repeat(2,minmax(0,1fr))}}

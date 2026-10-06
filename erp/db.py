@@ -1100,7 +1100,7 @@ MODULES = ["dashboard", "business_units", "sales", "shop", "estimating", "purcha
 SUBMODULES = {
     "dashboard": [],
     "business_units": ["units", "allocation", "profitability"],
-    "sales": ["offers", "receipts", "invoices", "receivables", "parties"],
+    "sales": ["offers", "receipts", "invoices", "extracts", "receivables", "parties"],
     "estimating": ["boqs", "prices"],
     "purchasing": ["orders", "costs", "expenses", "payments", "payables", "contacts", "negotiations", "custody"],
     "shop": ["products", "orders", "installments", "subscriptions"],
@@ -1241,6 +1241,12 @@ class Database:
                                                                      typ, sub, normal_for(typ, sub), role))
         self._add_cols("journal_lines", [("party", "TEXT DEFAULT ''")])
         self._add_cols("extract_lines", [("account", "TEXT DEFAULT ''")])
+        # extracts (مستخلصات): the client's layout — project / work titles, extract no., what was paid before, deductions,
+        # running or final; and the share of each item executed (النسبة)
+        self._add_cols("extracts", [("project", "TEXT DEFAULT ''"), ("work", "TEXT DEFAULT ''"), ("seq_no", "INTEGER DEFAULT 0"),
+                                    ("prev_paid", "INTEGER"), ("deductions", "INTEGER DEFAULT 0"), ("notes", "TEXT DEFAULT ''"),
+                                    ("final", "INTEGER DEFAULT 0")])
+        self._add_cols("extract_lines", [("pct", "REAL DEFAULT 1")])
         self._add_cols("rent_items", [("life_months", "INTEGER NOT NULL DEFAULT 120"), ("residual_pct", "REAL NOT NULL DEFAULT 0.1")])
         self._add_cols("rent_lots", [("opening_accum", "INTEGER NOT NULL DEFAULT 0"), ("depr_start", "TEXT DEFAULT ''")])
         self._add_cols("rentals", [("min_days", "INTEGER NOT NULL DEFAULT 0"), ("deposit", "INTEGER NOT NULL DEFAULT 0"),

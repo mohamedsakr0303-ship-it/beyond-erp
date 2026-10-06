@@ -783,8 +783,22 @@ def _lines_in(raw):
         out.append({"seq": i, "category": text(ln.get("category")), "sub": text(ln.get("sub")),
                     "item_no": text(ln.get("item_no")), "description": desc, "unit": text(ln.get("unit")),
                     "qty": num(ln.get("qty"), "quantity"), "price": to_minor(num(ln.get("price"), "price")),
-                    "cost": to_minor(num(ln.get("cost"), "cost")), "account": text(ln.get("account"), maxlen=20)})
+                    "cost": to_minor(num(ln.get("cost"), "cost")), "account": text(ln.get("account"), maxlen=20),
+                    "pct": _pct_in(ln.get("pct"))})
     return out
+
+
+def _pct_in(v):
+    """The share of an item executed on an extract line (النسبة): 1 = 100 %; '50%', 50 or 0.5 all mean half."""
+    if v in (None, ""):
+        return 1.0
+    s = str(v).strip().replace("%", "")
+    p = num(s, "percentage")
+    if p > 1 or "%" in str(v):
+        p = p / 100
+    if p < 0 or p > 1:
+        raise ValidationError("The percentage must be between 0 and 100 %")
+    return p
 
 
 def _line_out(ln):
@@ -792,7 +806,9 @@ def _line_out(ln):
     ln["price"] = to_major(ln["price"])
     if "cost" in ln:
         ln["cost"] = to_major(ln["cost"])
-    ln["amount"] = round(ln["qty"] * ln["price"], 2)
+    pct = ln.get("pct")
+    pct = 1.0 if pct is None else pct
+    ln["amount"] = round(ln["qty"] * ln["price"] * pct, 2)
     return ln
 
 
@@ -838,28 +854,36 @@ def save_extract(db, d, extract_id=None):
     vat_code, _ = tax_code(db, d.get("vat_code"), "vat")
     wht_code, _ = tax_code(db, d.get("wht_code"), "wht")
     with db.tx():
-        vals = (bu, boq_id, number, clean_date(d.get("date")), text(d.get("customer")), vat_code, wht_code)
+        prev = d.get("prev_paid")
+        prev = None if prev in (None, "") else to_minor(num(prev, "previously paid"))
+        seq_no = int(num(d.get("seq_no") or 0, "extract no."))
+        if not seq_no and not extract_id:   # extract no. on this site: the next one
+            r = db.one("SELECT COALESCE(MAX(seq_no),0) AS n, COUNT(*) AS c FROM extracts WHERE bu_id=?", (bu,))
+            seq_no = max(r["n"] or 0, r["c"] or 0) + 1
+        vals = (bu, boq_id, number, clean_date(d.get("date")), text(d.get("customer")), vat_code, wht_code,
+                text(d.get("project")), text(d.get("work")), seq_no, prev, to_minor(num(d.get("deductions") or 0, "deductions")),
+                text(d.get("notes"), maxlen=2000), 1 if d.get("final") in (1, True, "1", "true", "yes", "Yes") else 0)
         if extract_id:
             x = db.one("SELECT status FROM extracts WHERE id=?", (extract_id,))
             if not x:
                 raise ValidationError("Extract not found")
             if x["status"] == "posted":
                 raise ValidationError("Posted extracts are locked — reverse the invoice entry first")
-            db.conn.execute("UPDATE extracts SET bu_id=?,boq_id=?,number=?,date=?,customer=?,vat_code=?,wht_code=? "
-                            "WHERE id=?", vals + (extract_id,))
+            db.conn.execute("UPDATE extracts SET bu_id=?,boq_id=?,number=?,date=?,customer=?,vat_code=?,wht_code=?,"
+                            "project=?,work=?,seq_no=?,prev_paid=?,deductions=?,notes=?,final=? WHERE id=?", vals + (extract_id,))
             db.conn.execute("DELETE FROM extract_lines WHERE extract_id=?", (extract_id,))
         else:
             if db.one("SELECT 1 FROM extracts WHERE number=?", (number,)):
                 raise ValidationError(f"Invoice number {number} already exists")
-            extract_id = db.conn.execute("INSERT INTO extracts(bu_id,boq_id,number,date,customer,vat_code,wht_code) "
-                                         "VALUES (?,?,?,?,?,?,?)", vals).lastrowid
+            extract_id = db.conn.execute("INSERT INTO extracts(bu_id,boq_id,number,date,customer,vat_code,wht_code,project,work,"
+                                         "seq_no,prev_paid,deductions,notes,final) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", vals).lastrowid
         for ln in lines:   # a line may earn into its own revenue account (rent, services, compensation...)
             if ln["account"] and ln["account"] != db.acct("service_deferred"):   # billed in advance, earned month by month
                 account_code(db, ln["account"], types=("Revenue",), field="revenue account")
-        db.conn.executemany("INSERT INTO extract_lines(extract_id,seq,category,sub,item_no,description,unit,qty,price,account) "
-                            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+        db.conn.executemany("INSERT INTO extract_lines(extract_id,seq,category,sub,item_no,description,unit,qty,price,account,pct) "
+                            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                             [(extract_id, ln["seq"], ln["category"], ln["sub"], ln["item_no"], ln["description"],
-                              ln["unit"], ln["qty"], ln["price"], ln["account"]) for ln in lines])
+                              ln["unit"], ln["qty"], ln["price"], ln["account"], ln["pct"]) for ln in lines])
     return extract_id
 
 
@@ -908,7 +932,7 @@ def list_extracts(db, boq_id=None, bu_id=None, status=None, date_from=None, date
             w.append(cond)
             p.append(val)
     rows = db.q("SELECT x.*, u.code AS bu_code, b.title AS boq_title, "
-                "(SELECT COALESCE(SUM(ROUND(qty*price)),0) FROM extract_lines WHERE extract_id=x.id) AS total_minor "
+                "(SELECT COALESCE(SUM(ROUND(qty*price*COALESCE(pct,1))),0) FROM extract_lines WHERE extract_id=x.id) AS total_minor "
                 "FROM extracts x JOIN business_units u ON u.id=x.bu_id LEFT JOIN boqs b ON b.id=x.boq_id" +
                 (" WHERE " + " AND ".join(w) if w else "") + " ORDER BY x.date DESC, x.id DESC", p)
     for r in rows:

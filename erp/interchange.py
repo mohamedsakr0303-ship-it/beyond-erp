@@ -327,8 +327,15 @@ SHEETS = [
               C("ar_account", "Receivable Account", "حساب المدينين", kind="acct", role="ar"),
               C("revenue_account", "Revenue Account", "حساب الإيراد", kind="acct", role="revenue"),
               C("customer", "Customer", "العميل", width=22), C("vat_code", "VAT Code", "كود ض.ق.م", kind="tax", width=10), C("wht_code", "WHT Code", "كود خصم وتحصيل", kind="tax", width=10),
+              # extract (مستخلص) — how it prints for the client; none of these change the books
+              C("extract_no", "Extract No. (on its site)", "رقم المستخلص", kind="num", width=8, note="blank = the next number on the business unit"),
+              C("project", "Project (extract header)", "المشروع", width=16), C("work", "Work (extract header)", "الأعمال", width=24),
+              C("prev_paid", "Paid Before (extract)", "ما سبق صرفه", kind="money", note="blank = what the client paid before the date (receipts)"),
+              C("deductions", "Deductions (extract)", "خصومات", kind="money"),
+              C("final", "Final Extract", "مستخلص ختامي", width=7, choices=["Yes", "No"], note="Yes = final (ختامي); blank = running (جاري)"),
+              C("notes", "Extract Notes", "ملاحظات المستخلص", width=30),
               C("amount", "Net Amount", "صافي المبلغ", kind="calc",
-                calc="=SUMIFS('Invoice Lines'!$I:$I,'Invoice Lines'!$A:$A,{number})"),
+                calc="=SUMIFS([[Invoice Lines.amount]],[[Invoice Lines.number]],{number})"),
               C("posted_amount", "Posted Amount", "المبلغ المرحّل", kind="calc", calc='=IF({status}="Draft",0,{amount})'),
               C("x_rest", "to the invoice's revenue account", "لحساب إيراد الفاتورة", kind="calc", width=10,
                 calc="={posted_amount}-SUMIFS([[Invoice Lines.x_own]],[[Invoice Lines.number]],{number})"),
@@ -344,14 +351,20 @@ SHEETS = [
               C("sub", "Sub-category", "البند الفرعي", width=12), C("item_no", "Item No.", "رقم البند", width=8),
               C("description", "Description", "الوصف", width=50, required=True), C("unit", "Unit", "الوحدة", width=8),
               C("qty", "Qty Executed", "الكمية المنفذة", kind="num", width=9), C("price", "Unit Price", "سعر الوحدة", kind="money"),
-              C("amount", "Amount", "الإجمالي", kind="calc", calc="=ROUND(N({qty})*N({price}),2)"),
+              C("pct", "% Executed", "النسبة", kind="pct", width=8, note="blank = 100 %; e.g. half a month of rent = 50 %"),
+              C("amount", "Amount", "الإجمالي", kind="calc", calc='=ROUND(N({qty})*N({price})*IF({pct}="",1,N({pct})),2)'),
               C("account", "Line Revenue Account", "حساب إيراد البند", kind="acct", note="blank = the invoice's revenue account"),
               # a line with its own revenue account is credited there (the invoice credits the rest)
               C("date", "invoice date", "تاريخ الفاتورة", kind="calc", width=10, calc='=IFERROR(INDEX([[Sales Invoices.date]],MATCH({number},[[Sales Invoices.number]],0)),"")'),
               C("bu_code", "invoice business unit", "وحدة الأعمال", kind="calc", width=10, calc='=IFERROR(INDEX([[Sales Invoices.bu_code]],MATCH({number},[[Sales Invoices.number]],0))&"","")'),
               C("x_acct", "own revenue account", "حساب البند", kind="calc", width=8, calc='={account}&""'),
               C("x_own", "booked to its own account", "المرحل لحساب البند", kind="calc", width=10,
-                calc='=IF(OR({account}="",{date}=""),0,IF(IFERROR(INDEX([[Sales Invoices.status]],MATCH({number},[[Sales Invoices.number]],0))&"","")="Draft",0,{amount}))')],
+                calc='=IF(OR({account}="",{date}=""),0,IF(IFERROR(INDEX([[Sales Invoices.status]],MATCH({number},[[Sales Invoices.number]],0))&"","")="Draft",0,{amount}))'),
+              # the Extract Print sheet: 1 = this line is on the extract chosen there (running: the site's earlier issued ones too)
+              C("x_xp", "on the printed extract", "في المستخلص المطبوع", kind="calc", width=8,
+                calc='=IF({number}&""="",0,IF({number}&""=\'Extract Print\'!$J$2&"",1,IF(AND(\'Extract Print\'!$J$3="running",'
+                     '{bu_code}&""=\'Extract Print\'!$J$4&"",N({date})>0,N({date})<N(\'Extract Print\'!$J$5),'
+                     'IFERROR(INDEX([[Sales Invoices.status]],MATCH({number},[[Sales Invoices.number]],0))&"","")<>"Draft"),1,0)))')],
      "legs": [("x_own", "x_acct", "C")]},
     {"name": "Payment Vouchers", "ar": "سندات الصرف", "module": "purchasing", "kind": "Payment Voucher",
      "title": "Payments settling what we owe suppliers, subcontractors and workers",
@@ -537,11 +550,17 @@ def export_data(db):
         out["Sales Invoices"].append({"number": x["number"], "date": x["date"], "bu_code": code(x["bu_id"]),
                                       "boq_title": boq_titles.get(x["boq_id"], ""), "status": status,
                                       "ar_account": ar_acc, "revenue_account": rev_acc, "customer": x["customer"],
-                                      "vat_code": x["vat_code"], "wht_code": x["wht_code"]})
+                                      "vat_code": x["vat_code"], "wht_code": x["wht_code"], "extract_no": x.get("seq_no") or "",
+                                      "project": x.get("project") or "", "work": x.get("work") or "",
+                                      "prev_paid": "" if x.get("prev_paid") is None else to_major(x["prev_paid"]),
+                                      "deductions": to_major(x.get("deductions") or 0) or "", "final": "Yes" if x.get("final") else "",
+                                      "notes": x.get("notes") or ""})
         for ln in db.q("SELECT * FROM extract_lines WHERE extract_id=? ORDER BY seq, id", (x["id"],)):
+            pct = ln.get("pct")
             out["Invoice Lines"].append({"number": x["number"], "category": ln["category"], "sub": ln["sub"],
                                          "item_no": ln["item_no"], "description": ln["description"], "unit": ln["unit"],
-                                         "qty": ln["qty"], "price": to_major(ln["price"]), "account": ln["account"] or ""})
+                                         "qty": ln["qty"], "price": to_major(ln["price"]),
+                                         "pct": "" if pct in (None, 1, 1.0) else pct, "account": ln["account"] or ""})
     # stock moves (only those still attached to a live entry, or entry-less transfers/counts)
     stock_entries = set()
     moves = db.q("SELECT m.*, i.name AS item, i.unit, w.name AS warehouse FROM stock_moves m "
@@ -1237,7 +1256,9 @@ def _imp_invoices(db, data, errors, counts, user):
             xid = acc.save_extract(db, {"number": number, "date": r.get("date"), "bu_code": r.get("bu_code"),
                                         "boq_id": boq["id"] if boq else None, "lines": lines[number],
                                         "customer": r.get("customer"), "vat_code": r.get("vat_code"),
-                                        "wht_code": r.get("wht_code")})
+                                        "wht_code": r.get("wht_code"), "seq_no": r.get("extract_no"), "project": r.get("project"),
+                                        "work": r.get("work"), "prev_paid": r.get("prev_paid"), "deductions": r.get("deductions"),
+                                        "final": r.get("final"), "notes": r.get("notes")})
             if str(r.get("status") or "Posted").lower() != "draft":
                 acc.post_extract(db, xid, user=user, ar_account=r.get("ar_account") or None,
                                  revenue_account=r.get("revenue_account") or None)

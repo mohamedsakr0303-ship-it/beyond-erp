@@ -2514,3 +2514,57 @@ class RentalsLanguageAssets(unittest.TestCase):
         interchange.import_data(d2, interchange.read_xlsx(fh.name), mode="replace")
         __import__("os").unlink(fh.name)
         self.assertEqual(a.balance_sheet(d2)["total_assets"], a.balance_sheet(db)["total_assets"])
+
+
+class Extracts(unittest.TestCase):
+    """Running extracts (مستخلص جاري): the client's totals, the next extract of a rental contract, follow-up, adjusting."""
+
+    def setUp(self):
+        self.db = RentalsLanguageAssets().books()      # rental RC-1 on RNT-1, extract EXT-1 (600 × 94.50) issued up to 31/10
+        db = self.db
+        db.x("INSERT INTO business_units(code,name) VALUES ('B9','Building 9')")
+        self.xid = a.save_extract(db, {"number": "XT-1", "date": "2026-09-30", "bu_code": "B9", "customer": "Swag", "prev_paid": 65000,
+                                       "seq_no": 1, "project": "اجورا", "work": "عمارة 9",
+                                       "lines": [{"description": "تركيب و الفك", "qty": 1, "price": 38250},
+                                                 {"description": "ايجار", "qty": 200, "price": 94.5, "pct": "50%"}]})
+
+    def test_percent_and_client_totals(self):
+        from erp import extracts as xt
+        x = xt.detail(self.db, self.xid)
+        self.assertEqual(x["lines"][1]["amount"], 9450.0)          # 200 × 94.50 × 50 %
+        self.assertEqual(x["total"], 47700.0)
+        self.assertEqual((x["prev"], x["prev_auto"]), (65000.0, False))
+        self.assertEqual(x["due"], round(47700 - 65000, 2))
+
+    def test_next_extract_for_rental_and_follow_up(self):
+        from erp import extracts as xt
+        db = self.db
+        first = db.one("SELECT id FROM extracts WHERE number='EXT-1'")["id"]
+        a.record_collection(db, {"bu_code": "RNT-1", "amount": 30000, "credit_account": db.acct("ar"), "date": "2026-10-02"})
+        row = next(r for r in xt.board(db)["rows"] if r["id"] == first)
+        self.assertEqual((row["collected"], row["owed"], row["pay_state"]), (30000.0, 26700.0, "part"))
+        xid = xt.next_for_rental(db, 1, {"date": "2026-11-01"})
+        x = xt.detail(db, xid)
+        self.assertEqual((x["number"], x["seq_no"]), ("EXT-2", 2))  # follows the site's last number
+        rent = [ln for ln in x["lines"] if ln["description"].startswith("ايجار")]
+        self.assertTrue(rent and all("مدة 1/11/2026 الي 1/12/2026" in ln["description"] for ln in rent))
+        self.assertEqual(rent[0]["qty"], 200.0)                     # frames on site × one month
+        # running: works to date include extract 1; paid before = what was collected before the date
+        self.assertEqual(x["works_to_date"], round(56700 + x["total"], 2))
+        self.assertEqual(x["prev"], 30000.0)
+        self.assertEqual(x["due"], round(56700 + x["total"] - 30000, 2))
+        self.assertEqual(xt.xlsx(db, xid)[0][:2], b"PK")
+        self.assertIn("المستحق".encode(), xt.html(db, xid))
+
+    def test_extract_fields_round_trip_through_the_workbook(self):
+        import tempfile
+        from erp import workbook
+        raw = workbook.build_workbook(self.db)
+        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as fh:
+            fh.write(raw)
+        d2 = Database(":memory:")
+        interchange.import_data(d2, interchange.read_xlsx(fh.name), mode="replace")
+        __import__("os").unlink(fh.name)
+        x = d2.one("SELECT * FROM extracts WHERE number='XT-1'")
+        self.assertEqual((x["seq_no"], x["project"], x["prev_paid"]), (1, "اجورا", 6500000))
+        self.assertEqual(d2.one("SELECT pct FROM extract_lines WHERE extract_id=? AND description='ايجار'", (x["id"],))["pct"], 0.5)

@@ -791,6 +791,50 @@ def extracts(ctx):
                                 q.get("date_to")))
 
 
+@route("GET", "/api/extracts-board", "sales.extracts")
+def extracts_board(ctx):
+    from . import extracts as xt
+    q = ctx.q
+    return ok(xt.board(ctx.db, q.get("bu_id"), q.get("status"), q.get("q")))
+
+
+@route("GET", "/api/extracts/<xid>/detail", "sales.extracts")
+def extract_detail(ctx, xid):
+    from . import extracts as xt
+    return ok(xt.detail(ctx.db, int(xid)))
+
+
+@route("POST", "/api/rentals/<rid>/next-extract", "sales.extracts", "add")
+def rental_next_extract(ctx, rid):
+    from . import extracts as xt
+    xid = xt.next_for_rental(ctx.db, int(rid), ctx.body, ctx.user["username"])
+    ctx.log("extract.next", xid)
+    return ok({"id": xid})
+
+
+@route("POST", "/api/extracts/<xid>/reopen", "sales.extracts", "edit")
+def extract_reopen(ctx, xid):
+    """Adjust an issued extract: its invoice entry is voided (kept in the audit trail) and it becomes a draft again."""
+    x = ctx.db.one("SELECT status, entry_id FROM extracts WHERE id=?", (int(xid),))
+    if not x:
+        raise acc.ValidationError("Extract not found")
+    if x["status"] == "posted" and x["entry_id"]:
+        acc.void_entry(ctx.db, x["entry_id"], ctx.body.get("reason") or "Extract reopened to adjust", ctx.user["username"])
+    ctx.log("extract.reopen", xid)
+    return ok({"id": int(xid)})
+
+
+@route("GET", "/api/extracts/<xid>/doc", "sales.extracts")
+def extract_doc(ctx, xid):
+    """The extract in the client's layout: Excel, or a page that prints to PDF."""
+    from . import extracts as xt
+    lang = ctx.q.get("lang") or "ar"
+    if ctx.q.get("format") in ("pdf", "html"):
+        return Reply(xt.html(ctx.db, int(xid), lang), ctype="text/html; charset=utf-8")
+    data, name = xt.xlsx(ctx.db, int(xid), lang)
+    return download(data, name, XLSX)
+
+
 @route("GET", "/api/extracts/<xid>", "sales.invoices")
 def extract_one(ctx, xid):
     return ok(acc.get_extract(ctx.db, int(xid)))

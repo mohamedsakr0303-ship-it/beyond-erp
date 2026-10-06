@@ -886,6 +886,7 @@ def build_workbook(db, template=False, data=None, hide=None, lang="en", extend=N
     _scaffold_calculator(wb, db, colmap, F, fill, NAVY, BLUE, MONEY, L)
     _crew_calculator(wb, db, F, fill, NAVY, BLUE, MONEY)
     _guide(wb, F, fill)
+    _extract_print(wb, data, colmap, F, fill)
 
     # ----------------------------------------------------------------- audit
     au = wb.create_sheet("Model Audit")
@@ -1065,7 +1066,7 @@ def classic_style(wb, company):
         a1 = ws.cell(1, 1)
         if isinstance(a1.value, str) and not a1.value.startswith("="):
             if " | " not in a1.value:
-                a1.value = f"{brand} | {a1.value.upper()}"
+                a1.value = f"{brand} | {(ws.title if a1.value.strip().upper() == brand else a1.value).upper()}"
             a1.font = Font(name="Arial", size=16, bold=True, color=NAVY)
             ws.row_dimensions[1].height = 24
         for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
@@ -1389,6 +1390,135 @@ def _budget_sheet(wb, colmap, F, fill, NAVY, BLUE, MONEY, PCT, L):
 
 
 
+def _extract_print(wb, data, colmap, F, fill):
+    """An extract (مستخلص) laid out like the client's: pick the invoice number; running = every work to date on the site
+    (its earlier issued extracts too), less what was paid before, less deductions = due."""
+    from openpyxl.styles import Alignment, Border, Side
+    from openpyxl.worksheet.datavalidation import DataValidation
+    ar = getattr(wb, "_lang", "en") == "ar"
+    T = lambda en, a: a if ar else en  # noqa: E731
+    si, il, rv = colmap["Sales Invoices"], colmap["Invoice Lines"], colmap["Receipt Vouchers"]
+    S = lambda k: f"'Sales Invoices'!${si[k]}$5:${si[k]}$2000"  # noqa: E731
+    IL = lambda k: f"'Invoice Lines'!${il[k]}$5:${il[k]}$2000"  # noqa: E731
+    pick = lambda k: f'IFERROR(INDEX({S(k)},MATCH($J$2&"",{S("number")},0)),"")'  # noqa: E731
+    ws = wb.create_sheet("Extract Print")
+    ws.sheet_view.rightToLeft = ar
+    ws.sheet_view.showGridLines = False
+    med, thin = Side(style="medium", color="000000"), Side(style="thin", color="000000")
+    box, cb = Border(left=med, right=med, top=med, bottom=med), Border(left=thin, right=thin, top=thin, bottom=thin)
+    ctr = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    side = Alignment(horizontal="right" if ar else "left", vertical="center", wrap_text=True)
+    for c, w in zip("ABCDEFGHIJ", (5, 46, 7, 9, 10, 11, 13, 3, 24, 22)):
+        ws.column_dimensions[c].width = w
+    # the controls (outside the printed area)
+    sales = sorted([r for r in (data or {}).get("Sales Invoices") or [] if r.get("number")], key=lambda r: str(r.get("date") or ""))
+    ctl = [(T("Extract (invoice No.)", "المستخلص (رقم الفاتورة)"), sales[-1]["number"] if sales else ""),
+           (T("Show: running = all works to date; single = this extract only", "العرض: running = كل الأعمال حتى تاريخه؛ single = هذا المستخلص فقط"), "running"),
+           (T("Business unit", "وحدة العمل"), f"={pick('bu_code')}&\"\""), (T("Date", "التاريخ"), f"={pick('date')}")]
+    for i, (lab, v) in enumerate(ctl, start=2):
+        ws.cell(i, 9, lab).font = F(size=9, color="555555")
+        c = ws.cell(i, 10, v)
+        c.font = F(bold=True, color=BLUE if i <= 3 else "111111")
+    ws["J5"].number_format = "dd/mm/yyyy"
+    dv = DataValidation(type="list", formula1=f"={S('number')}", allow_blank=True)
+    ws.add_data_validation(dv)
+    dv.add("J2")
+    dv2 = DataValidation(type="list", formula1='"running,single"', allow_blank=False)
+    ws.add_data_validation(dv2)
+    dv2.add("J3")
+    ws["I7"] = T("Type in the blue cells. The extract is built from Sales Invoices / Invoice Lines; print the area A1:G.",
+                 "اكتب في الخلايا الزرقاء. المستخلص يُبنى من فواتير المبيعات وبنودها؛ اطبع النطاق A1:G.")
+    ws["I7"].font = F(size=8, italic=True, color="666666")
+    ws["I7"].alignment = Alignment(wrap_text=True, vertical="top")
+    ws.merge_cells("I7:J10")
+    # header boxes
+    run, fin = T("INTERIM", "جارى"), T("FINAL", "ختامى")
+    title = (f'="{T("", "مستخلـــــــص  (")}"&IF({pick("final")}="Yes","{fin}","{run}")&"{T(" EXTRACT No. ( ", ")  رقم ( ")}"&{pick("extract_no")}&" )"')
+    ws.merge_cells("A2:D3")
+    ws["A2"] = title
+    ws.merge_cells("E2:G3")
+    ws["E2"] = f"={pick('project')}&\"\""
+    keys = "Settings!$A$5:$A$400"
+    vals = "Settings!$B$5:$B$400"
+    co = f'IFERROR(INDEX({vals},MATCH("extract_contractor",{keys},0))&"","")'
+    co_name = f'IFERROR(INDEX({vals},MATCH("company_name",{keys},0))&"","")'
+    ws.merge_cells("A4:C4")
+    ws["A4"] = f'="{T("Contractor:  ", "أسم المقاول  :  ")}"&IF({co}<>"",{co},{co_name})'
+    ws.merge_cells("D4:G4")
+    ws["D4"] = f"=IF({pick('work')}&\"\"<>\"\",{pick('work')}&\"\",$J$4)"
+    for a, f, al in (("A2", F(bold=True, size=14), ctr), ("E2", F(bold=True, size=14), ctr), ("A4", F(bold=True, size=10), side), ("D4", F(bold=True, size=12), ctr)):
+        ws[a].font, ws[a].alignment = f, al
+    for rng in ("A2:D3", "E2:G3", "A4:C4", "D4:G4"):
+        for row in ws[rng]:
+            for c in row:
+                c.border = box
+    heads = [T("Item", "بند"), T("Description of works done", "بيان الاعمال المنفذة"), T("Unit", "الوحدة"), T("%", "النسبة"),
+             T("Qty", "الكمية"), T("Rate", "الفئة"), T("Total", "الإجمالي")]
+    for i, h in enumerate(heads, start=1):
+        c = ws.cell(6, i, h)
+        c.font, c.alignment, c.border = F(bold=True, size=10), ctr, cb
+    # the lines: progressive MATCH on the Invoice Lines rows flagged for this extract (helper in the hidden column K)
+    n, first = 30, 7
+    ws.column_dimensions["K"].hidden = True
+    tail = f"'Invoice Lines'!${il['x_xp']}$2000"
+    for k in range(n):
+        r = first + k
+        prev = "4" if k == 0 else f"$K{r - 1}"
+        ws.cell(r, 11, f'=IF(""&{prev}="","",IFERROR(MATCH(1,INDEX({IL("x_xp")},{prev}-3):{tail},0)+{prev},""))')
+        g = lambda key: f"INDEX('Invoice Lines'!${il[key]}:${il[key]},$K{r})"  # noqa: E731
+        ws.cell(r, 1, f'=IF($K{r}="","",{k + 1})')
+        ws.cell(r, 2, f'=IF($K{r}="","",{g("description")}&"")')
+        ws.cell(r, 3, f'=IF($K{r}="","",{g("unit")}&"")')
+        ws.cell(r, 4, f'=IF($K{r}="","",IF({g("pct")}="",1,N({g("pct")})))')
+        ws.cell(r, 5, f'=IF($K{r}="","",N({g("qty")}))')
+        ws.cell(r, 6, f'=IF($K{r}="","",N({g("price")}))')
+        ws.cell(r, 7, f'=IF($K{r}="","",N({g("amount")}))')
+        for i in range(1, 8):
+            c = ws.cell(r, i)
+            c.border, c.font, c.alignment = cb, F(size=11 if i == 2 else 10, bold=i == 2), side if i == 2 else ctr
+        ws.cell(r, 4).number_format, ws.cell(r, 5).number_format = "0.0%", "#,##0.0"
+        ws.cell(r, 6).number_format = ws.cell(r, 7).number_format = "#,##0.00"
+    last = first + n - 1
+    s0 = last + 2
+    run_f = '$J$3="running"'
+    bu_f = '$J$4'
+    vat = (f"=IF({run_f},SUMIFS({S('vat_amt')},{S('bu_code')},{bu_f},{S('date')},\"<\"&$J$5),0)+N({pick('vat_amt')})")
+    wht = (f"=IF({run_f},SUMIFS({S('wht_amt')},{S('bu_code')},{bu_f},{S('date')},\"<\"&$J$5),0)+N({pick('wht_amt')})")
+    paid = (f"=IF({pick('prev_paid')}&\"\"<>\"\",N({pick('prev_paid')}),SUMIFS('Receipt Vouchers'!${rv['amount']}$5:${rv['amount']}$2000,"
+            f"'Receipt Vouchers'!${rv['bu_code']}$5:${rv['bu_code']}$2000,{bu_f},'Receipt Vouchers'!${rv['date']}$5:${rv['date']}$2000,\"<\"&$J$5))")
+    sums = [(T("Total value of works", "اجمالى قيمة الاعمال"), f"=SUM(G{first}:G{last})"), (T("VAT", "ضريبة القيمة المضافة"), vat),
+            (T("Withholding tax", "خصم من المنبع"), wht), (T("Less paid before", "خصم ماسبق صرفه"), paid),
+            (T("Deductions", "خصومات"), f"=N({pick('deductions')})")]
+    ws.merge_cells(f"A{s0}:D{s0 + len(sums) - 1}")
+    ws[f"A{s0}"] = T("Notes", "الملاحظات")
+    ws[f"A{s0}"].font, ws[f"A{s0}"].alignment = F(bold=True, size=12), Alignment(horizontal="center", vertical="top")
+    for i, (lab, v) in enumerate(sums):
+        r = s0 + i
+        ws.merge_cells(f"E{r}:F{r}")
+        ws[f"E{r}"] = f'=IF(N(G{r})=0,"","{lab}")' if i in (1, 2) else lab    # VAT / WHT show only when there is some
+        ws[f"E{r}"].font, ws[f"E{r}"].alignment = F(size=9), side
+        ws[f"G{r}"] = v
+        ws[f"G{r}"].number_format = '#,##0.00;-#,##0.00;""' if i in (1, 2) else "#,##0.00"
+        ws[f"G{r}"].font, ws[f"G{r}"].alignment = F(size=10), ctr
+    due = s0 + len(sums)
+    ws.merge_cells(f"A{due}:F{due}")
+    ws[f"A{due}"] = T("AMOUNT DUE", "المستحق")
+    ws[f"A{due}"].font, ws[f"A{due}"].alignment = F(bold=True, size=12), ctr
+    ws[f"G{due}"] = f"=G{s0}+G{s0 + 1}-G{s0 + 2}-G{s0 + 3}-G{s0 + 4}"
+    ws[f"G{due}"].font, ws[f"G{due}"].number_format, ws[f"G{due}"].alignment = F(bold=True, size=11), "#,##0.00", ctr
+    for row in ws[f"A{s0}:G{due}"]:
+        for c in row:
+            c.border = cb
+    foot = [f'="{T("Issued on:  ", "تحريرا فى :  ")}"&IF(N($J$5)>0,TEXT($J$5,"d/m/yyyy"),"")', f"={pick('notes')}&\"\"", T("Signature", "التوقيع")]
+    for k, v in enumerate(foot):
+        c = ws.cell(due + 2 + k, 2, v)
+        c.font, c.alignment = F(bold=True, size=9), side
+    ws.page_setup.orientation, ws.page_setup.paperSize = "portrait", ws.PAPERSIZE_A4
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.page_setup.fitToWidth, ws.page_setup.fitToHeight = 1, 1
+    ws.print_area = f"A1:G{due + 5}"
+
+
 # what to type where — (task EN, sheet(s), what follows by itself EN, task AR, what follows AR)
 GUIDE = [
     ("Start renting to a new site / building", "Business Units, Rental Contracts",
@@ -1495,7 +1625,7 @@ def _guide(wb, F, fill):
             c.alignment = wrap
             c.font = F(bold=i == 0, size=9)
         if parts[0] in wb.sheetnames:
-            ws.cell(r, 3).hyperlink = f"#'{parts[0]}'!A1"
+            link(ws.cell(r, 3), parts[0])
             ws.cell(r, 3).font = F(size=9, color="1F4E79")
     r = 6 + len(GUIDE) + 1
     ws.cell(r, 2, "قواعد" if ar else "RULES").font = F(bold=True, size=11, color=NAVY)
@@ -1509,7 +1639,7 @@ SHEET_ORDER = ["Cover", "How to Use", "Partner Pack", "Dashboard", "Journal Vouc
                "Balance Sheet", "Cash Flow", "BU Profitability", "Payables", "Receivables", "Partner Equity", "Business Units",
                "Sales Invoices", "Invoice Lines", "Rental Contracts", "Rental Equipment", "Rental Stock Lots", "Loans",
                "Loan Transactions", "Employees", "Payroll Run", "Price List", "BOQ Lines", "Quick Estimator", "Scaffold Calculator",
-               "Crew Pay Calculator", "Budget vs Actual",
+               "Crew Pay Calculator", "Extract Print", "Budget vs Actual",
                "Tax Summary", "Model Audit", "Receipt Vouchers", "Payment Vouchers", "Direct Costs", "Operating Expenses", "Payroll",
                "Partner Transactions", "Cash Custody", "Custody Expenses", "Settings", "Parties", "Partners", "Partner Shares",
                "Payroll Settings", "Tax Codes"]
@@ -1517,7 +1647,7 @@ SHEET_ORDER = ["Cover", "How to Use", "Partner Pack", "Dashboard", "Journal Vouc
 
 # ------------------------------------------------------------------ sections a company does not use
 # report / tool sheets that belong to one section of the app (data sheets carry their own "module")
-EXTRA_SHEET_MODULE = {"Crew Pay Calculator": "payroll.crew", "Scaffold Calculator": "rentals.calculator", "Quick Estimator": "estimating", "Budget vs Actual": "accounting.budgets",
+EXTRA_SHEET_MODULE = {"Extract Print": "sales.extracts", "Crew Pay Calculator": "payroll.crew", "Scaffold Calculator": "rentals.calculator", "Quick Estimator": "estimating", "Budget vs Actual": "accounting.budgets",
                       "Receivables": "sales.receivables", "Payables": "purchasing.payables", "Partner Equity": "partners",
                       "Tax Summary": "tax", "BU Profitability": "business_units.profitability"}
 NEVER_HIDDEN = {"Cover", "Partner Pack", "Dashboard", "Settings", "Chart of Accounts", "Journal Vouchers", "Trial Balance", "Income Statement",
@@ -1625,7 +1755,7 @@ def _dashboard(wb, data, colmap, posting, rng, pl_refs, bs_refs, n_bu, audit_ref
               ("Net margin", f"=IFERROR('Income Statement'!$B${pl_refs['net']}/'Income Statement'!$B${pl_refs['net_sales']},0)", PCT)])
     st = span(12, 2, 13, f'="Books integrity (Model Audit):  "&{audit_ref}&"     ·     open the Model Audit sheet for the detail"',
               font=F(bold=True, size=10), align=center)
-    st.hyperlink = "#'Model Audit'!A1"
+    link(st, "Model Audit")
     ws.row_dimensions[12].height = 22
     ws.conditional_formatting.add("B12:M12", FormulaRule(formula=[f'ISNUMBER(SEARCH("ALL OK",{audit_ref}))'], fill=fill("E3F4E8"),
                                                          font=F(bold=True, color="1E7B34")))
@@ -1869,7 +1999,7 @@ def _cover(wb, cover, company, tagline, template, currency, audit_ref, hidden, F
         r += 1
         for name, desc in items:
             c = cover.cell(r, 2, name)
-            c.hyperlink = f"#'{name}'!A1"
+            link(c, name)
             c.font = F(bold=True, size=10, color="1155CC", underline="single")
             d = cover.cell(r, 3, desc[:110])
             d.font = F(size=9, color="333333")
@@ -1899,16 +2029,52 @@ def _cover(wb, cover, company, tagline, template, currency, audit_ref, hidden, F
     return cover
 
 
+def link(cell, sheet, cell_ref="A1"):
+    """A link to another sheet of this workbook (an in-file location, not a web address), so Excel, LibreOffice,
+    Google Sheets and phone apps all follow it."""
+    from openpyxl.worksheet.hyperlink import Hyperlink
+    cell.hyperlink = Hyperlink(ref=cell.coordinate, location=f"'{sheet}'!{cell_ref}", display=str(cell.value or sheet))
+
+
+def _home(ws):
+    """A '⌂ Home' cell beside the title that opens the Cover: past the end of the title, and outside the print area
+    on sheets that are printed."""
+    from openpyxl.utils import get_column_letter as L
+    from openpyxl.utils import column_index_from_string as CI
+    a1 = ws.cell(1, 1)
+    if not a1.value:
+        return
+    title = str(a1.value)
+    if title.startswith("="):
+        title = "x" * 40
+    need = len(title) * 1.5 + 2                    # the title is bold 14 pt: about 1.5 character widths per letter
+    for rng in ws.merged_cells.ranges:             # a merged title spans its range
+        if rng.min_row == 1 and rng.min_col == 1:
+            need = max(need, sum((ws.column_dimensions[L(c)].width or 8.43) for c in range(1, rng.max_col + 1)))
+    col, acc_w = 1, 0.0
+    while acc_w < need and col < 60:
+        acc_w += ws.column_dimensions[L(col)].width or 8.43
+        col += 1
+    pa = ws.print_area
+    if pa:                                         # printed sheets: keep it off the page
+        last = str(pa).split(":")[-1].replace("$", "").split("!")[-1]
+        col = max(col, CI("".join(ch for ch in last if ch.isalpha())) + 1)
+    while ws.cell(1, col).value not in (None, ""):
+        col += 1
+    c = ws.cell(1, col, "⌂ Home")
+    link(c, "Cover")
+    from openpyxl.styles import Font
+    c.font = Font(bold=True, size=10, color="1155CC", underline="single")
+
+
 def _polish(wb, data, fill):
-    """Finishing touches on every sheet: the title links back to the Cover; data sheets get light row banding over
+    """Finishing touches on every sheet: a Home link beside the title opens the Cover; data sheets get light row banding over
     the rows in use, their header row repeated on every printed page, and landscape pages one page wide."""
     from openpyxl.formatting.rule import FormulaRule
     for ws in wb.worksheets:
         if ws.title in ("Cover", "Lists"):
             continue
-        a1 = ws.cell(1, 1)
-        if a1.value and not a1.hyperlink:
-            a1.hyperlink = "#'Cover'!A1"
+        _home(ws)
         if ws.title not in SHEET_BY_NAME:
             continue
         last_col = ws.max_column

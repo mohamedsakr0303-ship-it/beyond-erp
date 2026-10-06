@@ -13,7 +13,7 @@ import re
 from .interchange import SHEETS
 
 REPORT_AR = {
-    "Cover": "الغلاف", "How to Use": "دليل الاستخدام", "Partner Pack": "تقرير الشركاء", "Dashboard": "لوحة المتابعة", "Trial Balance": "ميزان المراجعة",
+    "Cover": "الغلاف", "How to Use": "دليل الاستخدام", "Extract Print": "طباعة المستخلص", "Partner Pack": "تقرير الشركاء", "Dashboard": "لوحة المتابعة", "Trial Balance": "ميزان المراجعة",
     "Income Statement": "قائمة الدخل", "Balance Sheet": "الميزانية العمومية", "Cash Flow": "التدفقات النقدية",
     "BU Profitability": "ربحية المشروعات", "Payables": "الدائنون", "Receivables": "المدينون", "Partner Equity": "حقوق الشركاء",
     "Tax Summary": "ملخص الضرائب", "Model Audit": "فحص سلامة الدفاتر", "Budget vs Actual": "الموازنة مقابل الفعلي",
@@ -23,6 +23,7 @@ REPORT_AR = {
 
 # the workbook's own terms (the app's texts cover the rest)
 TERMS = {
+    "⌂ Home": "⌂ الرئيسية",
     # cover
     "Accounting & Project Control System": "نظام الحسابات ومتابعة المشروعات", "START HERE": "ابدأ هنا", "EVERY DAY": "العمل اليومي",
     "THE ACCOUNTS": "الحسابات", "PEOPLE & PAYROLL": "الموظفون والرواتب", "PROJECTS & PRICING": "المشروعات والتسعير",
@@ -229,7 +230,7 @@ def _ref_rx(names):
 
 
 # values formulas compare against — kept as they are wherever they are typed
-CODES = {"Yes", "No", "both", "install", "dismantle", "none", "Posted", "Draft", "OK", "ALL OK"}
+CODES = {"running", "single", "Yes", "No", "both", "install", "dismantle", "none", "Posted", "Draft", "OK", "ALL OK"}
 
 
 def _literals(f):
