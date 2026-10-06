@@ -2815,3 +2815,62 @@ class AssistantAnyProvider(unittest.TestCase):
         ai.save_policy(db, u, {"base_url": "http://127.0.0.1:9/v1"})
         with self.assertRaises(ai.AIError):
             ai.complete(db, u, {"messages": [{"role": "user", "content": "hi"}]})
+
+    def test_kimi_style_reasoning_diagnostics_and_connection_test(self):
+        import threading as th
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+        from erp import ai
+        seen = []
+
+        class H(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers["content-length"])))
+                seen.append((self.path, body))
+                if self.path.startswith("/web/"):            # a website, not an API
+                    out, ctype = b"<!doctype html><title>Kimi</title>", "text/html"
+                else:
+                    msg = {"role": "assistant", "content": "OK", "reasoning_content": "The user wants OK."}
+                    if body.get("tools"):
+                        msg = {"role": "assistant", "content": "", "reasoning_content": "Look up accounts.",
+                               "tool_calls": [{"id": "k1", "type": "function", "function": {"name": "erp_read", "arguments": "{\"path\":\"/api/accounts\"}"}}]}
+                    out, ctype = json.dumps({"model": "kimi-k3", "choices": [{"message": msg, "finish_reason": "tool_calls" if body.get("tools") else "stop"}]}).encode(), "application/json"
+                self.send_response(200)
+                self.send_header("content-type", ctype)
+                self.send_header("content-length", str(len(out)))
+                self.end_headers()
+                self.wfile.write(out)
+        srv = HTTPServer(("127.0.0.1", 0), H)
+        th.Thread(target=srv.serve_forever, daemon=True).start()
+        db = Database(":memory:")
+        auth.create_user(db, {"username": "boss", "password": "secret123", "full_name": "Boss"}, first=True)
+        u = auth.public_user(db.one("SELECT * FROM users WHERE id=1"))
+        self.assertEqual(ai.policy(db)["name"], "Kazuha")                          # not tied to one AI provider
+        db.set_setting("ai_policy", json.dumps({"name": "Claude"}))
+        self.assertEqual(ai.policy(db)["name"], "Kazuha")                          # the old default is renamed
+        ai.save_policy(db, u, {"provider": "kimi", "base_url": f"http://127.0.0.1:{srv.server_port}/v1", "model": "kimi-k3"})
+        # the connection test works while the assistant is still off, without tools
+        m = ai.complete(db, u, {"test": True})
+        self.assertEqual(m["content"][-1], {"type": "text", "text": "OK"})
+        self.assertNotIn("tools", seen[-1][1])
+        ai.save_policy(db, u, {"enabled": True})
+        m = ai.complete(db, u, {"messages": [{"role": "user", "content": "accounts?"}]})
+        self.assertEqual(m["content"][0], {"type": "reasoning", "text": "Look up accounts."})
+        msgs = [{"role": "user", "content": "accounts?"}, {"role": "assistant", "content": m["content"]},
+                {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "k1", "content": "[]"}]}]
+        ai.complete(db, u, {"messages": msgs})
+        sent = seen[-1][1]["messages"][2]
+        self.assertEqual((sent["reasoning_content"], sent["tool_calls"][0]["id"]), ("Look up accounts.", "k1"))
+        # switching to Claude drops the other provider's reasoning blocks
+        ai.save_policy(db, u, {"provider": "anthropic", "model": "claude-opus-5-5"})
+        _, params = ai.request_params(db, u, {"messages": msgs})
+        self.assertFalse(any(b.get("type") == "reasoning" for m2 in params["messages"] if isinstance(m2["content"], list) for b in m2["content"]))
+        # an address that is a website, not an API: say so, with what came back
+        ai.save_policy(db, u, {"provider": "custom", "base_url": f"http://127.0.0.1:{srv.server_port}/web", "model": "kimi-k3"})
+        with self.assertRaises(ai.AIError) as cm:
+            ai.complete(db, u, {"messages": [{"role": "user", "content": "hi"}]})
+        self.assertIn("did not answer like an AI API", str(cm.exception))
+        self.assertIn("<!doctype html>", str(cm.exception))
+        srv.shutdown()

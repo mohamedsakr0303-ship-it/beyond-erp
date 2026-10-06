@@ -51,21 +51,27 @@ function toOpenAI(p: any) {
     } else {
       const calls = (Array.isArray(m.content) ? m.content : []).filter((b: any) => b?.type === "tool_use")
         .map((b: any) => ({ id: b.id, type: "function", function: { name: b.name, arguments: JSON.stringify(b.input || {}) } }));
-      msgs.push({ role: "assistant", content: textOf(m.content) || null, ...(calls.length ? { tool_calls: calls } : {}) });
+      const reasoning = (Array.isArray(m.content) ? m.content : []).filter((b: any) => b?.type === "reasoning").map((b: any) => b.text || "").join("");
+      msgs.push({ role: "assistant", content: textOf(m.content) || (calls.length ? "" : null), ...(calls.length ? { tool_calls: calls } : {}),
+                  ...(reasoning ? { reasoning_content: reasoning } : {}) });
     }
   }
-  return { model: p.model, messages: msgs,
-           tools: p.tools.map((t: any) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.input_schema } })) };
+  return { model: p.model, messages: msgs, ...(p.tools.length ? {
+           tools: p.tools.map((t: any) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.input_schema } })) } : {}) };
 }
 function fromOpenAI(r: any) {
-  const ch = r?.choices?.[0]; if (!ch) throw new Error("The AI provider sent no answer" + (r?.error ? ": " + (r.error.message || r.error) : ""));
+  const ch = r?.choices?.[0];
+  if (!ch) throw new Error(r?.error ? "The AI provider refused the request: " + (r.error.message || r.error)
+    : "The AI provider's reply had no answer in it — check the address and the model name. It said: " + JSON.stringify(r || {}).slice(0, 300));
   const m = ch.message || {}, content: any[] = [];
+  if (m.reasoning_content) content.push({ type: "reasoning", text: String(m.reasoning_content) });
   if (m.content) content.push({ type: "text", text: typeof m.content === "string" ? m.content : JSON.stringify(m.content) });
   (m.tool_calls || []).forEach((tc: any, i: number) => { let input = {}; try { input = JSON.parse(tc.function?.arguments || "{}"); } catch { /* bad JSON */ }
     content.push({ type: "tool_use", id: tc.id || "call_" + i, name: tc.function?.name || "", input }); });
   let stop = ({ tool_calls: "tool_use", function_call: "tool_use", length: "max_tokens", content_filter: "refusal" } as any)[ch.finish_reason] || "end_turn";
   if (content.some(b => b.type === "tool_use")) stop = "tool_use";
-  return { role: "assistant", content: content.length ? content : [{ type: "text", text: "" }], stop_reason: stop, model: r.model || "" };
+  if (!content.some(b => b.type === "text" || b.type === "tool_use")) content.push({ type: "text", text: "(The model returned an empty answer.)" });
+  return { role: "assistant", content, stop_reason: stop, model: r.model || "" };
 }
 const TOOLS = ["erp_find", "erp_read", "erp_write"];
 const MAX_REQUEST = 30_000_000;
@@ -95,7 +101,7 @@ Deno.serve(async (req) => {
   const cfg = await call("GET", `/rest/v1/ai_config?select=api_key,settings&${inCo}`);
   const row = cfg.ok && cfg.data.length ? cfg.data[0] : null;
   const s: any = row?.settings || {};
-  if (!row || !s.enabled) return fail(403, "The AI assistant is switched off for this company");
+  if (!row || (!s.enabled && !(b.test && isSuper))) return fail(403, "The AI assistant is switched off for this company");
   const other = s.provider && s.provider !== "anthropic";
   if (!row.api_key && !other) return fail(400, "No AI provider key is installed yet — a super administrator adds it in Settings → AI assistant");
   if (!isSuper && s.access === "list") {
@@ -111,12 +117,13 @@ Deno.serve(async (req) => {
   if (!isSuper && limit && calls >= limit) return fail(429, `Daily limit reached (${limit} requests) — try again tomorrow`);
 
   // 3. the request: policy from the database, conversation from the page
-  const messages = Array.isArray(b.messages) ? b.messages : [];
+  const test = !!b.test && isSuper;   // Settings → Test connection (super administrators): one short question, no tools
+  let messages = test ? [{ role: "user", content: "Reply with the single word OK." }] : (Array.isArray(b.messages) ? b.messages : []);
   if (!messages.length || messages[0]?.role !== "user" || messages.some((m: any) => !["user", "assistant"].includes(m?.role)))
     return fail(400, "Malformed conversation");
   const model = other ? String(s.model || "") : (MODELS.includes(s.model) ? s.model : "claude-opus-5-5");
   const write = ["off", "confirm", "auto"].includes(s.write) ? s.write : "confirm";
-  const tools = (Array.isArray(b.tools) ? b.tools : [])
+  const tools = test ? [] : (Array.isArray(b.tools) ? b.tools : [])
     .filter((t: any) => t && TOOLS.includes(t.name) && !(t.name === "erp_write" && write === "off"));
   let fixed = String(b.base || "").slice(0, 20000);
   if (s.instructions) fixed += "\n\nStanding instructions from the company's super administrator:\n" + String(s.instructions).slice(0, 8000);
@@ -140,7 +147,9 @@ Deno.serve(async (req) => {
     let r: Response;
     try { r = await fetch(base + "/chat/completions", { method: "POST", headers, body: JSON.stringify(toOpenAI(params)) }); }
     catch { return fail(502, "Could not reach the AI provider — try again"); }
-    const data = await r.json().catch(() => ({}));
+    const raw = await r.text();
+    let data: any; try { data = JSON.parse(raw); } catch {
+      return fail(502, `The address ${base} did not answer like an AI API (it sent back: ${raw.trim().slice(0, 160)}) — check the provider's address in Settings → AI assistant`); }
     if (r.status === 401 || r.status === 403) return fail(400, "The AI provider refused the key — a super administrator should check it in Settings → AI assistant");
     if (r.status === 429) return fail(429, "The AI provider is busy (rate limit) — try again in a minute");
     if (!r.ok) return fail(400, `The AI provider refused the request (${r.status})${data?.error ? ": " + (data.error.message || data.error) : ""}`);
@@ -150,6 +159,7 @@ Deno.serve(async (req) => {
                { ...svc, Prefer: "resolution=merge-duplicates" });
     return reply(200, { message });
   }
+  params.messages = messages.map((m: any) => Array.isArray(m.content) ? { ...m, content: m.content.filter((x: any) => x?.type !== "reasoning") } : m);
   const client = new Anthropic({ apiKey: row.api_key });
   let message: any;
   try {

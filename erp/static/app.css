@@ -803,3 +803,4 @@ label.ppl.chk input{margin:0}
 .sw input:focus-visible+.sw-ui{outline:2px solid var(--brand);outline-offset:3px}
 .sw:active .sw-ui i{width:32px}
 @media (prefers-reduced-motion:reduce){.sw-ui,.sw-ui i,.sw-ui b{transition:none}}
+.ai-face{object-fit:cover;border-radius:50%;box-shadow:0 0 0 2px color-mix(in srgb,var(--brand) 35%,transparent)}

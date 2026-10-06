@@ -106,7 +106,7 @@ def build(make_zip=False):
         (OUT / "vendor" / "wheels" / fname).write_bytes(data)
         names.append(fname)
     print("App")
-    for f in ("app.css", "i18n.js", "app.js"):
+    for f in ("app.css", "i18n.js", "app.js", "assistant.jpg"):
         shutil.copy(ROOT / "erp" / "static" / f, OUT / f)
     for f in (ROOT / "erp" / "static" / "vendor").glob("*"):   # fonts, 3D model viewer (loaded only when a model is shown)
         if f.is_dir():

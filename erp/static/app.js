@@ -6322,11 +6322,16 @@ async function aiComplete(messages, ctx) {
   }
   const r = await api("POST", "/api/ai/complete", { messages });
   if (r.message) return r.message;
+  return aiCompleteBrowser(r);
+}
+// browser-only edition: the engine prepared the request; the page sends it (Claude: official SDK; others: plain HTTP)
+async function aiCompleteBrowser(r) {
   if (r.provider === "openai") {   // browser-only edition, any other provider: the page calls it, the engine translates
     let res;
     try { res = await fetch(r.url, { method: "POST", headers: r.headers, body: JSON.stringify(r.body) }); }
     catch { throw new Error(L2("Could not reach the AI provider from this browser (it may not allow browser access) — use the desktop app or the shared workspace.", "تعذّر الوصول إلى مزوّد الذكاء الاصطناعي من هذا المتصفح (قد لا يسمح بذلك) — استخدم تطبيق سطح المكتب أو مساحة العمل المشتركة.")); }
-    const data = await res.json().catch(() => ({}));
+    const raw = await res.text(); let data;
+    try { data = JSON.parse(raw); } catch { throw new Error(L2(`The address ${r.url} did not answer like an AI API (it sent back: ${raw.trim().slice(0, 160)}) — check the provider's address`, `العنوان ${r.url} لم يُجب كواجهة ذكاء اصطناعي (أرسل: ${raw.trim().slice(0, 160)}) — راجع عنوان المزوّد`)); }
     if (!res.ok) throw new Error(L2("The AI provider refused the request", "رفض مزوّد الذكاء الاصطناعي الطلب") + ` (${res.status})` + (data && data.error ? ": " + (data.error.message || data.error) : ""));
     return (await api("POST", "/api/ai/convert", { response: data })).message;
   }
@@ -6359,6 +6364,8 @@ async function aiApi(method, path, body, review) {
   return { status: r.status, text: /json/.test(ct) ? await r.text() : `(${ct} — a file, not shown)` };
 }
 const AI = { thread: null, busy: false, ctx: null, cloudReady: null };
+// the assistant's face: the super administrator's picture, or Kazuha
+const aiAvatar = (size = 34) => `<img class="av ai-face" style="width:${size}px;height:${size}px" src="${esc((S.ai && S.ai.policy && S.ai.policy.avatar) || "assistant.jpg")}" alt="">`;
 PAGES.assistant = async (view, parts) => {
   if (!S.ai) await loadAiPolicy();
   if (!S.ai || !S.ai.allowed) {
@@ -6369,10 +6376,10 @@ PAGES.assistant = async (view, parts) => {
   const tid = +parts[1] || null;
   AI.thread = tid ? await api("GET", "/api/ai/threads/" + tid).catch(() => null) : null;
   if (!AI.thread) AI.thread = { id: null, title: "", messages: [] };
-  const name = (S.ai.policy && S.ai.policy.name) || "Claude";
+  const name = (S.ai.policy && S.ai.policy.name) || "Kazuha";
   view.innerHTML = `<div class="chat ai ${tid ? "has-room" : ""}"><aside class="chl"><div class="chl-head"><a class="btn pri" href="#/assistant" style="width:100%;justify-content:center">${svg("plus")} ${esc(L2("New conversation", "محادثة جديدة"))}</a></div>
       <div class="chl-list">${threads.map(th => `<a class="chl-item ${th.id === tid ? "on" : ""}" href="#/assistant/${th.id}"><span class="chl-ic">${svg("spark")}</span><span class="chl-t"><b>${esc(th.title)}</b><small>${esc(fmtTime(th.updated_at))}</small></span><button class="lnk" data-a="aidel" data-id="${th.id}" title="${esc(L2("Delete", "حذف"))}">×</button></a>`).join("") || `<div class="muted chl-note">${esc(L2("Your conversations stay on this device.", "محادثاتك تبقى على هذا الجهاز."))}</div>`}</div></aside>
-    <section class="chv"><div class="ch-top"><a class="icbtn ch-back" href="#/assistant">${BACK_ICON}</a><span class="chl-ic big ai-ic">${svg("spark")}</span><div class="ch-tt"><b>${esc(name)}</b><small>${esc(L2("Works with your own access only", "يعمل بصلاحياتك أنت فقط"))} · ${esc(S.ai.policy.write === "off" ? L2("read-only", "قراءة فقط") : L2("every change is checked, then you review it", "كل تعديل يُفحص ثم تراجعه أنت"))}</small></div></div>
+    <section class="chv"><div class="ch-top"><a class="icbtn ch-back" href="#/assistant">${BACK_ICON}</a>${aiAvatar(40)}<div class="ch-tt"><b>${esc(name)}</b><small>${esc(L2("Works with your own access only", "يعمل بصلاحياتك أنت فقط"))} · ${esc(S.ai.policy.write === "off" ? L2("read-only", "قراءة فقط") : L2("every change is checked, then you review it", "كل تعديل يُفحص ثم تراجعه أنت"))}</small></div></div>
       <div class="ch-list ai-list" id="ailist"></div>
       <div class="ch-comp"><div class="ch-inbox"><textarea id="aitext" rows="1" placeholder="${esc(L2("Ask about your books, or ask for a change… e.g. “Which clients owe us the most?”", "اسأل عن دفاترك أو اطلب تعديلاً… مثال: «من أكثر العملاء مديونية لنا؟»"))}"></textarea></div>
         <button class="btn pri icbtn ch-send" data-a="aisend" aria-label="${esc(L2("Send", "إرسال"))}">${svg("send")}</button></div>
@@ -6423,7 +6430,7 @@ function aiDraw() {
       continue;
     }
     for (const b of m.content || []) {
-      if (b.type === "text" && b.text) h += `<div class="ch-msg ai-msg"><div class="ch-av"><span class="av ai-av">${svg("spark")}</span></div><div class="ch-b"><div class="ch-bubble md">${md(b.text)}</div></div></div>`;
+      if (b.type === "text" && b.text) h += `<div class="ch-msg ai-msg"><div class="ch-av">${aiAvatar(34)}</div><div class="ch-b"><div class="ch-bubble md">${md(b.text)}</div></div></div>`;
       if (b.type === "tool_use") {
         const r = results[b.id], inp = b.input || {};
         const label = b.name === "erp_find" ? L2("Looked for: ", "بحث عن: ") + (inp.query || "") : b.name === "erp_read" ? L2("Read ", "قرأ ") + (inp.path || "") : (inp.summary || inp.path || "");
@@ -6530,6 +6537,9 @@ async function aiSettingsTab(view, head) {
     <form id="aiform">${form([
       { k: "enabled", l: L2("AI assistant", "المساعد الذكي"), type: "switch", v: p.enabled, on: L2("On", "يعمل"), off: L2("Off", "متوقف") },
       { k: "name", l: L2("Assistant's name", "اسم المساعد"), v: p.name },
+      { html: `<label class="f">${esc(L2("Assistant's picture", "صورة المساعد"))}<span class="row" style="gap:10px;align-items:center"><img id="aiavprev" class="av" style="width:48px;height:48px" src="${esc(p.avatar || "assistant.jpg")}" alt="">
+        <label class="btn" style="cursor:pointer">${svg("upload")} ${esc(L2("Change", "تغيير"))}<input type="file" id="aiavf" accept="image/*" hidden></label>
+        <button class="btn" type="button" data-a="aiavreset">${esc(L2("Default", "الافتراضية"))}</button></span></label>` },
       { k: "provider", l: L2("AI provider", "مزوّد الذكاء الاصطناعي"), type: "select", opts: (r.providers || []).map(x => [x.id, x.label]), v: p.provider, change: "aiprov" },
       { html: `<label class="f" id="aimodelsel">${esc(L2("Model", "النموذج"))}<select name="model_claude">${r.models.map(([v, l]) => `<option value="${esc(v)}" ${p.model === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
         <label class="f" id="aimodeltxt">${esc(L2("Model name (exactly as the provider writes it)", "اسم النموذج (كما يكتبه المزوّد تماماً)"))}<input name="model_other" value="${esc(p.provider === "anthropic" ? "" : p.model)}" autocomplete="off"></label>` },
@@ -6550,8 +6560,25 @@ async function aiSettingsTab(view, head) {
         : STATIC ? L2("Browser-only edition: the key is kept in this browser and used from this browser only.", "النسخة التي تعمل في المتصفح فقط: يُحفظ المفتاح في هذا المتصفح ويُستخدم منه فقط.")
         : L2("Kept on this computer only (never copied to the shared workspace or backups sent elsewhere).", "يُحفظ على هذا الكمبيوتر فقط."))} ${esc(L2("Claude: get a key at console.anthropic.com → API keys. Other providers: from their own console. Local models (Ollama, LM Studio) work from the desktop app without a key.", "Claude: احصل على مفتاح من console.anthropic.com ← API keys. المزوّدون الآخرون: من لوحة التحكم الخاصة بهم. النماذج المحلية (Ollama وLM Studio) تعمل من تطبيق سطح المكتب دون مفتاح."))}</div>
       ${cloud && cloud.error ? `<div class="banner warn" style="margin-top:10px">${esc(L2("The shared workspace has not been updated for the assistant yet, so the key is kept on this device and the assistant works from here (see docs/SUPABASE_SETUP.md to update the workspace).", "لم تُحدَّث مساحة العمل المشتركة للمساعد بعد، لذا يُحفظ المفتاح على هذا الجهاز ويعمل المساعد منه (راجع docs/SUPABASE_SETUP.md لتحديث مساحة العمل)."))}</div>` : ""}
-      <div class="row" style="margin-top:14px"><button class="btn pri" type="submit">${t("save")}</button><a class="btn" href="#/assistant">${esc(L2("Open the assistant", "فتح المساعد"))}</a></div><div id="derr"></div></form></div>`;
+      <div class="row" style="margin-top:14px"><button class="btn pri" type="submit">${t("save")}</button><button class="btn" type="button" data-a="aitest">${esc(L2("Save and test the connection", "حفظ واختبار الاتصال"))}</button><a class="btn" href="#/assistant">${esc(L2("Open the assistant", "فتح المساعد"))}</a></div><div id="aitestres"></div><div id="derr"></div></form></div>`;
   S.H.aiacc = el => { $("#aiusers").hidden = el.value !== "list"; };
+  AI.newAvatar = undefined;
+  $("#aiavf").addEventListener("change", async e => { const f = e.target.files[0]; if (!f) return;
+    try { const src = await new Promise((ok, bad) => { const r2 = new FileReader(); r2.onload = () => ok(r2.result); r2.onerror = bad; r2.readAsDataURL(f); });
+      AI.newAvatar = await shrinkPic(src, 256, "image/jpeg", .86, true); $("#aiavprev").src = AI.newAvatar; } catch (err) { fail(err); } });
+  S.H.aiavreset = () => { AI.newAvatar = ""; $("#aiavprev").src = "assistant.jpg"; };
+  S.H.aitest = async () => {
+    const box = $("#aitestres"); box.innerHTML = `<div class="banner info"><i class="spin"></i> ${esc(L2("Saving and asking the provider a one-line question…", "جارٍ الحفظ وسؤال المزوّد سؤالاً قصيراً…"))}</div>`;
+    try {
+      const k = $("#aikey").value.trim(); await save(k ? k : undefined); await loadAiPolicy();
+      let msg;
+      if (cloudOn() && AI.cloudReady !== false) msg = (await CloudAPI.call("fn", "ai", { test: true, base: "", context: "", tools: [], messages: [{ role: "user", content: "test" }] })).message;
+      else { const r2 = await api("POST", "/api/ai/complete", { test: true });
+        msg = r2.message || await aiCompleteBrowser(r2); }
+      const txt = (msg.content || []).filter(b => b.type === "text").map(b => b.text).join(" ").trim();
+      box.innerHTML = `<div class="banner ok">✓ ${esc(L2("The provider answered", "أجاب المزوّد"))}${msg.model ? " (" + esc(msg.model) + ")" : ""}: “${esc(txt.slice(0, 200))}”</div>`;
+    } catch (err) { box.innerHTML = `<div class="banner err">✕ ${esc(err.message)}</div>`; }
+  };
   const provs = r.providers || [];
   const showProv = fill => {
     const id = $("#aiform [name=provider]").value, pr = provs.find(x => x.id === id) || {}, claude = id === "anthropic";
@@ -6565,7 +6592,7 @@ async function aiSettingsTab(view, head) {
   showProv(false);
   const save = async key => {
     const v = readForm($("#aiform"));
-    const body = { enabled: !!v.enabled, name: v.name, provider: v.provider, base_url: v.base_url, model: v.provider === "anthropic" ? v.model_claude : v.model_other, effort: v.effort, write: v.write, access: v.access, daily_limit: +v.daily_limit || 0,
+    const body = { enabled: !!v.enabled, name: v.name, avatar: AI.newAvatar !== undefined ? AI.newAvatar : p.avatar, provider: v.provider, base_url: v.base_url, model: v.provider === "anthropic" ? v.model_claude : v.model_other, effort: v.effort, write: v.write, access: v.access, daily_limit: +v.daily_limit || 0,
       instructions: v.instructions, users: $$(".aiu:checked").map(x => x.value), blocked: $$(".aib:checked").map(x => x.value) };
     const saved = await api("PUT", "/api/ai-policy", body);
     if (cloudOn() && !(cloud && cloud.error)) await CloudAPI.call("rpc", "ai_settings_set", { p_settings: saved, p_key: key === undefined ? null : key });

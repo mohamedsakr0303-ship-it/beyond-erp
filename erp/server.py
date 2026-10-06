@@ -151,7 +151,7 @@ def bootstrap(ctx):
     base["profile"] = chat.profile(db, user["id"])
     pol = ai.policy(db)
     base["ai"] = {"allowed": ai.allowed(pol, user), "used_today": ai.used_today(db, user), "has_key": ai.has_key(db),
-                  "models": ai.MODELS, "providers": ai.PROVIDERS, "policy": pol if user.get("is_super") else {k: pol[k] for k in ("enabled", "name", "write", "model", "daily_limit")}}
+                  "models": ai.MODELS, "providers": ai.PROVIDERS, "policy": pol if user.get("is_super") else {k: pol[k] for k in ("enabled", "name", "avatar", "write", "model", "daily_limit")}}
     sync = getattr(ctx.app, "cloud", None)
     base.update({
         "cloud": {"joined": bool(sync and sync.active)},
@@ -2928,7 +2928,7 @@ def chat_export(ctx, rid):
 def ai_policy_get(ctx):
     from . import ai
     p = ai.policy(ctx.db)
-    out = {"policy": p if ctx.user.get("is_super") else {k: p[k] for k in ("enabled", "name", "write", "model", "daily_limit")},
+    out = {"policy": p if ctx.user.get("is_super") else {k: p[k] for k in ("enabled", "name", "avatar", "write", "model", "daily_limit")},
            "allowed": ai.allowed(p, ctx.user), "models": ai.MODELS, "providers": ai.PROVIDERS, "used_today": ai.used_today(ctx.db, ctx.user),
            "has_key": ai.has_key(ctx.db)}
     return ok(out)

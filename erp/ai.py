@@ -37,6 +37,7 @@ PROVIDERS = [
     {"id": "openai", "label": "OpenAI", "base_url": "https://api.openai.com/v1", "model": "gpt-…"},
     {"id": "gemini", "label": "Google Gemini", "base_url": "https://generativelanguage.googleapis.com/v1beta/openai", "model": "gemini-…"},
     {"id": "mistral", "label": "Mistral", "base_url": "https://api.mistral.ai/v1", "model": "mistral-large-latest"},
+    {"id": "kimi", "label": "Moonshot — Kimi", "base_url": "https://api.moonshot.ai/v1", "model": "kimi-k3"},
     {"id": "deepseek", "label": "DeepSeek", "base_url": "https://api.deepseek.com/v1", "model": "deepseek-chat"},
     {"id": "xai", "label": "xAI — Grok", "base_url": "https://api.x.ai/v1", "model": "grok-…"},
     {"id": "groq", "label": "Groq", "base_url": "https://api.groq.com/openai/v1", "model": ""},
@@ -49,7 +50,7 @@ PROVIDERS = [
 OPENAI_STYLE = {x["id"] for x in PROVIDERS} - {"anthropic"}
 DEFAULT_POLICY = {"enabled": False, "provider": "anthropic", "base_url": "", "model": "claude-opus-5-5", "effort": "medium",
                   "access": "all", "users": [], "write": "confirm", "blocked": ["payroll"], "daily_limit": 100,
-                  "instructions": "", "name": "Claude"}
+                  "instructions": "", "name": "Kazuha", "avatar": ""}
 # never reachable through the assistant, whatever the policy says
 ALWAYS_BLOCKED = re.compile(r"^/api/(users|me|cloud|ai|ai-policy|licence|login|logout|setup|erase|restore|backup|"
                             r"maintenance|demo|session|einvoice/(submit|test)|\w+/\d+/reopen-licence)(/|$|\?)")
@@ -93,6 +94,8 @@ def policy(db):
     except ValueError:
         p = {}
     out = {**DEFAULT_POLICY, **{k: v for k, v in p.items() if k in DEFAULT_POLICY}}
+    if out["name"] in ("", "Claude"):          # the old default name: the assistant is not tied to one AI provider
+        out["name"] = "Kazuha"
     if out["write"] not in WRITE_MODES:
         out["write"] = "confirm"
     return out
@@ -144,7 +147,12 @@ def save_policy(db, user, d):
     if "instructions" in d:
         p["instructions"] = str(d["instructions"] or "")[:8000]
     if "name" in d:
-        p["name"] = acc.text(d["name"])[:40] or "Claude"
+        p["name"] = acc.text(d["name"])[:40] or "Kazuha"
+    if "avatar" in d:
+        av = d["avatar"] or ""
+        if av and (not re.match(r"^data:image/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$", av) or len(av) > 300_000):
+            raise AIError("The picture must be a PNG, JPEG, WebP or GIF image under 200 KB")
+        p["avatar"] = av
     db.set_setting("ai_policy", json.dumps(p))
     return p
 
@@ -454,14 +462,22 @@ def request_params(db, user, d):
     """The Messages API request for one step of a conversation, built here (not by the browser) so the policy, the
     super administrator's instructions and the tool set cannot be changed from the page."""
     p = policy(db)
-    if not allowed(p, user):
+    if not allowed(p, user) and not (d.get("test") and user.get("is_super")):   # the super administrator may test it while off
         raise PermissionError("The AI assistant is switched off for you — ask a super administrator")
     if p["daily_limit"] and used_today(db, user) >= p["daily_limit"] and not user.get("is_super"):
         raise AIError(f"Daily limit reached ({p['daily_limit']} requests) — try again tomorrow")
+    test = bool(d.get("test"))
+    if test:                  # Settings → Test connection: one short question, no tools
+        if not user.get("is_super"):
+            raise PermissionError("Only a super administrator can test the AI provider")
+        d = {"messages": [{"role": "user", "content": "Reply with the single word OK."}]}
     params = {"model": p["model"], "max_tokens": 16000, "system": system_blocks(p, context(db, user)),
-              "tools": tools(p), "messages": _clean_messages(d.get("messages"))}
+              "tools": [] if test else tools(p), "messages": _clean_messages(d.get("messages"))}
     if p["provider"] != "anthropic":
         return p, params
+    # blocks only other providers understand (their reasoning) are left out for Claude
+    params["messages"] = [{**m, "content": [b for b in m["content"] if b.get("type") != "reasoning"]} if isinstance(m["content"], list) else m
+                          for m in params["messages"]]
     if not p["model"].startswith("claude-haiku"):
         params["thinking"] = {"type": "adaptive"}
         params["output_config"] = {"effort": p["effort"]}
@@ -493,22 +509,32 @@ def to_openai(params):
         else:
             calls = [{"id": b["id"], "type": "function", "function": {"name": b["name"], "arguments": json.dumps(b.get("input") or {}, ensure_ascii=False)}}
                      for b in (c if isinstance(c, list) else []) if b.get("type") == "tool_use"]
-            msg = {"role": "assistant", "content": text(c) or None}
+            msg = {"role": "assistant", "content": text(c) or ("" if calls else None)}
             if calls:
                 msg["tool_calls"] = calls
+            reasoning = "".join(b.get("text", "") for b in (c if isinstance(c, list) else []) if b.get("type") == "reasoning")
+            if reasoning:         # "thinking" models (Kimi, DeepSeek…) expect their reasoning back with their tool calls
+                msg["reasoning_content"] = reasoning
             msgs.append(msg)
-    return {"model": params["model"], "messages": msgs,
-            "tools": [{"type": "function", "function": {"name": t["name"], "description": t["description"], "parameters": t["input_schema"]}}
-                      for t in params["tools"]]}
+    body = {"model": params["model"], "messages": msgs}
+    if params["tools"]:
+        body["tools"] = [{"type": "function", "function": {"name": t["name"], "description": t["description"], "parameters": t["input_schema"]}}
+                         for t in params["tools"]]
+    return body
 
 
 def from_openai(resp):
     if not isinstance(resp, dict) or not resp.get("choices"):
         err = (resp or {}).get("error") if isinstance(resp, dict) else None
-        raise AIError("The AI provider sent no answer" + (f": {err.get('message') if isinstance(err, dict) else err}" if err else ""))
+        if err:
+            raise AIError("The AI provider refused the request: " + str(err.get("message") if isinstance(err, dict) else err))
+        raise AIError("The AI provider's reply had no answer in it — check the address and the model name. It said: "
+                      + (json.dumps(resp, ensure_ascii=False)[:300] if resp else "(nothing)"))
     ch = resp["choices"][0]
     m = ch.get("message") or {}
     content = []
+    if m.get("reasoning_content"):
+        content.append({"type": "reasoning", "text": str(m["reasoning_content"])})
     if m.get("content"):
         content.append({"type": "text", "text": m["content"] if isinstance(m["content"], str) else json.dumps(m["content"])})
     for i, tc in enumerate(m.get("tool_calls") or []):
@@ -522,7 +548,9 @@ def from_openai(resp):
         ch.get("finish_reason"), "end_turn")
     if reason != "tool_use" and any(b["type"] == "tool_use" for b in content):
         reason = "tool_use"
-    return {"role": "assistant", "content": content or [{"type": "text", "text": ""}], "stop_reason": reason,
+    if not any(b["type"] in ("text", "tool_use") for b in content):
+        content.append({"type": "text", "text": "(The model returned an empty answer.)"})
+    return {"role": "assistant", "content": content, "stop_reason": reason,
             "model": resp.get("model") or ""}
 
 
@@ -543,13 +571,19 @@ def _complete_openai(db, user, p, params):
     req = urllib.request.Request(url, data=json.dumps(body).encode(), headers=headers, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=300) as r:
-            resp = json.loads(r.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
+            raw = r.read().decode("utf-8", "replace")
         try:
-            msg = json.loads(e.read().decode("utf-8")).get("error")
+            resp = json.loads(raw)
+        except ValueError:
+            raise AIError(f"The address {url} did not answer like an AI API (it sent back: {raw.strip()[:160]!r}) — "
+                          "check the provider's address in Settings → AI assistant")
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", "replace")
+        try:
+            msg = json.loads(body).get("error")
             msg = msg.get("message") if isinstance(msg, dict) else msg
         except Exception:  # noqa: BLE001
-            msg = ""
+            msg = body.strip()[:200]
         if e.code in (401, 403):
             raise AIError("The AI provider refused the key — a super administrator should check it in Settings → AI assistant")
         if e.code == 429:
