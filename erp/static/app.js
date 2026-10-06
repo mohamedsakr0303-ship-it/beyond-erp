@@ -377,7 +377,7 @@ function renderShell() {
   const initials = esc(((u.full_name || u.username || "?").trim().split(/\s+/).map(w => w[0]).join("").slice(0, 2)).toUpperCase());
   const role = u.is_super ? L2("Super admin", "مدير عام") : u.is_admin ? L2("Administrator", "مدير النظام") : L2("User", "مستخدم");
   const dark = document.documentElement.dataset.theme === "dark" || (!document.documentElement.dataset.theme && matchMedia("(prefers-color-scheme: dark)").matches);
-  $("#root").innerHTML = `<div class="app ${store.get("navMini", "") === "1" ? "mini" : ""}">
+  $("#root").innerHTML = `<div class="app ${store.get("navMini", "") === "1" ? "mini" : ""} nav-${navMode()}">
     <aside class="side">${brandBlock(st)}
       <div class="dd ucard"><button class="btn ucard-btn"><span class="avatar">${initials}</span><span class="ucard-t"><b>${esc(u.full_name || u.username)}</b><small>${esc(role)}</small></span>${svg("chev", "chev")}</button>
         <div class="dd-menu">${userMenu()}</div></div>
@@ -471,7 +471,11 @@ S.GLOBAL_H = {
   menu: () => { const app = $(".app"); if (innerWidth <= 900) app.classList.toggle("menu"); else { app.classList.toggle("mini"); store.set("navMini", app.classList.contains("mini") ? "1" : ""); } },
   palette: () => openPalette(),
   bellopen: () => { const b = $(".bell"); if (b) { b.classList.add("open"); loadAlerts(true); } },
-  grp: el => { const w = el.closest(".grp-wrap"), open = new Set(store.get("navOpen", "").split(",").filter(Boolean)); w.classList.toggle("open");
+  grp: el => { const w = el.closest(".grp-wrap"), app = $(".app");
+    if (app.classList.contains("mini") && innerWidth > 900 && matchMedia("(hover:hover) and (pointer:fine)").matches) {   // slim menu: the group opens as a panel beside the icons
+      const was = w.classList.contains("fly"); $$(".grp-wrap.fly").forEach(x => x.classList.remove("fly")); if (!was) w.classList.add("fly"); return; }
+    if (hoverNav()) return;                                    // hover mode: groups open while the pointer is on them
+    const open = new Set(store.get("navOpen", "").split(",").filter(Boolean)); w.classList.toggle("open");
     if (w.classList.contains("open")) open.add(el.dataset.g); else open.delete(el.dataset.g); store.set("navOpen", [...open].join(",")); },
   lang: () => { store.set("lang", S.lang === "ar" ? "en" : "ar"); applyLook(); renderShell(); route(); },
   theme: () => { const order = ["auto", "light", "dark"]; store.set("theme", order[(order.indexOf(store.get("theme", "auto")) + 1) % 3]); applyLook(); renderShell(); route(); },
@@ -485,6 +489,11 @@ S.GLOBAL_H = {
     if (S.navCount > 0) history.back(); else location.hash = "#/" + (parent || "dashboard"); },
   closeDrawer: () => closeDrawer(),
 };
+// Menu groups open on hover (default) or on click — a per-person choice in Settings → Appearance → My view.
+// Touch screens have no hover, so they always open groups by tapping.
+const navMode = () => store.get("navMode", "hover") === "click" ? "click" : "hover";
+const hoverNav = () => navMode() === "hover" && matchMedia("(hover:hover) and (pointer:fine)").matches;
+document.addEventListener("click", e => { if (!e.target.closest(".grp-wrap.fly")) $$(".grp-wrap.fly").forEach(x => x.classList.remove("fly")); });
 function renderNav(active) {
   const nav = $("#nav"); if (!nav) return;
   let html = "", title = "", group = "";
@@ -502,7 +511,7 @@ function renderNav(active) {
         : `<a href="#/${r}" class="${on ? "on" : ""}"><i class="dash"></i><span>${esc(t(k))}</span></a>`;
     }
     if (g === "g_home") { html += `<div class="grp-solo">${links}</div>`; continue; }
-    html += `<div class="grp-wrap ${has || open.has(g) ? "open" : ""} ${has ? "has" : ""}"><button class="grp" data-a="grp" data-g="${g}" title="${esc(t(g))}">${svg(GROUP_IC[g] || "grid")}<span>${esc(t(g))}</span>${svg("chev", "chev")}</button><div class="grp-items"><div class="fly-t">${esc(t(g))}</div>${links}</div></div>`;
+    html += `<div class="grp-wrap ${!hoverNav() && (has || open.has(g)) ? "open" : ""} ${has ? "has" : ""}"><button class="grp" data-a="grp" data-g="${g}" title="${esc(t(g))}">${svg(GROUP_IC[g] || "grid")}<span>${esc(t(g))}</span>${svg("chev", "chev")}</button><div class="grp-items"><div class="grp-in"><div class="fly-t">${esc(t(g))}</div>${links}</div></div></div>`;
   }
   nav.innerHTML = html;
   $("#ttl").textContent = title || t("m_dashboard");
@@ -2306,7 +2315,8 @@ PAGES.settings = async (view, parts, q) => {
         <label class="f">${t("lang_label")}<select id="my_lang" data-change="mysave"><option value="en">English</option><option value="ar" ${S.lang === "ar" ? "selected" : ""}>العربية</option></select></label>
         <label class="f">${t("font_family")}<select id="my_font" data-change="mysave"><option value="">${t("default")}</option>${FONTS.map(f => `<option ${store.get("font", "") === f ? "selected" : ""}>${f}</option>`).join("")}</select></label>
         <label class="f">${t("font_size")} <input id="my_size" data-change="mysave" type="range" min="11" max="22" value="${store.get("fontSize", "") || st.font_size || 15}"></label>
-        <label class="f">${t("theme")}<select id="my_theme" data-change="mysave">${["auto", "light", "dark"].map(x => `<option ${store.get("theme", "auto") === x ? "selected" : ""}>${x}</option>`).join("")}</select></label></div>
+        <label class="f">${t("theme")}<select id="my_theme" data-change="mysave">${["auto", "light", "dark"].map(x => `<option ${store.get("theme", "auto") === x ? "selected" : ""}>${x}</option>`).join("")}</select></label>
+        <label class="f">${L2("Menu groups open on", "فتح مجموعات القائمة عند")}<select id="my_navmode" data-change="mysave">${[["hover", L2("Hover — open while the mouse is over them", "المرور — تفتح أثناء مرور الماوس")], ["click", L2("Click — stay open until clicked again", "النقر — تبقى مفتوحة حتى النقر مرة أخرى")]].map(([v, l]) => `<option value="${v}" ${navMode() === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label></div>
         <div class="row" style="margin-top:10px"><button class="btn" data-a="mysave">${t("save")}</button><button class="btn" data-a="myreset">${t("clear")}</button></div></div>
       ${can("settings.branding") ? `<div class="card" id="apcard"><h2>${t("appearance")} — ${S.lang === "ar" ? "لكل المستخدمين" : "for everyone"}</h2>${form([
         { k: "app_name", l: t("app_name"), v: ap.app_name || "", ph: (st.company_name || "BEYOND") },
@@ -2320,8 +2330,8 @@ PAGES.settings = async (view, parts, q) => {
         { k: "corners", l: t("corners"), type: "select", opts: [["rounded", t("cr_rounded")], ["square", t("cr_square")]], v: ap.corners || "rounded" },
         { html: `<label class="f">${t("app_logo")} — ${t("al_custom")}<input type="file" id="aplogo" accept="image/*"></label>` }], 3)}
         ${ed ? `<div class="row" style="margin-top:10px"><button class="btn pri" data-a="apsave">${t("save")}</button></div>` : ""}</div>` : ""}`;
-    S.H.mysave = () => { store.set("lang", $("#my_lang").value); store.set("font", $("#my_font").value); store.set("fontSize", $("#my_size").value); store.set("theme", $("#my_theme").value); applyLook(); renderShell(); route(); };
-    S.H.myreset = () => { ["font", "fontSize"].forEach(k => store.set(k, "")); store.set("theme", "auto"); applyLook(); renderShell(); route(); };
+    S.H.mysave = () => { store.set("lang", $("#my_lang").value); store.set("font", $("#my_font").value); store.set("fontSize", $("#my_size").value); store.set("theme", $("#my_theme").value); store.set("navMode", $("#my_navmode").value); applyLook(); renderShell(); route(); };
+    S.H.myreset = () => { ["font", "fontSize"].forEach(k => store.set(k, "")); store.set("theme", "auto"); store.set("navMode", "hover"); applyLook(); renderShell(); route(); };
     let noAccent = !ap.accent;
     S.H.apnoacc = () => { noAccent = true; toast(t("default")); };
     const ac = $("[name=accent]"); if (ac) ac.addEventListener("input", () => { noAccent = false; });

@@ -535,22 +535,31 @@ tr.click:hover td{background:color-mix(in srgb,var(--brand) 6%,transparent)}
 .grp-items a:hover{background:none;color:var(--brand)}
 .grp-items a.on{background:none}
 .grp-items a.on::before{display:none}
-.grp-wrap .grp-items{transition:max-height .3s ease .06s}
+/* groups slide open by animating the grid row from 0 to the content's real height (smooth both ways) */
+.grp-items,.grp-wrap .grp-items{display:grid;grid-template-rows:0fr;max-height:none;overflow:visible;transition:grid-template-rows .26s cubic-bezier(.4,0,.2,1)}
+.grp-in{min-height:0;overflow:hidden;opacity:0;transition:opacity .2s ease}
+.grp-wrap.open .grp-items{grid-template-rows:1fr;max-height:none}
+.grp-wrap.open .grp-in{opacity:1}
+.grp .chev{transition:transform .26s cubic-bezier(.4,0,.2,1)}
 @media (hover:hover) and (pointer:fine){
-  .app:not(.mini) .grp-wrap:hover .grp-items{max-height:900px}
-  .app:not(.mini) .grp-wrap:hover>.grp .chev{transform:rotate(180deg)}
-  .app:not(.mini) .grp-wrap:hover>.grp{background:var(--hover)}
-  /* slim menu: a group opens as a panel beside the icons */
+  /* hover mode: a group opens while the pointer rests on it (short delay so sweeping past does not open everything) */
+  .app.nav-hover:not(.mini) .grp-wrap:hover .grp-items{grid-template-rows:1fr;transition-delay:.12s}
+  .app.nav-hover:not(.mini) .grp-wrap:hover .grp-in{opacity:1;transition-delay:.12s}
+  .app.nav-hover:not(.mini) .grp-wrap:hover>.grp .chev{transform:rotate(180deg);transition-delay:.12s}
+  .app.nav-hover:not(.mini) .grp-wrap:hover>.grp{background:var(--hover)}
+  /* slim menu: a group opens as a panel beside the icons (on hover, or on click in click mode) */
   .app.mini .side{overflow:visible;z-index:45}
   .app.mini .grp-wrap{position:relative}
   .app.mini .grp-wrap .grp-items{position:absolute;top:-6px;inset-inline-start:calc(100% + 14px);width:240px;max-height:none;display:none;
     background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow-lg);padding:8px;z-index:70;animation:pagein .15s ease}
-  .app.mini .grp-wrap:hover .grp-items{display:block}
+  .app.mini .grp-in{overflow:visible;opacity:1}
+  .app.mini.nav-hover .grp-wrap:hover .grp-items,.app.mini .grp-wrap.fly .grp-items{display:block}
   .app.mini .grp-wrap .grp-items::before{content:"";position:absolute;inset-block:0;inset-inline-start:-18px;width:18px}
   .app.mini .grp-items a{justify-content:flex-start;padding:9px 12px}
   .app.mini .grp-items a span{display:inline}
   .app.mini .fly-t{display:block;padding:6px 12px 8px;font-size:.72em;font-weight:800;text-transform:uppercase;letter-spacing:.7px;color:var(--muted)}
 }
+@media (prefers-reduced-motion:reduce){.grp-items,.grp-in,.grp .chev{transition:none!important}}
 /* ---------------------------------------------------------------- extracts */
 .xsites{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px;margin-bottom:14px}
 .xsite{margin:0}
