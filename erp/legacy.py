@@ -338,6 +338,9 @@ def read_legacy_workbook(path):
         _read_journal(wb, gj, data, notes, codes)
         _read_invoice_register(wb, data, notes)
     _read_boq_and_invoices(wb, data, notes, register=journal_mode)
+    if journal_mode:
+        _read_partner_loans(sheet("balances tracker"), data, notes)
+    data.pop("_remap", None)
     wb.close()
     # BEYOND's own letterhead identity, as the first app version set it; only fills settings that are still empty
     for k, v in (("company_name", "BEYOND DESIGN"), ("company_legal_name", "By SWAG For Contracting"),
@@ -393,8 +396,10 @@ def _find_bu(data, *hints):
     return ""
 
 
-def _account_v13(code, roles):
+def _account_v13(code, roles, remap=None):
     code = str(code or "").strip()
+    if remap and code in remap:
+        return remap[code]
     m = V13_ACCOUNTS.get(code)
     if not m:
         return code
@@ -428,13 +433,29 @@ def _read_new_accounts(ws, data, notes):
     if ws is None:
         return
     from .db import DEFAULT_ACCOUNTS
-    known = {c for c, *_ in DEFAULT_ACCOUNTS} | set(V13_ACCOUNTS)
-    added = []
+    app = {c: (n, t, r) for c, n, t, _s, r in DEFAULT_ACCOUNTS}
+    known = set(app) | set(V13_ACCOUNTS)
+    taken = set(known)
+    added, moved = [], []
+    remap = data.setdefault("_remap", {})
     for hr, h in _headers(ws, ["code", "account name", "type"], scan=10):
-        for row in ws.iter_rows(min_row=hr + 1, values_only=True):
+        rows = [r for r in ws.iter_rows(min_row=hr + 1, values_only=True)]
+        taken |= {str(_v(_get(r, _col(h, "code"))) or "").strip() for r in rows}
+        for row in rows:
             code, name, typ = (_v(_get(row, _col(h, k))) for k in ("code", "account name", "type"))
             code = str(code or "").strip()
-            if not code.isdigit() or not name or code in known or typ not in _COA_SUBTYPE:
+            if not code.isdigit() or not name or typ not in _COA_SUBTYPE:
+                continue
+            if code in app and code not in V13_ACCOUNTS and _clashes(name, typ, *app[code]):
+                # the same number means something else in the app (e.g. 1330 partner loans vs withholding tax
+                # receivable): keep the workbook's account under the next free number instead of mixing them up
+                new = next(str(n) for n in range(int(code) + 1, int(code) + 1000) if str(n) not in taken)
+                taken.add(new)
+                remap[code] = new
+                data.setdefault("Chart of Accounts", []).append({"code": new, "name": name, "type": typ, "subtype": _COA_SUBTYPE[typ]})
+                moved.append(f"{code} {name} → {new} ({code} is “{app[code][0]}” in the app)")
+                continue
+            if code in known:
                 continue
             line = str(_v(_get(row, _col(h, "income statement"))) or "").lower()
             sub = _COA_SUBTYPE[typ]
@@ -446,6 +467,62 @@ def _read_new_accounts(ws, data, notes):
         break
     if added:
         notes.append("Accounts added from the workbook's chart of accounts: " + ", ".join(added) + ".")
+    if moved:
+        notes.append("Account numbers that mean something else in the app, kept under a new number: " + "; ".join(moved) + ".")
+
+
+_TAX_WORDS = ("tax", "vat", "ضريب", "withholding", "خصم وتحصيل", "stamp", "دمغة")
+def _clashes(name, typ, app_name, app_type, app_role):
+    """True when a workbook account and the app account with the same number are clearly different things: another
+    type (asset vs liability…), or a tax account on one side only (e.g. 1330 partner loans vs withholding tax)."""
+    if typ != app_type:
+        return True
+    name_l, app_l = str(name).lower(), str(app_name).lower()
+    return any(w in name_l for w in _TAX_WORDS) != any(w in app_l for w in _TAX_WORDS)
+
+
+def _read_partner_loans(ws, data, notes):
+    """The Balances Tracker's partner-loan section (سلف الشركاء): each loan still owed goes into the Loans register as
+    'already in the books' — the General Journal posted the money, so nothing is posted twice; repayments recorded in
+    the app then reduce it and follow its monthly plan."""
+    if ws is None:
+        return
+    remap = data.get("_remap") or {}
+    acct = next((r["account"] for r in data.get("Journal Vouchers", []) if r.get("party") and r["account"] == remap.get("1330", "1330")), None)
+    loans, start_row = [], None
+    for r in range(1, ws.max_row + 1):
+        if "partner loans" in str(ws.cell(r, 1).value or "").lower():
+            start_row = r
+            break
+    if not start_row:
+        return
+    for hr, h in _headers(ws, ["partner", "lent", "still owed"], scan=6, start=start_row):
+        for row in ws.iter_rows(min_row=hr + 1, values_only=True):
+            who = _v(_get(row, _col(h, "partner")))
+            if not who or str(who).upper().startswith("TOTAL") or str(who).startswith("("):
+                if who and str(who).upper().startswith("TOTAL"):
+                    break
+                continue
+            lent, owed = _f(_get(row, _col(h, "lent"))), _f(_get(row, _col(h, "still owed")))
+            if lent <= 0 or owed <= 0:
+                continue
+            start = _date(_get(row, _col(h, "plan start", "start date")))
+            months = int(_f(_get(row, _col(h, "plan length", "months)"))) or 0)
+            loans.append({"code": f"LN-PL-{len(loans) + 1:02d}", "direction": "lent", "party": str(who),
+                          "purpose": "Partner loan (سلفة شريك) — from the workbook's Balances Tracker",
+                          "account": acct or remap.get("1330", "1330"), "interest_account": "4095", "accrued_account": "1185",
+                          "start_date": start, "principal": round(lent * 100), "opening_balance": round(owed * 100),
+                          "opening_date": start if abs(owed - lent) < 0.005 else _dt.date.today().isoformat(),
+                          "rate": 0, "interest_type": "none", "fixed_interest": 0, "term_months": months,
+                          "frequency": 1, "first_due": "", "schedule_type": "equal" if months else "none", "schedule": "[]",
+                          "status": "open", "closed_on": "", "notes": "Interest-free. The workbook's plan only advises; "
+                          "record repayments here (cash, or settled from his profit share by a decision).", "created_at": ""})
+        break
+    if loans:
+        data.setdefault("_extras", {}).setdefault("loans", []).extend(loans)
+        notes.append("Partner loans (Balances Tracker): " + "; ".join(
+            f"{x['party']} {x['opening_balance'] / 100:,.2f} still owed, {x['term_months']} months from {x['start_date']}" for x in loans) +
+            " — added to Loans & custody → Loans as already in the books (the journal entry is not posted twice).")
 
 
 def _read_journal(wb, ws, data, notes, codes):
@@ -484,7 +561,7 @@ def _read_journal(wb, ws, data, notes, codes):
             auto.append(je)
         for r in rows:
             code = str(_v(_get(r, _col(h, "account"))))
-            new = _account_v13(code, roles)
+            new = _account_v13(code, roles, data.get("_remap"))
             if new != code:
                 mapped.add(f"{code}→{new}")
             data["Journal Vouchers"].append({
@@ -496,8 +573,7 @@ def _read_journal(wb, ws, data, notes, codes):
     notes.append(f"General Journal: {n} entries imported line for line (the workbook's own source of truth); the hidden "
                  "archive sheets (Project Costing, OpEx, Payroll, Income Tracker) were not imported, so nothing is counted twice.")
     if mapped:
-        notes.append("Account codes that mean something else in the app were moved: " + ", ".join(sorted(mapped)) +
-                     " (unbilled revenue, cash custody, partner capital).")
+        notes.append("Account codes that mean something else in the app were moved: " + ", ".join(sorted(mapped)) + ".")
     if auto:
         notes.append(f"{', '.join(auto)} were formulas that recalculated themselves in Excel (cost-plus accrued revenue, "
                      "funding-partner top-up). They were imported with their values as of their date — the app will not "

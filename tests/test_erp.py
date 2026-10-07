@@ -1080,6 +1080,49 @@ class LegacyJournalWorkbook(unittest.TestCase):
         self.assertEqual(db.one("SELECT kind FROM journal_entries WHERE ref='JE-2'")["kind"], "Receipt Voucher")
         self.assertEqual([(x["number"], x["total"]) for x in a.list_extracts(db)], [("Invoice 01", 3500)])
 
+    @unittest.skipUnless(HAVE_XL, "openpyxl not installed")
+    def test_clashing_account_number_and_partner_loan(self):
+        """1330 is 'Partner loans' in the workbook but withholding tax in the app: it keeps its meaning under a new number,
+        the partner owes us in aging, and the Balances Tracker's loan lands in the Loans register without posting twice."""
+        import openpyxl
+        import tempfile
+        from erp import legacy, interchange, loans, statements
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Master Project Register"
+        ws.append(["Project ID", "Client Name"])
+        ws.append(["PRJ-2026-001", "Villa A"])
+        coa = wb.create_sheet("Chart of Accounts")
+        coa.append(["Code", "Account Name", "Type", "Normal"])
+        coa.append(["1330", "Partner loans — owed by partners (سلف الشركاء)", "Asset", "Debit"])
+        coa.append(["1020", "Bank Account", "Asset", "Debit"])
+        gj = wb.create_sheet("General Journal")
+        gj.append(["JE #", "Date", "Source / Type", "Project", "Stage", "Account", "Description", "Vendor / Party",
+                   "Deal Ref", "Qty", "Unit", "Rate", "Debit", "Credit"])
+        gj.append(["JE-1", "2026-01-01", "Partner funding (auto)", None, None, "1020", "Funding", "P1", None, None, None, None, 500000, None])
+        gj.append(["JE-1", "2026-01-01", "Partner funding (auto)", None, None, "3150", "Funding", "P1", None, None, None, None, None, 500000])
+        gj.append(["JE-2", "2026-03-01", "Partner loan", None, None, "1330", "Partner loan", "Partner B", None, None, None, None, 180000, None])
+        gj.append(["JE-2", "2026-03-01", "Partner loan", None, None, "1020", "Partner loan", "Partner B", None, None, None, None, None, 180000])
+        bt = wb.create_sheet("Balances Tracker")
+        bt.append(["SECTION 6 - PARTNER LOANS (سلف الشركاء): MONEY LENT TO PARTNERS, TO BE PAID BACK"])
+        bt.append(["Partner", "Lent", "Paid back in cash", "Settled from profit share", "Still owed", "Plan start date", "Plan length (months)"])
+        bt.append(["Partner A", 0, 0, 0, 0])
+        bt.append(["Partner B", 180000, 0, 0, 180000, "2026-03-01", 8])
+        bt.append(["TOTAL STILL OWED BY PARTNERS", 180000, 0, 0, 180000])
+        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+            wb.save(f.name)
+            data = legacy.read_legacy_workbook(f.name)
+        db = Database(":memory:")
+        interchange.import_data(db, data, mode="replace")
+        tb = {r["code"]: round(r["debit"] - r["credit"], 2) for r in a.trial_balance(db)["rows"]}
+        self.assertEqual((tb.get("1331"), tb.get("1330")), (180000, None))
+        self.assertEqual(db.one("SELECT name FROM accounts WHERE code='1331'")["name"], "Partner loans — owed by partners (سلف الشركاء)")
+        self.assertIn(("Partner B", 180000), [(r["party"], r["balance"]) for r in statements.aging(db, "2026-03-31")["rows"]])
+        ln = loans.register(db)["rows"]
+        self.assertEqual([(x["party"], x["outstanding"], x["term_months"], x["next_amount"]) for x in ln], [("Partner B", 180000, 8, 22500)])
+        self.assertEqual(db.one("SELECT COUNT(*) n FROM journal_entries")["n"], 2)   # the loan was not posted again
+        self.assertEqual([c["check"] for c in a.audit(db) if not c["ok"]], [])
+
 
 class DemoCompany(unittest.TestCase):
     """The demo company loads in one go through the import sheets and touches every module; its workbook re-imports."""
