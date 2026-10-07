@@ -15,15 +15,22 @@ BUCKETS = [(0, 30, "0–30", "0–30 يوم"), (31, 60, "31–60", "31–60 يو
            (91, 180, "91–180", "91–180 يوم"), (181, None, "180+", "أكثر من 180 يوم")]
 
 
-def accounts(db):
-    marks = ",".join("?" * len(SUBTYPES))
+# a partner's own accounts with the company: what he put in, what he took out on account of profit, his current account
+PARTNER_SUBTYPES = ("capital", "partner_current", "drawings", "dividends_payable")
+
+
+def accounts(db, partner=False):
+    subs = SUBTYPES + (PARTNER_SUBTYPES if partner else ())
+    marks = ",".join("?" * len(subs))
     nots = ",".join("?" * len(NOT_ROLES))
     return [r["code"] for r in db.q(f"SELECT code FROM accounts WHERE subtype IN ({marks}) AND COALESCE(role,'') NOT IN ({nots})",
-                                    SUBTYPES + NOT_ROLES)]
+                                    subs + NOT_ROLES)]
 
 
 def _lines(db, party=None, date_to=None):
-    codes = accounts(db)
+    # a single contact's statement also shows a partner's capital, current account and drawings; aging (everyone at
+    # once) stays on what customers and suppliers owe
+    codes = accounts(db, partner=party is not None)
     if not codes:
         return []
     w, p = [acc.LIVE, f"l.account IN ({','.join('?' * len(codes))})", f"{acc.PARTY}<>''"], list(codes)

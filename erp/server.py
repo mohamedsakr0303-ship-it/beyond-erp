@@ -81,7 +81,7 @@ COMPANY_KEYS = ("company_name", "company_tagline", "company_address", "company_t
                 "company_city", "company_phone", "company_email", "company_website", "bank_name", "bank_account",
                 "bank_holder", "bank_swift", "bank_iban", "offer_validity_days", "offer_prefix", "offer_digits", "regional",
                 "banks", "bank_default")
-PUBLIC_SETTINGS = COMPANY_KEYS + ("demo_loaded", "menu_labels", "reserve_pct", "legal_reserve_pct", "legal_reserve_cap", "report_from", "report_to", "lock_date", "hidden_modules",
+PUBLIC_SETTINGS = COMPANY_KEYS + ("demo_loaded", "menu_labels", "reserve_pct", "legal_reserve_pct", "legal_reserve_cap", "funding_partner", "funding_limit", "report_from", "report_to", "lock_date", "hidden_modules",
                                   "appearance", "po_self_approve_limit")
 JSON_SETTINGS = {"menu_labels": {}, "units": [], "hidden_modules": [], "appearance": {}, "regional": {}, "banks": []}
 
@@ -257,7 +257,7 @@ def put_settings(ctx):
         ctx.require("settings.company", "edit")
     if "appearance" in keys:
         ctx.require("settings.branding", "edit")
-    if keys & {"reserve_pct", "legal_reserve_pct", "legal_reserve_cap"} and not ctx.can("partners.equity", "edit"):
+    if keys & {"reserve_pct", "legal_reserve_pct", "legal_reserve_cap", "funding_partner", "funding_limit"} and not ctx.can("partners.equity", "edit"):
         ctx.require("settings.company", "edit")
     if keys & {"backup_keep", "lock_date", "po_self_approve_limit"}:
         ctx.require("settings.system", "edit")
@@ -2262,6 +2262,23 @@ def equity_post(ctx, action):
     r = equity.post(ctx.db, action, ctx.body, ctx.user["username"])
     ctx.log(f"equity.{action}", r)
     return ok(r)
+
+
+@route("GET", "/api/equity/exit")
+def equity_exit(ctx):
+    """What each partner would take out (or owe) if he left today, and the funding partner's money in and out."""
+    if not ctx.can("partners.equity"):
+        raise PermissionError()
+    from . import settlement
+    return ok(settlement.exit_view(ctx.db, ctx.q.get("date_to")))
+
+
+@route("POST", "/api/equity/funding/book", "partners.equity", "edit")
+def equity_funding_book(ctx):
+    from . import settlement
+    eid = settlement.book_funding(ctx.db, ctx.body.get("date"), ctx.user["username"])
+    ctx.log("equity.funding", eid)
+    return ok({"entry_id": eid})
 
 
 @route("GET", "/api/equity/history")

@@ -500,8 +500,20 @@ def plan(db, lid, action, d):
     borrowed = ln["direction"] == "borrowed"
     date = acc.clean_date(d.get("date") or acc.today())
     party = ln["party"]
-    money = acc.money_account(db, d.get("method"), d.get("paid_from") or d.get("received_into"))
+    src = str(d.get("paid_from") or d.get("received_into") or "")
+    if src.startswith("partner:"):
+        # the money left (or reached) a partner's own pocket, not the company's bank: it goes to his capital account,
+        # tagged to him — e.g. the funding partner paying a loan out personally
+        from . import equity
+        mparty = equity.partner(db, src[8:])["name"]
+        money = db.acct("capital")
+    else:
+        mparty = ""
+        money = acc.money_account(db, d.get("method"), src or None)
     dflt = default_accounts(db, ln["direction"], ln["term_months"])
+
+    def _M(debit=0, credit=0):
+        return _L(money, debit, credit, party=mparty)
     lines, notes, meta, tag = [], [], {"loan": ln["code"]}, ""
     if action == "draw":
         amount = to_minor(num(d.get("amount"), "amount", allow_zero=False))
@@ -509,14 +521,14 @@ def plan(db, lid, action, d):
         if fees >= amount:
             raise ValidationError("Fees cannot be as much as the loan itself")
         if borrowed:
-            lines = [_L(money, amount - fees)]
+            lines = [_M(amount - fees)]
             if fees:
                 lines.append(_L(acc.account_code(db, d.get("fee_account") or dflt["fee_account"], types=("Expense",),
                                                  field="fees account"), fees))
                 notes.append(f"{to_major(fees):,.2f} fees kept by the lender are booked as an expense.")
             lines.append(_L(ln["account"], credit=amount, party=party))
         else:
-            lines = [_L(ln["account"], amount, party=party), _L(money, credit=amount - fees)]
+            lines = [_L(ln["account"], amount, party=party), _M(credit=amount - fees)]
             if fees:
                 lines.append(_L(acc.account_code(db, d.get("fee_account") or dflt["fee_account"], types=("Revenue",),
                                                  field="fees account"), credit=fees))
@@ -549,9 +561,9 @@ def plan(db, lid, action, d):
         if extra:
             side.append((fee_acc, extra, ""))
         if borrowed:
-            lines = [_L(a, v, party=p) for a, v, p in side] + [_L(money, credit=total)]
+            lines = [_L(a, v, party=p) for a, v, p in side] + [_M(credit=total)]
         else:
-            lines = [_L(money, total)] + [_L(a, credit=v, party=p) for a, v, p in side]
+            lines = [_M(total)] + [_L(a, credit=v, party=p) for a, v, p in side]
         if from_accrued:
             notes.append(f"{to_major(from_accrued):,.2f} of the interest clears interest already accrued.")
         meta.update(principal=to_major(principal), interest=to_major(interest), fees=to_major(extra), interest_to=date)

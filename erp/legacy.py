@@ -491,7 +491,14 @@ def _read_partner_loans(ws, data, notes):
     acct = next((r["account"] for r in data.get("Journal Vouchers", []) if r.get("party") and r["account"] == remap.get("1330", "1330")), None)
     loans, start_row = [], None
     for r in range(1, ws.max_row + 1):
-        if "partner loans" in str(ws.cell(r, 1).value or "").lower():
+        head = str(ws.cell(r, 1).value or "")
+        m = re.search(r"FUNDING PARTNER.*\(([^)]+)\)", head, re.I)
+        if m and not any(x.get("key") == "funding_partner" for x in data.get("Settings", [])):
+            # the partner whose own account is the company's bank (section 5): his money in is worked out live
+            data.setdefault("Settings", []).append({"key": "funding_partner", "value": m.group(1).strip()})
+            notes.append(f"Funding partner: {m.group(1).strip()} — the company's money runs through his account "
+                         "(Equity → If a partner leaves shows his money in and out).")
+        if "partner loans" in head.lower():
             start_row = r
             break
     if not start_row:

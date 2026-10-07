@@ -1896,6 +1896,39 @@ class Loans(unittest.TestCase):
             self.assertTrue(reports.to_html(tb).startswith("<!doctype html>"))
 
 
+class FundingPartnerAndExit(unittest.TestCase):
+    """The funding partner's own money is out − in across the company's bank; a partner's statement shows his capital
+    and drawings; 'if he leaves' adds his billed profit and takes off what he owes; loans can be paid personally."""
+
+    def test_funding_statement_exit_and_personal_loan(self):
+        from erp import settlement as se, statements as st, loans
+        db = Database(":memory:")
+        db.x("INSERT INTO business_units(code,name) VALUES ('P1','Villa')")
+        db.x("INSERT INTO partners(name,default_share) VALUES ('Funder',0.5),('Other',0.5)")
+        db.set_setting("funding_partner", "Funder")
+        db.set_setting("reserve_pct", "0")
+        bank = db.acct("bank")
+        a.record_journal(db, {"date": "2026-01-02", "bu_code": "P1", "party": "Client", "lines": [{"account": bank, "debit": 1000}, {"account": "4010", "credit": 1000}]})
+        a.record_journal(db, {"date": "2026-01-03", "bu_code": "P1", "lines": [{"account": "5010", "debit": 600}, {"account": bank, "credit": 600}]})
+        a.record_journal(db, {"date": "2026-01-04", "kind": "Owner Drawing", "party": "Other", "lines": [{"account": db.acct("drawings"), "debit": 100}, {"account": bank, "credit": 100}]})
+        a.record_journal(db, {"date": "2026-01-05", "party": "Other", "lines": [{"account": "1175", "debit": 800}, {"account": bank, "credit": 800}]})
+        led = se.funding_ledger(db, date_to="2026-01-31")
+        self.assertEqual((led["money_in"], led["money_out"], led["own_money"], led["unbooked"]), (1000, 1500, 500, 500))
+        se.book_funding(db, "2026-01-31")
+        self.assertEqual(se.funding_ledger(db, date_to="2026-01-31")["unbooked"], 0)
+        self.assertEqual(st.statement(db, "Funder", date_to="2026-01-31")["closing"], -500)      # we owe him his capital
+        ex = {p["partner"]: p for p in se.exit_view(db, "2026-01-31")["partners"]}
+        self.assertEqual(ex["Funder"]["owed_now"], 500 + 200)                 # capital + half of the 400 profit
+        self.assertEqual(ex["Other"]["owed_now"], 200 - 100 - 800)            # profit − drawings − the loan he owes
+        lid = loans.save(db, {"direction": "lent", "party": "Other", "principal": 300, "start_date": "2026-02-01", "term_months": 1,
+                              "booking": "money", "paid_from": "partner:Funder"})
+        e = loans._entries(db, loans.get(db, lid)["code"])[0]
+        self.assertIn((db.acct("capital"), 0, 300, "Funder"), [(l["account"], l["debit"], l["credit"], l["party"]) for l in a.get_entry(db, e["id"])["lines"]])
+        ex = {p["partner"]: p for p in se.exit_view(db, "2026-02-28")["partners"]}
+        self.assertEqual((ex["Funder"]["owed_now"], ex["Other"]["owed_now"]), (1000, -1000))
+        self.assertEqual([c["check"] for c in a.audit(db) if not c["ok"]], [])
+
+
 class InvoiceAgainstUnbilledWork(unittest.TestCase):
     """Billing work already recognised as 'done, not yet invoiced' moves it to receivables without earning it twice;
     a posted invoice can be reopened (entry voided, back to draft) unless the tax authority has it."""
