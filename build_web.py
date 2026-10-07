@@ -12,6 +12,7 @@ Everything the site needs is self-hosted inside ./web (no CDN at runtime):
 """
 import argparse
 import base64
+import hashlib
 import io
 import json
 import shutil
@@ -71,9 +72,11 @@ def pack(wheel_names):
         data = path.read_bytes()
         parts = [data[i:i + PACK_CHUNK] for i in range(0, len(data), PACK_CHUNK)] or [b""]
         for i, part in enumerate(parts):
-            name = f"packs/p{len(files):02d}.js"
-            (OUT / name).write_text(f"BEYOND_PACK({json.dumps(path.name)},{i},{len(parts)},"
-                                    f"\"{base64.b64encode(part).decode()}\");\n", encoding="ascii")
+            body = f"BEYOND_PACK({json.dumps(path.name)},{i},{len(parts)},\"{base64.b64encode(part).decode()}\");\n"
+            # named by content: a file that did not change keeps its address, so browsers keep their stored copy
+            # across updates (only the changed parts — usually just erp.zip — are downloaded again)
+            name = f"packs/{hashlib.sha256(body.encode()).hexdigest()[:16]}.js"
+            (OUT / name).write_text(body, encoding="ascii")
             files.append(name)
         path.unlink()
     shutil.rmtree(OUT / "vendor" / "wheels")

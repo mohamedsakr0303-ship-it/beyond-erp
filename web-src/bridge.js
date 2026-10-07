@@ -17,16 +17,40 @@ window.BEYOND_STATIC = true;
   // from any static host (no special file types, every file < 3 MB) and even opened straight from disk (file://).
   const parts = {}, BLOBS = {};
   window.BEYOND_PACK = (name, i, n, b64) => { (parts[name] = parts[name] || { n, list: [] }).list[i] = b64; };
-  const b64bytes = s => { const bin = atob(s), a = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i); return a; };
+  // base64 → bytes with the browser's own decoder (much faster than a loop over 19 MB)
+  const b64bytes = async s => {
+    if (Uint8Array.fromBase64) return Uint8Array.fromBase64(s);
+    if (location.protocol !== "file:") { try { return new Uint8Array(await (await fetch("data:application/octet-stream;base64," + s)).arrayBuffer()); } catch { /* below */ } }
+    const bin = atob(s), a = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i); return a;
+  };
+  // From a web address the page fetches each engine file once and keeps that very download on this device (Cache
+  // Storage); later starts read it from there — no network. The files are named by their content, so an update only
+  // fetches the parts that changed. Opened from disk (file://) they load as plain <script> tags.
+  const PACK_RE = /^BEYOND_PACK\(("(?:[^"\\]|\\.)*"),(\d+),(\d+),"([^"]*)"\)/;
+  async function packFromStore(f, cache) {
+    let res = cache && await cache.match(f), fromStore = !!res;
+    if (!res) { res = await fetch(f); if (!res.ok) throw new Error("Could not load " + f); if (cache) await cache.put(f, res.clone()).catch(() => {}); }
+    const m = PACK_RE.exec(await res.text()); if (!m) throw new Error("Damaged engine file " + f + " — reload the page");
+    window.BEYOND_PACK(JSON.parse(m[1]), +m[2], +m[3], m[4]);
+    return fromStore;
+  }
   async function unpackAll() {
     const files = window.BEYOND_PACK_FILES || [];
-    for (let i = 0; i < files.length; i++) {
-      say(`Loading the ERP engine… ${Math.round(i / files.length * 100)}% (first visit ≈ 19 MB, then cached)`);
-      await load(files[i]);
-    }
+    const web = location.protocol !== "file:" && window.caches;
+    const cache = web ? await caches.open("beyond-erp").catch(() => null) : null;
+    const stored = cache ? new Set((await cache.keys()).map(k => new URL(k.url).pathname)) : new Set();
+    const fresh = files.some(f => !stored.has(new URL(f, location.href).pathname));
+    let done = 0;
+    const show = () => say(fresh ? `Loading the ERP engine… ${Math.round(done / files.length * 100)}% (downloaded once, about 19 MB — afterwards it starts from this device)`
+      : `Starting the ERP engine… ${Math.round(done / files.length * 100)}%`);
+    show();
+    await Promise.all(files.map(f => (web ? packFromStore(f, cache) : load(f)).then(() => { done++; show(); })));
+    // engine files of earlier versions are no longer needed on this device
+    if (cache) { const keep = new Set(files.map(f => new URL(f, location.href).pathname));
+      (await cache.keys()).filter(k => k.url.includes("/packs/") && !keep.has(new URL(k.url).pathname)).forEach(k => cache.delete(k)); }
     for (const [name, p] of Object.entries(parts)) {
       if (p.list.length !== p.n || p.list.some(x => x == null)) throw new Error("Incomplete upload: " + name + " — upload every file in the packs folder");
-      const chunks = p.list.map(b64bytes), out = new Uint8Array(chunks.reduce((a, c) => a + c.length, 0));
+      const chunks = await Promise.all(p.list.map(b64bytes)), out = new Uint8Array(chunks.reduce((a, c) => a + c.length, 0));
       let o = 0; chunks.forEach(c => { out.set(c, o); o += c.length; });
       BLOBS[name] = out; delete parts[name];
     }

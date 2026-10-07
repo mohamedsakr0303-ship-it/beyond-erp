@@ -396,6 +396,9 @@ function stackify(root) {
 // cut, a crash or a closed tab loses nothing. Saving / posting or pressing Cancel ends the draft. After signing back in
 // the screen it belongs to shows it (Continue / Discard), its menu item has a dot, and the top bar lists them all.
 const Drafts = {
+  open: new Map(),   // drafts on screen right now: kept quietly, listed only once their form is left
+  shown() { for (const [id, box] of Drafts.open) if (!box.isConnected) Drafts.open.delete(id);
+    return Drafts.all().filter(d => !Drafts.open.has(d.id)); },
   key: () => "drafts." + ((S.boot && S.boot.user && S.boot.user.username) || "") + "." + ((S.boot && S.boot.settings && S.boot.settings.company_name) || ""),
   all() { const v = store.get(Drafts.key(), []); return Array.isArray(v) ? v : []; },
   put(list) { store.set(Drafts.key(), list.slice(-40)); Drafts.badge(); },
@@ -410,10 +413,13 @@ const Drafts = {
     const opener = opt.page ? { hash: location.hash } : (S.lastClick && Date.now() - S.lastClick.at < 4000 ? S.lastClick : null);
     if (!opener) return;   // opened in a way that cannot be repeated later
     const menu = ($(".side a.on[href]") || {}).getAttribute?.("href") || "";   // the menu item it belongs to
-    box._draft = box._draft || { id: S.resumeDraft || ("d" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)), title, opener, hash: opener.hash || location.hash, menu };
+    // the same form opened the same way is the same draft (reopening it does not start a second one)
+    const sig = "d" + [...JSON.stringify([title, opener.a || "", opener.ds || {}, opener.hash || location.hash])].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7).toString(36);
+    box._draft = box._draft || { id: S.resumeDraft || sig, title, opener, hash: opener.hash || location.hash, menu };
     S.resumeDraft = null;
+    Drafts.open.set(box._draft.id, box); Drafts.badge();
     let h;
-    const save = e => { if (e && !e.isTrusted) return; clearTimeout(h); h = setTimeout(() => {
+    const save = e => { if (e && !e.isTrusted) return; box._draftDone = false; clearTimeout(h); h = setTimeout(() => {
       if (!box.isConnected || box._draftDone) return;
       const d = { ...box._draft, fields: Drafts.fields(box), at: new Date().toISOString() };
       if (!d.fields.some(x => x.v !== "" && x.v !== false)) return;
@@ -435,6 +441,7 @@ const Drafts = {
     } else box = $("#view .page");
     if (!box) return;
     box._draft = { id: d.id, title: d.title, opener: d.opener, hash: d.hash, menu: d.menu };
+    Drafts.open.set(d.id, box); Drafts.badge();
     await Drafts.fill(box, d.fields);
     toast(L2("Draft restored — check it, then save or post", "تمت استعادة المسودة — راجعها ثم احفظ أو رحّل"));
   },
@@ -459,7 +466,7 @@ const Drafts = {
     put();
   },
   banner(view) {
-    const mine = Drafts.all().filter(d => d.hash === location.hash); if (!mine.length) return;
+    const mine = Drafts.shown().filter(d => d.hash === location.hash); if (!mine.length) return;
     const b = document.createElement("div"); b.className = "banner info draft-bar";
     b.innerHTML = mine.map(d => `<div class="row" style="gap:8px;align-items:center;flex-wrap:wrap">${svg("file")} <b>${esc(L2("Unsaved draft", "مسودة غير محفوظة"))}:</b> ${esc(d.title)}
       <small class="muted">${esc(fmtTime(d.at))}</small><span class="spacer"></span><button class="btn sm pri" data-a="draftgo" data-id="${d.id}">${esc(L2("Continue", "متابعة"))}</button>
@@ -467,12 +474,12 @@ const Drafts = {
     view.prepend(b);
   },
   badge() {   // a dot on the menu items that hold a draft, and the count in the top bar
-    const list = Drafts.all();
+    const list = Drafts.shown();
     $$(".side a[href]").forEach(a => a.classList.toggle("has-draft", list.some(d => (d.menu || d.hash.split("?")[0]) === a.getAttribute("href"))));
     const tb = $("#draftsbtn"); if (tb) { tb.hidden = !list.length; const c = $(".dcount", tb); if (c) c.textContent = list.length; }
   },
   list() {
-    const list = Drafts.all().slice().reverse();
+    const list = Drafts.shown().slice().reverse();
     drawer(L2("Drafts", "المسودات"), list.length ? `<div class="tbl"><table><tbody>${list.map(d => `<tr><td><b>${esc(d.title)}</b><div class="lines">${esc(d.hash.replace("#/", ""))} · ${esc(fmtTime(d.at))}</div></td>
       <td style="white-space:nowrap"><button class="btn sm pri" type="button" data-a="draftgo" data-id="${d.id}">${esc(L2("Continue", "متابعة"))}</button> <button class="btn sm" type="button" data-a="draftdrop" data-id="${d.id}">${esc(L2("Discard", "تجاهل"))}</button></td></tr>`).join("")}</tbody></table></div>`
       : `<p class="muted">${esc(L2("No drafts.", "لا توجد مسودات."))}</p>`, null, { readOnly: true });
@@ -1042,7 +1049,7 @@ function drawer(title, html, onSubmit, opts = {}) {
   f.addEventListener("submit", async e => {
     e.preventDefault();
     const btn = $("button[type=submit]", f); if (btn) btn.disabled = true;
-    try { const done = await onSubmit(readForm(f), f); if (done !== false) { Drafts.done(f); closeDrawer(); route(); } }
+    try { const done = await onSubmit(readForm(f), f); Drafts.done(f); if (done !== false) { closeDrawer(); route(); } }
     catch (err) { $("#derr").innerHTML = `<div class="banner err">${esc(err.message)}</div>`; $("#derr").scrollIntoView({ block: "nearest", behavior: "smooth" }); }
     finally { if (btn) btn.disabled = false; }
   });
@@ -1053,6 +1060,7 @@ function drawer(title, html, onSubmit, opts = {}) {
 }
 function closeDrawer(keepEntry) {
   $$(".drawer-bg").forEach(d => d.remove());
+  setTimeout(() => Drafts.badge(), 0);
   if (keepEntry === true || drawerEntry === null) return;
   const was = drawerEntry; drawerEntry = null;
   // drop the panel's history entry — unless the page has moved on meanwhile
