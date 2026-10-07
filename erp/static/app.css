@@ -898,3 +898,8 @@ label.f.chk>input[type=radio],label.f.chk>input[type=checkbox]{flex:none;width:1
 .wpick small{flex-basis:100%;padding-inline-start:26px;margin-top:-4px}
 @media (max-width:1200px){.wgrid{grid-template-columns:repeat(2,minmax(0,1fr))}.wg.s2,.wg.s4{grid-column:1/-1}}
 @media (max-width:560px){.wgrid{gap:12px}.wg.s1{grid-column:span 1}}
+
+/* a memo column: shown for information, not part of the total */
+.memo-col{color:var(--muted);border-inline-start:1px dashed var(--line)}
+.pxtbl th{white-space:normal;vertical-align:bottom;min-width:84px;line-height:1.3}
+.pxtbl td:first-child{min-width:150px}

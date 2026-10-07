@@ -3352,22 +3352,27 @@ PAGES["partner-exit"] = async (view, parts, q) => {
   const d = await api("GET", "/api/equity/exit?" + qs({ date_to: q.date_to || "" }));
   const ed = can("partners.equity", "edit"), f = d.funding, ar = S.lang === "ar";
   const sign = v => `<span class="${v < 0 ? "neg" : v > 0 ? "pos" : ""}">${money(v)}</span>`;
+  const rp = Math.round((d.reserve_pct || 0) * 100);
   const cols = [[L2("Capital put in", "رأس المال المدفوع"), "capital"], [L2("Funding not booked yet", "تمويل لم يُسجل بعد"), "funding_unbooked"],
-    [L2("Current account", "الحساب الجاري"), "current"], [L2("Share of billed profit", "حصته من الربح المفوتر"), "billed_profit"],
-    [L2("Drawings taken", "المسحوبات"), "drawings", -1], [L2("Owes the company (loans…)", "مستحق عليه للشركة (سلف…)"), "owes_company", -1],
+    [L2("Current account", "الحساب الجاري"), "current"],
+    [L2("His undrawn share of billed profit", "حصته غير المسحوبة من الربح المفوتر"), "undrawn_profit", 0, p => `${money(p.distributable)} − ${money(p.drawings)} ${L2("drawn", "مسحوب")}`],
+    [L2(`His share of the reserve held back (${rp}%)`, `حصته من الاحتياطي المحتجز (${rp}%)`), "reserve_share"],
+    [L2("Owes the company (loans…)", "مستحق عليه للشركة (سلف…)"), "owes_company", -1],
     [L2("Company owes him (loans, interest…)", "مستحق له على الشركة (قروض، فوائد…)"), "company_owes"]];
-  const used = cols.filter(([, k]) => d.partners.some(p => Math.abs(p[k] || 0) >= 0.01) || k === "capital" || k === "billed_profit");
+  const used = cols.filter(([, k]) => d.partners.some(p => Math.abs(p[k] || 0) >= 0.01) || ["capital", "undrawn_profit", "reserve_share"].includes(k));
   S.H.pxfund = async () => { const v = $("#pxfp").value; try { await api("PUT", "/api/settings", { funding_partner: v }); toast(t("saved")); route(); } catch (e) { fail(e); } };
   S.H.pxbook = async () => { if (!confirm(L2(`Book his capital up to the money he has actually put in (${money(f.own_money)})? A capital entry for the difference is posted.`, `تسجيل رأس ماله بما يساوي ما دفعه فعلاً (${money(f.own_money)})؟ يُرحّل قيد رأس مال بالفرق.`))) return;
     try { await api("POST", "/api/equity/funding/book", {}); toast(t("posted")); route(); } catch (e) { fail(e); } };
   S.H.pxrows = () => { const el = $("#pxmov"); el.hidden = !el.hidden; };
   view.innerHTML = filterBar(q, ["asof"]) +
     `<div class="card"><h2>${L2("If a partner leaves today", "إذا خرج شريك اليوم")}</h2>
-      <p class="muted" style="margin-top:0">${L2("What the company would pay each partner (green) or what he would owe it (red): the capital he put in, his share of billed profit, less what he already took and what he owes. Profit on work done but not invoiced yet is his only once it is billed — shown in the last columns. Unpaid supplier bills are company debts and do not change this.", "ما ستدفعه الشركة لكل شريك (أخضر) أو ما سيكون مستحقاً عليه (أحمر): رأس المال الذي دفعه وحصته من الربح المفوتر، مطروحاً منها ما سحبه وما عليه. ربح الأعمال المنفذة غير المفوترة يصبح له فقط عند فوترتها — في آخر الأعمدة. فواتير الموردين غير المدفوعة ديون على الشركة ولا تغيّر هذا.")}</p>
-      <div class="tbl"><table><thead><tr><th>${t("partner")}</th>${used.map(([l]) => `<th class="num">${esc(l)}</th>`).join("")}<th class="num">${L2("Owed if he leaves now", "المستحق عند الخروج الآن")}</th><th class="num">${L2("+ his profit on unbilled work", "+ ربحه من أعمال لم تُفوتر")}</th><th class="num">${L2("Once that work is billed", "بعد فوترة تلك الأعمال")}</th></tr></thead><tbody>
+      <p class="muted" style="margin-top:0">${L2("What the company would pay each partner (green) or what he would owe it (red): the capital he put in, his share of billed profit not drawn yet, his share of the reserve the company held back, less what he owes. Unpaid supplier bills are company debts and do not change this. The memo column is not in the total: profit on work not invoiced yet belongs to no one until it is billed.", "ما ستدفعه الشركة لكل شريك (أخضر) أو ما سيكون مستحقاً عليه (أحمر): رأس المال الذي دفعه وحصته غير المسحوبة من الربح المفوتر وحصته من الاحتياطي المحتجز، مطروحاً منها ما عليه. فواتير الموردين غير المدفوعة ديون على الشركة ولا تغيّر هذا. عمود المذكرة خارج الإجمالي: ربح الأعمال غير المفوترة لا يخص أحداً حتى تُفوتر.")}</p>
+      <div class="tbl pxtbl"><table><thead><tr><th>${t("partner")}</th>${used.map(([l]) => `<th class="num">${esc(l)}</th>`).join("")}<th class="num">${L2("Owed if he leaves now", "المستحق عند الخروج الآن")}</th><th class="num memo-col">${L2("Memo — his share of expected profit on work not yet invoiced (not included)", "مذكرة — حصته من الربح المتوقع على أعمال لم تُفوتر (غير محتسبة)")}</th></tr></thead><tbody>
       ${d.partners.map(p => `<tr><td><a href="#/statement?${qs({ party: p.partner })}">${esc(p.partner)}</a>${p.funding ? ` <span class="chip">${L2("funding partner", "الشريك الممول")}</span>` : ""}<div class="lines">${pct(p.ratio)}</div></td>
-        ${used.map(([, k, sg]) => `<td class="num">${(p[k] || 0) ? money(sg ? -p[k] : p[k]) : "—"}</td>`).join("")}
-        <td class="num"><b>${sign(p.owed_now)}</b></td><td class="num muted">${money(p.wip_profit)}</td><td class="num"><b>${sign(p.owed_when_billed)}</b></td></tr>`).join("")}
+        ${used.map(([, k, sg, sub]) => `<td class="num">${(p[k] || 0) ? money(sg ? -p[k] : p[k]) : "—"}${sub ? `<div class="lines">${sub(p)}</div>` : ""}</td>`).join("")}
+        <td class="num"><b>${sign(p.owed_now)}</b></td><td class="num memo-col"><i>${money(p.wip_profit)}</i></td></tr>`).join("")}
+      <tr class="total"><td>${t("total")}</td>${used.map(([, k, sg]) => { const v = d.partners.reduce((x, p) => x + (p[k] || 0), 0); return `<td class="num">${v ? money(sg ? -v : v) : "—"}</td>`; }).join("")}
+        <td class="num"><b>${sign(d.partners.reduce((x, p) => x + p.owed_now, 0))}</b></td><td class="num memo-col"><i>${money(d.partners.reduce((x, p) => x + p.wip_profit, 0))}</i></td></tr>
       </tbody></table></div></div>
     <div class="card"><h2>${L2("Funding partner's account — money in and out", "حساب الشريك الممول — الوارد والمنصرف")}</h2>
       <div class="row" style="gap:8px;flex-wrap:wrap;align-items:flex-end"><label class="f" style="min-width:260px">${L2("Funding partner (the company's money runs through his account)", "الشريك الممول (أموال الشركة تمر بحسابه)")}

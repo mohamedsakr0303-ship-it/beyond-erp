@@ -1920,6 +1920,11 @@ class FundingPartnerAndExit(unittest.TestCase):
         ex = {p["partner"]: p for p in se.exit_view(db, "2026-01-31")["partners"]}
         self.assertEqual(ex["Funder"]["owed_now"], 500 + 200)                 # capital + half of the 400 profit
         self.assertEqual(ex["Other"]["owed_now"], 200 - 100 - 800)            # profit − drawings − the loan he owes
+        db.set_setting("reserve_pct", "0.25")                                  # a quarter of billed profit held back
+        f = {p["partner"]: p for p in se.exit_view(db, "2026-01-31")["partners"]}["Funder"]
+        self.assertEqual((f["undrawn_profit"], f["reserve_share"], f["owed_now"]), (150, 50, 700))   # same total, split
+        self.assertNotIn("owed_when_billed", f)                                # unbilled-work profit is a memo only
+        db.set_setting("reserve_pct", "0")
         lid = loans.save(db, {"direction": "lent", "party": "Other", "principal": 300, "start_date": "2026-02-01", "term_months": 1,
                               "booking": "money", "paid_from": "partner:Funder"})
         e = loans._entries(db, loans.get(db, lid)["code"])[0]

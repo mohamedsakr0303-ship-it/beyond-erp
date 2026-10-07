@@ -6,9 +6,10 @@ it and every cost, loan to a partner or distribution leaves it. The money he has
 Balances Tracker section 5. His capital in the books is the same figure once it is booked (the workbook's automatic
 funding entry, or "Book funding to date" here).
 
-Leaving partner: capital (+ funding not yet booked) + current account + his share of BILLED profit − drawings − what he
-owes the company (loans to him, anything else in his name) + what the company owes him (loans from him, interest,
-amounts payable). His share of profit on work done but not invoiced is shown apart: it is his once that work is billed.
+Leaving partner: capital (+ funding not yet booked) + current account + his undrawn share of BILLED profit (after the
+reserve, less his drawings) + his share of the reserve held back − what he owes the company (loans to him, anything else
+in his name) + what the company owes him (loans from him, interest, amounts payable). His share of the profit expected on
+work done but not invoiced is a memo only — never in the total.
 """
 from . import accounting as acc
 from .db import to_major, to_minor
@@ -138,6 +139,7 @@ def exit_view(db, date_to=None):
     rep = partner_report(db, None, date_to)
     fund = funding_partner(db)
     led = funding_ledger(db, fund, date_to) if fund else None
+    reserve = rep["reserve_pct"]
     out = []
     for p in rep["partners"]:
         name = p["name"]
@@ -156,9 +158,15 @@ def exit_view(db, date_to=None):
                        WHERE {LIVE} AND e.date<=? AND {PARTY}=? AND a.subtype<>'cash'""", (date_to, name))
         owes, owed = to_major(r["owes"]), to_major(r["owed"])
         unbooked = led["unbooked"] if led and name == fund else 0
-        now = round(capital + unbooked + current + billed - drawings - owes + owed, 2)
+        # his billed profit splits into what he may take (less what he already took) and the reserve the company
+        # holds back — still his equity, so it is paid out when he leaves
+        distributable = round(billed * (1 - reserve), 2) if billed > 0 else billed
+        undrawn = round(distributable - drawings, 2)
+        reserve_share = round(billed - distributable, 2)
+        now = round(capital + unbooked + current + undrawn + reserve_share - owes + owed, 2)
         out.append({"partner": name, "active": p["active"], "ratio": p["profit_ratio"], "capital": capital, "funding_unbooked": unbooked,
-                    "current": current, "billed_profit": billed, "drawings": drawings, "owes_company": owes, "company_owes": owed,
-                    "owed_now": now, "wip_profit": p["held_in_wip"], "owed_when_billed": round(now + p["held_in_wip"], 2),
-                    "funding": name == fund})
-    return {"date_to": date_to, "partners": out, "funding_partner": fund, "funding": led}
+                    "current": current, "billed_profit": billed, "distributable": distributable, "drawings": drawings,
+                    "undrawn_profit": undrawn, "reserve_share": reserve_share, "owes_company": owes, "company_owes": owed,
+                    "owed_now": now, "wip_profit": p["held_in_wip"], "funding": name == fund})
+    # memo only: profit expected on work done but not invoiced yet — not owed to anyone until it is billed
+    return {"date_to": date_to, "partners": out, "funding_partner": fund, "funding": led, "reserve_pct": reserve}
