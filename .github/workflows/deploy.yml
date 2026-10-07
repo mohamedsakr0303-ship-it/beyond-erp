@@ -182,6 +182,7 @@ jobs:
       - name: Build the web app
         run: python build_web.py --zip
       - uses: actions/upload-artifact@v7
+        continue-on-error: true   # a full artifact-storage quota must not stop the deploy
         with:
           name: beyond-erp-web
           path: beyond-erp-web.zip
@@ -197,6 +198,7 @@ jobs:
         run: python packaging/collect_downloads.py dl "$SITE"
       - name: Keep the site for GitHub Pages
         uses: actions/upload-pages-artifact@v5
+        continue-on-error: true
         with:
           path: web
           retention-days: 1
