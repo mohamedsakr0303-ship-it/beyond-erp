@@ -1495,15 +1495,27 @@ def partner_report(db, date_from=None, date_to=None):
     # agreed interest on capital comes out of the company's result before the rest is shared
     cap_int = equity.capital_interest(db, date_from, date_to)
     pool = round(company_after_alloc - sum(cap_int.values()), 2)
+    # profit is only distributable once BILLED: a project's work done but not invoiced (unbilled revenue) carries
+    # its share of the profit, which is earned but held in the company until the invoice goes out
+    from .partner_pack import billed_profit, wip_accounts
+    wip_codes = wip_accounts(db)
+    w, p = _where(date_to=date_to)
+    wip_bu = {r["bu_id"]: to_major(r["n"]) for r in db.q(
+        f"""SELECT e.bu_id, SUM(l.debit-l.credit) n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
+            WHERE {w} AND l.account IN ({','.join('?' * len(wip_codes)) or "''"}) GROUP BY e.bu_id""", p + list(wip_codes))}
+    billed = {b["id"]: billed_profit(b["revenue"], wip_bu.get(b["id"], 0), b["net_profit"]) for b in bus}
     rows = []
     for pt in partners:
-        per, total = {}, 0.0
+        per, total, total_billed = {}, 0.0, 0.0
         for b in bus:
             s = shares.get((pt["id"], b["id"]), ratio[pt["id"]])
-            per[b["code"]] = {"share": s, "profit": round(b["net_profit"] * s, 2)}
+            per[b["code"]] = {"share": s, "profit": round(b["net_profit"] * s, 2), "billed": round(billed[b["id"]] * s, 2)}
             total += b["net_profit"] * s
-        total += pool * ratio[pt["id"]] + cap_int.get(pt["name"], 0)
-        distributable = total * (1 - reserve) if total > 0 else total
+            total_billed += billed[b["id"]] * s
+        rest = pool * ratio[pt["id"]] + cap_int.get(pt["name"], 0)
+        total += rest
+        total_billed += rest
+        distributable = total_billed * (1 - reserve) if total_billed > 0 else total_billed
         drawn = draws.get(pt["name"], 0)
         rows.append({"id": pt["id"], "name": pt["name"], "default_share": pt["default_share"], "units": per,
                      "active": pt["active"], "joined": pt["joined"], "left_on": pt["left_on"],
@@ -1511,11 +1523,13 @@ def partner_report(db, date_from=None, date_to=None):
                      "profit_ratio": ratio[pt["id"]], "profit_share_typed": pt["profit_share"], "salary": to_major(pt["salary"] or 0),
                      "drawings_interest": pt["drawings_interest"],
                      "capital_interest": cap_int.get(pt["name"], 0), "accounts": equity.balances(db, pt["name"], date_to),
-                     "profit_share": round(total, 2), "distributable": round(distributable, 2), "drawn": drawn,
+                     "profit_share": round(total, 2), "billed_share": round(total_billed, 2),
+                     "held_in_wip": round(total - total_billed, 2), "distributable": round(distributable, 2), "drawn": drawn,
                      "balance": round(distributable - drawn, 2)})
     checks = {b["code"]: round(sum(shares.get((pt["id"], b["id"]), ratio[pt["id"]]) for pt in partners), 4)
               for b in bus}
-    return {"partners": rows, "units": [{"id": b["id"], "code": b["code"], "net_profit": b["net_profit"]} for b in bus],
+    return {"partners": rows, "units": [{"id": b["id"], "code": b["code"], "net_profit": b["net_profit"], "billed_profit": billed[b["id"]],
+                                         "wip": wip_bu.get(b["id"], 0)} for b in bus],
             "company_result": company_after_alloc, "reserve_pct": reserve, "share_checks": checks,
             "default_check": round(sum(pt["default_share"] or 0 for pt in partners), 4), "ratio_typed": typed,
             "ratio_check": round(sum(ratio.values()), 4), "appropriations": equity.appropriations(db),
