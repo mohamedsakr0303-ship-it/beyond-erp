@@ -2427,6 +2427,14 @@ class Companies(unittest.TestCase):
             self.assertEqual(fn({"username": "ali.beta", "password": "betapw1"})["username"], "ali.beta")
             # adding the very same person on purpose (by their email, no password) is allowed; they keep their password
             self.assertTrue(fn({"username": "ali", "email": "ali@users.beyond-erp.invalid"})["shared"])
+            # a username can be the person's email address: the account is that address, and they sign in with it
+            self.assertEqual(fn({"username": "Boss@Beta.com", "password": "bosspw12"})["username"], "boss@beta.com")
+            self.assertEqual(sb.state.accounts["boss@beta.com"], "bosspw12")
+            self.assertTrue(Supabase(url, "anon").sign_in("boss@beta.com", "bosspw12")["access_token"])
+            for bad in ({"username": "boss@beta.com", "email": "other@beta.com", "password": "x123456"},
+                        {"username": "two words", "password": "x123456"}):
+                with self.assertRaises(RuntimeError):
+                    fn(bad)
             # switching company on a connected device is refused (disconnect first)
             self.assertEqual(api(0, a, "POST", "/api/cloud/company", {"action": "choose", "company": beta})[0], 400)
         finally:

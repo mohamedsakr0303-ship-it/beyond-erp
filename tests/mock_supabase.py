@@ -281,7 +281,13 @@ class Handler(BaseHTTPRequestHandler):
         if not cm or not cm["is_admin"]:
             return 403, {"msg": "Only administrators of this company can manage sign-in accounts"}
         u = str(body.get("username", "")).strip().lower()
-        e = (body.get("email") or "").strip().lower()
+        u_is_email = bool(re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", u))
+        e = (body.get("email") or "").strip().lower() or (u if u_is_email else "")
+        if body.get("action") != "delete":
+            if u_is_email and e != u:
+                return 400, {"msg": "When the username is an email address, the email must be that same address (or left blank)"}
+            if not u_is_email and not re.fullmatch(r"[a-z0-9][a-z0-9._-]{1,39}", u):
+                return 400, {"msg": "Usernames for signing in use 2–40 letters, digits, dots, dashes or underscores (no spaces) — or an email address"}
         others = lambda em: [k for k in st.members if k[1] == em and k[0] != cid]  # noqa: E731
         if body.get("action") == "delete":
             tgt = e or next((em for em, un in st.people.items() if un == u), f"{u}@users.beyond-erp.invalid")

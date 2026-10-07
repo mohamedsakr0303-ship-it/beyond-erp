@@ -59,7 +59,9 @@ Deno.serve(async (req) => {
   if (!adm.ok || !adm.data.length) return fail(403, "Only administrators of this company can manage sign-in accounts");
 
   const username = String(b.username || "").trim().toLowerCase();
-  const email = String(b.email || "").trim().toLowerCase();
+  // a username may be the person's email address: they then sign in with that address (sign-in treats "@" as an email)
+  const userIsEmail = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(username);
+  const email = String(b.email || "").trim().toLowerCase() || (userIsEmail ? username : "");
   const idOf = async (e: string) => (await call("POST", "/rest/v1/rpc/auth_user_id", { p_email: e })).data || null;
   const person = async (q: string) => { const r = await call("GET", `/rest/v1/people?select=email,username&${q}&limit=1`); return r.ok && r.data.length ? r.data[0] : null; };
   const otherCompanies = async (e: string) => {
@@ -94,8 +96,10 @@ Deno.serve(async (req) => {
 
   const password = b.password ? String(b.password) : "";
   const active = b.active !== false;
-  if (!/^[a-z0-9][a-z0-9._-]{1,39}$/.test(username)) {
-    return fail(400, "Usernames for signing in use 2–40 letters, digits, dots, dashes or underscores (no spaces)");
+  if (userIsEmail) {
+    if (email !== username) return fail(400, "When the username is an email address, the email must be that same address (or left blank)");
+  } else if (!/^[a-z0-9][a-z0-9._-]{1,39}$/.test(username)) {
+    return fail(400, "Usernames for signing in use 2–40 letters, digits, dots, dashes or underscores (no spaces) — or an email address");
   }
   if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return fail(400, "Enter a valid email address");
   if (password && password.length < 6) return fail(400, "Passwords need at least 6 characters");
