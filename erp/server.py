@@ -381,6 +381,12 @@ def _bu_negotiation(ctx, bid):
         if m and m not in acc.NEGOTIATION_MODES:
             raise acc.ValidationError("Negotiation handling must be 'keep' or 'pass'")
         ctx.db.x("UPDATE business_units SET negotiation=? WHERE id=?", (m, int(bid)))
+    if "wip_mode" in ctx.body:
+        w = acc.text(ctx.body.get("wip_mode")).lower()
+        ctx.db.x("UPDATE business_units SET wip_mode=? WHERE id=?", (w if w in ("cost_plus", "drafts") else "", int(bid)))
+    from . import wip
+    with ctx.db.tx():
+        wip.sync(ctx.db, int(bid))
 
 
 @route("GET", "/api/bus", "business_units.units")
@@ -896,7 +902,12 @@ def extract_del(ctx, xid):
     x = ctx.db.one("SELECT status FROM extracts WHERE id=?", (int(xid),))
     if x and x["status"] == "posted":
         raise acc.ValidationError("Posted invoices cannot be deleted — reverse the invoice entry first")
+    bu = ctx.db.one("SELECT bu_id FROM extracts WHERE id=?", (int(xid),))
     ctx.db.x("DELETE FROM extracts WHERE id=?", (int(xid),))
+    if bu:
+        from . import wip
+        with ctx.db.tx():
+            wip.sync(ctx.db, bu["bu_id"])
     return ok()
 
 

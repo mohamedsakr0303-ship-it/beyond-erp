@@ -144,6 +144,9 @@ def read_legacy_workbook(path):
                     "basis": basis if basis in acc.BILLING_BASES else
                     "Fixed Price" if str(basis or "").lower().startswith("measured") else "Cost-Plus %",
                     "fee_pct": _f(_get(row, _col(h, "fee %"))),
+                    # measured (BOQ-rate) work: the executed quantities on its draft invoice are its work in progress
+                    "wip_mode": "drafts" if str(basis or "").lower().startswith("measured") else
+                    "cost_plus" if str(basis or "").lower().startswith("cost-plus") else "",
                     "contract_value": contract if isinstance(contract, (int, float)) else ""})
             break
 
@@ -334,6 +337,7 @@ def read_legacy_workbook(path):
             break
 
     if journal_mode:
+        data["_funder"] = _funding_partner_name(sheet("balances tracker"))
         _read_new_accounts(sheet("chart of accounts"), data, notes)
         _read_journal(wb, gj, data, notes, codes)
         _read_invoice_register(wb, data, notes)
@@ -343,6 +347,7 @@ def read_legacy_workbook(path):
         _read_negotiations(sheet("negotiation register"), data, notes)
         _read_design_offer(sheet("design offer"), data, notes)
     data.pop("_remap", None)
+    data.pop("_funder", None)
     wb.close()
     # BEYOND's own letterhead identity, as the first app version set it; only fills settings that are still empty
     for k, v in (("company_name", "BEYOND DESIGN"), ("company_legal_name", "By SWAG For Contracting"),
@@ -481,6 +486,20 @@ def _clashes(name, typ, app_name, app_type, app_role):
         return True
     name_l, app_l = str(name).lower(), str(app_name).lower()
     return any(w in name_l for w in _TAX_WORDS) != any(w in app_l for w in _TAX_WORDS)
+
+
+FUNDING_ACCOUNT = "3015"
+
+
+def _funding_partner_name(ws):
+    """The partner named in the Balances Tracker's 'funding partner's account' section, if any."""
+    if ws is None:
+        return ""
+    for r in range(1, ws.max_row + 1):
+        m = re.search(r"FUNDING PARTNER.*\(([^)]+)\)", str(ws.cell(r, 1).value or ""), re.I)
+        if m:
+            return m.group(1).strip()
+    return ""
 
 
 def _read_design_offer(ws, data, notes):
@@ -631,7 +650,9 @@ def _read_journal(wb, ws, data, notes, codes):
         if je not in groups:
             order.append(je)
         groups.setdefault(je, []).append(row)
-    auto, mapped = [], set()
+    auto, mapped, funded = [], set(), set()
+    funder = data.get("_funder") or ""
+    bank_codes = {"1020", "1010"}
     n = 0
     for je in order:
         rows = groups[je]
@@ -645,28 +666,40 @@ def _read_journal(wb, ws, data, notes, codes):
         deal = next((_v(_get(r, _col(h, "deal ref"))) for r in rows if _v(_get(r, _col(h, "deal ref")))), "") or ""
         memo = str(_v(_get(first, _col(h, "description"))) or src or je)
         date = _date(_get(first, _col(h, "date")))
+        if "auto" in src.lower() and (src.lower().startswith("accrual") or funder):
+            # the workbook's self-updating entries are not copied as fixed snapshots: the app keeps work in progress
+            # up to date per project, and the funding partner's account carries his money live
+            auto.append(je)
+            continue
         if "auto" in src.lower():
             memo = f"{memo} — snapshot from the Excel workbook on {date} (it updated itself there)"
-            auto.append(je)
         for r in rows:
             code = str(_v(_get(r, _col(h, "account"))))
             new = _account_v13(code, roles, data.get("_remap"))
+            line_party = (_v(_get(r, _col(h, "vendor", "party"))) or "") if (_v(_get(r, _col(h, "vendor", "party"))) or "") != party else ""
+            if funder and code in bank_codes:
+                # the workbook's bank is the funding partner's own account: every payment out of it is his money
+                new, line_party = FUNDING_ACCOUNT, funder
+                funded.add(je)
             if new != code:
                 mapped.add(f"{code}→{new}")
             data["Journal Vouchers"].append({
                 "voucher": je, "date": date, "kind": kind, "bu_code": proj, "party": party, "ref": je, "memo": memo,
                 "deal_ref": deal, "account": new, "debit": round(_f(_get(r, _col(h, "debit"))), 2) or "",
                 "credit": round(_f(_get(r, _col(h, "credit"))), 2) or "",
-                "line_party": (_v(_get(r, _col(h, "vendor", "party"))) or "") if (_v(_get(r, _col(h, "vendor", "party"))) or "") != party else ""})
+                "line_party": line_party})
         n += 1
     notes.append(f"General Journal: {n} entries imported line for line (the workbook's own source of truth); the hidden "
                  "archive sheets (Project Costing, OpEx, Payroll, Income Tracker) were not imported, so nothing is counted twice.")
     if mapped:
         notes.append("Account codes that mean something else in the app were moved: " + ", ".join(sorted(mapped)) + ".")
+    if funded:
+        notes.append(f"Every payment and receipt ({len(funded)} entries) goes through {funder}'s funding account "
+                     f"({FUNDING_ACCOUNT}) instead of the bank — his money in the company is their total, live.")
     if auto:
-        notes.append(f"{', '.join(auto)} were formulas that recalculated themselves in Excel (cost-plus accrued revenue, "
-                     "funding-partner top-up). They were imported with their values as of their date — the app will not "
-                     "update them; reverse and re-enter them when the figures change.")
+        notes.append(f"{', '.join(auto)} recalculated themselves in the workbook (work in progress, funding top-up). They "
+                     "were not copied as fixed snapshots: the app keeps each project's work in progress up to date itself"
+                     + (" and the funding partner's account carries his money" if funder else "") + ".")
 
 
 def _read_invoice_register(wb, data, notes):

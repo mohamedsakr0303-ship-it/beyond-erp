@@ -1020,7 +1020,9 @@ class LegacyJournalWorkbook(unittest.TestCase):
         tb = {r["code"]: round(r["debit"] - r["credit"], 2) for r in a.trial_balance(db)["rows"]}
         self.assertEqual((tb["1020"], tb["3010"], tb["5020"], tb["2010"], tb["1035"]), (500, -1000, 600, -200, 100))
         self.assertNotIn("1320", tb)
-        self.assertEqual(db.one("SELECT COUNT(*) n FROM journal_entries")["n"], 3)        # zero auto-accrual skipped
+        self.assertEqual(db.one("SELECT COUNT(*) n FROM journal_entries WHERE kind<>'Work in Progress'")["n"], 3)  # no snapshots
+        tbw = {r["code"]: round(r["debit"] - r["credit"], 2) for r in a.trial_balance(db)["rows"]}
+        self.assertEqual(tbw.get(db.acct("unbilled_revenue")), 750)                     # cost-plus: 600 × 1.25, kept live
         self.assertEqual(a.get_entry(db, db.one("SELECT id FROM journal_entries WHERE ref='JE-2'")["id"])["meta"]["deal_ref"], "SUB-1")
         self.assertEqual([(x["number"], x["total"]) for x in a.list_extracts(db)], [("INV-1", 500)])
         self.assertEqual([c["check"] for c in a.audit(db) if not c["ok"]], [])
@@ -1138,7 +1140,9 @@ class LegacyJournalWorkbook(unittest.TestCase):
         self.assertIn(("Partner B", 180000), [(r["party"], r["balance"]) for r in statements.aging(db, "2026-03-31")["rows"]])
         ln = loans.register(db)["rows"]
         self.assertEqual([(x["party"], x["outstanding"], x["term_months"], x["next_amount"]) for x in ln], [("Partner B", 180000, 8, 22500)])
-        self.assertEqual(db.one("SELECT COUNT(*) n FROM journal_entries")["n"], 3)   # the loan was not posted again
+        self.assertEqual(db.one("SELECT COUNT(*) n FROM journal_entries")["n"], 2)   # the loan was not posted again; no
+        # funding snapshot either: the sheet's bank is P1's own account, so every payment is on his funding account
+        self.assertEqual((tb.get("3015"), tb.get("1020", 0)), (-194000, 0))
         self.assertEqual([c["check"] for c in a.audit(db) if not c["ok"]], [])
 
 
@@ -1948,6 +1952,45 @@ class FundingPartnerAndExit(unittest.TestCase):
         self.assertIn((db.acct("capital"), 0, 300, "Funder"), [(l["account"], l["debit"], l["credit"], l["party"]) for l in a.get_entry(db, e["id"])["lines"]])
         ex = {p["partner"]: p for p in se.exit_view(db, "2026-02-28")["partners"]}
         self.assertEqual((ex["Funder"]["owed_now"], ex["Other"]["owed_now"]), (1000, -1000))
+        self.assertEqual([c["check"] for c in a.audit(db) if not c["ok"]], [])
+
+
+class LiveWorkInProgress(unittest.TestCase):
+    """No snapshots: a cost-plus project's work in progress follows its costs, a measured one its draft invoices, and
+    posting the invoice moves the work to receivables without counting it twice. Money through the funding partner's
+    account is his, tagged automatically."""
+
+    def test_cost_plus_drafts_and_funding_account(self):
+        db = Database(":memory:")
+        db.x("INSERT INTO business_units(code,name,basis,fee_pct,wip_mode) VALUES ('CP','O West','Cost-Plus %',0.25,'cost_plus'),"
+             "('MS','Palm','Fixed Price',0,'drafts'),('NO','Plain','Cost-Plus %',0.25,'')")
+        db.x("INSERT INTO partners(name,default_share) VALUES ('Funder',1)")
+        db.set_setting("funding_partner", "Funder")
+        fund = db.acct("funding_partner")
+        self.assertEqual(a.money_account(db), fund)                                # payments default to his account
+        unb = db.acct("unbilled_revenue")
+        wip = lambda code: round(sum(l["debit"] - l["credit"] for l in db.q(  # noqa: E731
+            "SELECT l.debit, l.credit FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id JOIN business_units b ON b.id=e.bu_id "
+            "WHERE e.status='posted' AND l.account=? AND b.code=?", (unb, code))) / 100, 2)
+        e1 = a.record_journal(db, {"date": "2026-09-23", "bu_code": "CP", "lines": [{"account": "5045" if db.one("SELECT 1 FROM accounts WHERE code='5045'") else "5010", "debit": 6200}, {"account": fund, "credit": 6200}]})
+        self.assertEqual(wip("CP"), 7750)                                          # 6,200 × 1.25
+        a.record_journal(db, {"date": "2026-09-24", "bu_code": "NO", "lines": [{"account": "5010", "debit": 1000}, {"account": fund, "credit": 1000}]})
+        self.assertEqual(wip("NO"), 0)                                             # not switched on
+        self.assertEqual(db.one("SELECT party FROM journal_lines WHERE entry_id=? AND account=?", (e1, fund))["party"], "Funder")
+        a.void_entry(db, e1, "mistake")
+        self.assertEqual(wip("CP"), 0)                                             # follows the costs both ways
+        a.record_journal(db, {"date": "2026-09-25", "bu_code": "CP", "lines": [{"account": "5010", "debit": 6200}, {"account": fund, "credit": 6200}]})
+        xid = a.save_extract(db, {"bu_id": 2, "number": "Invoice 01", "date": "2026-09-23", "customer": "C",
+                                  "lines": [{"description": "Works", "qty": 1, "price": 453767.75}]})
+        self.assertEqual(wip("MS"), 453767.75)                                     # the draft's executed work
+        net0 = a.income_statement(db)["net_profit"]
+        a.post_extract(db, xid)
+        self.assertEqual((wip("MS"), a.income_statement(db)["net_profit"]), (0, net0))   # billed, not earned twice
+        cp = a.save_extract(db, {"bu_id": 1, "number": "OW-1", "date": "2026-09-30", "customer": "O",
+                                 "lines": [{"description": "Works", "qty": 1, "price": 7750}]})
+        a.post_extract(db, cp)
+        self.assertEqual(wip("CP"), 0)                                             # cost-plus invoiced in full
+        self.assertEqual(db.one("SELECT COUNT(*) n FROM journal_entries WHERE kind='Work in Progress' AND status='posted'")["n"], 0)
         self.assertEqual([c["check"] for c in a.audit(db) if not c["ok"]], [])
 
 

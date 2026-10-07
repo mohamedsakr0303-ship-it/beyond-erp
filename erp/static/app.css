@@ -903,3 +903,4 @@ label.f.chk>input[type=radio],label.f.chk>input[type=checkbox]{flex:none;width:1
 .memo-col{color:var(--muted);border-inline-start:1px dashed var(--line)}
 .pxtbl th{white-space:normal;vertical-align:bottom;min-width:84px;line-height:1.3}
 .pxtbl td:first-child{min-width:150px}
+tr.memo td{color:var(--muted);border-top:1px dashed var(--line)}

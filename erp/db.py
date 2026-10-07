@@ -1092,6 +1092,9 @@ DEFAULT_ACCOUNTS = [
     # ---- Equity
     ("3010", "Partner Capital", "Equity", "capital", "capital"),
     ("3020", "Partners' Current Accounts", "Equity", "partner_current", "partner_current"),
+    # one partner's own account pays and receives for the company (BEYOND's funding partner): every payment out of it
+    # is his money put in, every client payment into it is the company's money he holds — his balance is live
+    ("3015", "Funding Partner's Account (pays & receives for the company)", "Equity", "capital", "funding_partner"),
     ("3030", "Share Premium", "Equity", "other_equity", "share_premium"),
     ("3100", "Retained Earnings", "Equity", "retained_earnings", "retained"),
     ("3110", "Legal Reserve", "Equity", "reserves", "legal_reserve"),
@@ -1171,6 +1174,7 @@ ACCOUNT_NAMES_AR = {'3190': 'أرباح موزعة على الشركاء وال�
 ACCOUNT_NAMES_AR.update({'4035': 'إيرادات الصيانة والخدمات والاشتراكات', '2107': 'إيرادات خدمات واشتراكات مؤجلة'})
 ACCOUNT_NAMES_AR.update({'4025': 'مبيعات البضائع والوحدات', '4096': 'إيرادات فوائد التقسيط', '2106': 'فوائد تقسيط مؤجلة',
                          '5005': 'تكلفة البضاعة والوحدات المباعة', '1210': 'بضائع ووحدات بغرض البيع'})
+ACCOUNT_NAMES_AR.update({'3015': 'حساب الشريك الممول (يدفع ويحصّل للشركة)'})
 ACCOUNT_NAMES_AR.update({'1120': 'أوراق القبض (شيكات تحت التحصيل)', '1170': 'مستحق من الشركاء', '1180': 'إيرادات مستحقة غير مفوترة (أعمال منفذة)', '1190': 'مخصص الديون المشكوك في تحصيلها', '1340': 'غطاء خطابات الضمان', '1440': 'أراضي', '1450': 'مباني وتحسينات أماكن مستأجرة', '1460': 'مشروعات تحت التنفيذ', '1520': 'الشهرة', '1700': 'استثمارات طويلة الأجل', '2050': 'أوراق الدفع (شيكات صادرة)', '2060': 'فوائد مستحقة', '2120': 'توزيعات أرباح مستحقة للشركاء', '2130': 'مستحق للشركاء المنسحبين', '2510': 'مخصص مكافأة نهاية الخدمة', '3020': 'جاري الشركاء', '3030': 'علاوة إصدار / علاوة حصص', '3110': 'الاحتياطي القانوني', '3120': 'الاحتياطي العام', '4060': 'أرباح بيع أصول ثابتة', '4070': 'إيرادات إيجار', '4080': 'خصم مكتسب', '6015': 'صيانة وإصلاحات', '6078': 'وقود ومصروفات سيارات', '6088': 'ديون معدومة', '7045': 'خسائر بيع أصول ثابتة'})
 NEW_IN_V12 = {"1120", "1170", "1180", "1190", "1340", "1440", "1450", "1460", "1520", "1700", "2050", "2060", "2120",
               "2130", "2510", "3020", "3030", "3110", "3120", "4060", "4070", "4080", "6015", "6078", "6088", "7045"}
@@ -1363,6 +1367,10 @@ class Database:
                 not self.conn.execute("SELECT 1 FROM settings WHERE key='coa_v2'").fetchone():
             self._add_new_accounts()
         self.conn.execute("INSERT OR IGNORE INTO settings(key,value) VALUES ('coa_v2','1')")
+        self._add_role_account("3015", "funding_partner")
+        # how a business unit's work in progress is kept up to date: 'cost_plus' = costs × (1 + fee), 'drafts' = executed
+        # work on draft invoices (measured / BOQ-rate contracts), '' = not automatically
+        self._add_cols("business_units", [("wip_mode", "TEXT DEFAULT ''")])
         # loans & cash custody accounts — books from before they existed (a used code moves to the next free one)
         if self.conn.execute("SELECT COUNT(*) FROM accounts").fetchone()[0]:
             for code, role in (("6065", "bank_charges"),):
@@ -1422,6 +1430,18 @@ class Database:
         if not self.conn.execute("SELECT 1 FROM settings WHERE key='docs_seeded'").fetchone():
             self.seed_documents()
             self.conn.execute("INSERT OR REPLACE INTO settings(key,value) VALUES ('docs_seeded','1')")
+
+    def _add_role_account(self, code, role):
+        """An account added in a later version, for books that do not have its role yet (a used code moves on)."""
+        if not self.conn.execute("SELECT COUNT(*) FROM accounts").fetchone()[0] or \
+                self.conn.execute("SELECT 1 FROM accounts WHERE role=?", (role,)).fetchone():
+            return
+        name, typ, sub = next((n, t, sb) for c, n, t, sb, r in DEFAULT_ACCOUNTS if c == code)
+        c = code
+        while self.conn.execute("SELECT 1 FROM accounts WHERE code=?", (c,)).fetchone():
+            c = str(int(c) + 1)
+        self.conn.execute("INSERT INTO accounts(code,name,name_ar,type,subtype,normal,role) VALUES (?,?,?,?,?,?,?)",
+                          (c, name, ACCOUNT_NAMES_AR.get(code, ""), typ, sub, normal_for(typ, sub), role))
 
     def _add_new_accounts(self):
         """Books created before version 1.2 get the accounts added then (reserves, partner current accounts,

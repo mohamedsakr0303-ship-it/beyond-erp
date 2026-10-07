@@ -23,7 +23,8 @@ def funding_partner(db):
 
 
 def _cash_codes(db):
-    return [r["code"] for r in db.q("SELECT code FROM accounts WHERE subtype='cash'")]
+    """Where the company's money moves: cash / bank, and the funding partner's own account when there is one."""
+    return [r["code"] for r in db.q("SELECT code FROM accounts WHERE subtype='cash' OR role='funding_partner'")]
 
 
 def funding_ledger(db, name=None, date_to=None):
@@ -49,12 +50,13 @@ def funding_ledger(db, name=None, date_to=None):
         by_entry.setdefault(ln["id"], []).append(ln)
     groups, rows = {}, []
     for eid, ls in by_entry.items():
-        if any(x["subtype"] in ("capital", "partner_current") and x["party"] == name for x in ls):
-            continue                                    # booking his funding: not a movement of money
-        money = sum(x["debit"] - x["credit"] for x in ls if x["subtype"] == "cash")
+        is_money = lambda x: x["subtype"] == "cash" or x["role"] == "funding_partner"  # noqa: E731
+        if any(x["subtype"] in ("capital", "partner_current") and x["role"] != "funding_partner" and x["party"] == name for x in ls):
+            continue                                    # booking his funding as capital: not a movement of money
+        money = sum(x["debit"] - x["credit"] for x in ls if is_money(x))
         if not money:
             continue                                    # a transfer between the company's own accounts
-        other = [x for x in ls if x["subtype"] != "cash"]
+        other = [x for x in ls if not is_money(x)]
         e = ls[0]
         if e["bu_code"]:
             key, label = "bu:" + e["bu_code"], f"{e['bu_code']} · {e['bu_name'] or ''}".strip(" ·")
@@ -77,7 +79,7 @@ def funding_ledger(db, name=None, date_to=None):
                       FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id JOIN accounts a ON a.code=l.account
                       LEFT JOIN business_units b ON b.id=e.bu_id
                       WHERE {LIVE} AND e.date<=? AND {PARTY}=? AND a.subtype IN ('capital','partner_current')
-                        AND e.kind<>'Profit Appropriation'
+                        AND COALESCE(a.role,'')<>'funding_partner' AND e.kind<>'Profit Appropriation'
                         AND e.id NOT IN (SELECT entry_id FROM journal_lines WHERE account IN ({marks}))
                       GROUP BY e.id ORDER BY e.date, e.id""", [date_to, name] + cash):
         if not e["n"]:

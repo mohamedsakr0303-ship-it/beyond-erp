@@ -97,9 +97,17 @@ def is_cash_method(method):
 
 
 def money_account(db, method=None, explicit=None):
-    """Where money goes in/out: an explicit cash/bank account, else by payment method."""
+    """Where money goes in/out: an explicit cash/bank account (or the funding partner's account), else by payment
+    method — and when the company has a funding partner, his account is where its money comes from and goes to."""
     if explicit:
+        row = db.one("SELECT role FROM accounts WHERE code=?", (text(explicit),))
+        if row and row["role"] == "funding_partner":
+            return account_code(db, explicit)
         return account_code(db, explicit, subtypes=("cash", "short_term_debt"))
+    if (db.setting("funding_partner") or "").strip():
+        f = db.one("SELECT code FROM accounts WHERE role='funding_partner' AND active=1")
+        if f:
+            return f["code"]
     return db.acct("cash" if is_cash_method(method) else "bank")
 
 
@@ -133,7 +141,8 @@ def bu_id_or_none(db, value, required=False):
 def _validate_lines(db, lines):
     if not lines or len(lines) < 2:
         raise ValidationError("An entry needs at least two lines")
-    accounts = {r["code"]: r for r in db.q("SELECT code, active FROM accounts")}
+    accounts = {r["code"]: r for r in db.q("SELECT code, active, role FROM accounts")}
+    funder = None
     out, dr, cr = [], 0, 0
     touched = set()
     for ln in lines:
@@ -147,6 +156,10 @@ def _validate_lines(db, lines):
         if not d and not c:
             continue
         party = text(ln.get("party"))
+        if not party and accounts[acc]["role"] == "funding_partner":
+            # money through the funding partner's account is always his
+            funder = funder if funder is not None else (db.setting("funding_partner") or "").strip()
+            party = funder
         out.append((acc, d, c, party))
         touched.add((acc, party))
         dr += d
@@ -189,6 +202,7 @@ def _insert_entry(db, *, date, kind, memo="", bu_id=None, party="", ref="", line
         db.conn.execute("DELETE FROM journal_lines WHERE entry_id=?", (eid,))
         db.conn.executemany("INSERT INTO journal_lines(entry_id,account,debit,credit,party) VALUES (?,?,?,?,?)",
                             [(eid, a, d, c, p) for a, d, c, p in vlines])
+        _wip_after(db, kind, bu_id, e.get("bu_id"))
         return eid
     cur = db.conn.execute(
         "INSERT INTO journal_entries(date,kind,memo,bu_id,party,ref,meta,reversal_of,created_by,created_at) "
@@ -198,7 +212,17 @@ def _insert_entry(db, *, date, kind, memo="", bu_id=None, party="", ref="", line
     eid = cur.lastrowid
     db.conn.executemany("INSERT INTO journal_lines(entry_id,account,debit,credit,party) VALUES (?,?,?,?,?)",
                         [(eid, a, d, c, p) for a, d, c, p in vlines])
+    _wip_after(db, kind, bu_id)
     return eid
+
+
+def _wip_after(db, kind, *bu_ids):
+    """A project's costs or invoices changed: bring its work in progress up to date (not for that entry itself)."""
+    if kind == "Work in Progress":
+        return
+    from . import wip
+    for b in {x for x in bu_ids if x}:
+        wip.sync(db, b)
 
 
 def post_entry(db, **kw):
@@ -527,6 +551,7 @@ def void_entry(db, eid, reason="", user=""):
         db.conn.execute("UPDATE journal_entries SET status='void', meta=? WHERE id=?",
                         (json.dumps(meta, ensure_ascii=False), eid))
         _unlink_documents(db, eid)
+        _wip_after(db, e["kind"], e["bu_id"])
 
 
 def reverse_entry(db, eid, date=None, user=""):
@@ -856,6 +881,7 @@ def save_extract(db, d, extract_id=None):
     boq_id = d.get("boq_id") or None
     vat_code, _ = tax_code(db, d.get("vat_code"), "vat")
     wht_code, _ = tax_code(db, d.get("wht_code"), "wht")
+    old_bu = (db.one("SELECT bu_id FROM extracts WHERE id=?", (extract_id,)) or {}).get("bu_id") if extract_id else None
     with db.tx():
         prev = d.get("prev_paid")
         prev = None if prev in (None, "") else to_minor(num(prev, "previously paid"))
@@ -887,6 +913,7 @@ def save_extract(db, d, extract_id=None):
                             "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                             [(extract_id, ln["seq"], ln["category"], ln["sub"], ln["item_no"], ln["description"],
                               ln["unit"], ln["qty"], ln["price"], ln["account"], ln["pct"]) for ln in lines])
+        _wip_after(db, "Sales Invoice", bu, old_bu)
     return extract_id
 
 
@@ -965,7 +992,9 @@ def post_extract(db, xid, date=None, user="", ar_account=None, revenue_account=N
     by_acc[rev] = by_acc.get(rev, 0) + diff
     # Work already recognised as "done, not yet invoiced" (unbilled revenue / contract asset) is billed out of that
     # balance, not earned a second time: Dr Receivables / Cr Unbilled revenue, and only the rest is new revenue.
-    unbilled_acc, billed_from = db.acct("unbilled_revenue") if x["bu_id"] else None, 0
+    from . import wip
+    managed = wip.managed(db, x["bu_id"])          # kept up to date automatically: it adjusts once this is posted
+    unbilled_acc, billed_from = db.acct("unbilled_revenue") if x["bu_id"] and not managed else None, 0
     if unbilled_acc:
         bal = db.one(f"SELECT COALESCE(SUM(l.debit-l.credit),0) AS n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id "
                      f"WHERE {LIVE} AND l.account=? AND e.bu_id=?", (unbilled_acc, x["bu_id"]))["n"]
@@ -989,6 +1018,7 @@ def post_extract(db, xid, date=None, user="", ar_account=None, revenue_account=N
                             meta={"extract_id": xid, "vat_code": x["vat_code"], "wht_code": x["wht_code"],
                                   **({"billed_from_unbilled": to_major(billed_from)} if billed_from else {})})
         db.conn.execute("UPDATE extracts SET status='posted', entry_id=? WHERE id=?", (eid, xid))
+        _wip_after(db, "Sales Invoice", x["bu_id"])
     return eid
 
 

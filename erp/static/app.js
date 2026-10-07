@@ -1739,6 +1739,9 @@ function buForm(b) {
       help: L2("Default for this project's costs. Earnings: the cost stays at the supplier's full price (cost-plus bills the client on it) and the discount shows as Negotiation Earnings.",
         "الافتراضي لتكاليف هذا المشروع. أرباح: تبقى التكلفة بالسعر الكامل (ويُحاسب العميل عليه في التكلفة+) ويظهر الخصم كأرباح تفاوض.") },
     { k: "overhead_pct", l: t("overhead_pct"), type: "number", v: b.overhead_pct ? +(b.overhead_pct * 100).toFixed(4) : "", help: t("overhead_note") },
+    { k: "wip_mode", l: L2("Work in progress (done, not invoiced yet)", "أعمال تحت التنفيذ (منفذة ولم تُفوتر)"), type: "select", v: b.wip_mode || "",
+      opts: [["", L2("Not automatic", "غير تلقائي")], ["cost_plus", L2("Cost-plus: direct costs × (1 + fee %)", "تكلفة+: التكاليف المباشرة × (1 + نسبة الأتعاب)")], ["drafts", L2("Executed work on draft invoices (measured / BOQ rates)", "الأعمال المنفذة في الفواتير المسودة (بالقياس / أسعار المقايسة)")]],
+      help: L2("Kept up to date automatically as costs, draft invoices and invoices change.", "تُحدّث تلقائياً مع تغيّر التكاليف والفواتير المسودة والفواتير.") },
     { k: "customer", l: t("customer"), v: b.customer, list: "custs" },
     { k: "notes", l: t("notes"), type: "textarea", v: b.notes, span: "spanall" }]) + datalist("custs", (S.boot.parties || []).map(p => p.name)),
   async v => { v.fee_pct = (+v.fee_pct || 0) / 100; v.overhead_pct = (+v.overhead_pct || 0) / 100;
@@ -3387,6 +3390,19 @@ PAGES["partner-exit"] = async (view, parts, q) => {
           ${f.limit ? `<div class="kpi"><div class="l">${L2("Agreed funding limit", "حد التمويل المتفق عليه")}</div><div class="v">${money(f.limit)}</div><div class="muted" style="font-size:.78em">${pct(f.limit_used)} ${L2("used", "مستخدم")} · ${money(f.limit - f.own_money)} ${L2("left", "متبقٍ")}</div></div>` : ""}
           <div class="kpi"><div class="l">${L2("Company money sitting in his account", "أموال الشركة في حسابه")}</div><div class="v">${money(f.in_his_account)}</div></div>
           <div class="kpi"><div class="l">${L2("His capital in the books", "رأس ماله في الدفاتر")}</div><div class="v">${money(f.booked_capital)}</div></div></div>
+        ${(() => { const fp = d.partners.find(p => p.funding); if (!fp) return "";
+          const row = (l, v, cls = "", sub = false) => `<tr class="${cls}"><td ${sub ? 'style="padding-inline-start:28px" class="muted"' : ""}>${esc(l)}</td><td class="num">${cls === "memo" ? `<i>${money(v)}</i>` : money(v)}</td></tr>`;
+          return `<h3 style="margin:16px 0 6px">${L2("What the company owes", "المستحق له على الشركة")} ${esc(fp.partner)}</h3><div class="tbl" style="max-width:640px"><table><tbody>
+            ${row(L2("Funding to return (his money in the company)", "تمويل يُرد إليه (أمواله في الشركة)"), fp.capital + fp.funding_unbooked)}
+            ${row(L2("of which: funded loans", "منها: قروض مموّلة"), f.lent_out, "", true)}${row(L2("of which: spent on the company", "منها: أُنفق على الشركة"), f.spent_on_company, "", true)}
+            ${fp.current ? row(L2("His current account", "حسابه الجاري"), fp.current) : ""}
+            ${row(L2("His undrawn share of billed profit", "حصته غير المسحوبة من الربح المفوتر"), fp.undrawn_profit)}
+            ${row(L2("His share of the reserve held back", "حصته من الاحتياطي المحتجز"), fp.reserve_share)}
+            ${fp.owes_company ? row(L2("Less what he owes the company", "مطروحاً منه ما عليه للشركة"), -fp.owes_company) : ""}
+            ${fp.company_owes ? row(L2("Loans / amounts the company owes him", "قروض / مبالغ مستحقة له"), fp.company_owes) : ""}
+            <tr class="total"><td>${L2("Total owed to him", "إجمالي المستحق له")}</td><td class="num"><b>${money(fp.owed_now)}</b></td></tr>
+            ${row(L2("Memo — his share of expected profit on work not yet invoiced (not included)", "مذكرة — حصته من الربح المتوقع على أعمال لم تُفوتر (غير محتسبة)"), fp.wip_profit, "memo")}
+          </tbody></table></div><p class="muted" style="font-size:.82em;margin-top:4px">${L2("Capital (money he put in) and profit are kept apart, as partnership accounts do: the money in and out above is his capital; his profit share is added on top only once it is billed.", "رأس المال (أمواله المدفوعة) والأرباح منفصلان كما في حسابات الشركاء: الوارد والمنصرف أعلاه هو رأس ماله، وتُضاف حصته من الربح فقط بعد الفوترة.")}</p>`; })()}
         ${Math.abs(f.unbooked) >= 0.01 ? `<div class="banner warn" style="margin-top:10px">${L2(`His capital in the books differs from the money he has actually put in by ${money(f.unbooked)}.`, `رأس ماله في الدفاتر يختلف عما دفعه فعلاً بمبلغ ${money(f.unbooked)}.`)} ${ed ? `<button class="btn sm" data-a="pxbook">${L2("Book funding to date", "تسجيل التمويل حتى تاريخه")}</button>` : ""}</div>`
           : `<div class="banner ok" style="margin-top:10px">✓ ${L2("Ties: his own money = his capital in the books.", "مطابق: أمواله الخاصة = رأس ماله في الدفاتر.")}</div>`}
         <p class="muted" style="font-size:.85em">${L2("Every client payment lands in his account and every cost, loan to a partner and distribution leaves it, so each payment below is tagged to him. Unpaid supplier bills are not here until they are paid.", "كل دفعة من عميل تدخل حسابه وكل تكلفة وسلفة شريك وتوزيع تخرج منه، فكل دفعة أدناه منسوبة إليه. فواتير الموردين غير المدفوعة لا تظهر هنا حتى تُدفع.")}</p>
@@ -3491,7 +3507,12 @@ const LOAN_O = {
     ["6", L2("Every 6 months", "نصف سنوي")], ["12", L2("Yearly", "سنوي")]],
   state: s => ({ paid: ["ok", L2("Paid", "مسدد")], partial: ["warn", L2("Part paid", "مسدد جزئياً")], open: ["", L2("Upcoming", "قادم")], overdue: ["bad", L2("Overdue", "متأخر")] }[s] || ["", s]),
 };
-const moneyAccts = () => accts(null, ["cash"]);
+// where money comes from / goes to: cash and bank — and, when the company has a funding partner, his own account first
+// (BEYOND: his personal account is the company's bank, so payments and receipts default to it)
+const fundAcc = () => (S.boot.settings || {}).funding_partner ? accByRole("funding_partner") : "";
+const moneyAccts = () => { const f = fundAcc(); const a = f && S.boot.accounts.find(x => x.code === f);
+  return [...(a ? [[a.code, `${a.code} — ${(S.boot.settings || {}).funding_partner} (${L2("funding partner's account", "حساب الشريك الممول")})`]] : []), ...accts(null, ["cash"])]; };
+const defMoney = r => fundAcc() || accByRole(r);
 // loans: the money can also leave / reach a partner's own pocket (booked to his capital, tagged to him)
 const loanMoneyOpts = () => [...moneyAccts(), ...(S.boot.partners || []).filter(p => p.active !== 0).map(p => ["partner:" + p.name, L2(`${p.name} — personally (his own money, added to his capital)`, `${p.name} — شخصياً (من أمواله، يُضاف لرأس ماله)`)])];
 const loanWho = dir => dir === "borrowed" ? L2("Lender", "المُقرض") : L2("Borrower", "المقترض");
@@ -3604,7 +3625,7 @@ async function loanForm(d) {
     ...(ed ? (L.opening_balance ? [{ k: "opening_balance", l: L2("Balance when registered", "الرصيد عند التسجيل"), type: "number", v: L.opening_balance }, { k: "opening_date", l: L2("As of", "في تاريخ"), type: "date", v: L.opening_date }] : [])
       : [{ k: "booking", l: L2("The money", "المبلغ"), type: "select", change: "lnsync", span: "spanall", opts: [["money", L2("Moved now — book it in cash / bank", "تم استلامه / صرفه الآن — يُسجل في الخزينة / البنك")],
           ["opening", L2("Already in the books — just track the remaining balance", "مسجل مسبقاً في الدفاتر — متابعة الرصيد المتبقي فقط")], ["none", L2("Record the money later (Receive / Lend more)", "يُسجل المبلغ لاحقاً")]] },
-        { k: "paid_from", l: L2("Cash / bank account — or a partner personally", "حساب الخزينة / البنك — أو شريك شخصياً"), type: "select", opts: loanMoneyOpts(), v: accByRole("bank") },
+        { k: "paid_from", l: L2("Cash / bank account — or a partner personally", "حساب الخزينة / البنك — أو شريك شخصياً"), type: "select", opts: loanMoneyOpts(), v: defMoney("bank") },
         { k: "fees", l: L2("Fees deducted from the amount", "رسوم مخصومة من المبلغ"), type: "number" },
         { k: "opening_balance", l: L2("Balance still outstanding", "الرصيد المتبقي"), type: "number" }, { k: "opening_date", l: L2("As of", "في تاريخ"), type: "date", v: today() }]),
     { k: "bu_id", l: t("bu"), type: "select", opts: buOpts("—"), v: L ? L.bu_id || "" : "" },
@@ -3659,7 +3680,7 @@ async function loanAction(d, action) {
   const acc = (types) => accts(types);
   const titles = { pay: B ? L2("Repayment", "سداد قسط / دفعة") : L2("Collection", "تحصيل قسط / دفعة"), interest: L2("Book interest", "تسجيل فوائد"), draw: B ? L2("Money received", "استلام مبلغ القرض") : L2("Money lent", "صرف مبلغ القرض"),
     fee: L2("Charges / fees", "مصاريف / رسوم"), writeoff: B ? L2("Loan forgiven by the lender", "إعفاء من المقرض") : L2("Write off the loan", "إعدام القرض") };
-  const money_ = (lbl) => [{ k: "paid_from", l: lbl || (B ? L2("Paid from", "دُفع من") : L2("Received into", "استُلم في")), type: "select", opts: loanMoneyOpts(), v: accByRole("bank") }];
+  const money_ = (lbl) => [{ k: "paid_from", l: lbl || (B ? L2("Paid from", "دُفع من") : L2("Received into", "استُلم في")), type: "select", opts: loanMoneyOpts(), v: defMoney("bank") }];
   const fields = {
     pay: [{ k: "date", l: t("date"), type: "date", v: today(), change: "lnsug", req: 1 },
       { html: `<div class="muted" id="lnsugtxt"></div>`, span: "spanall" },
@@ -3760,7 +3781,7 @@ async function custodyForm(C) {
     { k: "purpose", l: L2("Purpose", "الغرض"), v: C ? C.purpose : "", ph: L2("e.g. site purchases for Villa", "مثال: مشتريات موقع الفيلا"), span: "spanall" },
     ...(ed ? [] : [{ k: "booking", l: L2("The money", "المبلغ"), type: "select", change: "cusync", span: "spanall", opts: [["money", L2("Handed over now — from cash / bank", "يُصرف الآن — من الخزينة / البنك")],
       ["opening", L2("Already with the employee (in the books) — track it from here", "لدى الموظف بالفعل (مسجل بالدفاتر) — متابعته من الآن")], ["none", L2("Give it later", "يُصرف لاحقاً")]] },
-      { k: "amount", l: t("amount"), type: "number" }, { k: "paid_from", l: L2("Paid from", "دُفع من"), type: "select", opts: moneyAccts(), v: accByRole("cash") }]),
+      { k: "amount", l: t("amount"), type: "number" }, { k: "paid_from", l: L2("Paid from", "دُفع من"), type: "select", opts: moneyAccts(), v: defMoney("cash") }]),
     { k: "float_amount", l: L2("Limit / standing float", "الحد / قيمة العهدة المستديمة"), type: "number", v: C ? (C.float_amount || "") : "", help: L2("Optional. For a permanent float this is the amount it is topped back up to.", "اختياري. للعهدة المستديمة هو المبلغ الذي تُعاد تغذيتها إليه.") },
     { k: "issued_on", l: L2("Given on", "تاريخ الصرف"), type: "date", v: C ? C.issued_on : today(), req: 1 },
     { k: "due_date", l: L2("Settle by", "تُسوى قبل"), type: "date", v: C ? C.due_date : "" },
@@ -3785,16 +3806,16 @@ async function custodyAction(C, action) {
   let rows = [{ date: today(), description: "", account: accByRole("other_overhead"), bu_id: C.bu_id || "", amount: "", vat_code: "", supplier: "", receipt: "" }];
   const fields = {
     issue: [{ k: "date", l: t("date"), type: "date", v: today(), req: 1 }, { k: "amount", l: t("amount"), type: "number", v: bal < 0 ? -bal : (C.to_replenish || ""), req: 1 },
-      { k: "paid_from", l: L2("Paid from", "دُفع من"), type: "select", opts: moneyAccts(), v: accByRole("cash") }, { k: "memo", l: t("memo"), span: "spanall" }],
+      { k: "paid_from", l: L2("Paid from", "دُفع من"), type: "select", opts: moneyAccts(), v: defMoney("cash") }, { k: "memo", l: t("memo"), span: "spanall" }],
     return: [{ k: "date", l: t("date"), type: "date", v: today(), req: 1 }, { k: "amount", l: t("amount"), type: "number", v: Math.max(bal, 0) || "", req: 1 },
-      { k: "received_into", l: L2("Received into", "استُلم في"), type: "select", opts: moneyAccts(), v: accByRole("cash") }, { k: "memo", l: t("memo"), span: "spanall" }],
+      { k: "received_into", l: L2("Received into", "استُلم في"), type: "select", opts: moneyAccts(), v: defMoney("cash") }, { k: "memo", l: t("memo"), span: "spanall" }],
     deduct: [{ k: "date", l: t("date"), type: "date", v: today(), req: 1 }, { k: "amount", l: t("amount"), type: "number", v: Math.max(bal, 0) || "", req: 1 },
       { k: "account", l: L2("Deduct to", "يُخصم على"), type: "select", opts: [[accByRole("accrued_payroll"), L2("From the employee's salary (accrued payroll)", "من راتب الموظف (أجور مستحقة)")], ...accts(["Expense"])], v: accByRole("accrued_payroll"),
         help: L2("Salary: reduces what the company owes them. An expense account: the company absorbs it.", "الراتب: يقلل المستحق له. حساب مصروف: تتحملها الشركة.") }, { k: "memo", l: t("memo"), span: "spanall" }],
     settle: [{ k: "date", l: t("date"), type: "date", v: today(), req: 1 }, { k: "report_no", l: L2("Report no.", "رقم التقرير") }, { k: "memo", l: t("memo"), span: "spanall" },
       { html: `<div id="culines"></div>`, span: "spanall" },
       ...(C.kind === "permanent" ? [{ k: "replenish", l: L2("Top the float back up by the same amount", "إعادة تغذية العهدة بنفس المبلغ"), type: "checkbox", v: true, span: "spanall" },
-        { k: "paid_from", l: L2("Top up from", "التغذية من"), type: "select", opts: moneyAccts(), v: accByRole("cash") }] : [])],
+        { k: "paid_from", l: L2("Top up from", "التغذية من"), type: "select", opts: moneyAccts(), v: defMoney("cash") }] : [])],
   }[action];
   const collect = f => ({ ...readForm(f), id: C.id, lines: action === "settle" ? rows : undefined });
   drawer(`${titles[action]} — ${C.code} · ${C.holder}`, form(fields) + `<h4 style="margin:12px 0 0">${L2("Entry", "القيد")}</h4><div id="lpv" class="muted">—</div>`,
@@ -4041,7 +4062,7 @@ function rentDeposit(R, type) {
   drawer(`${title} — ${R.code}`, `<p class="muted">${type === "apply" ? L2("Reduces what the client owes on their invoices; the rest stays held.", "يقلل المستحق على العميل في الفواتير؛ والباقي يظل محتفظاً به.")
       : type === "receive" ? L2("Held as a liability (2105 Security Deposits from Clients) until it is refunded or applied.", "يُسجل كالتزام (2105 تأمينات العملاء) حتى يُرد أو يُخصم.") : L2("Paid back to the client.", "يُرد للعميل.")}</p>` +
     form([{ k: "date", l: t("date"), type: "date", v: today(), req: 1 }, { k: "amount", l: t("amount"), type: "number", v: dflt || "", req: 1, help: `${L2("Held now", "المحتفظ به")}: ${money(R.deposit_held)}` },
-      ...(type === "apply" ? [] : [{ k: "paid_from", l: type === "receive" ? L2("Received into", "استُلم في") : L2("Paid from", "دُفع من"), type: "select", opts: moneyAccts(), v: accByRole("bank") }]),
+      ...(type === "apply" ? [] : [{ k: "paid_from", l: type === "receive" ? L2("Received into", "استُلم في") : L2("Paid from", "دُفع من"), type: "select", opts: moneyAccts(), v: defMoney("bank") }]),
       { k: "memo", l: t("memo"), span: "spanall" }]),
     async v => { await api("POST", `/api/rentals/${R.id}/deposit`, { ...v, type }); toast(t("posted")); });
 }
@@ -4206,7 +4227,7 @@ function rentLotForm(it) {
     { k: "source", l: L2("Source", "المصدر"), type: "select", change: "rlsrc", opts: [["purchase", L2("Bought now — book it", "شراء الآن — يُسجل محاسبياً")], ["opening", L2("Already owned (in the books)", "مملوك سابقاً (مسجل بالدفاتر)")]] },
     { k: "date", l: t("date"), type: "date", v: today(), req: 1 }, { k: "qty", l: t("qty"), type: "number", req: 1 }, { k: "unit_cost", l: L2("Cost per piece", "تكلفة القطعة"), type: "number", v: it.last_cost || it.std_cost || "", req: 1 },
     { k: "supplier", l: t("supplier"), list: "parties" }, { k: "paid", l: t("paid_now"), type: "number", ph: L2("blank = paid in full", "فارغ = مدفوع بالكامل") },
-    { k: "paid_from", l: L2("Paid from", "دُفع من"), type: "select", opts: moneyAccts(), v: accByRole("bank") }, { k: "vat_code", l: t("vat_code"), type: "select", opts: taxOpts("vat") },
+    { k: "paid_from", l: L2("Paid from", "دُفع من"), type: "select", opts: moneyAccts(), v: defMoney("bank") }, { k: "vat_code", l: t("vat_code"), type: "select", opts: taxOpts("vat") },
     { k: "opening_accum", l: L2("Depreciation already taken (total for this lot)", "الإهلاك المحتسب سابقاً (إجمالي الدفعة)"), type: "number" },
     { k: "depr_start", l: L2("Depreciation starts (month)", "بداية الإهلاك (شهر)"), type: "month", help: L2("Blank = the month of the date above", "فارغ = شهر التاريخ أعلاه") },
     { k: "notes", l: t("notes"), span: "spanall" }]) + partyList("parties"),

@@ -118,6 +118,7 @@ SHEETS = [
               C("contract_value", "Contract Value", "قيمة العقد", kind="money"),
               C("overhead_pct", "Overhead Allocation %", "نسبة تحميل المصروفات المشتركة", kind="pct", width=10),
               C("negotiation", "Negotiation Earnings", "أرباح التفاوض", width=12, choices=["", "keep", "pass"]),
+              C("wip_mode", "Work in Progress From", "أعمال تحت التنفيذ من", width=14, choices=["", "cost_plus", "drafts"]),
               C("customer", "Customer", "العميل", width=24), C("notes", "Notes", "ملاحظات", width=24)]},
     {"name": "Parties", "ar": "العملاء والموردون", "module": "sales",
      "title": "Customers & suppliers master — tax registration numbers and addresses are needed for e-invoices",
@@ -498,7 +499,7 @@ def export_data(db):
     for b in bus.values():
         out["Business Units"].append({k: b[k] for k in ("code", "name", "type", "location", "area", "start_date",
                                                          "status", "basis", "fee_pct", "overhead_pct", "customer",
-                                                         "notes", "negotiation")}
+                                                         "notes", "negotiation", "wip_mode")}
                                      | {"contract_value": to_major(b["contract_value"])})
     for p in db.q("SELECT * FROM partners ORDER BY id"):
         out["Partners"].append({"name": p["name"], "default_share": p["default_share"],
@@ -1144,6 +1145,8 @@ def import_data(db, data, mode="append", dry_run=False, user=""):
                     counts[name] = n
             if isinstance(data.get("_extras"), dict):
                 _imp_extras(db, data["_extras"], mode, counts)
+            from . import wip      # every project's work in progress, from what was just imported
+            wip.sync_all(db)
             db.conn.execute("INSERT OR REPLACE INTO settings(key,value) VALUES ('lock_date', ?)",
                             (acc.text(lock[-1].get("value")) if lock else saved_lock,))
             if errors or dry_run:
@@ -1205,14 +1208,15 @@ def _imp_bu(db, r):
             r.get("basis") if r.get("basis") in acc.BILLING_BASES else "Cost-Plus %", _pct(r.get("fee_pct")),
             to_minor(acc.num(r.get("contract_value"), "contract value")), _pct(r.get("overhead_pct")),
             acc.text(r.get("notes"), maxlen=4000), acc.text(r.get("customer")),
-            acc.text(r.get("negotiation")).lower() if acc.text(r.get("negotiation")).lower() in acc.NEGOTIATION_MODES else "")
+            acc.text(r.get("negotiation")).lower() if acc.text(r.get("negotiation")).lower() in acc.NEGOTIATION_MODES else "",
+            acc.text(r.get("wip_mode")).lower() if acc.text(r.get("wip_mode")).lower() in ("cost_plus", "drafts") else "")
     code = acc.text(r.get("code"), "code", required=True)
     if db.one("SELECT 1 FROM business_units WHERE code=?", (code,)):
         db.conn.execute("UPDATE business_units SET name=?,type=?,location=?,area=?,start_date=?,status=?,basis=?,"
-                        "fee_pct=?,contract_value=?,overhead_pct=?,notes=?,customer=?,negotiation=? WHERE code=?", vals + (code,))
+                        "fee_pct=?,contract_value=?,overhead_pct=?,notes=?,customer=?,negotiation=?,wip_mode=? WHERE code=?", vals + (code,))
     else:
         db.conn.execute("INSERT INTO business_units(name,type,location,area,start_date,status,basis,fee_pct,"
-                        "contract_value,overhead_pct,notes,customer,negotiation,code) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        "contract_value,overhead_pct,notes,customer,negotiation,wip_mode,code) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         vals + (code,))
 
 
