@@ -2646,8 +2646,8 @@ PAGES.settings = async (view, parts, q) => {
     <div class="card"><h2>${t("hidden_mods")}</h2><p class="muted">${t("hidden_moved")} <a href="#/settings?tab=menus">${t("tab_menus")}</a></p></div>` : "") +
     (S.boot.user.is_super ? `<div class="card danger-zone" id="erasecard"><h2 class="neg">${t("erase_title")}</h2>
       <div class="banner ${STATIC ? "err" : "info"}">${STATIC ? t("erase_static") + ` <a href="/api/export/json">⬇ JSON</a>` : t("erase_note")}</div>
-      <label class="f chk"><input type="radio" name="escope" value="transactions" checked>${t("erase_tx")}</label>
-      <label class="f chk"><input type="radio" name="escope" value="all">${t("erase_all")}</label>
+      <div class="opt-list"><label class="f chk"><input type="radio" name="escope" value="transactions" checked>${t("erase_tx")}</label>
+      <label class="f chk"><input type="radio" name="escope" value="all">${t("erase_all")}</label></div>
       <div class="row" style="margin-top:10px"><input id="econfirm" placeholder="${t("erase_type")}" style="max-width:220px" autocomplete="off"><button class="btn danger" data-a="erase">${t("erase_btn")}</button></div></div>`
       : `<div class="card"><h2>${t("erase_title")}</h2><div class="muted">${t("admin_only")}</div></div>`);
   S.H.maint = async () => { try { await api("PUT", "/api/settings", { backup_keep: $("#bkeep").value }); const r = await api("POST", "/api/maintenance", {}); toast(`${(r.size_before / 1048576).toFixed(2)} → ${(r.size_after / 1048576).toFixed(2)} MB`); route(); } catch (e) { fail(e); } };

@@ -837,3 +837,12 @@ label.ppl.chk input{margin:0}
 .draftsbtn .dcount{font-size:.75em;font-weight:800;min-width:18px;height:18px;border-radius:9px;background:#f59e0b;color:#111;display:inline-flex;align-items:center;justify-content:center;padding:0 5px}
 .draft-bar{margin-bottom:12px}
 .draft-bar>div+div{margin-top:6px}
+
+/* a list of choices (radio / tick): one per line, the mark beside its text */
+.opt-list{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.opt-list label.f.chk{align-items:flex-start;font-size:.9em;width:auto}
+label.f.chk>input[type=radio],label.f.chk>input[type=checkbox]{flex:none;width:18px;height:18px;margin:1px 0 0;accent-color:var(--brand)}
+/* sidebar header: no space is kept for a name or slogan that is not shown */
+.brand-logo-row{line-height:0}
+.brand>:last-child,.brand-logo-row:last-child .brand-logo{margin-bottom:0}
+.brand.logo-only{padding-bottom:8px}
