@@ -960,6 +960,20 @@ def post_extract(db, xid, date=None, user="", ar_account=None, revenue_account=N
         by_acc[a] = by_acc.get(a, 0) + to_minor(ln["amount"])
     diff = to_minor(x["total"]) - sum(by_acc.values())   # rounding lands on the main revenue account
     by_acc[rev] = by_acc.get(rev, 0) + diff
+    # Work already recognised as "done, not yet invoiced" (unbilled revenue / contract asset) is billed out of that
+    # balance, not earned a second time: Dr Receivables / Cr Unbilled revenue, and only the rest is new revenue.
+    unbilled_acc, billed_from = db.acct("unbilled_revenue") if x["bu_id"] else None, 0
+    if unbilled_acc:
+        bal = db.one(f"SELECT COALESCE(SUM(l.debit-l.credit),0) AS n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id "
+                     f"WHERE {LIVE} AND l.account=? AND e.bu_id=?", (unbilled_acc, x["bu_id"]))["n"]
+        total = sum(by_acc.values())
+        billed_from = max(0, min(bal, total))
+        if billed_from:
+            keep = total - billed_from
+            scaled = {a: (v * keep) // total for a, v in by_acc.items()}
+            scaled[rev] = scaled.get(rev, 0) + keep - sum(scaled.values())
+            by_acc = scaled
+            by_acc[unbilled_acc] = by_acc.get(unbilled_acc, 0) + billed_from
     for a, v in by_acc.items():
         if v:
             lines.append({"account": a, "credit": to_major(v)} if v > 0 else {"account": a, "debit": to_major(-v)})
@@ -969,7 +983,8 @@ def post_extract(db, xid, date=None, user="", ar_account=None, revenue_account=N
         eid = _insert_entry(db, date=date or x["date"], kind="Sales Invoice", memo=f"Invoice — {x['number']}",
                             bu_id=x["bu_id"], party=x["customer"] or x["bu_customer"] or x["bu_name"], ref=x["number"],
                             user=user, lines=lines,
-                            meta={"extract_id": xid, "vat_code": x["vat_code"], "wht_code": x["wht_code"]})
+                            meta={"extract_id": xid, "vat_code": x["vat_code"], "wht_code": x["wht_code"],
+                                  **({"billed_from_unbilled": to_major(billed_from)} if billed_from else {})})
         db.conn.execute("UPDATE extracts SET status='posted', entry_id=? WHERE id=?", (eid, xid))
     return eid
 

@@ -5,6 +5,7 @@ import sys
 import tempfile
 import threading
 import datetime
+import types
 import unittest
 import urllib.error
 import urllib.request
@@ -1893,6 +1894,33 @@ class Loans(unittest.TestCase):
         for name, p in (("loans", {}), ("loan_schedule", {"code": "LN-0001"})):
             tb = reports.build(db, name, p)
             self.assertTrue(reports.to_html(tb).startswith("<!doctype html>"))
+
+
+class InvoiceAgainstUnbilledWork(unittest.TestCase):
+    """Billing work already recognised as 'done, not yet invoiced' moves it to receivables without earning it twice;
+    a posted invoice can be reopened (entry voided, back to draft) unless the tax authority has it."""
+
+    def test_bill_from_unbilled_and_reopen(self):
+        from erp import server
+        db = Database(":memory:")
+        db.x("INSERT INTO business_units(code,name) VALUES ('P1','Villa')")
+        unb = db.acct("unbilled_revenue")
+        a.record_journal(db, {"date": "2026-10-07", "bu_code": "P1", "lines": [{"account": unb, "debit": 1000}, {"account": "4010", "credit": 1000}]})
+        xid = a.save_extract(db, {"bu_id": 1, "number": "INV-1", "date": "2026-09-23", "customer": "C",
+                                  "lines": [{"description": "Works", "qty": 1, "price": 1200}]})
+        net = lambda: a.income_statement(db)["net_profit"]  # noqa: E731
+        eid = a.post_extract(db, xid)
+        lines = {l["account"]: (l["debit"], l["credit"]) for l in a.get_entry(db, eid)["lines"]}
+        self.assertEqual((lines[unb], lines["4010"], lines[db.acct("ar")]), ((0, 1000), (0, 200), (1200, 0)))
+        self.assertEqual(net(), 1200)                       # 1,000 earned before + only 200 new
+        self.assertEqual([c["check"] for c in a.audit(db) if not c["ok"]], [])
+        ctx = types.SimpleNamespace(db=db, body={}, user={"username": "t"}, can=lambda *k: True, log=lambda *k: None)
+        server.extract_reopen(ctx, str(xid))
+        self.assertEqual((db.one("SELECT status FROM extracts WHERE id=?", (xid,))["status"], net()), ("draft", 1000))
+        a.post_extract(db, xid)
+        db.x("UPDATE extracts SET eta_uuid='U1', eta_status='Valid' WHERE id=?", (xid,))
+        with self.assertRaises(a.ValidationError):
+            server.extract_reopen(ctx, str(xid))
 
 
 class Custody(unittest.TestCase):

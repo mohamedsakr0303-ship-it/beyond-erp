@@ -2015,7 +2015,7 @@ PAGES.invoice = async (view, parts, q) => {
     view.innerHTML = `<div class="toolbar"><a class="btn" href="#/invoices">← ${t("m_invoices")}</a><span class="spacer"></span>
         ${!isNew ? docMenu(`/api/extracts/${x.id}/file`, [["xlsx", "excel_doc"], ["pdf", "pdf_print"]], `<a href="/api/reports/vouchers?${qs({ q: x.number, kinds: "Sales Invoice", format: "pdf", lang: S.lang })}" target="_blank" rel="noopener">${S.lang === "ar" ? "القيد المحاسبي (طباعة)" : "Accounting voucher (print)"}</a>`) : ""}
         ${!isNew && can("sales.invoices", "add") ? `<a class="btn" href="#/invoice/new?dup=${x.id}">${t("duplicate")}</a>` : ""}
-        ${!locked ? `${!isNew ? `<button class="btn danger" data-a="xdel">${t("delete")}</button>` : ""}<button class="btn" data-a="xsave">${t("save")}</button><button class="btn pri" data-a="xpost">${t("save_post")}</button>` : `<span class="chip ok">${t("invoiced")}</span>`}</div>
+        ${!locked ? `${!isNew ? `<button class="btn danger" data-a="xdel">${t("delete")}</button>` : ""}<button class="btn" data-a="xsave">${t("save")}</button><button class="btn pri" data-a="xpost">${t("save_post")}</button>` : `<span class="chip ok">${t("invoiced")}</span>${x.status === "posted" && can("sales.invoices", "edit") ? `<button class="btn" data-a="xreopen" title="${esc(L2("Its entry is voided (kept in the audit trail) and the invoice becomes a draft you can change, then post again", "يُلغى قيدها (ويبقى في سجل المراجعة) وتعود مسودة يمكن تعديلها ثم ترحيلها مجدداً"))}">↺ ${esc(L2("Reopen to edit", "إعادة فتح للتعديل"))}</button>` : ""}`}</div>
       <div class="card">${form([{ k: "bu_id", l: t("bu"), type: "select", opts: buOpts(), v: x.bu_id, dis: locked }, { k: "number", l: t("invoice_no"), v: x.number || `INV-${today().slice(0, 7)}-`, dis: locked },
         { k: "date", l: t("date"), type: "date", v: x.date, dis: locked }, { k: "boq_id", l: t("boq"), type: "select", opts: [["", t("standalone")], ...boqs.map(b => [b.id, `${b.title} (${b.bu_code || ""})`])], v: x.boq_id, dis: locked, change: "xboq" },
         { k: "customer", l: t("customer"), v: x.customer, list: "custs", dis: locked, change: "xcust" }, { k: "vat_code", l: t("vat_code"), type: "select", opts: taxOpts("vat"), v: x.vat_code, dis: locked, change: "letot" },
@@ -2044,6 +2044,9 @@ PAGES.invoice = async (view, parts, q) => {
   S.H.xsave = () => save(false).catch(fail);
   S.H.xpost = () => save(true).catch(fail);
   S.H.xdel = async () => { if (!confirm(t("confirm_delete"))) return; await api("DELETE", "/api/extracts/" + x.id).catch(fail); location.hash = "#/invoices"; };
+  S.H.xreopen = async () => { if (!confirm(L2("Reopen this invoice to edit it? Its accounting entry is voided (kept in the audit trail) and it becomes a draft; post it again when ready.",
+    "إعادة فتح الفاتورة للتعديل؟ يُلغى قيدها المحاسبي (ويبقى في سجل المراجعة) وتعود مسودة؛ رحّلها مجدداً عند الجاهزية."))) return;
+    try { await api("POST", `/api/extracts/${x.id}/reopen`, {}); toast(L2("Back to draft", "عادت مسودة")); route(); } catch (e) { fail(e); } };
   render();
 };
 async function etaPanel(x) {
@@ -2053,7 +2056,7 @@ async function etaPanel(x) {
   const tx = can("tax.einvoice", "edit");
   const st = x.eta_status ? `<span class="chip ${/valid/i.test(x.eta_status) && !/invalid/i.test(x.eta_status) ? "ok" : /reject|invalid/i.test(x.eta_status) ? "bad" : "warn"}">${esc(x.eta_status)}</span> ${x.eta_uuid ? `<span class="muted">${esc(x.eta_uuid)}</span>` : ""}` : "";
   box.innerHTML = `<div class="row" style="margin-bottom:8px">${t("eta_status")}: ${st || "—"}</div>
-    ${d.problems.length ? `<div class="banner err"><b>${t("eta_problems")}:</b><ul>${d.problems.map(p => `<li>${esc(p)}</li>`).join("")}</ul></div>` : `<div class="banner ok">${t("eta_ready")} — ${money(d.document.totalAmount)} ${cur()}</div>`}
+    ${d.problems.length ? `<div class="banner warn"><b>${esc(L2("The invoice is posted to your books. To send it as an e-invoice to the tax authority (ETA), first complete", "الفاتورة مُرحّلة في دفاترك. لإرسالها كفاتورة إلكترونية لمصلحة الضرائب استكمل أولاً"))}:</b><ul>${d.problems.map(p => `<li>${esc(p)}</li>`).join("")}</ul></div>` : `<div class="banner ok">${t("eta_ready")} — ${money(d.document.totalAmount)} ${cur()}</div>`}
     ${x.eta_error ? `<div class="banner err" style="font-size:.8em">${esc(x.eta_error)}</div>` : ""}
     <div class="row"><a class="btn" href="/api/einvoice/${x.id}?format=json">⬇ ${t("eta_json")}</a>
       ${tx && !d.problems.length && !/valid|submitted/i.test(x.eta_status || "") ? `<button class="btn pri" data-a="etasub">${t("eta_submit")}</button>` : ""}

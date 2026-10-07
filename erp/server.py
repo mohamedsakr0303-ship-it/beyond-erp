@@ -835,12 +835,19 @@ def rental_next_extract(ctx, rid):
     return ok({"id": xid})
 
 
-@route("POST", "/api/extracts/<xid>/reopen", "sales.extracts", "edit")
+@route("POST", "/api/extracts/<xid>/reopen")
 def extract_reopen(ctx, xid):
-    """Adjust an issued extract: its invoice entry is voided (kept in the audit trail) and it becomes a draft again."""
-    x = ctx.db.one("SELECT status, entry_id FROM extracts WHERE id=?", (int(xid),))
+    """Adjust an issued invoice / extract: its invoice entry is voided (kept in the audit trail) and it becomes a draft
+    again. Not once the tax authority has it: cancel the e-invoice first."""
+    if not (ctx.can("sales.invoices", "edit") or ctx.can("sales.extracts", "edit")):
+        raise PermissionError("You need edit rights on sales invoices to reopen one")
+    x = ctx.db.one("SELECT * FROM extracts WHERE id=?", (int(xid),))
     if not x:
-        raise acc.ValidationError("Extract not found")
+        raise acc.ValidationError("Invoice not found")
+    st = str(x.get("eta_status") or "").lower()
+    if x.get("eta_uuid") and st and not any(w in st for w in ("cancel", "reject", "invalid")):
+        raise acc.ValidationError(f"This invoice was sent to the tax authority (e-invoice status: {x['eta_status']}) — "
+                                  "cancel the e-invoice first, then reopen it")
     if x["status"] == "posted" and x["entry_id"]:
         acc.void_entry(ctx.db, x["entry_id"], ctx.body.get("reason") or "Extract reopened to adjust", ctx.user["username"])
     ctx.log("extract.reopen", xid)
