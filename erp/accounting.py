@@ -494,7 +494,10 @@ def record_journal(db, d, user=""):
     return post_entry(db, date=d.get("date"), kind=text(d.get("kind")) or "Journal Voucher", memo=text(d.get("memo")),
                       bu_id=bu_id_or_none(db, d.get("bu_id") or d.get("bu_code")), party=text(d.get("party")),
                       ref=text(d.get("ref")), lines=d.get("lines") or [], user=user,
-                      meta={k: text(d[k]) for k in ("deal_ref", "deal_status") if d.get(k)} or None)
+                      meta={**{k: text(d[k]) for k in ("deal_ref", "deal_status") if d.get(k)},
+                            # a negotiated deal: what was quoted, the saving and how it is treated (keep / pass)
+                            **{k: num(d[k], k) for k in ("quoted", "savings") if d.get(k) not in (None, "")},
+                            **({"negotiation": d["negotiation"]} if d.get("negotiation") in ("keep", "pass") else {})} or None)
 
 
 # ------------------------------------------------------------- corrections

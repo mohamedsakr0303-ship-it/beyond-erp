@@ -971,8 +971,14 @@ def _imp_extras(db, ex, mode, counts):
     for o in ex.get("offers") or []:
         if isinstance(o, dict) and o.get("number"):
             bu = db.one("SELECT id FROM business_units WHERE code=?", (o.get("bu_code") or "",))
+            tid = ids.get(o.get("type_id"))
+            if not tid and o.get("type_name"):     # e.g. a workbook's design offer: the company's own offer type, by name
+                t = db.one("SELECT id FROM offer_types WHERE name=?", (acc.text(o["type_name"]),))
+                tid = t["id"] if t else None
+            if o.get("replace_same") and db.one("SELECT 1 FROM offers WHERE number=?", (acc.text(o["number"]),)):
+                db.conn.execute("DELETE FROM offers WHERE number=?", (acc.text(o["number"]),))
             db.conn.execute("INSERT INTO offers(number,type_id,date,client,project,bu_id,status,content) VALUES (?,?,?,?,?,?,?,?)",
-                            (acc.text(o["number"]), ids.get(o.get("type_id")), o.get("date"), acc.text(o.get("client")),
+                            (acc.text(o["number"]), tid, o.get("date"), acc.text(o.get("client")),
                              acc.text(o.get("project")), bu["id"] if bu else None, o.get("status") or "Draft",
                              str(o.get("content") or "{}")))
             n += 1
@@ -1339,7 +1345,8 @@ def _imp_journal(db, rows, errors, counts, user):
             acc.record_journal(db, {"date": first.get("date"), "kind": first.get("kind") or "Journal Voucher",
                                     "bu_code": first.get("bu_code"), "party": first.get("party"),
                                     "ref": first.get("ref") or ("" if re.fullmatch(r"JV-\d+", v) else v), "memo": first.get("memo"),
-                                    "deal_ref": first.get("deal_ref"),
+                                    "deal_ref": first.get("deal_ref"), "quoted": first.get("quoted"), "savings": first.get("savings"),
+                                    "negotiation": first.get("negotiation"),
                                     "lines": [{"account": r.get("account"), "debit": r.get("debit"),
                                                "credit": r.get("credit"), "party": r.get("line_party")}
                                               for _, r in items]}, user)

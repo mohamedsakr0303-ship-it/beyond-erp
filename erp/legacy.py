@@ -340,6 +340,8 @@ def read_legacy_workbook(path):
     _read_boq_and_invoices(wb, data, notes, register=journal_mode)
     if journal_mode:
         _read_partner_loans(sheet("balances tracker"), data, notes)
+        _read_negotiations(sheet("negotiation register"), data, notes)
+        _read_design_offer(sheet("design offer"), data, notes)
     data.pop("_remap", None)
     wb.close()
     # BEYOND's own letterhead identity, as the first app version set it; only fills settings that are still empty
@@ -481,6 +483,80 @@ def _clashes(name, typ, app_name, app_type, app_role):
     return any(w in name_l for w in _TAX_WORDS) != any(w in app_l for w in _TAX_WORDS)
 
 
+def _read_design_offer(ws, data, notes):
+    """The Design Offer sheet's inputs (client, project, scope lines, cost, discount, payment split, bank, terms) become an
+    offer in the app on the company's Design Package layout, so it prints and exports from Sales → Offers."""
+    if ws is None:
+        return
+    inp = {}
+    for row in ws.iter_rows(values_only=True):
+        for i, v in enumerate(row):
+            k = str(v or "").strip().lower()
+            if k and i + 1 < len(row) and row[i + 1] not in (None, "") and not k.startswith(("beyond", "dear")):
+                inp.setdefault(k, row[i + 1])
+    client, project = str(inp.get("client") or "").strip(), str(inp.get("project / unit") or inp.get("project") or "").strip()
+    total = _f(inp.get("total cost"))
+    if not client or not total:
+        return
+    scope = [str(inp[k]).strip() for k in sorted(x for x in inp if x.startswith("scope line")) if str(inp[k]).strip()]
+    pct = lambda k: round(_f(inp.get(k)) * (100 if _f(inp.get(k)) <= 1 else 1), 2)  # noqa: E731
+    days, fee, rev = _f(inp.get("working days")), pct("execution fee %"), _f(inp.get("minor revisions"))
+    terms = [f"1. Time duration for the drawings of the unit is {days:g} working days." if days else "",
+             f"2. Execution fees is {fee:g}% on total project cost according to the quotation (Optional)." if fee else "",
+             f"3. Design is subject to {rev:g} minor Revision." if rev else ""]
+    bank = {"bank": inp.get("bank"), "acct": inp.get("account number"), "holder": inp.get("account name"),
+            "swift": inp.get("swift code"), "iban": inp.get("iban")}
+    content = {"lang": "en", "title": "DESIGN PACKAGE :{project} ({client})",
+               "intro": "Dear {client},\nKindly find this quotation (design package) for\n{project}",
+               "sections": [{"kind": "text", "heading": "INTERIOR DESIGN", "style": "lines", "bold": False,
+                             "body": "\n".join(f"{i}. {x}" for i, x in enumerate(scope, 1))},
+                            {"kind": "pricing", "heading": "PROJECT COST", "style": "lines", "words": True,
+                             "items": [{"desc": "Total Cost", "amount": total}], "discount": _f(inp.get("discount")), "vat": 0},
+                            {"kind": "payment", "heading": "PAYMENT TERMS", "style": "lines",
+                             "milestones": [{"label": "Advance Payment", "pct": pct("advance %")},
+                                            {"label": "after Renders submission", "pct": pct("after renders %")},
+                                            {"label": "after Final approval", "pct": pct("after approval %")}]},
+                            {"kind": "bank", "heading": "", "style": "lines",
+                             **({"bank_id": "custom", "bank_details": {k: str(v) for k, v in bank.items() if v}} if any(bank.values()) else {})},
+                            {"kind": "text", "heading": "TIME DURATION", "style": "lines", "bold": True,
+                             "body": "\n".join(t for t in terms if t)}],
+               "closing": ""}
+    import json as _json
+    date = _date(inp.get("date")) or _dt.date.today().isoformat()
+    data.setdefault("_extras", {}).setdefault("offers", []).append(
+        {"number": f"DESIGN-{date}-{client}"[:60], "type_name": "Design Package", "date": date, "client": client, "project": project,
+         "status": "Draft", "content": _json.dumps(content, ensure_ascii=False), "replace_same": True})
+    notes.append(f"Design Offer: {client} — {project}, {total:,.2f} less {_f(inp.get('discount')):,.2f} — added to Sales → Offers as a draft.")
+
+
+def _read_negotiations(ws, data, notes):
+    """The Negotiation Register: each deal settled below its quote is matched to its journal entry by Deal Ref, so the
+    app's negotiation report shows it (quoted, saving, kept or passed on). The amounts are already in the journal."""
+    if ws is None:
+        return
+    found = []
+    for hr, h in _headers(ws, ["deal ref", "quoted", "saving"], scan=10):
+        for row in ws.iter_rows(min_row=hr + 1, values_only=True):
+            ref = _v(_get(row, _col(h, "deal ref")))
+            saving = round(_f(_get(row, _col(h, "saving"))), 2)
+            if not ref or not saving:
+                continue
+            treat = str(_v(_get(row, _col(h, "treatment"))) or "").lower()
+            mode = "keep" if treat.startswith("keep") else "pass"
+            rows = [r for r in data.get("Journal Vouchers", []) if str(r.get("deal_ref") or "").strip() == str(ref).strip()]
+            if not rows:
+                notes.append(f"Negotiation Register: deal {ref} has no journal entry with that Deal Ref — not linked.")
+                continue
+            je = rows[-1]["voucher"]      # the settling entry (the last one carrying this deal)
+            for r in data["Journal Vouchers"]:
+                if r["voucher"] == je:
+                    r.update(quoted=round(_f(_get(row, _col(h, "quoted"))), 2), savings=saving, negotiation=mode)
+            found.append(f"{ref} ({saving:,.2f}, {'kept' if mode == 'keep' else 'passed to the client'})")
+        break
+    if found:
+        notes.append("Negotiation Register: " + "; ".join(found) + " — linked to their journal entries (Purchasing → Negotiations).")
+
+
 def _read_partner_loans(ws, data, notes):
     """The Balances Tracker's partner-loan section (سلف الشركاء): each loan still owed goes into the Loans register as
     'already in the books' — the General Journal posted the money, so nothing is posted twice; repayments recorded in
@@ -498,9 +574,15 @@ def _read_partner_loans(ws, data, notes):
             data.setdefault("Settings", []).append({"key": "funding_partner", "value": m.group(1).strip()})
             notes.append(f"Funding partner: {m.group(1).strip()} — the company's money runs through his account "
                          "(Equity → If a partner leaves shows his money in and out).")
-        if "partner loans" in head.lower():
+        if not any(x.get("key") == "funding_limit" for x in data.get("Settings", [])):
+            cells = [ws.cell(r, c).value for c in range(1, min(ws.max_column, 16) + 1)]
+            if any("agreed funding limit" in str(v or "").lower() for v in cells):
+                nums = [v for v in cells if isinstance(v, (int, float)) and not isinstance(v, bool)]
+                if nums:
+                    data.setdefault("Settings", []).append({"key": "funding_limit", "value": str(nums[-1])})
+                    notes.append(f"Funding limit {nums[-1]:,.2f} (Balances Tracker) — shown against his money in the company.")
+        if "partner loans" in head.lower() and not start_row:
             start_row = r
-            break
     if not start_row:
         return
     for hr, h in _headers(ws, ["partner", "lent", "still owed"], scan=6, start=start_row):

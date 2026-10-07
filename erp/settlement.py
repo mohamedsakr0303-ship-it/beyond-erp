@@ -96,7 +96,8 @@ def funding_ledger(db, name=None, date_to=None):
     booked = to_minor(_bal(db, name, date_to, ("capital", "partner_current")))
     own = tout - tin
     limit = float(db.setting("funding_limit") or 0)
-    return {"partner": name, "date_to": date_to,
+    lent = sum(-g["in"] + g["out"] for g in order if g["key"] == "loans")
+    return {"partner": name, "date_to": date_to, "lent_out": to_major(lent), "spent_on_company": to_major(max(own, 0) - lent),
             "groups": [{**g, "in": to_major(g["in"]), "out": to_major(g["out"]), "net": to_major(g["in"] - g["out"])} for g in order],
             "rows": rows, "money_in": to_major(tin), "money_out": to_major(tout),
             "own_money": to_major(max(own, 0)), "in_his_account": to_major(max(-own, 0)),

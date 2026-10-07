@@ -1110,18 +1110,35 @@ class LegacyJournalWorkbook(unittest.TestCase):
         bt.append(["Partner A", 0, 0, 0, 0])
         bt.append(["Partner B", 180000, 0, 0, 180000, "2026-03-01", 8])
         bt.append(["TOTAL STILL OWED BY PARTNERS", 180000, 0, 0, 180000])
+        bt.append(["SECTION 5 - THE FUNDING PARTNER'S ACCOUNT: MONEY IN AND OUT  (P1)", None, None, None, None, "FUNDING LIMIT"])
+        bt.append([None, None, None, None, None, "Agreed funding limit (includes everything he has put in)", None, None, 430000])
+        gj.append(["JE-3", "2026-03-02", "Project cost", "PRJ-2026-001", "All", "5020", "Tiles", "Hani", "HANI-2", 1, "Task", 15000, 14000, None])
+        gj.append(["JE-3", "2026-03-02", "Project cost", "PRJ-2026-001", "All", "1020", "Tiles", "Hani", "HANI-2", None, None, None, None, 14000])
+        ng = wb.create_sheet("Negotiation Register")
+        ng.append(["Date", "Deal Ref", "Project", "Vendor / subcontractor", "What was negotiated", "Quoted", "Settled at", "Saving", "Treatment"])
+        ng.append(["2026-03-02", "HANI-2", "PRJ-2026-001", "Hani", "Tiles", 15000, 14000, 1000, "Keep — bill the client the quoted price"])
+        do = wb.create_sheet("Design Offer")
+        for k, v in (("Date", "2026-10-07"), ("Client", "Mr. Aly Amr"), ("Project / unit", "Muruj"), ("Scope line 1", "Layout"),
+                     ("Total cost", 60000), ("Discount", 10000), ("Advance %", 0.6), ("After renders %", 0.2), ("After approval %", 0.2)):
+            do.append([None, k, v])
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
             wb.save(f.name)
             data = legacy.read_legacy_workbook(f.name)
         db = Database(":memory:")
         interchange.import_data(db, data, mode="replace")
+        self.assertEqual((db.setting("funding_partner"), float(db.setting("funding_limit"))), ("P1", 430000))
+        self.assertEqual([(r["deal_ref"], r["quoted"], r["savings"], r["mode"]) for r in a.negotiations(db)["rows"]],
+                         [("HANI-2", 15000, 1000, "keep")])
+        from erp import documents
+        offers = documents.list_offers(db)
+        self.assertEqual([(o["client"], documents.offer_totals(documents.pricing(o))["net"]) for o in offers], [("Mr. Aly Amr", 50000)])
         tb = {r["code"]: round(r["debit"] - r["credit"], 2) for r in a.trial_balance(db)["rows"]}
         self.assertEqual((tb.get("1331"), tb.get("1330")), (180000, None))
         self.assertEqual(db.one("SELECT name FROM accounts WHERE code='1331'")["name"], "Partner loans — owed by partners (سلف الشركاء)")
         self.assertIn(("Partner B", 180000), [(r["party"], r["balance"]) for r in statements.aging(db, "2026-03-31")["rows"]])
         ln = loans.register(db)["rows"]
         self.assertEqual([(x["party"], x["outstanding"], x["term_months"], x["next_amount"]) for x in ln], [("Partner B", 180000, 8, 22500)])
-        self.assertEqual(db.one("SELECT COUNT(*) n FROM journal_entries")["n"], 2)   # the loan was not posted again
+        self.assertEqual(db.one("SELECT COUNT(*) n FROM journal_entries")["n"], 3)   # the loan was not posted again
         self.assertEqual([c["check"] for c in a.audit(db) if not c["ok"]], [])
 
 

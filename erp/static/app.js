@@ -3360,7 +3360,7 @@ PAGES["partner-exit"] = async (view, parts, q) => {
     [L2("Owes the company (loans…)", "مستحق عليه للشركة (سلف…)"), "owes_company", -1],
     [L2("Company owes him (loans, interest…)", "مستحق له على الشركة (قروض، فوائد…)"), "company_owes"]];
   const used = cols.filter(([, k]) => d.partners.some(p => Math.abs(p[k] || 0) >= 0.01) || ["capital", "undrawn_profit", "reserve_share"].includes(k));
-  S.H.pxfund = async () => { const v = $("#pxfp").value; try { await api("PUT", "/api/settings", { funding_partner: v }); toast(t("saved")); route(); } catch (e) { fail(e); } };
+  S.H.pxfund = async () => { const v = $("#pxfp").value, lim = $("#pxlim").value; try { await api("PUT", "/api/settings", { funding_partner: v, funding_limit: lim ? String(+lim) : "" }); toast(t("saved")); route(); } catch (e) { fail(e); } };
   S.H.pxbook = async () => { if (!confirm(L2(`Book his capital up to the money he has actually put in (${money(f.own_money)})? A capital entry for the difference is posted.`, `تسجيل رأس ماله بما يساوي ما دفعه فعلاً (${money(f.own_money)})؟ يُرحّل قيد رأس مال بالفرق.`))) return;
     try { await api("POST", "/api/equity/funding/book", {}); toast(t("posted")); route(); } catch (e) { fail(e); } };
   S.H.pxrows = () => { const el = $("#pxmov"); el.hidden = !el.hidden; };
@@ -3377,11 +3377,14 @@ PAGES["partner-exit"] = async (view, parts, q) => {
     <div class="card"><h2>${L2("Funding partner's account — money in and out", "حساب الشريك الممول — الوارد والمنصرف")}</h2>
       <div class="row" style="gap:8px;flex-wrap:wrap;align-items:flex-end"><label class="f" style="min-width:260px">${L2("Funding partner (the company's money runs through his account)", "الشريك الممول (أموال الشركة تمر بحسابه)")}
         <select id="pxfp" ${ed ? "" : "disabled"}><option value="">— ${L2("none", "لا يوجد")} —</option>${d.partners.map(p => `<option ${p.partner === d.funding_partner ? "selected" : ""}>${esc(p.partner)}</option>`).join("")}</select></label>
+        <label class="f" style="max-width:200px">${L2("Agreed funding limit (blank = none)", "حد التمويل المتفق عليه (فارغ = بدون)")}<input id="pxlim" type="number" step="any" value="${esc(f && f.limit ? f.limit : "")}" ${ed ? "" : "disabled"}></label>
         ${ed ? `<button class="btn" data-a="pxfund">${t("save")}</button>` : ""}</div>
       ${f ? `<div class="tbl" style="margin-top:12px"><table><thead><tr><th>${L2("Where the money came from / went", "مصدر / وجهة الأموال")}</th><th class="num">${L2("Money in", "الوارد")}</th><th class="num">${L2("Money out", "المنصرف")}</th><th class="num">${L2("Net (in − out)", "الصافي (وارد − منصرف)")}</th></tr></thead><tbody>
         ${f.groups.map(g => `<tr><td>${esc(g.label)}</td><td class="num">${money(g.in)}</td><td class="num">${money(g.out)}</td><td class="num">${sign(g.net)}</td></tr>`).join("")}
         <tr class="total"><td>${t("total")}</td><td class="num">${money(f.money_in)}</td><td class="num">${money(f.money_out)}</td><td class="num">${sign(f.money_in - f.money_out)}</td></tr></tbody></table></div>
-        <div class="kpis" style="margin-top:10px"><div class="kpi"><div class="l">${L2("His own money in the company", "أمواله الخاصة في الشركة")}</div><div class="v">${money(f.own_money)}</div></div>
+        <div class="kpis" style="margin-top:10px"><div class="kpi"><div class="l">${L2("His own money in the company", "أمواله الخاصة في الشركة")}</div><div class="v">${money(f.own_money)}</div>
+            <div class="muted" style="font-size:.78em">${L2("Funded loans", "قروض مموّلة")} ${money(f.lent_out)} · ${L2("spent on the company", "أُنفق على الشركة")} ${money(f.spent_on_company)}</div></div>
+          ${f.limit ? `<div class="kpi"><div class="l">${L2("Agreed funding limit", "حد التمويل المتفق عليه")}</div><div class="v">${money(f.limit)}</div><div class="muted" style="font-size:.78em">${pct(f.limit_used)} ${L2("used", "مستخدم")} · ${money(f.limit - f.own_money)} ${L2("left", "متبقٍ")}</div></div>` : ""}
           <div class="kpi"><div class="l">${L2("Company money sitting in his account", "أموال الشركة في حسابه")}</div><div class="v">${money(f.in_his_account)}</div></div>
           <div class="kpi"><div class="l">${L2("His capital in the books", "رأس ماله في الدفاتر")}</div><div class="v">${money(f.booked_capital)}</div></div></div>
         ${Math.abs(f.unbooked) >= 0.01 ? `<div class="banner warn" style="margin-top:10px">${L2(`His capital in the books differs from the money he has actually put in by ${money(f.unbooked)}.`, `رأس ماله في الدفاتر يختلف عما دفعه فعلاً بمبلغ ${money(f.unbooked)}.`)} ${ed ? `<button class="btn sm" data-a="pxbook">${L2("Book funding to date", "تسجيل التمويل حتى تاريخه")}</button>` : ""}</div>`

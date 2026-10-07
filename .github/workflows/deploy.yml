@@ -116,6 +116,8 @@ jobs:
       matrix:
         os: [windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write   # publishes the installers on the "desktop-latest" release
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -150,15 +152,17 @@ jobs:
         run: |
           ditto -c -k --keepParent "dist-online/Beyond ERP.app" BeyondERP-mac.zip
           ditto -c -k --keepParent "dist/Beyond ERP Offline.app" BeyondERP-Offline-mac.zip
-      - uses: actions/upload-artifact@v7
-        with:
-          name: desktop-${{ runner.os }}
-          path: |
-            dist-installer/*.exe
-            BeyondERP-mac.zip
-            BeyondERP-Offline-mac.zip
-          if-no-files-found: ignore
-          retention-days: 7
+      # The installers go on a GitHub release instead of the Actions artifact storage, which a private repository's
+      # free quota runs out of; release files have no such limit and stay until the next build replaces them.
+      - name: Publish the installers on the desktop-latest release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view desktop-latest >/dev/null 2>&1 || gh release create desktop-latest --prerelease \
+            --title "Desktop apps (latest build)" --notes "Built automatically from main; the website offers these downloads."
+          files=$(ls dist-installer/*.exe BeyondERP-mac.zip BeyondERP-Offline-mac.zip 2>/dev/null || true)
+          if [ -n "$files" ]; then gh release upload desktop-latest $files --clobber; fi
 
   web:
     needs: [test, database, desktop]
@@ -181,22 +185,18 @@ jobs:
           key: web-runtimes-${{ hashFiles('build_web.py') }}
       - name: Build the web app
         run: python build_web.py --zip
-      - uses: actions/upload-artifact@v7
-        continue-on-error: true   # a full artifact-storage quota must not stop the deploy
-        with:
-          name: beyond-erp-web
-          path: beyond-erp-web.zip
-          retention-days: 7
-      - uses: actions/download-artifact@v7
+      - name: Fetch the desktop installers built in this run
+        if: needs.desktop.result == 'success'
         continue-on-error: true
-        with:
-          pattern: desktop-*
-          path: dl
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download desktop-latest -R "${{ github.repository }}" -D dl --clobber
       - name: Add the downloads (desktop installers, offline copy)
         env:
           SITE: ${{ vars.SITE_URL || format('https://{0}.pages.dev/', vars.CLOUDFLARE_PAGES_PROJECT || 'beyond-erp') }}
         run: python packaging/collect_downloads.py dl "$SITE"
       - name: Keep the site for GitHub Pages
+        if: vars.USE_GITHUB_PAGES == 'true'
         uses: actions/upload-pages-artifact@v5
         continue-on-error: true
         with:
