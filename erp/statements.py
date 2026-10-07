@@ -39,6 +39,19 @@ def _lines(db, party=None, date_to=None):
                     WHERE {' AND '.join(w)} ORDER BY e.date, e.id, l.id""", p)
 
 
+def later(db, date_to, party=None):
+    """Entries with a contact dated after the as-of date: left out of the balance, but often a typo in the date (a
+    month off), so the reports say so instead of quietly showing a half-settled balance."""
+    out = {}
+    for r in _lines(db, party):
+        if r["date"] > date_to:
+            g = out.setdefault(r["party"], {"party": r["party"], "entries": set(), "first": r["date"], "last": r["date"], "net": 0})
+            g["entries"].add(r["id"])
+            g["first"], g["last"] = min(g["first"], r["date"]), max(g["last"], r["date"])
+            g["net"] += r["debit"] - r["credit"]
+    return [{**g, "entries": len(g["entries"]), "net": to_major(g["net"])} for g in sorted(out.values(), key=lambda g: g["first"])]
+
+
 def _age(items, balance, as_of):
     """Split an open balance by age: the newest charges in the balance's direction make it up (first in, first out)."""
     out = [0] * len(BUCKETS)
@@ -109,7 +122,7 @@ def statement(db, party, date_from=None, date_to=None):
     p = db.one("SELECT * FROM parties WHERE name=?", (party,))
     return {"party": party, "contact": p, "date_from": date_from, "date_to": date_to, "opening": to_major(opening),
             "rows": rows, "debits": to_major(tot_dr), "credits": to_major(tot_cr), "closing": to_major(run),
-            "balances": balances, "aging": aging, "buckets": [b[2] for b in BUCKETS], "buckets_ar": [b[3] for b in BUCKETS]}
+            "balances": balances, "aging": aging, "later": later(db, date_to, party), "buckets": [b[2] for b in BUCKETS], "buckets_ar": [b[3] for b in BUCKETS]}
 
 
 def aging(db, date_to=None, side="all"):
@@ -128,6 +141,6 @@ def aging(db, date_to=None, side="all"):
     tot = lambda rows: [round(sum(r["aging"][i] for r in rows), 2) for i in range(len(BUCKETS))]  # noqa: E731
     rec = [r for r in out if r["balance"] > 0]
     pay = [r for r in out if r["balance"] < 0]
-    return {"date_to": date_to, "rows": out, "buckets": [b[2] for b in BUCKETS], "buckets_ar": [b[3] for b in BUCKETS],
+    return {"date_to": date_to, "rows": out, "later": later(db, date_to), "buckets": [b[2] for b in BUCKETS], "buckets_ar": [b[3] for b in BUCKETS],
             "receivable": {"balance": round(sum(r["balance"] for r in rec), 2), "aging": tot(rec), "count": len(rec)},
             "payable": {"balance": round(sum(r["balance"] for r in pay), 2), "aging": tot(pay), "count": len(pay)}}

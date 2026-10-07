@@ -1894,6 +1894,27 @@ class Custody(unittest.TestCase):
         self.assertEqual(custody.status(db2, custody.get(db2, "CU-0002"))["balance"], 1000)
         self.assertEqual(len(custody.statement(db2, "CU-0001")["rows"]), 5)
 
+    def test_overspent_custody_is_owed_to_the_holder(self):
+        """8,000 given, 9,800 of receipts: the company owes the holder 1,800 (not the reverse); reimbursing settles it.
+        Entries dated after the as-of date stay out of the balance but are listed under it."""
+        from erp import custody, statements, reports
+        db = Database(":memory:")
+        a.record_journal(db, {"date": "2026-01-01", "lines": [{"account": "1010", "debit": 50000}, {"account": "3010", "credit": 50000}]})
+        cid = custody.save(db, {"holder": "Mohamed", "amount": 8000, "issued_on": "2026-09-29"})
+        custody.post(db, cid, "settle", {"date": "2026-09-29", "lines": [{"description": "Electrical", "account": "5010", "amount": 9800}]})
+        row = lambda d: next(r for r in statements.aging(db, d)["rows"] if r["party"] == "Mohamed")  # noqa: E731
+        self.assertEqual(row("2026-09-30")["balance"], -1800)                         # − = we owe them
+        self.assertIn("we owe them", str(reports.party_statement_table(db, "Mohamed", date_to="2026-09-30")["rows"]))
+        custody.post(db, cid, "issue", {"date": "2026-10-01", "amount": 1800})       # reimburse
+        self.assertFalse([r for r in statements.aging(db, "2026-10-02")["rows"] if r["party"] == "Mohamed"])
+        # the same custody booked with a mistyped later date: out of the balance as of today, but flagged
+        later = statements.aging(db, "2026-09-28")["later"]
+        self.assertEqual([(g["party"], g["entries"], g["first"]) for g in later], [("Mohamed", 3, "2026-09-29")])
+        self.assertIn("NOT COUNTED", str(reports.aging_table(db, "2026-09-28")["rows"]))
+        from erp import server
+        notes = server._future_dated({"Journal Vouchers": [{"voucher": "JE-1", "date": "2999-01-01"}, {"voucher": "JE-1", "date": "2999-01-01"}]})
+        self.assertTrue(notes and "JE-1 (2999-01-01)" in notes[0] and "1 dated after today" in notes[0])
+
 
 class Rentals(unittest.TestCase):
     """Equipment rental: FIFO stock, frames, the scaffold calculator, PO → signed contract → signed handovers → invoices."""

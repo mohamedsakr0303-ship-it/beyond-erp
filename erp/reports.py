@@ -725,11 +725,30 @@ def party_statement_table(db, party, date_from=None, date_to=None, lang="en"):
         for b, v in zip(d["buckets_ar"] if ar else [x + " days" for x in d["buckets"]], d["aging"]):
             if v:
                 rows.append({"cells": ["", "", "", b, "", "", abs(v)], "style": "item", "indent": 1})
+    _later_rows(rows, d, ar, 7, 3)
     per = f"{d['date_from'] or '…'} → {d['date_to']}"
     return {"title": (f"كشف حساب — {d['party']}" if ar else f"Statement of account — {d['party']}"),
             "subtitle": f"{per} · {db.setting('currency')} · " + ("+ مدين = مستحق لنا، − = مستحق له" if ar else
                                                                "+ = they owe us, − = we owe them"),
             "columns": cols, "rows": rows, "lang": lang}
+
+
+def _later_rows(rows, d, ar, ncols, at):
+    """Entries dated after the as-of date are not in the balance above: list them, since a wrong year or month in a
+    date otherwise shows up as a balance that looks reversed."""
+    if not d.get("later"):
+        return
+    def row(text, style, indent):
+        cells = [""] * ncols
+        cells[at] = text
+        rows.append({"cells": cells, "style": style, "indent": indent})
+    row((f"⚠ قيود بتاريخ بعد {d['date_to']} — غير محسوبة أعلاه (راجع التاريخ إن كان خطأ)" if ar else
+         f"⚠ DATED AFTER {d['date_to']} — NOT COUNTED ABOVE (check the date if this is a typo)"), "section", 0)
+    for g in d["later"]:
+        n, when = g["entries"], (g["first"] if g["first"] == g["last"] else f"{g['first']} → {g['last']}")
+        side = ("عليه لنا" if g["net"] > 0 else "له علينا") if ar else ("they owe us" if g["net"] > 0 else "we owe them")
+        amt = f"{abs(g['net']):,.2f} {side}, " if g["net"] else ""
+        row(f"{g['party']} — {amt}{n} {'قيد' if ar else ('entry' if n == 1 else 'entries')}, {when}", "note", 1)
 
 
 def aging_table(db, date_to=None, side="all", lang="en"):
@@ -750,6 +769,7 @@ def aging_table(db, date_to=None, side="all", lang="en"):
                          "style": "item", "indent": 1})
         t = d[key]
         rows.append({"cells": [L("total", lang), ""] + [abs(v) for v in t["aging"]] + [abs(t["balance"])], "style": "subtotal", "indent": 0})
+    _later_rows(rows, d, ar, len(labels) + 3, 0)
     return {"title": "أعمار الديون (العملاء والموردين)" if ar else "Aging — receivables & payables",
             "subtitle": f"{L('as_of', lang)} {d['date_to']} · {db.setting('currency')}", "columns": cols, "rows": rows, "lang": lang}
 

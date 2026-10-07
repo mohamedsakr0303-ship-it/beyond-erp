@@ -2740,6 +2740,27 @@ def import_sheet(ctx):
     return _sheet_import(ctx, False)
 
 
+def _future_dated(data):
+    """Rows booked with a date after today: imported as they are, but listed — a month or year typed wrong leaves them
+    out of every 'as of today' balance and aging, which then looks half-settled or reversed."""
+    today, out = acc.today(), []
+    for sheet, rows in data.items():
+        if sheet.startswith("_") or sheet in ("BOQ Lines", "Offers", "Offer Lines", "Budgets", "Business Units") or not isinstance(rows, list):
+            continue
+        refs = []
+        for r in rows:
+            d = str((r or {}).get("date") or "")[:10] if isinstance(r, dict) else ""
+            if len(d) == 10 and d > today:
+                ref = str(r.get("voucher") or r.get("number") or r.get("ref") or d)
+                if (ref, d) not in refs:
+                    refs.append((ref, d))
+        if refs:
+            shown = ", ".join(f"{a} ({b})" if a != b else a for a, b in refs[:8]) + (" …" if len(refs) > 8 else "")
+            out.append(f"{sheet}: {len(refs)} dated after today ({today}) — {shown}. They are imported as dated, so balances and "
+                       "aging as of today leave them out; if a date is a typo, fix it in the file and import again.")
+    return out
+
+
 @route("POST", "/api/import", "import_export.import", "edit")
 def do_import(ctx):
     fmt = ctx.q.get("format") or "xlsx"
@@ -2776,7 +2797,7 @@ def do_import(ctx):
         res = interchange.import_data(ctx.db, data, mode=mode, dry_run=dry, user=ctx.user["username"])
     except interchange.ImportErrors as e:
         return ok({"ok": False, "error": str(e), "errors": e.errors}, 400)
-    res["notes"] = data.get("_notes", [])
+    res["notes"] = data.get("_notes", []) + _future_dated(data)
     if not dry:
         ctx.db.set_setting("onboarding", "done")
     ctx.log("import" + (".dry" if dry else ""), json.dumps(res["counts"]))
