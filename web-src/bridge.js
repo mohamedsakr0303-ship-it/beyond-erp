@@ -300,7 +300,7 @@ def cloud_new_books(name, email):
       async function restoreSnapshot(b64) {
         const res = db.exec("SELECT key, value FROM cloud_local");
         const keep = res.length ? res[0].values.map(([key, value]) => ({ key, value })) : [];
-        const bytes = await gz(b64bytes(b64), false);
+        const bytes = await gz(await b64bytes(b64), false);
         const old = db; db = new SQL.Database(bytes); db.run("PRAGMA foreign_keys = ON"); old.close();
         P("cloud_after_restore")(JSON.stringify(keep));
         dirty = true; await persist();

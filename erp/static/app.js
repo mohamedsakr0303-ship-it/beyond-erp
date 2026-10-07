@@ -811,7 +811,7 @@ async function renderCloudAuth(msg, kind = "info", mode = "start") {
         if (r.confirm) return renderCloudAuth(r.message, "ok", "email");
         await cloudEnter(await C.info());
       } else await cloudEnter(await CloudAPI.signin(v.email, v.password, false));
-    } catch (x) { show(x.message); } finally { btn.disabled = false; }
+    } catch (x) { show(plainNetErr(x)); } finally { btn.disabled = false; }
   });
 }
 // A link from a Supabase email (account confirmation or password reset) brought the person back to the app.
@@ -832,9 +832,12 @@ async function cloudReturn() {
       catch (x) { $("#lerr").innerHTML = `<div class="banner err">${esc(x.message)}</div>`; } });
     return true;
   }
-  try { await cloudEnter(r.info); } catch (e) { await renderCloudAuth(e.message, "err", "start"); }
+  try { await cloudEnter(r.info); } catch (e) { await renderCloudAuth(plainNetErr(e), "err", "start"); }
   return true;
 }
+// the browser's own words for a dropped download ("Failed to fetch", "Load failed"…) in plain language
+const plainNetErr = e => (/failed to fetch|load failed|networkerror|network request failed/i.test(String(e && e.message))
+  ? L2("Could not download the company's books — check the internet connection and sign in again.", "تعذّر تنزيل دفاتر الشركة — تحقق من الاتصال بالإنترنت وسجّل الدخول مرة أخرى.") : (e && e.message) || String(e));
 // After a successful workspace sign-in: choose / create / join a company if needed, get its books, open the user.
 async function cloudEnter(info) {
   const ar = S.lang === "ar", C = window.BeyondCloud;
@@ -877,7 +880,7 @@ function renderCompanyGate(info, msg, kind = "err") {
     $("#cohint").textContent = w === "join" ? (ar ? "اطلب الرمز من مسؤول الشركة (الإعدادات ← مساحة العمل)." : "Get the code from the company's administrator (Settings → Workspace).")
       : (ar ? "تصبح مسؤولها، ثم تختار: دفاتر فارغة، شركة تجريبية، أو استيراد بياناتك." : "You become its administrator, then choose: empty books, the demo company, or your own data."); };
   $("#cowhat").addEventListener("change", pane); pane();
-  const open = id => { if (C.chooseCompany(id)) location.reload(); else cloudEnter({ ...info, needs_company: false, is_member: true }).catch(e => show(e.message)); };
+  const open = id => { if (C.chooseCompany(id)) location.reload(); else cloudEnter({ ...info, needs_company: false, is_member: true }).catch(e => show(plainNetErr(e))); };
   S.H = { copick: el => { show(ar ? "جارٍ فتح الشركة…" : "Opening the company…", "info"); open(el.dataset.id); },
     coout: () => { C.signout(); renderCloudAuth(); } };
   $("#cojoin").addEventListener("submit", async e => { e.preventDefault(); const code = new FormData(e.target).get("code").trim();
@@ -977,7 +980,7 @@ async function renderAuth() {
     // still signed in to the workspace (e.g. after switching company): carry on without asking again
     if (window.BeyondCloud.signedIn()) {
       applyLook(); $("#root").innerHTML = `<div class="login"><div class="empty">${t("loading")}</div><div id="lerr"></div></div>`;
-      try { return await cloudEnter(await window.BeyondCloud.info()); } catch (e) { return renderCloudAuth(e.message, "err"); }
+      try { return await cloudEnter(await window.BeyondCloud.info()); } catch (e) { return renderCloudAuth(plainNetErr(e), "err"); }
     }
     return renderCloudAuth();
   }
