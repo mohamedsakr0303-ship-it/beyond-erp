@@ -110,6 +110,7 @@ const LV = ["none", "view", "add", "edit"];
 const levelOf = key => {
   const u = S.boot && S.boot.user; if (!u) return "none";
   if (key === "chat") return "edit";                                       // chat needs no permission
+  if (key === "dashboard" && !u.is_admin && LV.indexOf(u.perms.dashboard || "none") < 1) return "view";   // everyone opens their group's dashboard (its cards check their own permissions)
   if (key === "chat.ai") return S.ai && S.ai.allowed ? "edit" : "none";   // the assistant: super administrator's policy
   if (u.is_admin) return "edit";
   const p = u.perms;
@@ -1489,7 +1490,7 @@ function monthBars(series) {
   const y = v => (H - padB) - v / max * (H - padB - 12);
   const grid = [0.25, 0.5, 0.75, 1].map(f => `<line x1="0" x2="${W}" y1="${y(max * f)}" y2="${y(max * f)}" class="gl"/>`).join("");
   const bars = series.map((s, i) => { const x = padL + i * bw + bw / 2;
-    return `<g class="mb" data-tip="${esc(s.month)} · ${esc(t("rev"))} ${money(s.revenue)} · ${esc(t("costs"))} ${money(s.costs)} · ${esc(t("net_profit"))} ${money(s.revenue - s.costs)}">
+    return `<g class="mb" data-tip="${esc(s.month)}&#10;${esc(t("rev"))}: ${money(s.revenue)}&#10;${esc(t("costs"))}: ${money(s.costs)}&#10;${esc(t("net_profit"))}: ${money(s.revenue - s.costs)}">
       <rect x="${x - bw / 2}" y="0" width="${bw}" height="${H}" class="hit"/>
       <rect x="${x - b - 2}" y="${y(s.revenue)}" width="${b}" height="${Math.max(1, H - padB - y(s.revenue))}" rx="${b / 2}" class="r"/>
       <rect x="${x + 2}" y="${y(s.costs)}" width="${b}" height="${Math.max(1, H - padB - y(s.costs))}" rx="${b / 2}" class="c"/>
@@ -1502,61 +1503,186 @@ function countUp(root) {
     const step = now => { const k = Math.min(1, (now - t0) / 700), e = 1 - Math.pow(1 - k, 3); el.textContent = fmt(to * e); if (k < 1 && el.isConnected) requestAnimationFrame(step); else el.textContent = fmt(to); };
     requestAnimationFrame(step); });
 }
+// ------------------------------------------------------------------ dashboard (per group of users)
+// Each group (Sales, Accounts & finance, …) has its own widgets; super administrators choose them (Customise), may
+// look at any group's dashboard, and may let a group see a widget beyond its permissions. The server sends only the
+// widgets — and figures — the person may see.
+const DASH = { edit: null };
 PAGES.dashboard = async (view, parts, q) => {
-  const [d, al] = await Promise.all([api("GET", "/api/dashboard?" + qs({ date_from: q.date_from || yearStart(), date_to: q.date_to || "", bu_id: q.bu_id || "" })),
-    api("GET", "/api/alerts").catch(() => ({ rows: [] }))]);
-  const ar = S.lang === "ar", cp = d.cash_position, ser = d.series || [];
-  const months = +(store.get("dashMonths", "12")) || 12, sr = ser.slice(-months);
-  const hero = (cls, ic, label, value, series, color, extra = "", after = "") => `<div class="hero ${cls}"><div class="hero-top"><span class="hero-ic">${svg(ic)}</span>
-      <div><div class="hero-v" data-count="${value}" data-fmt="money">${money(value)}</div><div class="hero-l">${esc(label)}</div></div>${extra}</div>${series ? spark(series, color, cls) : ""}${after}</div>`;
-  const gap = cp.floor ? cp.cash / cp.floor : NaN;
-  const cashExtra = `<div class="hero-floor"><div class="meter"><i style="width:${Math.max(3, Math.min(100, (isFinite(gap) ? gap : 1) * 100)).toFixed(0)}%"></i></div>
-    <small>${esc(t("cash_floor"))} ${money(cp.floor)} ${cp.gap > 0 ? `· <b class="neg">−${money(cp.gap)}</b>` : "✓"}</small></div>`;
-  const pos = [["receivable", t("receivable"), d.receivable, "#/receivables", "var(--info)"], ["payable", t("payable"), d.payable, "#/payables", "var(--bad)"],
-    ["advances", t("advances"), d.advances, "#/receipts", "#a855f7"], ["accrued", t("accrued"), d.accrued, "#/payables", "var(--warn)"],
-    ["inventory", t("inventory"), d.inventory, "#/stock", "#14b8a6"], ["ebitda", t("ebitda"), d.ebitda, "#/report/income_statement", "var(--good)"]];
-  const rent = d.rentals && d.rentals.rows.length ? d.rentals : null;
-  const rtab = store.get("dashRent", "all");
-  const rrows = rent ? rent.rows.filter(r => rtab === "all" || r.to_bill) : [];
+  const sup = !!S.boot.user.is_super;
+  const group = sup ? (q.group || store.get("dashGroup", "")) : "";
+  const d = await api("GET", "/api/dashboard/view?" + qs({ group, date_from: q.date_from || yearStart(), date_to: q.date_to || "", bu_id: q.bu_id || "" }));
+  if (DASH.edit && DASH.edit.group !== d.group) DASH.edit = null;
+  const ed = DASH.edit, items = ed ? ed.layout : d.widgets;
+  const dataOf = {}; d.widgets.forEach(w => { dataOf[w.w] = w; });
+  const cat = Object.fromEntries((d.catalog || []).map(w => [w.id, w]));
+  const gname = g => (S.lang === "ar" && g.name_ar) || g.name;
+  const top = `<div class="toolbar dash-bar">
+      ${sup ? `<label class="dash-grp">${svg("users")}<select data-change="dgroup" aria-label="${esc(L2("Dashboard of the group", "لوحة المجموعة"))}">${(d.groups || []).map(g => `<option value="${esc(g.key)}" ${g.key === d.group ? "selected" : ""}>${esc(gname(g))} (${g.users})</option>`).join("")}</select></label>` : ""}
+      <span class="spacer"></span>
+      ${sup ? (ed ? `<button class="btn" data-a="dadd">${svg("plus")} ${esc(L2("Add widget", "إضافة عنصر"))}</button><button class="btn" data-a="dgroups">${esc(L2("Groups…", "المجموعات…"))}</button>
+          <button class="btn" data-a="dcancel">${esc(t("cancel"))}</button><button class="btn pri" data-a="dsave">${esc(t("save"))}</button>`
+        : `<button class="btn" data-a="dedit">${svg("pen")} ${esc(L2("Customise this dashboard", "تخصيص هذه اللوحة"))}</button>`) : ""}</div>
+    ${ed ? `<div class="banner info">${esc(L2(`Customising the dashboard of “${d.name}”. Drag cards (or use the arrows) to reorder, choose a size, tick 🔓 to show a card even to people whose permissions do not include it, then Save.`,
+      `تخصيص لوحة «${d.name_ar || d.name}». اسحب البطاقات (أو استخدم الأسهم) لترتيبها، واختر الحجم، وفعّل 🔓 لإظهار بطاقة حتى لمن لا تشملها صلاحياته، ثم احفظ.`))}</div>` : ""}`;
   view.innerHTML = filterBar({ date_from: q.date_from || yearStart(), ...q }, ["dates", "bu"]) +
-    (S.boot.settings.demo_loaded ? `<div class="banner info">${L2("You are looking at the demo company (invented data).", "هذه بيانات الشركة التجريبية (بيانات وهمية).")} <a href="#/data">${L2("Demo & data", "البيانات التجريبية")} →</a></div>` : "") +
-    `<div class="heroes">
-      ${hero("h-rev", "in", t("revenue"), d.revenue, sr.map(s => s.revenue), "#34c77b")}
-      ${hero("h-cost", "out", t("costs"), sr.reduce((a, s) => a + s.costs, 0), sr.map(s => s.costs), "#ff5a5f")}
-      ${hero("h-prof", "chart", t("net_profit"), d.net_profit, sr.map(s => s.revenue - s.costs), "#ffa726", `<span class="chip ${d.net_profit < 0 ? "bad" : "ok"} hero-chip">${pct(d.margins.net)}</span>`)}
-      ${hero("h-cash", "wallet", t("cash"), d.cash, null, "#5b9dff", "", cashExtra)}
-    </div>
-    <div class="dgrid">
-      <div class="card"><h2>${esc(L2("Money position", "المركز المالي"))}<span class="spacer"></span><a class="btn sm" href="#/report/balance_sheet">${esc(t("m_bs"))}</a></h2>
-        <div class="posgrid">${pos.map(([k, l, v, href, c]) => `<a class="posit" href="${href}" style="--c:${c}"><i></i><div><small>${esc(l)}</small><b class="${v < 0 ? "neg" : ""}" data-count="${v}" data-fmt="money">${money(v)}</b></div></a>`).join("")}</div>
-        <div class="rings">${ring(d.margins.ebitda, t("ebitda"), "r1")}${ring(d.margins.net, t("net_profit"), "r2")}${ring(gap, L2("Cash vs safety floor", "النقدية مقابل حد الأمان"), "r3")}
-          ${rent ? ring(rent.rows.reduce((a, r) => a + r.collected, 0) / Math.max(1, rent.rows.reduce((a, r) => a + r.invoiced, 0)), L2("Rent invoices collected", "تحصيل فواتير الإيجار"), "r4") : ""}</div></div>
-      <div class="card"><h2>${svg("bell")} ${esc(L2("Needs attention", "يحتاج متابعة"))}</h2>
-        ${al.rows.length ? `<div class="alist">${al.rows.map(r => `<a class="alert-row" href="${esc(r.href)}"><span class="dot ${r.level}">${svg(r.level === "bad" ? "alert" : r.level === "warn" ? "clock" : "bell")}</span><span>${esc(ar ? r.ar : r.en)}</span></a>`).join("")}</div>`
-          : `<div class="empty">${svg("check")}<div>${esc(L2("All clear — nothing waiting on you.", "لا يوجد ما ينتظرك."))}</div></div>`}
-        <h2 style="margin-top:18px">${esc(t("model_audit"))}</h2><div class="audit">${d.audit.map(a => `<span class="chip ${a.ok ? "ok" : "bad"}" title="${esc(a.check)}">${a.ok ? "✓" : "✗"} ${esc(a.check)}</span>`).join("")}</div></div>
-    </div>
-    <div class="dgrid">
-      <div class="card"><h2>${esc(t("last12"))}<span class="spacer"></span><span class="seg">${[6, 12].map(m => `<button class="btn sm ${months === m ? "pri" : ""}" data-a="dmonths" data-m="${m}">${m} ${esc(L2("months", "شهر"))}</button>`).join("")}</span></h2>
-        <div class="legend"><span class="r">${t("rev")}</span><span class="c">${t("costs")}</span></div>${monthBars(sr)}</div>
-      ${rent ? `<div class="card"><h2>${esc(L2("Ongoing rentals", "الإيجارات الجارية"))}<span class="spacer"></span><span class="seg">${[["all", L2("All", "الكل")], ["bill", L2("To invoice", "للفوترة")]].map(([k, l]) => `<button class="btn sm ${rtab === k ? "pri" : ""}" data-a="drent" data-k="${k}">${esc(l)}${k === "bill" && rent.to_bill ? ` (${rent.to_bill})` : ""}</button>`).join("")}</span></h2>
-        <div class="rlist">${rrows.map(r => `<a class="rrow" href="#/rental/${r.id}"><span class="dot ${r.to_bill ? "warn" : "ok"}">${svg("building")}</span>
-          <span class="rr-main"><b>${esc(r.client)}</b><small>${esc(r.code)} · ${esc(r.site || "")}</small></span>
-          <span class="rr-mid"><small>${esc(L2("Rent / month", "الإيجار الشهري"))}</small><b>${money(r.monthly)}</b></span>
-          <span class="rr-end"><b class="${r.owed > 0 ? "" : "pos"}">${money(r.owed)}</b><small>${r.to_bill ? `${esc(L2("bill from", "فوترة من"))} ${fd(r.next_from)}` : esc(L2("client owes", "على العميل"))}</small></span></a>`).join("") || `<div class="empty">${esc(t("nothing"))}</div>`}</div>
-        <div class="rfoot"><span>${esc(L2("Monthly rent on site", "إجمالي الإيجار الشهري"))}: <b>${money(rent.monthly)}</b></span><a class="btn sm" href="#/rentals">${esc(t("m_rentals"))} →</a></div></div>`
-      : `<div class="card"><h2>${esc(t("m_bus"))}</h2>${buTable(d.units)}</div>`}
-    </div>
-    ${rent ? `<div class="card"><h2>${esc(t("m_bus"))}</h2>${buTable(d.units)}</div>` : ""}`;
-  Object.assign(S.H, { dmonths: el => { store.set("dashMonths", el.dataset.m); route(); }, drent: el => { store.set("dashRent", el.dataset.k); route(); } });
-  const mc = $(".mchart", view);
-  if (mc) { const tip = $(".tip", mc);
-    mc.addEventListener("pointermove", e => { const g = e.target.closest(".mb"); $$(".mb.on", mc).forEach(x => x !== g && x.classList.remove("on"));
-      if (!g) { tip.hidden = true; return; } g.classList.add("on"); const r = mc.getBoundingClientRect(); tip.hidden = false; tip.textContent = g.dataset.tip;
-      tip.style.left = Math.min(r.width - tip.offsetWidth - 4, Math.max(4, e.clientX - r.left - tip.offsetWidth / 2)) + "px"; });
-    mc.addEventListener("pointerleave", () => { tip.hidden = true; $$(".mb.on", mc).forEach(x => x.classList.remove("on")); }); }
+    (S.boot.settings.demo_loaded ? `<div class="banner info">${L2("You are looking at the demo company (invented data).", "هذه بيانات الشركة التجريبية (بيانات وهمية).")} <a href="#/data">${L2("Demo & data", "البيانات التجريبية")}</a></div>` : "") +
+    top + `<div class="wgrid ${ed ? "editing" : ""}">${items.map((e, i) => widgetHtml(e, dataOf[e.w], cat[e.w], i, !!ed)).join("") ||
+      `<div class="card empty" style="grid-column:1/-1">${svg("chart")}<div>${esc(sup ? L2("No cards yet — press Customise to add some.", "لا توجد بطاقات — اضغط تخصيص لإضافتها.")
+        : L2("Your dashboard is empty — a super administrator sets it up for your group.", "لوحتك فارغة — يجهزها المدير العام لمجموعتك."))}</div></div>`}</div>`;
+  const months = +(store.get("dashMonths", "12")) || 12;
+  Object.assign(S.H, {
+    dmonths: el => { store.set("dashMonths", el.dataset.m); route(); },
+    dgroup: el => { store.set("dashGroup", el.value); DASH.edit = null; route(); },
+    dedit: () => { DASH.edit = { group: d.group, layout: d.widgets.map(({ w, size, grant, opts }) => ({ w, size, grant, opts: opts || {} })) }; route(); },
+    dcancel: () => { DASH.edit = null; route(); },
+    dsave: async () => { try { await api("PUT", "/api/dashboard/groups/" + d.group, { layout: DASH.edit.layout }); DASH.edit = null; toast(t("saved")); route(); } catch (e) { fail(e); } },
+    dmove: el => { const i = +el.dataset.i, j = i + +el.dataset.by, L = DASH.edit.layout; if (j < 0 || j >= L.length) return; [L[i], L[j]] = [L[j], L[i]]; route(); },
+    dsize: el => { DASH.edit.layout[+el.dataset.i].size = +el.dataset.s; route(); },
+    dgrant: el => { const e = DASH.edit.layout[+el.dataset.i]; e.grant = !e.grant; route(); },
+    ddel: el => { DASH.edit.layout.splice(+el.dataset.i, 1); route(); },
+    dopts: el => widgetOpts(DASH.edit.layout[+el.dataset.i], cat[DASH.edit.layout[+el.dataset.i].w]),
+    dadd: () => widgetPicker(d),
+    dgroups: () => groupsDrawer(d),
+  });
+  if (ed) {   // drag to reorder
+    let from = null;
+    $$(".wg", view).forEach(c => {
+      c.addEventListener("dragstart", e => { from = +c.dataset.i; c.classList.add("dragging"); e.dataTransfer.effectAllowed = "move"; });
+      c.addEventListener("dragend", () => c.classList.remove("dragging"));
+      c.addEventListener("dragover", e => { e.preventDefault(); c.classList.add("over"); });
+      c.addEventListener("dragleave", () => c.classList.remove("over"));
+      c.addEventListener("drop", e => { e.preventDefault(); const to = +c.dataset.i; if (from == null || from === to) return;
+        const L = DASH.edit.layout, [m] = L.splice(from, 1); L.splice(to, 0, m); route(); });
+    });
+  }
+  // the monthly chart's tooltip
+  // A mouse shows it while hovering; a finger (phone, tablet) taps a month to pin it and taps again, or anywhere else, to close it.
+  $$(".mchart", view).forEach(mc => { const tip = $(".tip", mc);
+    const hide = () => { tip.hidden = true; $$(".mb.on", mc).forEach(x => x.classList.remove("on")); };
+    const show = (g, x) => { $$(".mb.on", mc).forEach(o => o !== g && o.classList.remove("on"));
+      if (!g) return hide(); g.classList.add("on"); const r = mc.getBoundingClientRect(); tip.hidden = false; tip.textContent = g.dataset.tip;
+      tip.style.left = Math.min(r.width - tip.offsetWidth - 4, Math.max(4, x - r.left - tip.offsetWidth / 2)) + "px"; };
+    mc.addEventListener("pointermove", e => { if (e.pointerType === "mouse") show(e.target.closest(".mb"), e.clientX); });
+    mc.addEventListener("pointerleave", e => { if (e.pointerType === "mouse") hide(); });
+    mc.addEventListener("click", e => { const g = e.target.closest(".mb");
+      if (!g || (g.classList.contains("on") && !tip.hidden && !matchMedia("(hover: hover)").matches)) hide(); else show(g, e.clientX); });
+    const away = e => { if (!mc.isConnected) return document.removeEventListener("pointerdown", away, true); if (!mc.contains(e.target)) hide(); };
+    document.addEventListener("pointerdown", away, true); });
+  void months;
   countUp(view);
 };
+// one card
+function widgetHtml(e, got, info, i, editing) {
+  const w = got || { ...e, en: (info || {}).en || e.w, ar: (info || {}).ar || e.w, size: e.size || (info || {}).size || 2 };
+  const size = e.size || w.size || 2, title = L2(w.en, w.ar);
+  const tools = editing ? `<div class="wg-tools"><span class="wg-drag" title="${esc(L2("Drag to move", "اسحب للتحريك"))}">⠿</span>
+      <button class="lnk" data-a="dmove" data-i="${i}" data-by="-1" title="${esc(L2("Earlier", "قبل"))}">‹</button><button class="lnk" data-a="dmove" data-i="${i}" data-by="1" title="${esc(L2("Later", "بعد"))}">›</button>
+      <span class="wg-sizes">${[[1, "S"], [2, "M"], [4, "L"]].map(([v, l]) => `<button class="lnk ${size === v ? "on" : ""}" data-a="dsize" data-i="${i}" data-s="${v}" title="${esc(L2(["", "Small", "Medium", "", "Wide"][v], ["", "صغير", "متوسط", "", "عريض"][v]))}">${l}</button>`).join("")}</span>
+      <button class="lnk ${e.grant ? "on" : ""}" data-a="dgrant" data-i="${i}" title="${esc(L2("Show even to people whose permissions do not include it", "إظهارها حتى لمن لا تشملها صلاحياته"))}">${e.grant ? "🔓" : "🔒"}</button>
+      ${info && Object.keys(info.opts || {}).length ? `<button class="lnk" data-a="dopts" data-i="${i}" title="${esc(L2("Options", "خيارات"))}">⚙</button>` : ""}
+      <button class="lnk" data-a="ddel" data-i="${i}" title="${esc(L2("Remove", "إزالة"))}">✕</button></div>` : "";
+  let body;
+  if (!got || (!got.data && !got.error)) body = `<div class="empty small">${esc(L2("Figures appear after saving.", "تظهر الأرقام بعد الحفظ."))}</div>`;
+  else if (got.error) body = `<div class="banner err">${esc(got.error)}</div>`;
+  else body = (WIDGET_DRAW[e.w] || (() => ""))(got.data, got, e);
+  const bare = ["revenue", "costs", "net_profit", "cash"].includes(e.w) && !editing;
+  return `<section class="wg s${size} ${bare ? "bare" : ""}" data-i="${i}" ${editing ? 'draggable="true"' : ""}>${tools}
+    ${bare ? body : `<div class="card wcard"><h2>${esc(title)}${e.grant && editing ? ` <span class="chip">🔓 ${esc(L2("shown to all", "ظاهرة للجميع"))}</span>` : ""}</h2>${body}</div>`}</section>`;
+}
+const wList = (rows, empty) => rows && rows.length ? `<div class="wlist">${rows.map(r => `<a class="wl-row" href="${esc(r.href || "#/dashboard")}"><span class="dot ${r.level || "info"}"></span>
+    <span class="wl-main"><b>${esc(r.title || "")}</b><small>${esc(r.sub || "")}</small></span>${r.value != null ? `<b class="wl-val ${r.value < 0 ? "neg" : ""}">${money(r.value)}</b>` : ""}</a>`).join("")}</div>`
+  : `<div class="empty small">${svg("check")}<div>${esc(empty || L2("Nothing here right now.", "لا يوجد شيء الآن."))}</div></div>`;
+const wStat = (value, sub, href, isMoney) => `<a class="wstat" href="${esc(href || "#/dashboard")}"><b data-count="${value}" ${isMoney ? 'data-fmt="money"' : ""}>${isMoney ? money(value) : value}</b>${sub ? `<small>${esc(L2(sub[0], sub[1]))}</small>` : ""}</a>`;
+function heroCard(cls, ic, label, value, series, color, extra = "", after = "") {
+  return `<div class="hero ${cls}"><div class="hero-top"><span class="hero-ic">${svg(ic)}</span>
+    <div><div class="hero-v" data-count="${value}" data-fmt="money">${money(value)}</div><div class="hero-l">${esc(label)}</div></div>${extra}</div>${series ? spark(series, color, cls) : ""}${after}</div>`;
+}
+const WIDGET_DRAW = {
+  revenue: (x, w) => heroCard("h-rev", "in", L2(w.en, w.ar), x.value, x.series, "#34c77b"),
+  costs: (x, w) => heroCard("h-cost", "out", L2(w.en, w.ar), x.value, x.series, "#ff5a5f"),
+  net_profit: (x, w) => heroCard("h-prof", "chart", L2(w.en, w.ar), x.value, x.series, "#ffa726", `<span class="chip ${x.value < 0 ? "bad" : "ok"} hero-chip">${pct(x.chip)}</span>`),
+  cash: (x, w) => { const cp = x.floor, gap = cp.floor ? cp.cash / cp.floor : NaN;
+    return heroCard("h-cash", "wallet", L2(w.en, w.ar), x.value, null, "#5b9dff", "", `<div class="hero-floor"><div class="meter"><i style="width:${Math.max(3, Math.min(100, (isFinite(gap) ? gap : 1) * 100)).toFixed(0)}%"></i></div>
+      <small>${esc(t("cash_floor"))} ${money(cp.floor)} ${cp.gap > 0 ? `· <b class="neg">−${money(cp.gap)}</b>` : "✓"}</small></div>`); },
+  money_position: x => { const cp = x.cash_position, gap = cp.floor ? cp.cash / cp.floor : NaN;
+    const pos = [["receivable", t("receivable"), "#/receivables", "var(--info)"], ["payable", t("payable"), "#/payables", "var(--bad)"], ["advances", t("advances"), "#/receipts", "#a855f7"],
+      ["accrued", t("accrued"), "#/payables", "var(--warn)"], ["inventory", t("inventory"), "#/stock", "#14b8a6"], ["ebitda", t("ebitda"), "#/report/income_statement", "var(--good)"]];
+    return `<div class="posgrid">${pos.map(([k, l, href, c]) => `<a class="posit" href="${href}" style="--c:${c}"><i></i><div><small>${esc(l)}</small><b class="${x[k] < 0 ? "neg" : ""}" data-count="${x[k]}" data-fmt="money">${money(x[k])}</b></div></a>`).join("")}</div>
+      <div class="rings">${ring(x.margins.ebitda, t("ebitda"), "r1")}${ring(x.margins.net, t("net_profit"), "r2")}${ring(gap, L2("Cash vs safety floor", "النقدية مقابل حد الأمان"), "r3")}</div>`; },
+  monthly_chart: x => { const months = +(store.get("dashMonths", "12")) || 12, sr = (x.series || []).slice(-months);
+    return `<div class="row" style="justify-content:flex-end;margin:-6px 0 6px"><span class="seg">${[6, 12].map(m => `<button class="btn sm ${months === m ? "pri" : ""}" data-a="dmonths" data-m="${m}">${m} ${esc(L2("months", "شهر"))}</button>`).join("")}</span></div>
+      <div class="legend"><span class="r">${t("rev")}</span><span class="c">${t("costs")}</span></div>${monthBars(sr)}`; },
+  attention: x => x.rows.length ? `<div class="alist">${x.rows.map(r => `<a class="alert-row" href="${esc(r.href)}"><span class="dot ${r.level}">${svg(r.level === "bad" ? "alert" : r.level === "warn" ? "clock" : "bell")}</span><span>${esc(S.lang === "ar" ? r.ar : r.en)}</span></a>`).join("")}</div>`
+    : `<div class="empty small">${svg("check")}<div>${esc(L2("All clear — nothing waiting on you.", "لا يوجد ما ينتظرك."))}</div></div>`,
+  books_check: x => `<div class="audit">${x.checks.map(a => `<span class="chip ${a.ok ? "ok" : "bad"}" title="${esc(a.check)}">${a.ok ? "✓" : "✗"} ${esc(a.check)}</span>`).join("")}</div>`,
+  sales_target: x => { const p = x.target ? x.done / x.target : 0, exp = x.target ? x.expected / x.target : 0;
+    const per = { month: L2("this month", "هذا الشهر"), quarter: L2("this quarter", "هذا الربع"), year: L2("this year", "هذا العام") }[x.period] || "";
+    return `<div class="tgt"><div class="tgt-nums"><b data-count="${x.done}" data-fmt="money">${money(x.done)}</b><span>/ ${x.target ? money(x.target) : esc(L2("no target set yet", "لم يُحدد مستهدف بعد"))}</span>
+      ${x.target ? `<span class="chip ${p >= exp ? "ok" : "bad"}">${pct(p)}</span>` : ""}</div>
+      <div class="tgt-bar"><i style="width:${Math.min(100, p * 100).toFixed(1)}%"></i>${x.target ? `<em style="left:${Math.min(100, exp * 100).toFixed(1)}%" title="${esc(L2("Where sales should be by today", "أين يجب أن تكون المبيعات اليوم"))}"></em>` : ""}</div>
+      <small class="muted">${esc(x.mine ? L2("Your sales", "مبيعاتك") : L2("Sales invoiced", "المبيعات المفوترة"))} ${esc(per)} · ${x.days_left} ${esc(L2("days left", "يوم متبقٍ"))}${x.target ? ` · ${esc(p >= exp ? L2("ahead of pace", "متقدم عن المعدل") : L2("behind pace", "متأخر عن المعدل"))}` : ""}</small></div>`; },
+  installments_upcoming: x => `<div class="wsum">${esc(L2(`Next ${x.days} days`, `خلال ${x.days} يوماً`))}: <b>${money(x.total)}</b></div>` + wList(x.rows, L2("No instalments coming up.", "لا توجد أقساط قادمة.")),
+  installments_overdue: x => wStat(x.value, [`${x.count} instalments · ${x.customers} customers`, `${x.count} قسط · ${x.customers} عميل`], x.href, true) + wList(x.rows, L2("Nothing overdue.", "لا توجد متأخرات.")),
+  cheques_due: x => (x.rows.length ? `<div class="wsum">${esc(L2("Total", "الإجمالي"))}: <b>${money(x.total)}</b></div>` : "") + wList(x.rows, L2("No cheques due.", "لا توجد شيكات مستحقة.")),
+  recent_sales: x => wList(x.rows, L2("No sales yet.", "لا توجد مبيعات بعد.")),
+  offers_open: x => wList(x.rows, L2("No open offers.", "لا توجد عروض مفتوحة.")),
+  receivables_top: x => `<div class="wsum">${esc(L2("Owed to us", "مستحق لنا"))}: <b>${money(x.total)}</b></div>` + wList(x.rows),
+  payables_due: x => `<div class="wsum">${esc(L2("We owe", "مستحق علينا"))}: <b>${money(x.total)}</b></div>` + wList(x.rows),
+  po_open: x => `<div class="wsum">${esc(L2("To approve", "بانتظار الاعتماد"))}: <b>${x.to_approve}</b> · ${esc(L2("Not yet received", "لم يُستلم بعد"))}: <b>${money(x.open_value)}</b></div>` + wList(x.rows, L2("No open orders.", "لا توجد أوامر مفتوحة.")),
+  custody_open: x => wList(x.rows, L2("No open custody.", "لا توجد عهد مفتوحة.")),
+  rentals_ongoing: x => wList(x.rows, L2("No ongoing rentals.", "لا توجد إيجارات جارية.")) + (x.rows.length ? `<div class="wsum">${esc(L2("Monthly rent on site", "الإيجار الشهري"))}: <b>${money(x.monthly)}</b></div>` : ""),
+  loans_due: x => wList(x.rows, L2("No loan instalments due.", "لا توجد أقساط قروض.")),
+  recurring_due: x => wStat(x.value, x.sub, x.href),
+  partner_balances: x => wList(x.rows),
+  active_projects: x => wStat(x.value, x.sub, x.href),
+  top_projects: x => wList(x.rows),
+  bu_table: x => buTable(x.units),
+  inventory_value: x => wStat(x.value, null, x.href, true),
+  headcount: x => wStat(x.value, x.sub, x.href),
+  payroll_status: x => `<a class="wstat" href="${x.href}"><b>${x.this_done ? "✓" : "—"}</b><small>${esc(x.this_done ? L2(`${x.this_month} posted`, `${x.this_month} مُرحّلة`) : L2(`${x.this_month} not posted yet`, `${x.this_month} لم تُرحّل بعد`))}${x.last ? ` · ${esc(L2("last run", "آخر مسير"))} ${esc(x.last.period)}` : ""}</small></a>`,
+  quick_links: () => { const items = window.MENU.flatMap(([, it]) => it).filter(i => i[1] !== "dashboard" && can(i[2]) && shown(i[2])).slice(0, 10);
+    return `<div class="qlinks">${items.map(i => `<a class="btn" href="#/${i[1]}">${esc(t(i[0]))}</a>`).join("")}</div>`; },
+};
+// super administrators: add cards to a group's dashboard
+function widgetPicker(d) {
+  const have = new Set(DASH.edit.layout.map(e => e.w));
+  const byCat = {}; (d.catalog || []).forEach(w => { (byCat[w.cat] = byCat[w.cat] || []).push(w); });
+  drawer(L2("Add a card", "إضافة بطاقة"), Object.entries(byCat).map(([c, ws]) => `<h4 style="margin:10px 0 6px">${esc(L2(...(d.cats[c] || [c, c])))}</h4>
+    <div class="wpick">${ws.map(w => `<label class="f chk"><input type="checkbox" name="w_${w.id}" ${have.has(w.id) ? "checked disabled" : ""}>${esc(L2(w.en, w.ar))}
+      <small class="muted">${esc(w.perm.length ? L2("needs: ", "تحتاج: ") + w.perm.join(" / ") : L2("everyone", "للجميع"))}</small></label>`).join("")}</div>`).join(""),
+    async v => { Object.keys(v).filter(k => v[k] && k.startsWith("w_") && !have.has(k.slice(2))).forEach(k => DASH.edit.layout.push({ w: k.slice(2), opts: {} })); route(); },
+    { submitLabel: L2("Add", "إضافة"), noDraft: true });
+}
+function widgetOpts(e, info) {
+  const o = e.opts || {};
+  drawer(L2("Card options", "خيارات البطاقة") + " — " + L2(info.en, info.ar), form(Object.entries(info.opts).map(([k, [en, ar, kind]]) =>
+    kind === "check" ? { k, l: L2(en, ar), type: "checkbox", v: !!o[k], span: "spanall" }
+      : kind === "period" ? { k, l: L2(en, ar), type: "select", v: o[k] || "month", opts: [["month", L2("Month", "شهر")], ["quarter", L2("Quarter", "ربع سنة")], ["year", L2("Year", "سنة")]] }
+        : { k, l: L2(en, ar), type: "number", v: o[k] ?? "" })),
+    async v => { e.opts = Object.fromEntries(Object.entries(v).filter(([, x]) => x !== "" && x !== false).map(([k, x]) => [k, typeof x === "string" && x.trim() !== "" && !isNaN(+x) ? +x : x])); route(); },
+    { submitLabel: L2("Done", "تم"), noDraft: true });
+}
+// super administrators: the groups themselves
+function groupsDrawer(d) {
+  const gname = g => (S.lang === "ar" && g.name_ar) || g.name;
+  drawer(L2("Groups", "المجموعات"), `<p class="muted" style="margin-top:0">${esc(L2("Each person belongs to one group (Users → open a user → Group) and sees that group's dashboard.", "كل مستخدم ينتمي لمجموعة واحدة (المستخدمون ← فتح المستخدم ← المجموعة) ويرى لوحة مجموعته."))}</p>
+    <div class="tbl"><table><thead><tr><th>${esc(t("name"))}</th><th>${esc(L2("Arabic name", "الاسم بالعربية"))}</th><th class="num">${esc(L2("People", "الأفراد"))}</th><th></th></tr></thead><tbody>
+    ${(d.groups || []).map(g => `<tr><td><input class="in" data-gk="${esc(g.key)}" data-f="name" value="${esc(g.name)}"></td><td><input class="in" dir="rtl" data-gk="${esc(g.key)}" data-f="name_ar" value="${esc(g.name_ar || "")}"></td>
+      <td class="num">${g.users}</td><td>${g.key === "general" ? "" : `<button type="button" class="btn sm danger" data-a="gdel" data-k="${esc(g.key)}" data-n="${esc(gname(g))}">${esc(t("delete"))}</button>`}</td></tr>`).join("")}</tbody></table></div>
+    <h4 style="margin:14px 0 6px">${esc(L2("New group", "مجموعة جديدة"))}</h4>
+    <div class="row" style="gap:8px;flex-wrap:wrap"><input class="in" id="gnew" placeholder="${esc(L2("e.g. Site engineers", "مثال: مهندسو المواقع"))}" style="flex:1;min-width:180px">
+      <select id="gcopy"><option value="">${esc(L2("Start empty", "ابدأ فارغة"))}</option>${(d.groups || []).map(g => `<option value="${esc(g.key)}">${esc(L2("Copy of ", "نسخة من "))}${esc(gname(g))}</option>`).join("")}</select></div>`,
+    async () => {
+      for (const g of d.groups || []) { const n = $(`[data-gk="${g.key}"][data-f=name]`).value.trim(), a = $(`[data-gk="${g.key}"][data-f=name_ar]`).value.trim();
+        if (n && (n !== g.name || a !== (g.name_ar || ""))) await api("PUT", "/api/dashboard/groups/" + g.key, { name: n, name_ar: a }); }
+      const nn = $("#gnew").value.trim();
+      if (nn) { const r = await api("POST", "/api/dashboard/groups", { name: nn, copy_from: $("#gcopy").value }); store.set("dashGroup", r.key); }
+      DASH.edit = null; toast(t("saved"));
+    }, { noDraft: true });
+  S.H.gdel = async el => { if (!confirm(L2(`Delete the group “${el.dataset.n}”? Its people move to General.`, `حذف مجموعة «${el.dataset.n}»؟ ينتقل أفرادها إلى «عام».`))) return;
+    try { await api("DELETE", "/api/dashboard/groups/" + el.dataset.k); closeDrawer(); if (store.get("dashGroup", "") === el.dataset.k) store.set("dashGroup", ""); DASH.edit = null; route(); } catch (e) { fail(e); } };
+}
 function buTable(rows) {
   if (!rows.length) return `<div class="empty">${t("nothing")}</div>`;
   return `<div class="tbl stack"><table><thead><tr><th>${t("code")}</th><th>${t("name")}</th><th>${t("basis")}</th><th class="num">${t("rev")}</th><th class="num">${t("direct_costs")}</th><th class="num">${t("direct_overhead")}</th><th class="num">${t("allocated_overhead")}</th><th class="num">${t("net_profit")}</th><th class="num">${t("margin")}</th><th class="num">${t("to_collect")}</th></tr></thead><tbody>
@@ -2799,11 +2925,14 @@ function wirePerms(f) {
   S.H.pmall = el => { $$("input.psec, input.pscr", f).forEach(r => { r.checked = r.value === el.dataset.l; }); };
 }
 PAGES.users = async (view) => {
-  const rows = await api("GET", "/api/users");
+  const [rows, gr] = await Promise.all([api("GET", "/api/users"), api("GET", "/api/dashboard/groups").catch(() => ({ groups: [] }))]);
   const ed = can("users.users", "edit");
   const ar = S.lang === "ar";
+  const groupName = k => { const g = gr.groups.find(x => x.key === (k || "general")); return g ? (ar && g.name_ar) || g.name : ""; };
   const edit = u => drawer(t("m_users") + (u.username ? " — " + u.username : ""), form([{ k: "username", l: t("username"), v: u.username, req: 1, dis: !!u.id,
     help: cloudOn() && !u.id ? (S.lang === "ar" ? "اسم الدخول فريد في كل الشركات — لو كان مستخدماً في شركة أخرى سنقترح اسماً آخر (مثل ahmed.beyond)." : "Sign-in names are unique across all companies — if it is taken in another company you'll be offered another (e.g. ahmed.beyond).") : "" }, { k: "full_name", l: t("full_name"), v: u.full_name },
+    ...(gr.groups.length ? [{ k: "group_key", l: L2("Group (decides their dashboard)", "المجموعة (تحدد لوحة التحكم الخاصة به)"), type: "select", v: u.group_key || "general",
+      opts: gr.groups.map(g => [g.key, (ar && g.name_ar) || g.name]), help: L2("Super administrators choose what each group's dashboard shows (Dashboard → Customise).", "يحدد المدير العام ما تعرضه لوحة كل مجموعة (لوحة التحكم ← تخصيص).") }] : []),
     { k: "email", l: t("email") + (cloudOn() ? (ar ? " (اختياري)" : " (optional)") : ""), type: "email", v: u.email, span: "spanall", help: cloudOn()
       ? (ar ? "اتركه فارغاً ليسجل الدخول باسم المستخدم وكلمة المرور فقط. أضفه إن أراد الدخول بحساب Google أو استعادة كلمة المرور بنفسه." : "Leave it blank and they simply sign in with username + password. Add it if they want Google sign-in or to reset their own password by email.")
       : (ar ? "اختياري — يُستخدم لتسجيل الدخول إلى مساحة العمل المشتركة عند تفعيلها." : "Optional — used for signing in to the shared workspace when you connect one.") },
@@ -2815,6 +2944,7 @@ PAGES.users = async (view) => {
     { html: `<h4 style="margin:8px 0 0">${t("perm_matrix")}</h4>${permMatrix(u.perms || {})}`, span: "spanall" }]),
   async (v, f) => { const perms = readPerms(f);
     const body = { username: v.username || u.username, full_name: v.full_name, email: v.email, password: v.password, is_admin: v.is_admin || v.is_super, active: v.active, perms, _no_password: !v.password };
+    if (v.group_key !== undefined) body.group_key = v.group_key === "general" ? "" : v.group_key;
     if (S.boot.user.is_super) body.is_super = !!v.is_super; else { body.is_admin = !!u.is_admin; }
     if (u.id) await api("PUT", "/api/users/" + u.id, body); else await api("POST", "/api/users", body);
     if (!cloudOn()) { toast(t("saved")); return; }
@@ -2852,8 +2982,8 @@ PAGES.users = async (view) => {
       if (vals.every(v => v === vals[0])) return `<span class="chip">${esc(t("mod_" + m))}: ${esc(t("perm_" + (vals[0] === "edit" ? "full" : vals[0])))}</span>`;
       return `<span class="chip warn">${esc(t("mod_" + m))}: ${ss.map((s, i) => vals[i] === "none" ? "" : `${esc(t(window.SUBPERM[`${m}.${s}`] || s))} ${esc({ view: "👁", add: "+", edit: "✎" }[vals[i]])}`).filter(Boolean).join(", ")}</span>`; }).join(" ");
   };
-  view.innerHTML = `<div class="toolbar">${can("users.users", "add") ? `<button class="btn pri" data-a="unew">+ ${t("new")}</button>` : ""}</div><div class="card"><div class="tbl"><table><thead><tr><th>${t("username")}</th><th>${t("full_name")}</th><th>${t("email")}</th><th>${t("perm_matrix")}</th><th>${t("status")}</th></tr></thead><tbody>
-    ${rows.map(u => `<tr class="click ${u.active ? "" : "void"}" data-a="${ed ? "uedit" : ""}" data-id="${u.id}"><td><b>${esc(u.username)}</b></td><td>${esc(u.full_name)}</td><td>${esc(u.email || "")}</td><td>${summary(u)}</td><td>${u.active ? "" : `<span class="chip bad">${t("no")}</span>`}</td></tr>`).join("")}</tbody></table></div>
+  view.innerHTML = `<div class="toolbar">${can("users.users", "add") ? `<button class="btn pri" data-a="unew">+ ${t("new")}</button>` : ""}</div><div class="card"><div class="tbl"><table><thead><tr><th>${t("username")}</th><th>${t("full_name")}</th><th>${t("email")}</th><th>${L2("Group", "المجموعة")}</th><th>${t("perm_matrix")}</th><th>${t("status")}</th></tr></thead><tbody>
+    ${rows.map(u => `<tr class="click ${u.active ? "" : "void"}" data-a="${ed ? "uedit" : ""}" data-id="${u.id}"><td><b>${esc(u.username)}</b></td><td>${esc(u.full_name)}</td><td>${esc(u.email || "")}</td><td>${esc(groupName(u.group_key))}</td><td>${summary(u)}</td><td>${u.active ? "" : `<span class="chip bad">${t("no")}</span>`}</td></tr>`).join("")}</tbody></table></div>
     <p class="muted" style="font-size:.82em">👁 ${t("perm_view")} · + ${t("perm_add")} · ✎ ${t("perm_full")}</p></div>`;
 };
 PAGES.audit = async (view, parts, q) => {

@@ -2122,35 +2122,9 @@ def rental_action(ctx, rid, what):
 @route("GET", "/api/alerts")
 def alerts(ctx):
     """What needs attention now, for the bell in the top bar — only what this user may see."""
-    out = []
-
-    def add(level, en, ar, href, n=1):
-        out.append({"level": level, "en": en, "ar": ar, "href": href, "count": n})
-    if ctx.can("rentals.contracts"):
-        on = rentals.ongoing(ctx.db)
-        for r in on["rows"]:
-            if r.get("to_bill"):
-                add("warn", f"{r['code']} — bill from {r['next_from']}", f"{r['code']} — فوترة من {r['next_from']}", f"#/rental/{r['id']}")
-    if ctx.can("shop.installments") or ctx.can("shop.orders"):
-        o = sales.overdue_summary(ctx.db)
-        if o:
-            add("bad", f"Overdue installments: {o['count']}", f"أقساط متأخرة: {o['count']}", "#/installments?status=overdue", o["count"])
-        c = len(sales.cheques_due(ctx.db))
-        if c:
-            add("warn", f"Customer cheques due: {c}", f"شيكات عملاء مستحقة: {c}", "#/installments", c)
-    if ctx.can("accounting.recurring"):
-        due = recurring.due_list(ctx.db, acc.today(), lambda m: ctx.can(m, "add"))
-        if due:
-            add("info", f"Recurring entries due: {len(due)}", f"قيود متكررة مستحقة: {len(due)}", "#/recurring", len(due))
-    if ctx.can("assets.depreciation", "add"):
-        d = assets.due(ctx.db)
-        if d:
-            add("warn", f"Depreciation not booked up to {d['through']}", f"لم يُحتسب الإهلاك حتى {d['through']}", "#/depreciation", d["count"])
-    if ctx.can("reports"):
-        bad = [a for a in acc.audit(ctx.db) if not a["ok"]]
-        if bad:
-            add("bad", f"Books check: {len(bad)} to review", f"فحص الدفاتر: {len(bad)} للمراجعة", "#/dashboard", len(bad))
-    return ok({"rows": out, "count": sum(1 for x in out)})
+    from . import dashboards
+    out = dashboards.alerts(ctx.db, ctx.can)
+    return ok({"rows": out, "count": len(out)})
 
 
 @route("GET", "/api/assets-overview", "assets.overview")
@@ -2480,6 +2454,63 @@ def eta_cancel(ctx, xid):
 
 
 # =============================================================== dashboard
+@route("GET", "/api/dashboard/view")
+def dashboard_view(ctx):
+    """The signed-in person's dashboard (their group's), with each widget's figures. Super administrators may pass
+    ?group= to see — and customise — another group's dashboard."""
+    from . import dashboards
+    r = dashboards.view(ctx.db, ctx.user, ctx.q, ctx.can, ctx.q.get("group") or None)
+    if ctx.user.get("is_super"):
+        r["groups"] = [{k: g[k] for k in ("key", "name", "name_ar", "users")} for g in dashboards.groups(ctx.db)]
+        r["catalog"] = dashboards.catalog()
+        r["cats"] = dashboards.CATS
+    return ok(r)
+
+
+@route("GET", "/api/dashboard/groups")
+def dashboard_groups(ctx):
+    """The groups (to put people in when they are created or edited)."""
+    from . import dashboards
+    if not (ctx.user.get("is_admin") or ctx.can("users.users")):
+        raise PermissionError()
+    return ok({"groups": [{k: g[k] for k in ("key", "name", "name_ar", "users")} for g in dashboards.groups(ctx.db)]})
+
+
+def _need_super_dash(ctx):
+    if not ctx.user.get("is_super"):
+        raise PermissionError("Only a super administrator can change the dashboards")
+
+
+@route("POST", "/api/dashboard/groups")
+def dashboard_group_add(ctx):
+    from . import dashboards
+    _need_super_dash(ctx)
+    name = acc.text(ctx.body.get("name"), "name", required=True)
+    key = dashboards.save_group(ctx.db, dashboards.new_key(ctx.db, name), {**ctx.body, "name": name})
+    ctx.log("dashboard.group.add", key)
+    return ok({"key": key})
+
+
+@route("PUT", "/api/dashboard/groups/<key>")
+def dashboard_group_save(ctx, key):
+    from . import dashboards
+    _need_super_dash(ctx)
+    if not ctx.db.one("SELECT 1 FROM user_groups WHERE key=?", (key,)):
+        raise acc.ValidationError("Unknown group")
+    dashboards.save_group(ctx.db, key, ctx.body)
+    ctx.log("dashboard.group.save", key)
+    return ok()
+
+
+@route("DELETE", "/api/dashboard/groups/<key>")
+def dashboard_group_del(ctx, key):
+    from . import dashboards
+    _need_super_dash(ctx)
+    dashboards.delete_group(ctx.db, key)
+    ctx.log("dashboard.group.delete", key)
+    return ok()
+
+
 @route("GET", "/api/dashboard", "dashboard")
 def dashboard(ctx):
     q = ctx.q

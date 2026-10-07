@@ -2708,6 +2708,74 @@ class Extracts(unittest.TestCase):
         self.assertEqual(d2.one("SELECT pct FROM extract_lines WHERE extract_id=? AND description='ايجار'", (x["id"],))["pct"], 0.5)
 
 
+class DashboardsPerGroup(unittest.TestCase):
+    """Each group has its own dashboard; only super administrators change them; a card shows only to people allowed to
+    see it unless a super administrator ticked "show even without access"; the server sends nothing else."""
+
+    def setUp(self):
+        from erp.server import handle
+        from erp import demo
+        self.handle = handle
+        self.app = type("App", (), {"static": False})()
+        self.app.db = self.db = Database(":memory:")
+        demo.load(self.db, "boss")
+        auth.create_user(self.db, {"username": "boss", "password": "secret123"}, first=True)
+        auth.create_user(self.db, {"username": "admin2", "password": "secret123", "is_admin": True})
+        auth.create_user(self.db, {"username": "sam", "password": "secret123", "full_name": "Sam Sales", "group_key": "sales",
+                                   "perms": {"shop": "view", "sales": "view"}})
+        self.tok = {u: auth.login(self.db, u, "secret123")[0] for u in ("boss", "admin2", "sam")}
+
+    def call(self, who, method, url, body=None):
+        h = {"x-requested-with": "BeyondERP", "x-session": self.tok[who], "content-type": "application/json"}
+        r = self.handle(self.app, method, url, h, json.dumps(body).encode() if body is not None else b"")
+        return r.status, json.loads(r.body)
+
+    def test_groups_permissions_and_grants(self):
+        st, v = self.call("sam", "GET", "/api/dashboard/view")
+        self.assertEqual((st, v["group"]), (200, "sales"))
+        ids = [w["w"] for w in v["widgets"]]
+        self.assertIn("sales_target", ids)
+        self.assertIn("installments_upcoming", ids)
+        self.assertNotIn("catalog", v)                                     # the catalogue is for super administrators
+        # another group's dashboard is not theirs to see — they get their own
+        self.assertEqual(self.call("sam", "GET", "/api/dashboard/view?group=management")[1]["group"], "sales")
+        # only super administrators change dashboards (not even an administrator)
+        self.assertEqual(self.call("admin2", "PUT", "/api/dashboard/groups/sales", {"layout": []})[0], 403)
+        self.assertEqual(self.call("sam", "POST", "/api/dashboard/groups", {"name": "x"})[0], 403)
+        # a money card Sam may not see stays out, figures and all…
+        self.assertEqual(self.call("boss", "PUT", "/api/dashboard/groups/sales",
+                                   {"layout": [{"w": "sales_target", "opts": {"target": 50000, "period": "month"}}, {"w": "cash"}]})[0], 200)
+        v = self.call("sam", "GET", "/api/dashboard/view")[1]
+        self.assertEqual([w["w"] for w in v["widgets"]], ["sales_target"])
+        self.assertEqual(v["widgets"][0]["data"]["target"], 50000)
+        # …until a super administrator lets the group see it
+        self.call("boss", "PUT", "/api/dashboard/groups/sales", {"layout": [{"w": "sales_target"}, {"w": "cash", "grant": True}]})
+        v = self.call("sam", "GET", "/api/dashboard/view")[1]
+        self.assertEqual([w["w"] for w in v["widgets"]], ["sales_target", "cash"])
+        self.assertIn("value", v["widgets"][1]["data"])
+        # the super administrator sees any group's dashboard and the catalogue to customise it
+        v = self.call("boss", "GET", "/api/dashboard/view?group=hr")[1]
+        self.assertEqual(v["group"], "hr")
+        self.assertTrue(v["catalog"] and v["groups"])
+        # new group, copied from Sales; deleting it moves its people to General
+        st, r = self.call("boss", "POST", "/api/dashboard/groups", {"name": "Site engineers", "copy_from": "sales"})
+        self.assertEqual(st, 200)
+        self.assertEqual(self.call("boss", "PUT", f"/api/users/{self.db.one('SELECT id FROM users WHERE username=?', ('sam',))['id']}",
+                                   {"group_key": r["key"]})[0], 200)
+        self.assertEqual(self.call("sam", "GET", "/api/dashboard/view")[1]["group"], r["key"])
+        self.call("boss", "DELETE", "/api/dashboard/groups/" + r["key"])
+        self.assertEqual(self.call("sam", "GET", "/api/dashboard/view")[1]["group"], "general")
+        self.assertEqual(self.call("boss", "DELETE", "/api/dashboard/groups/general")[0], 400)
+
+    def test_every_card_works_on_real_books(self):
+        from erp import dashboards
+        lay = [{"w": w} for w in dashboards.WIDGETS]
+        self.call("boss", "PUT", "/api/dashboard/groups/management", {"layout": lay})
+        v = self.call("boss", "GET", "/api/dashboard/view?group=management")[1]
+        self.assertEqual(len(v["widgets"]), len(dashboards.WIDGETS))
+        self.assertEqual([w["w"] for w in v["widgets"] if w.get("error")], [])
+
+
 class ChatProfilesAssistant(unittest.TestCase):
     """Chat rooms and their members, edit-until-seen, files, mentions, export; profiles; the AI assistant's policy."""
 

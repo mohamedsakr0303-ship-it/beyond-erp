@@ -852,7 +852,8 @@ def export_extras(db):
             "custodies": custody.export_rows(db), "rentals": rentals.export_rows(db), "payroll": payroll.export_rows(db),
             "sales": sales.export_rows(db), "bank": bankrec.export_rows(db), "recurring": recurring.export_rows(db),
             "entry_meta": _entry_meta_export(db), "attachments": _attachments_export(db),
-            "purchase_orders": _po_export(db), "services": _svc_export(db), "chat": _chat_export(db)}
+            "purchase_orders": _po_export(db), "services": _svc_export(db), "chat": _chat_export(db),
+            "dashboard_groups": db.q("SELECT key, name, name_ar, layout, sort FROM user_groups ORDER BY sort, id")}
 
 
 def _chat_export(db):
@@ -990,6 +991,14 @@ def _imp_extras(db, ex, mode, counts):
         if mode == "replace":
             db.conn.execute("DELETE FROM attachments")
         counts["Attached files"] = attachments.import_rows(db, ex["attachments"])
+    if isinstance(ex.get("dashboard_groups"), list) and ex["dashboard_groups"]:   # each group's dashboard
+        for g in ex["dashboard_groups"]:
+            if isinstance(g, dict) and g.get("key"):
+                db.conn.execute("INSERT INTO user_groups(key,name,name_ar,layout,sort) VALUES (?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET "
+                                "name=excluded.name, name_ar=excluded.name_ar, layout=excluded.layout, sort=excluded.sort",
+                                (acc.text(g["key"]), acc.text(g.get("name")) or g["key"], acc.text(g.get("name_ar")),
+                                 g.get("layout") if isinstance(g.get("layout"), str) else json.dumps(g.get("layout") or []), int(g.get("sort") or 0)))
+        counts["Dashboard groups"] = len(ex["dashboard_groups"])
     if isinstance(ex.get("chat"), dict):
         from . import chat
         chat.import_rows(db, ex["chat"], mode, counts)

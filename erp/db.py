@@ -931,6 +931,16 @@ CREATE TABLE IF NOT EXISTS offers (
 );
 
 -- People: a profile per user (picture, title, contact) and their personal preferences (menu, notifications).
+-- Dashboards per group of users: each group's widgets in order, with their size, options and "show even without
+-- access" (set by super administrators only). users.group_key says which group a person belongs to.
+CREATE TABLE IF NOT EXISTS user_groups (
+    id INTEGER PRIMARY KEY,
+    key TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL DEFAULT '',
+    name_ar TEXT DEFAULT '',
+    layout TEXT NOT NULL DEFAULT '[]',   -- [{"w": widget id, "size": 1|2|4, "grant": true, "opts": {...}}]
+    sort INTEGER NOT NULL DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS user_profiles (
     user_id      INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
     display_name TEXT DEFAULT '',
@@ -1303,6 +1313,7 @@ class Database:
         have = self._add_cols("accounts", [("name_ar", "TEXT DEFAULT ''")])
         self._add_cols("rental_lines", [("cost", "INTEGER NOT NULL DEFAULT 0")])
         self._add_cols("users", [("is_super", "INTEGER NOT NULL DEFAULT 0")])
+        self._add_cols("users", [("group_key", "TEXT NOT NULL DEFAULT ''")])
         if not self.conn.execute("SELECT 1 FROM users WHERE is_super=1 AND active=1").fetchone():   # books from before the level
             self.conn.execute("UPDATE users SET is_super=1 WHERE id=(SELECT id FROM users WHERE is_admin=1 AND active=1 ORDER BY id LIMIT 1)")
         if "name_ar" not in have:
