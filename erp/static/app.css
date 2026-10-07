@@ -299,6 +299,7 @@ h4.fsec{margin:14px 0 4px;font-size:.85em;text-transform:uppercase;letter-spacin
 #impwm tr.miss td{background:rgba(185,28,28,.07)}
 #impwm select{min-width:160px;max-width:100%}
 .impdd .dd-menu{min-width:240px}
+.newdd .dd-menu{max-height:calc(100vh - 90px);overflow-y:auto;overscroll-behavior:contain}
 .bgrid input{width:96px;min-width:80px;padding:4px 6px}.bgrid td{padding:3px 4px}.bgrid input.bt{font-weight:600}
 .attlist{display:grid;gap:6px}.att{display:flex;gap:10px;align-items:center;border:1px solid var(--line,#e3e6ea);border-radius:10px;padding:6px 8px;min-width:0}
 .attthumb{width:48px;height:48px;flex:0 0 48px;border:0;border-radius:8px;background:var(--soft,#f2f4f7);display:grid;place-items:center;font-size:22px;cursor:pointer;overflow:hidden;padding:0}
@@ -453,7 +454,7 @@ tr.click:hover td{background:color-mix(in srgb,var(--brand) 6%,transparent)}
   .bottombar .badge{top:0;inset-inline-end:6px}
   .bb-new>.btn{width:54px;height:54px;border-radius:18px;padding:0;display:flex;align-items:center;justify-content:center;margin-top:-26px;box-shadow:0 10px 24px color-mix(in srgb,var(--brand) 45%,transparent)}
   .bb-new>.btn svg.i{width:24px;height:24px}
-  .bb-new .dd-menu{position:fixed;inset-inline:10px;bottom:calc(84px + env(safe-area-inset-bottom));top:auto;min-width:0}
+  .bb-new .dd-menu{position:fixed;inset-inline:10px;bottom:calc(84px + env(safe-area-inset-bottom));top:auto;min-width:0;max-height:calc(100vh - 170px)}
   .kpi .v{font-size:1.25em}
   .drawer{border-radius:0}
 }
@@ -784,6 +785,9 @@ label.ppl.chk input{margin:0}
   .prof-grid{grid-template-columns:minmax(0,1fr)}
   .prof-card{position:static}
   .emo-grid{grid-template-columns:repeat(7,34px)}
+  /* on a phone menus are pinned to the screen: the emoji panel sits just above the composer and the bottom bar */
+  .ch-emo .dd-menu{position:fixed;inset-inline:10px;top:auto;bottom:calc(160px + env(safe-area-inset-bottom));max-height:45vh}
+  .ch-emo .emo-grid{grid-template-columns:repeat(auto-fill,minmax(38px,1fr))}
 }
 
 /* the assistant's checked change */
