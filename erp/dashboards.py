@@ -362,6 +362,41 @@ def w_payroll_status(c, o):
             "this_done": bool(c.db.one("SELECT 1 FROM payroll_runs WHERE period=? AND status='posted'", (this,))), "href": "#/payroll"}
 
 
+def w_projects_progress(c, o):
+    from . import projects
+    rows = [r for r in projects.overview(c.db) if r["status"] not in ("Completed", "Closed") and (r["progress"] is not None or r["open_tasks"])]
+    rows.sort(key=lambda r: (r["variance"] if r["variance"] is not None else 0))
+    return {"rows": [{"title": r["code"], "sub": (f"{round((r['progress'] or 0) * 100)}% done" + (f" · plan {round(r['planned'] * 100)}%" if r["planned"] is not None else "")
+                                                   + (f" · {r['overdue_tasks']} overdue tasks" if r["overdue_tasks"] else "")),
+                      "value": r["contract_value"], "href": f"#/project/{r['id']}",
+                      "level": "bad" if (r["variance"] or 0) < -0.1 or r["overdue_tasks"] else "warn" if (r["variance"] or 0) < 0 else "ok"}
+                     for r in rows[: int(o.get("count") or 8)]]}
+
+
+def w_contracts_watch(c, o):
+    from . import contracts
+    a = contracts.alerts(c.db)
+    rows = [{"title": r["party"], "sub": f"{r['code']} · {'ended' if r['expired'] else 'ends'} {r['revised_finish']}", "value": r["revised_value"],
+             "href": f"#/contract/{r['id']}", "level": "bad" if r["expired"] else "warn"} for r in a["expired"] + a["ending_soon"]]
+    return {"pending_vos": a["pending_vos"], "certs": a["certs_to_approve"] + a["certs_to_post"], "rows": rows[:10]}
+
+
+def w_equipment_due(c, o):
+    from . import equipment
+    a = equipment.alerts(c.db)
+    return {"rows": [{"title": f"{x['code']} — {x['name']}", "sub": x["plan"] + (f" · due {x['due_date']}" if x["due_date"] else "")
+                      + (f" · {x['meter']:g}/{x['due_hours']:g} h" if x["due_hours"] else ""), "value": None, "href": "#/maintenance",
+                      "level": "bad" if x["state"] == "overdue" else "warn"} for x in a["maintenance_due"][:10]]}
+
+
+def w_attendance_today(c, o):
+    from . import labour
+    s = labour.sheet(c.db, acc.today())["summary"]
+    return {"value": s["present"] + s["half"], "count": True, "href": "#/attendance",
+            "sub": [f"absent {s['absent'] + s['sick']} · leave {s['leave']} · not marked {s['unmarked']}",
+                    f"غياب {s['absent'] + s['sick']} · إجازة {s['leave']} · لم يُسجَّل {s['unmarked']}"]}
+
+
 def w_quick_links(c, o):
     return {}   # drawn in the page from the screens this person may open
 
@@ -403,6 +438,11 @@ _W = [
     ("inventory_value", "Stock value", "قيمة المخزون", "purchasing", ("stock.balances",), 1, w_inventory, {}),
     ("headcount", "Employees", "الموظفون", "hr", ("payroll.employees",), 1, w_headcount, {}),
     ("payroll_status", "This month's payroll", "رواتب هذا الشهر", "hr", ("payroll.runs",), 1, w_payroll_status, {}),
+    ("projects_progress", "Projects: progress vs plan", "المشروعات: الإنجاز مقابل الخطة", "projects", ("projects.overview",), 2, w_projects_progress,
+     {"count": ("How many", "العدد", "number")}),
+    ("contracts_watch", "Contracts to watch", "عقود تحتاج متابعة", "projects", ("contracts.contracts",), 2, w_contracts_watch, {}),
+    ("equipment_due", "Equipment maintenance due", "صيانة معدات مستحقة", "projects", ("equipment.maintenance",), 2, w_equipment_due, {}),
+    ("attendance_today", "On site today", "الحضور اليوم", "hr", ("payroll.attendance",), 1, w_attendance_today, {}),
     ("quick_links", "Quick links", "روابط سريعة", "general", (), 2, w_quick_links, {}),
 ]
 WIDGETS = {w[0]: {"id": w[0], "en": w[1], "ar": w[2], "cat": w[3], "perm": w[4], "size": w[5], "fn": w[6], "opts": w[7]} for w in _W}
@@ -468,6 +508,60 @@ def alerts(db, can):
         d = assets.due(db)
         if d:
             add("warn", f"Depreciation not booked up to {d['through']}", f"لم يُحتسب الإهلاك حتى {d['through']}", "#/depreciation", d["count"])
+    if can("projects.tasks") or can("projects.overview"):
+        from . import projects
+        p = projects.alerts(db)
+        if p["overdue_tasks"]:
+            add("warn", f"Overdue project tasks: {p['overdue_tasks']}", f"مهام مشروعات متأخرة: {p['overdue_tasks']}", "#/tasks?status=overdue", p["overdue_tasks"])
+        if p["late_phases"]:
+            add("warn", f"Project phases past their finish date: {p['late_phases']}", f"مراحل تجاوزت موعد انتهائها: {p['late_phases']}", "#/projects",
+                p["late_phases"])
+    if can("contracts.contracts") or can("contracts.variations") or can("contracts.certificates"):
+        from . import contracts
+        c = contracts.alerts(db)
+        if c["expired"]:
+            add("bad", f"Contracts past their end date: {len(c['expired'])}", f"عقود تجاوزت تاريخ انتهائها: {len(c['expired'])}", "#/contracts", len(c["expired"]))
+        if c["ending_soon"]:
+            add("warn", f"Contracts ending within 30 days: {len(c['ending_soon'])}", f"عقود تنتهي خلال 30 يوماً: {len(c['ending_soon'])}", "#/contracts",
+                len(c["ending_soon"]))
+        if c["pending_vos"] and can("contracts.variations", "edit"):
+            add("info", f"Variation orders to decide: {c['pending_vos']}", f"أوامر تغيير بانتظار القرار: {c['pending_vos']}", "#/variations", c["pending_vos"])
+        if (c["certs_to_approve"] or c["certs_to_post"]) and can("contracts.certificates", "edit"):
+            n = c["certs_to_approve"] + c["certs_to_post"]
+            add("info", f"Subcontractor certificates to approve / post: {n}", f"مستخلصات مقاولي باطن للاعتماد / الترحيل: {n}", "#/certificates", n)
+        if c["retention_due"]:
+            add("warn", f"Retention due for release: {len(c['retention_due'])}", f"محتجزات مستحقة الرد: {len(c['retention_due'])}", "#/contracts",
+                len(c["retention_due"]))
+    if can("purchasing.requests"):
+        from . import procurement
+        r = procurement.alerts(db)
+        if r["to_approve"] and can("purchasing.requests", "edit"):
+            add("info", f"Purchase requests to approve: {r['to_approve']}", f"طلبات شراء بانتظار الاعتماد: {r['to_approve']}", "#/purchase-requests?status=submitted",
+                r["to_approve"])
+        if r["to_order"]:
+            add("info", f"Approved requests not ordered yet: {r['to_order']}", f"طلبات معتمدة لم يُصدر لها أمر شراء: {r['to_order']}",
+                "#/purchase-requests?status=approved", r["to_order"])
+    if can("stock.counts"):
+        from . import stocktake
+        n = stocktake.alerts(db)["open_counts"]
+        if n:
+            add("info", f"Stock counts open: {n}", f"جرد مفتوح: {n}", "#/stock-counts", n)
+    if can("equipment.maintenance"):
+        from . import equipment
+        e = equipment.alerts(db)
+        if e["overdue"]:
+            add("bad", f"Equipment maintenance overdue: {e['overdue']}", f"صيانة معدات متأخرة: {e['overdue']}", "#/maintenance", e["overdue"])
+        elif e["maintenance_due"]:
+            add("warn", f"Equipment maintenance due soon: {len(e['maintenance_due'])}", f"صيانة معدات قريبة: {len(e['maintenance_due'])}", "#/maintenance",
+                len(e["maintenance_due"]))
+    if can("tax.ereceipt"):
+        from . import ereceipt
+        r = ereceipt.alerts(db)
+        if r["rejected"]:
+            add("bad", f"E-receipts rejected: {r['rejected']}", f"إيصالات إلكترونية مرفوضة: {r['rejected']}", "#/ereceipts?status=rejected", r["rejected"])
+        if r["not_sent"]:
+            add("warn", f"E-receipts not sent to the tax authority: {r['not_sent']}", f"إيصالات لم تُرسل لمصلحة الضرائب: {r['not_sent']}", "#/ereceipts?status=issued",
+                r["not_sent"])
     if can("reports"):
         bad = [a for a in acc.audit(db) if not a["ok"]]
         if bad:

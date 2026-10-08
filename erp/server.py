@@ -676,6 +676,8 @@ KIND_MODULE = {"Revenue Recognition": "shop.subscriptions", "Supplier Discount":
                **{k: "accounting.loans" for k in loans.ALL_KINDS}, **{k: "purchasing.custody" for k in custody.ALL_KINDS},
                **{k: "rentals.fleet" for k in rentals.KINDS},
                "Bank Entry": "accounting.bankrec",
+               "Subcontractor Certificate": "contracts.certificates", "Equipment Usage": "equipment.usage",
+               "Equipment Maintenance": "equipment.maintenance", "E-Receipt": "tax.ereceipt",
                **{k: "shop.orders" for k in ("Installment Interest", "Advance Applied", "Cost of Sales", "Cheque Received",
                                              "Cheque Cleared", "Cheque Bounced", "Sale Refund")}}
 
@@ -2425,9 +2427,9 @@ def eta_settings(ctx):
 
 @route("PUT", "/api/einvoice/settings", "tax.einvoice", "edit")
 def eta_settings_save(ctx):
-    from .db import ETA_SETTINGS
+    from .db import ETA_SECRETS, ETA_SETTINGS
     for k, v in ctx.body.items():
-        if k not in ETA_SETTINGS or (k == "eta_client_secret" and (v or "").startswith("••")):
+        if k not in ETA_SETTINGS or (k in ETA_SECRETS and (v or "").startswith("••")):
             continue
         if k == "eta_env" and v not in ("preprod", "prod"):
             raise acc.ValidationError("environment must be preprod or prod")
@@ -2486,6 +2488,544 @@ def eta_refresh(ctx, xid):
 @route("POST", "/api/einvoice/<xid>/cancel", "tax.einvoice", "edit")
 def eta_cancel(ctx, xid):
     return ok(einvoice.cancel(ctx.db, int(xid), ctx.body.get("reason")))
+
+
+# ================================================== projects, contracts, procurement, site (erp/projects.py …)
+def _u(ctx):
+    return ctx.user["username"]
+
+
+@route("GET", "/api/projects", "projects.overview")
+def prj_overview(ctx):
+    from . import projects
+    return ok(projects.overview(ctx.db))
+
+
+@route("GET", "/api/projects/<bu>", "projects.overview")
+def prj_status(ctx, bu):
+    from . import projects
+    r = projects.status_report(ctx.db, bu)
+    r["phases"] = projects.phases(ctx.db, r["bu"]["id"])
+    return ok(r)
+
+
+@route("POST", "/api/project-phases", "projects.overview", "add")
+def prj_phase_add(ctx):
+    from . import projects
+    return ok({"id": projects.save_phase(ctx.db, ctx.body)})
+
+
+@route("PUT", "/api/project-phases/<pid>", "projects.overview", "edit")
+def prj_phase_edit(ctx, pid):
+    from . import projects
+    projects.save_phase(ctx.db, ctx.body, pid)
+    return ok()
+
+
+@route("DELETE", "/api/project-phases/<pid>", "projects.overview", "edit")
+def prj_phase_del(ctx, pid):
+    from . import projects
+    projects.delete_phase(ctx.db, pid)
+    return ok()
+
+
+@route("GET", "/api/project-tasks", "projects.tasks")
+def prj_tasks(ctx):
+    from . import projects
+    q = ctx.q
+    return ok(projects.tasks(ctx.db, q.get("bu_id"), q.get("assignee"), q.get("status"), q.get("q")))
+
+
+@route("POST", "/api/project-tasks", "projects.tasks", "add")
+def prj_task_add(ctx):
+    from . import projects
+    return ok({"id": projects.save_task(ctx.db, ctx.body, None, _u(ctx))})
+
+
+@route("PUT", "/api/project-tasks/<tid>", "projects.tasks", "add")
+def prj_task_edit(ctx, tid):
+    from . import projects
+    projects.save_task(ctx.db, ctx.body, tid, _u(ctx))
+    return ok()
+
+
+@route("DELETE", "/api/project-tasks/<tid>", "projects.tasks", "edit")
+def prj_task_del(ctx, tid):
+    from . import projects
+    projects.delete_task(ctx.db, tid)
+    return ok()
+
+
+# contracts & variation orders
+@route("GET", "/api/contracts", "contracts.contracts")
+def con_list(ctx):
+    from . import contracts
+    q = ctx.q
+    return ok(contracts.listing(ctx.db, q.get("kind"), q.get("bu_id"), q.get("status"), q.get("q")))
+
+
+@route("GET", "/api/contracts/<cid>", "contracts.contracts")
+def con_get(ctx, cid):
+    from . import contracts
+    return ok(contracts.get(ctx.db, cid))
+
+
+@route("POST", "/api/contracts", "contracts.contracts", "add")
+def con_add(ctx):
+    from . import contracts
+    cid = contracts.save(ctx.db, ctx.body)
+    ctx.log("contract.add", cid)
+    return ok({"id": cid})
+
+
+@route("PUT", "/api/contracts/<cid>", "contracts.contracts", "edit")
+def con_edit(ctx, cid):
+    from . import contracts
+    contracts.save(ctx.db, ctx.body, cid)
+    ctx.log("contract.edit", cid)
+    return ok()
+
+
+@route("DELETE", "/api/contracts/<cid>", "contracts.contracts", "edit")
+def con_del(ctx, cid):
+    from . import contracts
+    c = contracts.get(ctx.db, cid)
+    if c["certificates"] or any(v["status"] == "approved" for v in c["variations"]):
+        raise acc.ValidationError("This contract has certificates or approved variations — mark it terminated instead")
+    ctx.db.x("DELETE FROM contracts WHERE id=?", (c["id"],))
+    ctx.log("contract.delete", c["code"])
+    return ok()
+
+
+@route("POST", "/api/contracts/<cid>/variations", "contracts.variations", "add")
+def con_vo_add(ctx, cid):
+    from . import contracts
+    return ok({"id": contracts.save_vo(ctx.db, cid, ctx.body)})
+
+
+@route("PUT", "/api/variations/<vid>", "contracts.variations", "add")
+def con_vo_edit(ctx, vid):
+    from . import contracts
+    v = ctx.db.one("SELECT contract_id FROM variation_orders WHERE id=?", (int(vid),))
+    if not v:
+        raise acc.ValidationError("Variation order not found")
+    contracts.save_vo(ctx.db, v["contract_id"], ctx.body, vid)
+    return ok()
+
+
+@route("POST", "/api/variations/<vid>/decide", "contracts.variations", "edit")
+def con_vo_decide(ctx, vid):
+    from . import contracts
+    contracts.decide_vo(ctx.db, vid, ctx.body.get("decision"), _u(ctx))
+    ctx.log("variation." + str(ctx.body.get("decision")), vid)
+    return ok()
+
+
+@route("DELETE", "/api/variations/<vid>", "contracts.variations", "edit")
+def con_vo_del(ctx, vid):
+    from . import contracts
+    contracts.delete_vo(ctx.db, vid)
+    return ok()
+
+
+@route("GET", "/api/variations", "contracts.variations")
+def con_vo_list(ctx):
+    rows = ctx.db.q("SELECT v.*, c.code AS contract, c.party, c.kind, b.code AS bu_code FROM variation_orders v JOIN contracts c ON c.id=v.contract_id "
+                    "LEFT JOIN business_units b ON b.id=c.bu_id ORDER BY v.date DESC, v.id DESC")
+    for r in rows:
+        r["amount"] = acc.to_major(r["amount"])
+    return ok(rows)
+
+
+# subcontractor certificates
+@route("GET", "/api/sub-certificates", "contracts.certificates")
+def cert_list(ctx):
+    from . import contracts
+    out = []
+    for c in ctx.db.q("SELECT id FROM contracts WHERE kind='sub' ORDER BY code"):
+        k = contracts.get(ctx.db, c["id"])
+        for x in k["certificates"]:
+            out.append({"id": x["id"], "contract_id": k["id"], "contract": k["code"], "party": k["party"], "bu_code": k["bu_code"],
+                        **{f: x[f] for f in ("number", "date", "period_to", "status", "gross_to_date", "previous", "this_period", "retention",
+                                             "advance_recovered", "vat", "wht", "net_payable", "entry_id")}})
+    out.sort(key=lambda r: (r["date"], r["id"]), reverse=True)
+    return ok(out)
+
+
+@route("POST", "/api/contracts/<cid>/certificates", "contracts.certificates", "add")
+def cert_add(ctx, cid):
+    from . import contracts
+    return ok({"id": contracts.save_certificate(ctx.db, cid, ctx.body)})
+
+
+@route("PUT", "/api/sub-certificates/<xid>", "contracts.certificates", "add")
+def cert_edit(ctx, xid):
+    from . import contracts
+    x = ctx.db.one("SELECT contract_id FROM sub_certificates WHERE id=?", (int(xid),))
+    if not x:
+        raise acc.ValidationError("Certificate not found")
+    contracts.save_certificate(ctx.db, x["contract_id"], ctx.body, xid)
+    return ok()
+
+
+@route("POST", "/api/sub-certificates/<xid>/<action>", "contracts.certificates", "edit")
+def cert_action(ctx, xid, action):
+    from . import contracts
+    fn = {"approve": contracts.approve_certificate, "post": contracts.post_certificate, "reopen": contracts.reopen_certificate}.get(action)
+    if not fn:
+        raise acc.ValidationError("Unknown action")
+    r = fn(ctx.db, xid, _u(ctx))
+    ctx.log("certificate." + action, xid)
+    return ok({"entry_id": r} if action == "post" else {})
+
+
+@route("DELETE", "/api/sub-certificates/<xid>", "contracts.certificates", "edit")
+def cert_del(ctx, xid):
+    from . import contracts
+    contracts.delete_certificate(ctx.db, xid)
+    return ok()
+
+
+@route("POST", "/api/contracts/<cid>/pay", "contracts.certificates", "add")
+def con_pay(ctx, cid):
+    from . import contracts
+    if not ctx.can("purchasing.payments", "add") and ctx.body.get("kind") != "release":
+        raise PermissionError("Paying needs 'add' on Purchasing → Payments")
+    eid = contracts.pay(ctx.db, cid, ctx.body, _u(ctx))
+    ctx.log("contract.pay", f"{cid} {ctx.body.get('kind')}")
+    return ok({"entry_id": eid})
+
+
+# purchase requests & quotation comparison
+@route("GET", "/api/purchase-requests", "purchasing.requests")
+def prq_list(ctx):
+    from . import procurement
+    return ok(procurement.listing(ctx.db, ctx.q.get("status"), ctx.q.get("bu_id"), ctx.q.get("q")))
+
+
+@route("GET", "/api/purchase-requests/<pid>", "purchasing.requests")
+def prq_get(ctx, pid):
+    from . import procurement
+    return ok(procurement.get(ctx.db, pid))
+
+
+@route("POST", "/api/purchase-requests", "purchasing.requests", "add")
+def prq_add(ctx):
+    from . import procurement
+    pid = procurement.save(ctx.db, ctx.body, _u(ctx))
+    if ctx.body.get("submit"):
+        procurement.set_status(ctx.db, pid, "submitted", _u(ctx))
+    return ok({"id": pid})
+
+
+@route("PUT", "/api/purchase-requests/<pid>", "purchasing.requests", "add")
+def prq_edit(ctx, pid):
+    from . import procurement
+    procurement.save(ctx.db, ctx.body, _u(ctx), pid)
+    return ok()
+
+
+@route("POST", "/api/purchase-requests/<pid>/status", "purchasing.requests", "add")
+def prq_status(ctx, pid):
+    from . import procurement
+    st = ctx.body.get("status")
+    if st in ("approved", "rejected") and not ctx.can("purchasing.requests", "edit"):
+        raise PermissionError("Approving needs 'edit' on Purchase requests")
+    procurement.set_status(ctx.db, pid, st, _u(ctx))
+    ctx.log("pr." + str(st), pid)
+    return ok()
+
+
+@route("POST", "/api/purchase-requests/<pid>/quotes", "purchasing.requests", "add")
+def prq_quote_add(ctx, pid):
+    from . import procurement
+    return ok({"id": procurement.save_quote(ctx.db, pid, ctx.body)})
+
+
+@route("PUT", "/api/purchase-requests/<pid>/quotes/<qid>", "purchasing.requests", "add")
+def prq_quote_edit(ctx, pid, qid):
+    from . import procurement
+    procurement.save_quote(ctx.db, pid, ctx.body, qid)
+    return ok()
+
+
+@route("DELETE", "/api/purchase-requests/<pid>/quotes/<qid>", "purchasing.requests", "add")
+def prq_quote_del(ctx, pid, qid):
+    from . import procurement
+    procurement.delete_quote(ctx.db, qid)
+    return ok()
+
+
+@route("POST", "/api/purchase-requests/<pid>/award", "purchasing.requests", "edit")
+def prq_award(ctx, pid):
+    from . import procurement
+    if not ctx.can("purchasing.orders", "add"):
+        raise PermissionError("Raising orders needs 'add' on Purchase orders")
+    codes = procurement.award(ctx.db, pid, ctx.body, _u(ctx))
+    ctx.log("pr.award", f"{pid} → {', '.join(codes)}")
+    return ok({"orders": codes})
+
+
+@route("DELETE", "/api/purchase-requests/<pid>", "purchasing.requests", "edit")
+def prq_del(ctx, pid):
+    from . import procurement
+    pr = procurement.get(ctx.db, pid)
+    if pr["status"] == "ordered":
+        raise acc.ValidationError("Orders were raised from this request — cancel those orders instead")
+    ctx.db.x("DELETE FROM purchase_requests WHERE id=?", (pr["id"],))
+    return ok()
+
+
+# stocktakes
+@route("GET", "/api/stock-counts", "stock.counts")
+def sc_list(ctx):
+    from . import stocktake
+    return ok(stocktake.listing(ctx.db, ctx.q.get("status")))
+
+
+@route("GET", "/api/stock-counts/<cid>", "stock.counts")
+def sc_get(ctx, cid):
+    from . import stocktake
+    return ok(stocktake.get(ctx.db, cid))
+
+
+@route("POST", "/api/stock-counts", "stock.counts", "add")
+def sc_start(ctx):
+    from . import stocktake
+    return ok({"id": stocktake.start(ctx.db, ctx.body, _u(ctx))})
+
+
+@route("PUT", "/api/stock-counts/<cid>", "stock.counts", "add")
+def sc_save(ctx, cid):
+    from . import stocktake
+    stocktake.save_counts(ctx.db, cid, ctx.body)
+    return ok(stocktake.get(ctx.db, cid))
+
+
+@route("POST", "/api/stock-counts/<cid>/post", "stock.counts", "edit")
+def sc_post(ctx, cid):
+    from . import stocktake
+    n = stocktake.post(ctx.db, cid, _u(ctx))
+    ctx.log("stockcount.post", f"{cid}: {n} adjustments")
+    return ok({"adjustments": n})
+
+
+@route("POST", "/api/stock-counts/<cid>/cancel", "stock.counts", "edit")
+def sc_cancel(ctx, cid):
+    from . import stocktake
+    stocktake.cancel(ctx.db, cid)
+    return ok()
+
+
+# equipment
+@route("GET", "/api/equipment", "equipment.register")
+def eq_list(ctx):
+    from . import equipment
+    return ok(equipment.listing(ctx.db, ctx.q.get("status"), ctx.q.get("q")))
+
+
+@route("GET", "/api/equipment-report", "equipment.usage")
+def eq_report(ctx):
+    from . import equipment
+    return ok(equipment.report(ctx.db, ctx.q.get("date_from"), ctx.q.get("date_to")))
+
+
+@route("GET", "/api/equipment/<eid>", "equipment.register")
+def eq_get(ctx, eid):
+    from . import equipment
+    e = equipment.get(ctx.db, eid)
+    e["usage"] = equipment.usage(ctx.db, e["id"])[:200]
+    e["logs"] = equipment.logs(ctx.db, e["id"])
+    return ok(e)
+
+
+@route("POST", "/api/equipment", "equipment.register", "add")
+def eq_add(ctx):
+    from . import equipment
+    return ok({"id": equipment.save(ctx.db, ctx.body)})
+
+
+@route("PUT", "/api/equipment/<eid>", "equipment.register", "edit")
+def eq_edit(ctx, eid):
+    from . import equipment
+    equipment.save(ctx.db, ctx.body, eid)
+    return ok()
+
+
+@route("DELETE", "/api/equipment/<eid>", "equipment.register", "edit")
+def eq_del(ctx, eid):
+    from . import equipment
+    equipment.delete(ctx.db, eid)
+    return ok()
+
+
+@route("GET", "/api/equipment-usage", "equipment.usage")
+def eq_usage(ctx):
+    from . import equipment
+    q = ctx.q
+    return ok(equipment.usage(ctx.db, q.get("equipment_id"), q.get("bu_id"), q.get("date_from"), q.get("date_to")))
+
+
+@route("POST", "/api/equipment-usage", "equipment.usage", "add")
+def eq_usage_add(ctx):
+    from . import equipment
+    return ok({"id": equipment.log_usage(ctx.db, ctx.body, _u(ctx))})
+
+
+@route("DELETE", "/api/equipment-usage/<uid>", "equipment.usage", "edit")
+def eq_usage_del(ctx, uid):
+    from . import equipment
+    equipment.delete_usage(ctx.db, uid, _u(ctx))
+    return ok()
+
+
+@route("GET", "/api/maintenance", "equipment.maintenance")
+def eq_maint(ctx):
+    from . import equipment
+    plans = []
+    for e in equipment.listing(ctx.db):
+        plans += [{**p, "code": e["code"], "name": e["name"]} for p in e["plans"]]
+    return ok({"plans": plans, "logs": equipment.logs(ctx.db, ctx.q.get("equipment_id"))})
+
+
+@route("POST", "/api/maintenance-plans", "equipment.maintenance", "add")
+def eq_plan_add(ctx):
+    from . import equipment
+    return ok({"id": equipment.save_plan(ctx.db, ctx.body)})
+
+
+@route("PUT", "/api/maintenance-plans/<pid>", "equipment.maintenance", "edit")
+def eq_plan_edit(ctx, pid):
+    from . import equipment
+    equipment.save_plan(ctx.db, ctx.body, pid)
+    return ok()
+
+
+@route("DELETE", "/api/maintenance-plans/<pid>", "equipment.maintenance", "edit")
+def eq_plan_del(ctx, pid):
+    from . import equipment
+    equipment.delete_plan(ctx.db, pid)
+    return ok()
+
+
+@route("POST", "/api/maintenance-logs", "equipment.maintenance", "add")
+def eq_log_add(ctx):
+    from . import equipment
+    return ok({"id": equipment.log_maintenance(ctx.db, ctx.body, _u(ctx))})
+
+
+@route("DELETE", "/api/maintenance-logs/<lid>", "equipment.maintenance", "edit")
+def eq_log_del(ctx, lid):
+    from . import equipment
+    equipment.delete_log(ctx.db, lid, _u(ctx))
+    return ok()
+
+
+# attendance
+@route("GET", "/api/attendance", "payroll.attendance")
+def att_sheet(ctx):
+    from . import labour
+    return ok(labour.sheet(ctx.db, ctx.q.get("date"), ctx.q.get("bu_id")))
+
+
+@route("POST", "/api/attendance", "payroll.attendance", "add")
+def att_save(ctx):
+    from . import labour
+    if ctx.body.get("mark_all"):
+        n = labour.mark_all(ctx.db, ctx.body.get("date"), ctx.body.get("bu_id"), ctx.body.get("status") or "present")
+    else:
+        n = labour.save_day(ctx.db, ctx.body, _u(ctx))
+    return ok({"saved": n})
+
+
+@route("GET", "/api/attendance-summary", "payroll.attendance")
+def att_summary(ctx):
+    from . import labour
+    q = ctx.q
+    today = acc.today()
+    return ok(labour.summary(ctx.db, q.get("date_from") or today[:8] + "01", q.get("date_to") or today, q.get("bu_id")))
+
+
+@route("GET", "/api/attendance-records", "payroll.attendance")
+def att_records(ctx):
+    from . import labour
+    q = ctx.q
+    return ok(labour.records(ctx.db, q.get("date_from"), q.get("date_to"), q.get("bu_id"), q.get("employee_id")))
+
+
+@route("POST", "/api/payroll/runs/<rid>/from-attendance", "payroll.runs", "add")
+def att_to_payroll(ctx, rid):
+    from . import labour
+    return ok({"lines": labour.fill_payroll(ctx.db, rid)})
+
+
+# ETA e-receipts
+@route("GET", "/api/ereceipts", "tax.ereceipt")
+def er_list(ctx):
+    from . import ereceipt
+    q = ctx.q
+    return ok(ereceipt.listing(ctx.db, q.get("status"), q.get("date_from"), q.get("date_to"), q.get("q")))
+
+
+@route("GET", "/api/ereceipts/<rid>", "tax.ereceipt")
+def er_get(ctx, rid):
+    from . import ereceipt
+    r = ereceipt.get(ctx.db, rid)
+    if r["status"] == "draft":
+        r["preview"], r["problems"], _ = ereceipt.build(ctx.db, r, "")
+    return ok(r)
+
+
+@route("POST", "/api/ereceipts", "tax.ereceipt", "add")
+def er_add(ctx):
+    from . import ereceipt
+    rid = ereceipt.save(ctx.db, ctx.body)
+    out = {"id": rid}
+    if ctx.body.get("issue"):
+        out.update(ereceipt.issue(ctx.db, rid, _u(ctx)))
+    return ok(out)
+
+
+@route("PUT", "/api/ereceipts/<rid>", "tax.ereceipt", "add")
+def er_edit(ctx, rid):
+    from . import ereceipt
+    ereceipt.save(ctx.db, ctx.body, rid)
+    return ok()
+
+
+@route("POST", "/api/ereceipts/<rid>/issue", "tax.ereceipt", "add")
+def er_issue(ctx, rid):
+    from . import ereceipt
+    r = ereceipt.issue(ctx.db, rid, _u(ctx))
+    ctx.log("ereceipt.issue", rid)
+    return ok(r)
+
+
+@route("DELETE", "/api/ereceipts/<rid>", "tax.ereceipt", "edit")
+def er_del(ctx, rid):
+    from . import ereceipt
+    ereceipt.delete(ctx.db, rid)
+    return ok()
+
+
+@route("GET", "/api/ereceipts-chain", "tax.ereceipt")
+def er_chain(ctx):
+    from . import ereceipt
+    return ok(ereceipt.verify_chain(ctx.db))
+
+
+@route("GET", "/api/ereceipts-export", "tax.ereceipt")
+def er_export(ctx):
+    from . import ereceipt
+    ids = [int(x) for x in (ctx.q.get("ids") or "").split(",") if x.strip().isdigit()]
+    data = json.dumps(ereceipt.export_json(ctx.db, ids or None), ensure_ascii=False, indent=1).encode("utf-8")
+    return download(data, f"e-receipts-{acc.today()}.json", "application/json")
+
+
+@route("POST", "/api/ereceipts-submit", "tax.ereceipt", "edit")
+def er_submit(ctx):
+    from . import ereceipt
+    return ok(ereceipt.submit(ctx.db, ctx.body.get("ids") or None, _u(ctx)))
 
 
 # =============================================================== dashboard
@@ -3300,12 +3840,14 @@ def offer_type_del(ctx, tid):
 
 
 # ============================================================ erase all data
-ERASE_TRANSACTIONS = ("sub_recognitions", "sub_visits", "sub_invoices", "subscriptions", "po_receipts", "po_lines", "purchase_orders", "bank_lines", "bank_statements", "recurring_runs", "sale_cheques", "sale_installments", "sale_lines", "sales_orders", "stock_moves", "stock_levels", "extract_lines", "extracts", "ownership_changes", "journal_lines",
+ERASE_TRANSACTIONS = ("sub_cert_lines", "sub_certificates", "pr_quote_lines", "pr_quotes", "pr_lines", "purchase_requests", "stock_count_lines",
+                      "stock_counts", "equipment_usage", "maintenance_logs", "attendance", "ereceipts", "sub_recognitions", "sub_visits", "sub_invoices", "subscriptions", "po_receipts", "po_lines", "purchase_orders", "bank_lines", "bank_statements", "recurring_runs", "sale_cheques", "sale_installments", "sale_lines", "sales_orders", "stock_moves", "stock_levels", "extract_lines", "extracts", "ownership_changes", "journal_lines",
                       "journal_entries", "offers", "loans", "custodies", "rent_moves", "rental_invoices", "rental_charges",
                       "rental_handovers", "rental_lines", "rentals", "rent_lots")
 ERASE_ALL = ERASE_TRANSACTIONS + ("parties", "stock_items", "boq_lines", "boqs", "partner_shares", "partners", "rates",
                                   "fixed_assets", "business_units", "offer_types", "tax_codes", "assets", "rent_kit_lines", "rent_kits",
-                                  "rent_items", "rent_models", "product_media", "products", "bank_rules", "recurring", "budgets", "attachments", "service_plans")
+                                  "rent_items", "rent_models", "product_media", "products", "bank_rules", "recurring", "budgets", "attachments", "service_plans",
+                                  "variation_orders", "contract_lines", "contracts", "maintenance_plans", "equipment", "project_tasks", "project_phases")
 
 
 @route("POST", "/api/erase")

@@ -1020,6 +1020,258 @@ CREATE TABLE IF NOT EXISTS ai_usage (
     calls   INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (user_id, day)
 );
+
+-- Projects: execution phases (weighted progress) and the team's tasks
+CREATE TABLE IF NOT EXISTS project_phases (
+    id INTEGER PRIMARY KEY,
+    bu_id INTEGER NOT NULL REFERENCES business_units(id) ON DELETE CASCADE,
+    seq INTEGER NOT NULL DEFAULT 0,
+    name TEXT NOT NULL,
+    weight REAL NOT NULL DEFAULT 1,             -- share of the project (any scale; progress is weighted by it)
+    start TEXT DEFAULT '',
+    finish TEXT DEFAULT '',
+    progress REAL NOT NULL DEFAULT 0,           -- 0..1 done
+    status TEXT NOT NULL DEFAULT 'planned',     -- planned | in_progress | done | on_hold
+    notes TEXT DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS project_tasks (
+    id INTEGER PRIMARY KEY,
+    bu_id INTEGER REFERENCES business_units(id) ON DELETE CASCADE,
+    phase_id INTEGER REFERENCES project_phases(id) ON DELETE SET NULL,
+    title TEXT NOT NULL,
+    assignee TEXT DEFAULT '',                   -- a user name or anyone's name
+    due TEXT DEFAULT '',
+    priority TEXT NOT NULL DEFAULT 'normal',    -- low | normal | high
+    status TEXT NOT NULL DEFAULT 'todo',        -- todo | doing | blocked | done
+    notes TEXT DEFAULT '',
+    created_by TEXT DEFAULT '',
+    created_at TEXT DEFAULT '',
+    done_at TEXT DEFAULT ''
+);
+
+-- Contracts with clients and subcontractors, their variation orders, and subcontractors' certificates (extracts)
+CREATE TABLE IF NOT EXISTS contracts (
+    id INTEGER PRIMARY KEY,
+    code TEXT NOT NULL UNIQUE,
+    kind TEXT NOT NULL DEFAULT 'client',        -- client | sub
+    bu_id INTEGER REFERENCES business_units(id) ON DELETE SET NULL,
+    party TEXT NOT NULL,
+    title TEXT DEFAULT '',
+    value INTEGER NOT NULL DEFAULT 0,           -- original contract value (minor units)
+    signed_on TEXT DEFAULT '',
+    start TEXT DEFAULT '',
+    finish TEXT DEFAULT '',
+    retention_pct REAL NOT NULL DEFAULT 0,
+    retention_release TEXT DEFAULT '',          -- when the retention is due back
+    advance INTEGER NOT NULL DEFAULT 0,         -- advance payment agreed
+    advance_recovery_pct REAL NOT NULL DEFAULT 0,
+    payment_terms TEXT DEFAULT '',
+    scope TEXT DEFAULT '',
+    vat_code TEXT DEFAULT '',                   -- subcontracts: VAT on their certificates
+    wht_code TEXT DEFAULT '',                   -- subcontracts: withholding tax deducted from their certificates
+    status TEXT NOT NULL DEFAULT 'active',      -- draft | active | completed | terminated
+    notes TEXT DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS contract_lines (
+    id INTEGER PRIMARY KEY,
+    contract_id INTEGER NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+    seq INTEGER NOT NULL DEFAULT 0,
+    item_no TEXT DEFAULT '',
+    description TEXT NOT NULL,
+    unit TEXT DEFAULT '',
+    qty REAL NOT NULL DEFAULT 0,
+    rate INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS variation_orders (
+    id INTEGER PRIMARY KEY,
+    contract_id INTEGER NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+    code TEXT NOT NULL,
+    date TEXT NOT NULL,
+    description TEXT NOT NULL,
+    amount INTEGER NOT NULL DEFAULT 0,          -- + addition, − omission
+    days INTEGER NOT NULL DEFAULT 0,            -- extension of time
+    status TEXT NOT NULL DEFAULT 'pending',     -- pending | approved | rejected
+    decided_by TEXT DEFAULT '',
+    decided_at TEXT DEFAULT '',
+    notes TEXT DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS sub_certificates (
+    id INTEGER PRIMARY KEY,
+    contract_id INTEGER NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+    number INTEGER NOT NULL,
+    date TEXT NOT NULL,
+    period_to TEXT DEFAULT '',
+    deductions INTEGER NOT NULL DEFAULT 0,      -- other deductions (penalties, materials supplied...)
+    status TEXT NOT NULL DEFAULT 'draft',       -- draft | approved | posted
+    approved_by TEXT DEFAULT '',
+    approved_at TEXT DEFAULT '',
+    entry_id INTEGER REFERENCES journal_entries(id) ON DELETE SET NULL,
+    notes TEXT DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS sub_cert_lines (
+    id INTEGER PRIMARY KEY,
+    cert_id INTEGER NOT NULL REFERENCES sub_certificates(id) ON DELETE CASCADE,
+    line_id INTEGER REFERENCES contract_lines(id) ON DELETE SET NULL,
+    description TEXT NOT NULL,
+    unit TEXT DEFAULT '',
+    rate INTEGER NOT NULL DEFAULT 0,
+    qty_to_date REAL NOT NULL DEFAULT 0         -- cumulative quantity executed up to this certificate
+);
+
+-- Purchase requests, suppliers' quotations and their comparison (the chosen quotes become purchase orders)
+CREATE TABLE IF NOT EXISTS purchase_requests (
+    id INTEGER PRIMARY KEY,
+    code TEXT NOT NULL UNIQUE,
+    date TEXT NOT NULL,
+    requested_by TEXT DEFAULT '',
+    bu_id INTEGER REFERENCES business_units(id) ON DELETE SET NULL,
+    warehouse_id INTEGER REFERENCES warehouses(id) ON DELETE SET NULL,
+    needed_by TEXT DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'draft',       -- draft | submitted | approved | rejected | ordered | cancelled
+    approved_by TEXT DEFAULT '',
+    approved_at TEXT DEFAULT '',
+    orders TEXT DEFAULT '',                     -- purchase order codes raised from it
+    notes TEXT DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS pr_lines (
+    id INTEGER PRIMARY KEY,
+    pr_id INTEGER NOT NULL REFERENCES purchase_requests(id) ON DELETE CASCADE,
+    seq INTEGER NOT NULL DEFAULT 0,
+    kind TEXT NOT NULL DEFAULT 'cost',
+    description TEXT NOT NULL,
+    item TEXT DEFAULT '',
+    account TEXT DEFAULT '',
+    qty REAL NOT NULL DEFAULT 1,
+    unit TEXT DEFAULT '',
+    est_rate INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS pr_quotes (
+    id INTEGER PRIMARY KEY,
+    pr_id INTEGER NOT NULL REFERENCES purchase_requests(id) ON DELETE CASCADE,
+    supplier TEXT NOT NULL,
+    date TEXT DEFAULT '',
+    valid_until TEXT DEFAULT '',
+    delivery_days INTEGER NOT NULL DEFAULT 0,
+    vat_code TEXT DEFAULT '',
+    terms TEXT DEFAULT '',
+    notes TEXT DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS pr_quote_lines (
+    id INTEGER PRIMARY KEY,
+    quote_id INTEGER NOT NULL REFERENCES pr_quotes(id) ON DELETE CASCADE,
+    line_id INTEGER NOT NULL REFERENCES pr_lines(id) ON DELETE CASCADE,
+    rate INTEGER NOT NULL DEFAULT 0,
+    awarded INTEGER NOT NULL DEFAULT 0
+);
+
+-- Stocktakes: a count sheet per warehouse; posting turns the differences into stock adjustments
+CREATE TABLE IF NOT EXISTS stock_counts (
+    id INTEGER PRIMARY KEY,
+    code TEXT NOT NULL UNIQUE,
+    date TEXT NOT NULL,
+    warehouse_id INTEGER NOT NULL REFERENCES warehouses(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'counting',    -- counting | posted | cancelled
+    counted_by TEXT DEFAULT '',
+    posted_by TEXT DEFAULT '',
+    notes TEXT DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS stock_count_lines (
+    id INTEGER PRIMARY KEY,
+    count_id INTEGER NOT NULL REFERENCES stock_counts(id) ON DELETE CASCADE,
+    item_id INTEGER NOT NULL REFERENCES stock_items(id) ON DELETE CASCADE,
+    system_qty REAL NOT NULL DEFAULT 0,         -- what the books said when the count started
+    counted REAL,                               -- NULL = not counted yet
+    unit_cost REAL NOT NULL DEFAULT 0,          -- average cost (minor units) when the count started
+    note TEXT DEFAULT ''
+);
+
+-- Equipment the company owns or runs: hours used per project (charged at a rate), maintenance plans and work done
+CREATE TABLE IF NOT EXISTS equipment (
+    id INTEGER PRIMARY KEY,
+    code TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    category TEXT DEFAULT '',
+    serial TEXT DEFAULT '',
+    asset_id INTEGER REFERENCES fixed_assets(id) ON DELETE SET NULL,
+    hourly_rate INTEGER NOT NULL DEFAULT 0,     -- charged to a project per working hour (minor units)
+    meter_start REAL NOT NULL DEFAULT 0,        -- hour meter when registered
+    bu_id INTEGER REFERENCES business_units(id) ON DELETE SET NULL,   -- where it is now
+    status TEXT NOT NULL DEFAULT 'available',   -- available | in_use | maintenance | retired
+    notes TEXT DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS equipment_usage (
+    id INTEGER PRIMARY KEY,
+    equipment_id INTEGER NOT NULL REFERENCES equipment(id) ON DELETE CASCADE,
+    date TEXT NOT NULL,
+    bu_id INTEGER REFERENCES business_units(id) ON DELETE SET NULL,
+    hours REAL NOT NULL DEFAULT 0,
+    operator TEXT DEFAULT '',
+    fuel_qty REAL NOT NULL DEFAULT 0,
+    fuel_cost INTEGER NOT NULL DEFAULT 0,
+    notes TEXT DEFAULT '',
+    entry_id INTEGER REFERENCES journal_entries(id) ON DELETE SET NULL
+);
+CREATE TABLE IF NOT EXISTS maintenance_plans (
+    id INTEGER PRIMARY KEY,
+    equipment_id INTEGER NOT NULL REFERENCES equipment(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    every_days INTEGER NOT NULL DEFAULT 0,
+    every_hours REAL NOT NULL DEFAULT 0,
+    start_date TEXT DEFAULT '',
+    notes TEXT DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS maintenance_logs (
+    id INTEGER PRIMARY KEY,
+    equipment_id INTEGER NOT NULL REFERENCES equipment(id) ON DELETE CASCADE,
+    plan_id INTEGER REFERENCES maintenance_plans(id) ON DELETE SET NULL,
+    date TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'service',       -- service | repair | inspection
+    description TEXT DEFAULT '',
+    hours_at REAL,                              -- hour meter at the service
+    cost INTEGER NOT NULL DEFAULT 0,
+    vendor TEXT DEFAULT '',
+    entry_id INTEGER REFERENCES journal_entries(id) ON DELETE SET NULL
+);
+
+-- Daily attendance of workers on projects: hours, overtime and what they produced
+CREATE TABLE IF NOT EXISTS attendance (
+    id INTEGER PRIMARY KEY,
+    date TEXT NOT NULL,
+    employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+    bu_id INTEGER REFERENCES business_units(id) ON DELETE SET NULL,
+    status TEXT NOT NULL DEFAULT 'present',     -- present | absent | leave | sick | half
+    hours REAL NOT NULL DEFAULT 0,
+    overtime REAL NOT NULL DEFAULT 0,
+    qty REAL NOT NULL DEFAULT 0,                -- work produced (productivity)
+    unit TEXT DEFAULT '',
+    task TEXT DEFAULT '',
+    notes TEXT DEFAULT '',
+    UNIQUE(date, employee_id)
+);
+
+-- ETA e-receipts (B2C): each receipt carries the previous one's UUID (the chain the tax authority checks)
+CREATE TABLE IF NOT EXISTS ereceipts (
+    id INTEGER PRIMARY KEY,
+    number TEXT NOT NULL UNIQUE,
+    issued_at TEXT NOT NULL,                    -- ISO date-time (UTC)
+    kind TEXT NOT NULL DEFAULT 'sale',          -- sale | return
+    ref_uuid TEXT DEFAULT '',                   -- the sale a return refers to
+    buyer_type TEXT NOT NULL DEFAULT 'P',       -- P person | B business | F foreigner
+    buyer_id TEXT DEFAULT '',
+    buyer_name TEXT DEFAULT '',
+    buyer_mobile TEXT DEFAULT '',
+    payment_method TEXT NOT NULL DEFAULT 'C',   -- C cash | V visa | CC cash with contractor ...
+    lines TEXT NOT NULL DEFAULT '[]',           -- [{description, code, code_type, unit, qty, price, discount, vat_code}]
+    entry_id INTEGER REFERENCES journal_entries(id) ON DELETE SET NULL,
+    uuid TEXT DEFAULT '',
+    previous_uuid TEXT DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'draft',       -- draft | issued | submitted | valid | invalid | rejected
+    submission_id TEXT DEFAULT '',
+    error TEXT DEFAULT '',
+    document TEXT DEFAULT '',                   -- the JSON sent
+    bu_id INTEGER REFERENCES business_units(id) ON DELETE SET NULL,
+    account TEXT DEFAULT ''                     -- revenue account (blank = sales revenue)
+);
 """
 
 # (code, name, type, subtype, role)
@@ -1033,7 +1285,7 @@ DEFAULT_ACCOUNTS = [
     ("1035", "Cash Custody with Employees", "Asset", "other_current_asset", "custody"),
     ("1100", "Accounts Receivable — Clients", "Asset", "receivable", "ar"),
     ("1120", "Notes Receivable (Cheques Under Collection)", "Asset", "receivable", "notes_receivable"),
-    ("1150", "Retention Receivable", "Asset", "receivable", None),
+    ("1150", "Retention Receivable", "Asset", "receivable", "retention_receivable"),
     ("1160", "Employee Advances", "Asset", "other_current_asset", "employee_advances"),
     ("1170", "Due from Partners", "Asset", "other_current_asset", "partner_receivable"),
     ("1175", "Loans Receivable (Short-term)", "Asset", "other_current_asset", "loans_receivable"),
@@ -1043,7 +1295,7 @@ DEFAULT_ACCOUNTS = [
     ("1200", "Materials Inventory", "Asset", "inventory", "inventory"),
     ("1210", "Goods & Units for Sale", "Asset", "inventory", "goods_inventory"),
     ("1300", "Prepaid Expenses", "Asset", "prepaid", None),
-    ("1310", "Supplier Advances", "Asset", "prepaid", None),
+    ("1310", "Supplier Advances", "Asset", "prepaid", "supplier_advances"),
     ("1320", "VAT Recoverable (Input)", "Asset", "other_current_asset", "vat_input"),
     ("1330", "Withholding Tax Receivable (deducted by clients)", "Asset", "other_current_asset", "wht_receivable"),
     ("1340", "Letters of Guarantee — Cash Margin", "Asset", "other_current_asset", None),
@@ -1066,7 +1318,7 @@ DEFAULT_ACCOUNTS = [
     ("1700", "Long-term Investments", "Asset", "investment", "investments"),
     # ---- Liabilities
     ("2010", "Accounts Payable — Suppliers", "Liability", "payable", "ap"),
-    ("2015", "Subcontractors Payable", "Liability", "payable", None),
+    ("2015", "Subcontractors Payable", "Liability", "payable", "sub_payable"),
     ("2020", "Accrued Payroll", "Liability", "accrued", "accrued_payroll"),
     ("2030", "Accrued Expenses", "Liability", "accrued", None),
     ("2040", "Social Insurance Payable", "Liability", "accrued", "social_insurance_payable"),
@@ -1078,7 +1330,7 @@ DEFAULT_ACCOUNTS = [
     ("2105", "Security Deposits from Clients", "Liability", "other_current_liability", "rental_deposits"),
     ("2106", "Deferred Installment Interest", "Liability", "other_current_liability", "installment_deferred"),
     ("2107", "Deferred Service & Subscription Revenue", "Liability", "deferred_revenue", "service_deferred"),
-    ("2110", "Retention Payable", "Liability", "other_current_liability", None),
+    ("2110", "Retention Payable", "Liability", "other_current_liability", "retention_payable"),
     ("2120", "Profit Distributions Payable to Partners", "Liability", "dividends_payable", "dividends_payable"),
     ("2130", "Due to Departing Partners", "Liability", "other_current_liability", "partner_payable"),
     ("2200", "VAT Payable (Output)", "Liability", "tax_payable", "vat_output"),
@@ -1122,10 +1374,11 @@ DEFAULT_ACCOUNTS = [
     # ---- Cost of sales
     ("5005", "Cost of Goods & Units Sold", "COGS", "cogs", "cost_of_sales"),
     ("5010", "Materials", "COGS", "cogs", "materials"),
-    ("5020", "Subcontractor Costs", "COGS", "cogs", None),
+    ("5020", "Subcontractor Costs", "COGS", "cogs", "subcontract_cost"),
     ("5030", "Direct Labour (billable)", "COGS", "cogs", "direct_labour"),
     ("5040", "Site Preparation", "COGS", "cogs", None),
     ("5050", "Equipment Rental", "COGS", "cogs", None),
+    ("5052", "Own Equipment Used on Projects", "COGS", "cogs", "equipment_charge"),
     ("5060", "Transport & Hauling", "COGS", "cogs", None),
     ("5070", "Design Outsourcing & Renders", "COGS", "cogs", None),
     ("5080", "Inventory Adjustments", "COGS", "cogs", "stock_adjust"),
@@ -1147,6 +1400,9 @@ DEFAULT_ACCOUNTS = [
     ("6085", "Insurance", "Expense", "general_admin", None),
     ("6088", "Bad Debts Expense", "Expense", "general_admin", "bad_debts"),
     ("6090", "Other Operating Expenses", "Expense", "other_operating", "other_overhead"),
+    # running own equipment (fuel, maintenance, operators): charged out to projects by the hour, so what is left here is
+    # the cost not recovered from projects (or recovered beyond it, when negative)
+    ("6094", "Equipment Running Costs (pool)", "Expense", "other_operating", "equipment_pool"),
     # ---- Below EBITDA
     ("7010", "Depreciation Expense", "Expense", "depreciation", "depreciation"),
     ("7020", "Amortization Expense", "Expense", "amortization", "amortization"),
@@ -1174,8 +1430,78 @@ ACCOUNT_NAMES_AR = {'3190': 'أرباح موزعة على الشركاء وال�
 ACCOUNT_NAMES_AR.update({'4035': 'إيرادات الصيانة والخدمات والاشتراكات', '2107': 'إيرادات خدمات واشتراكات مؤجلة'})
 ACCOUNT_NAMES_AR.update({'4025': 'مبيعات البضائع والوحدات', '4096': 'إيرادات فوائد التقسيط', '2106': 'فوائد تقسيط مؤجلة',
                          '5005': 'تكلفة البضاعة والوحدات المباعة', '1210': 'بضائع ووحدات بغرض البيع'})
-ACCOUNT_NAMES_AR.update({'3015': 'حساب الشريك الممول (يدفع ويحصّل للشركة)'})
+ACCOUNT_NAMES_AR.update({'3015': 'حساب الشريك الممول (يدفع ويحصّل للشركة)', '5052': 'معدات الشركة المستخدمة في المشروعات',
+                         '6094': 'تكاليف تشغيل المعدات (وعاء التحميل)'})
 ACCOUNT_NAMES_AR.update({'1120': 'أوراق القبض (شيكات تحت التحصيل)', '1170': 'مستحق من الشركاء', '1180': 'إيرادات مستحقة غير مفوترة (أعمال منفذة)', '1190': 'مخصص الديون المشكوك في تحصيلها', '1340': 'غطاء خطابات الضمان', '1440': 'أراضي', '1450': 'مباني وتحسينات أماكن مستأجرة', '1460': 'مشروعات تحت التنفيذ', '1520': 'الشهرة', '1700': 'استثمارات طويلة الأجل', '2050': 'أوراق الدفع (شيكات صادرة)', '2060': 'فوائد مستحقة', '2120': 'توزيعات أرباح مستحقة للشركاء', '2130': 'مستحق للشركاء المنسحبين', '2510': 'مخصص مكافأة نهاية الخدمة', '3020': 'جاري الشركاء', '3030': 'علاوة إصدار / علاوة حصص', '3110': 'الاحتياطي القانوني', '3120': 'الاحتياطي العام', '4060': 'أرباح بيع أصول ثابتة', '4070': 'إيرادات إيجار', '4080': 'خصم مكتسب', '6015': 'صيانة وإصلاحات', '6078': 'وقود ومصروفات سيارات', '6088': 'ديون معدومة', '7045': 'خسائر بيع أصول ثابتة'})
+# Professional (IFRS-style) titles. Fresh books get them; existing books are renamed by the migration only where the
+# account still carries its original default name (a company's own wording is never overwritten).
+# code: (old English, new English, new Arabic)
+PRO_NAMES = {
+    "1020": ("Bank Account", "Cash at Bank", "النقدية بالبنوك"),
+    "1030": ("Petty Cash", "Petty Cash", "صندوق المصروفات النثرية"),
+    "1035": ("Cash Custody with Employees", "Cash Advances to Employees (Custody)", "عهد نقدية لدى العاملين"),
+    "1100": ("Accounts Receivable — Clients", "Trade Receivables — Customers", "العملاء (ذمم مدينة تجارية)"),
+    "1150": ("Retention Receivable", "Retentions Receivable", "محتجزات لدى العملاء (ضمان أعمال)"),
+    "1180": ("Unbilled Revenue (Work Done, Not Yet Invoiced)", "Contract Assets — Unbilled Revenue", "أصول العقود — إيرادات مستحقة غير مفوترة"),
+    "1190": ("Allowance for Doubtful Accounts", "Allowance for Expected Credit Losses", "مخصص الخسائر الائتمانية المتوقعة"),
+    "1210": ("Goods & Units for Sale", "Finished Goods & Units Held for Sale", "بضاعة ووحدات بغرض البيع"),
+    "1310": ("Supplier Advances", "Advances to Suppliers & Subcontractors", "دفعات مقدمة للموردين ومقاولي الباطن"),
+    "1320": ("VAT Recoverable (Input)", "Input VAT Recoverable", "ضريبة القيمة المضافة — مدخلات"),
+    "1330": ("Withholding Tax Receivable (deducted by clients)", "Withholding Tax Credits (Deducted by Customers)", "ضريبة خصم وتحصيل لدى العملاء"),
+    "1400": ("Furniture & Office Equipment", "Furniture, Fixtures & Office Equipment", "أثاث وتجهيزات ومعدات مكتبية"),
+    "1410": ("Tools & Site Equipment", "Plant, Tools & Site Equipment", "آلات وعدد ومعدات مواقع"),
+    "1420": ("Vehicles", "Motor Vehicles", "وسائل نقل وانتقال"),
+    "1460": ("Assets Under Construction", "Capital Work in Progress", "مشروعات تحت التنفيذ (أصول)"),
+    "1500": ("Software & Licences", "Computer Software & Licences", "برامج حاسب وتراخيص"),
+    "1510": ("Brand, Website & Design Library", "Trademarks, Website & Design Library", "علامات تجارية وموقع إلكتروني ومكتبة تصميمات"),
+    "1600": ("Security Deposits", "Refundable Deposits Paid", "تأمينات لدى الغير"),
+    "2010": ("Accounts Payable — Suppliers", "Trade Payables — Suppliers", "الموردون (ذمم دائنة تجارية)"),
+    "2015": ("Subcontractors Payable", "Trade Payables — Subcontractors", "مقاولو الباطن (ذمم دائنة)"),
+    "2020": ("Accrued Payroll", "Accrued Salaries & Wages", "رواتب وأجور مستحقة"),
+    "2100": ("Client Advances (Unearned Revenue)", "Contract Liabilities — Customer Advances", "التزامات العقود — دفعات مقدمة من العملاء"),
+    "2105": ("Security Deposits from Clients", "Customer Security Deposits", "تأمينات العملاء (ودائع ضمان)"),
+    "2106": ("Deferred Installment Interest", "Deferred Instalment Interest Income", "فوائد تقسيط مؤجلة"),
+    "2110": ("Retention Payable", "Retentions Payable — Subcontractors", "محتجزات مقاولي الباطن"),
+    "2120": ("Profit Distributions Payable to Partners", "Distributions Payable to Partners", "توزيعات أرباح مستحقة للشركاء"),
+    "2130": ("Due to Departing Partners", "Due to Retiring Partners", "مستحقات الشركاء المتخارجين"),
+    "2200": ("VAT Payable (Output)", "Output VAT Payable", "ضريبة القيمة المضافة — مخرجات"),
+    "2210": ("Withholding Tax Payable (deducted from suppliers)", "Withholding Tax Payable", "ضريبة الخصم والتحصيل المستحقة"),
+    "2300": ("Short-term Loans", "Short-term Borrowings", "قروض وتسهيلات قصيرة الأجل"),
+    "2400": ("Long-term Loans", "Long-term Borrowings", "قروض طويلة الأجل"),
+    "2500": ("Partner Loans", "Loans from Partners", "قروض من الشركاء"),
+    "2510": ("End-of-Service Provision", "Provision for End-of-Service Benefits", "مخصص مكافأة نهاية الخدمة"),
+    "3010": ("Partner Capital", "Partners' Capital", "رأس مال الشركاء"),
+    "3015": ("Funding Partner's Account (pays & receives for the company)", "Funding Partner — Current Account", "الشريك الممول — حساب جاري"),
+    "3190": ("Profit Appropriated to Partners & Reserves", "Profit Appropriation Account", "حساب توزيع الأرباح"),
+    "3200": ("Partner Drawings / Dividends", "Partners' Drawings", "مسحوبات الشركاء"),
+    "4010": ("Project Revenue — Execution", "Contract Revenue — Execution", "إيرادات العقود — التنفيذ"),
+    "4030": ("Supervision / Management Fees", "Supervision & Project Management Fees", "أتعاب الإشراف وإدارة المشروعات"),
+    "4040": ("Furniture & Supply Sales", "Supply & Furniture Sales", "مبيعات توريدات وأثاث"),
+    "4070": ("Rental Income", "Other Rental Income", "إيرادات إيجار أخرى"),
+    "4080": ("Discounts Received", "Purchase Discounts Received", "خصم مكتسب"),
+    "4085": ("Negotiation Earnings", "Negotiated Procurement Savings", "وفورات التفاوض على المشتريات"),
+    "4025": ("Sales of Goods & Units", "Sales of Goods & Real-Estate Units", "مبيعات البضائع والوحدات العقارية"),
+    "4096": ("Installment Interest Income", "Instalment Sales Interest Income", "إيرادات فوائد البيع بالتقسيط"),
+    "5010": ("Materials", "Direct Materials", "خامات مباشرة"),
+    "5020": ("Subcontractor Costs", "Subcontract Costs", "تكاليف مقاولي الباطن"),
+    "5030": ("Direct Labour (billable)", "Direct Labour", "عمالة مباشرة"),
+    "5040": ("Site Preparation", "Site Preparation & Mobilisation", "تجهيز الموقع والتعبئة"),
+    "5050": ("Equipment Rental", "Hired Plant & Equipment", "معدات مستأجرة"),
+    "5052": ("Own Equipment Used on Projects", "Plant & Equipment Charges — Own Fleet", "تحميل معدات الشركة على المشروعات"),
+    "5070": ("Design Outsourcing & Renders", "Outsourced Design & Visualisation", "تصميم خارجي وإظهار معماري"),
+    "5080": ("Inventory Adjustments", "Inventory Count Differences", "فروق جرد المخزون"),
+    "6010": ("Rent", "Office Rent", "إيجار المكاتب"),
+    "6050": ("Office & Admin Salaries", "Administrative Salaries & Wages", "رواتب وأجور إدارية"),
+    "6055": ("Social Insurance & Benefits", "Employer Social Insurance & Benefits", "حصة صاحب العمل في التأمينات والمزايا"),
+    "6070": ("Project Overhead (non-billable)", "Project Indirect Costs (Non-billable)", "تكاليف غير مباشرة للمشروعات (غير محملة)"),
+    "6078": ("Fuel & Vehicle Running Costs", "Vehicle Running Costs", "مصروفات تشغيل السيارات"),
+    "6088": ("Bad Debts Expense", "Expected Credit Loss Expense", "مصروف الخسائر الائتمانية المتوقعة"),
+    "6094": ("Equipment Running Costs (pool)", "Plant & Equipment Running Costs (Clearing)", "تكاليف تشغيل المعدات (حساب وسيط)"),
+    "7060": ("Bad Debts & Loan Write-offs", "Loan Write-offs & Impairment", "إعدام واضمحلال القروض"),
+}
+_OLD_AR = dict(ACCOUNT_NAMES_AR)
+DEFAULT_ACCOUNTS = [(c, PRO_NAMES[c][1] if c in PRO_NAMES and n == PRO_NAMES[c][0] else n, *rest) for c, n, *rest in DEFAULT_ACCOUNTS]
+ACCOUNT_NAMES_AR.update({c: v[2] for c, v in PRO_NAMES.items()})
 NEW_IN_V12 = {"1120", "1170", "1180", "1190", "1340", "1440", "1450", "1460", "1520", "1700", "2050", "2060", "2120",
               "2130", "2510", "3020", "3030", "3110", "3120", "4060", "4070", "4080", "6015", "6078", "6088", "7045"}
 ROLES_ADDED_V12 = {"2500": "partner_loans", "4095": "interest_income", "1180": "unbilled_revenue"}
@@ -1192,7 +1518,8 @@ def normal_for(acc_type: str, subtype: str) -> str:
     return "Debit" if debit else "Credit"
 
 
-MODULES = ["dashboard", "business_units", "sales", "shop", "estimating", "purchasing", "stock", "rentals", "payroll", "assets",
+MODULES = ["dashboard", "business_units", "projects", "contracts", "sales", "shop", "estimating", "purchasing", "stock", "equipment",
+           "rentals", "payroll", "assets",
            "accounting", "partners", "reports", "tax", "import_export", "settings", "users"]
 
 # Second-level permissions: each screen can have its own level, or inherit its section's.
@@ -1201,16 +1528,19 @@ SUBMODULES = {
     "business_units": ["units", "allocation", "profitability"],
     "sales": ["offers", "receipts", "invoices", "extracts", "receivables", "parties"],
     "estimating": ["boqs", "prices"],
-    "purchasing": ["orders", "costs", "expenses", "payments", "payables", "contacts", "negotiations", "custody"],
+    "projects": ["overview", "tasks"],
+    "contracts": ["contracts", "variations", "certificates"],
+    "purchasing": ["requests", "orders", "costs", "expenses", "payments", "payables", "contacts", "negotiations", "custody"],
+    "equipment": ["register", "usage", "maintenance"],
     "shop": ["products", "orders", "installments", "subscriptions"],
-    "stock": ["balances", "moves", "warehouses"],
+    "stock": ["balances", "moves", "warehouses", "counts"],
     "rentals": ["contracts", "fleet", "calculator"],
-    "payroll": ["employees", "runs", "entries", "crew", "settings"],
+    "payroll": ["employees", "attendance", "runs", "entries", "crew", "settings"],
     "assets": ["overview", "cash", "register", "depreciation"],
     "accounting": ["journal", "ledger", "coa", "loans", "bankrec", "recurring", "budgets"],
     "partners": ["equity", "transactions", "ownership"],
     "reports": ["partner_pack", "income_statement", "balance_sheet", "cash_flow", "trial_balance", "budget", "aging", "statement"],
-    "tax": ["codes", "report", "einvoice"],
+    "tax": ["codes", "report", "einvoice", "ereceipt"],
     "import_export": ["export", "import"],
     "settings": ["company", "branding", "menus", "system"],
     "users": ["users", "audit"],
@@ -1264,7 +1594,13 @@ ETA_SETTINGS = {
     "eta_doc_version": "1.0", "eta_activity_code": "", "eta_branch_id": "0", "eta_governate": "",
     "eta_region": "", "eta_street": "", "eta_building": "", "eta_postal_code": "", "eta_item_prefix": "EG",
     "eta_default_item_code": "", "eta_default_unit": "EA",
+    # e-receipts (B2C point of sale): the POS registered with ETA, its own login, and where the sales post
+    "eta_pos_serial": "", "eta_pos_os_version": "", "eta_pos_model": "", "eta_pos_client_id": "", "eta_pos_client_secret": "",
+    "eta_pos_presharedkey": "", "eta_pos_branch_code": "0", "eta_receipt_prefix": "R-", "eta_receipt_vat_code": "",
+    "eta_receipt_account": "", "eta_receipt_method": "cash",
 }
+# never sent to the browser, exported, or imported over the stored value
+ETA_SECRETS = ("eta_client_secret", "eta_pos_client_secret", "eta_pos_presharedkey")
 
 
 class Database:
@@ -1368,9 +1704,23 @@ class Database:
             self._add_new_accounts()
         self.conn.execute("INSERT OR IGNORE INTO settings(key,value) VALUES ('coa_v2','1')")
         self._add_role_account("3015", "funding_partner")
+        self._add_role_account("5052", "equipment_charge")
+        self._add_role_account("6094", "equipment_pool")
+        # roles that later modules rely on, given to the accounts that already carry them in older books
+        for code, role in (("1310", "supplier_advances"), ("2015", "sub_payable"), ("2110", "retention_payable"),
+                           ("5020", "subcontract_cost"), ("1150", "retention_receivable")):
+            if self.conn.execute("SELECT COUNT(*) FROM accounts").fetchone()[0] and \
+                    not self.conn.execute("SELECT 1 FROM accounts WHERE role=?", (role,)).fetchone():
+                self.conn.execute("UPDATE accounts SET role=? WHERE code=? AND role IS NULL", (role, code))
         # how a business unit's work in progress is kept up to date: 'cost_plus' = costs × (1 + fee), 'drafts' = executed
         # work on draft invoices (measured / BOQ-rate contracts), '' = not automatically
         self._add_cols("business_units", [("wip_mode", "TEXT DEFAULT ''")])
+        self._add_cols("ereceipts", [("bu_id", "INTEGER"), ("account", "TEXT DEFAULT ''")])
+        # professional account titles, only where the company still uses the original default wording
+        for code, (old_en, new_en, new_ar) in PRO_NAMES.items():
+            self.conn.execute("UPDATE accounts SET name=? WHERE code=? AND name=?", (new_en, code, old_en))
+            self.conn.execute("UPDATE accounts SET name_ar=? WHERE code=? AND name=? AND (name_ar='' OR name_ar=?)",
+                              (new_ar, code, new_en, _OLD_AR.get(code, "")))
         # loans & cash custody accounts — books from before they existed (a used code moves to the next free one)
         if self.conn.execute("SELECT COUNT(*) FROM accounts").fetchone()[0]:
             for code, role in (("6065", "bank_charges"),):

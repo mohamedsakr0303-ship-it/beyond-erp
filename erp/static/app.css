@@ -904,3 +904,7 @@ label.f.chk>input[type=radio],label.f.chk>input[type=checkbox]{flex:none;width:1
 .pxtbl th{white-space:normal;vertical-align:bottom;min-width:84px;line-height:1.3}
 .pxtbl td:first-child{min-width:150px}
 tr.memo td{color:var(--muted);border-top:1px dashed var(--line)}
+/* project progress: done (fill) against where the plan says it should be today (marker) */
+.pbar{position:relative;height:8px;border-radius:6px;background:var(--line, rgba(127,127,127,.25));overflow:visible;margin:3px 0;min-width:90px}
+.pbar i{position:absolute;inset:0 auto 0 0;border-radius:6px;background:var(--good, #34c77b)}
+.pbar em{position:absolute;top:-3px;width:2px;height:14px;background:var(--warn, #ffa726);transform:translateX(-1px)}

@@ -364,6 +364,116 @@ def sheets():
         {"name": "Monthly depreciation", "doc_type": "depreciation", "start": eom(5), "unit": "month", "month_end": "Yes", "mode": "auto"},
         {"name": "Accrued audit fee", "doc_type": "journal", "start": eom(4), "unit": "month", "every": 3, "month_end": "Yes", "mode": "auto",
          "amount": 4000, "description": "Audit fee accrual {month}", "account": "6060", "credit_account": "2030"}]
+    # ---- projects, contracts & the site
+    S["Employees"] = [
+        {"code": "EMP-D01", "name": "Mahmoud Saber", "job_title": "Mason", "department": "Execution / Site", "emp_type": "daily",
+         "cost_type": "Direct Labour (Cost of Revenue)", "bu_code": "PRJ-D01", "hire_date": d(0, 3), "daily_rate": 450, "insured": "No", "method": "Cash"},
+        {"code": "EMP-D02", "name": "Ahmed Ragab", "job_title": "Plasterer", "department": "Execution / Site", "emp_type": "daily",
+         "cost_type": "Direct Labour (Cost of Revenue)", "bu_code": "PRJ-D01", "hire_date": d(0, 3), "daily_rate": 400, "insured": "No", "method": "Cash"},
+        {"code": "EMP-D03", "name": "Youssef Ali", "job_title": "Electrician", "department": "Execution / Site", "emp_type": "hourly",
+         "cost_type": "Direct Labour (Cost of Revenue)", "bu_code": "PRJ-D02", "hire_date": d(1, 1), "hourly_rate": 60, "insured": "No", "method": "Cash"},
+        {"code": "EMP-D04", "name": "Nadia Hosny", "job_title": "Site Engineer", "department": "Execution / Site", "emp_type": "monthly",
+         "cost_type": "Indirect Labour (Cost-Centre Overhead)", "bu_code": "PRJ-D01", "hire_date": d(0, 1), "basic": 18000,
+         "al_transport": 1500, "insured": "Yes", "method": "Bank Transfer"}]
+    S["Project Phases"] = [{"bu_code": "PRJ-D01", "seq": i + 1, "name": n, "weight": w, "start": a, "finish": b, "progress": p}
+                           for i, (n, w, a, b, p) in enumerate((("Site preparation & demolition", 5, d(0, 3), d(0, 15), 1),
+                                                                ("Masonry & plastering", 25, d(0, 15), d(2, 10), 1),
+                                                                ("Plumbing & electrical", 20, d(1, 5), d(3, 20), 0.8),
+                                                                ("Flooring & tiling", 25, d(2, 1), d(4, 15), 0.5),
+                                                                ("Painting & finishing", 15, d(4, 1), d(5, 25), 0.1),
+                                                                ("Handover & snagging", 10, d(5, 20), d(5, 28), 0)))] + \
+                          [{"bu_code": "PRJ-D02", "seq": i + 1, "name": n, "weight": w, "start": a, "finish": b, "progress": p}
+                           for i, (n, w, a, b, p) in enumerate((("Demolition", 10, d(1, 1), d(1, 10), 1), ("Electrical", 30, d(1, 10), d(3, 1), 0.9),
+                                                                ("Finishes", 60, d(2, 15), d(5, 25), 0.35)))]
+    S["Project Tasks"] = [
+        {"bu_code": "PRJ-D01", "phase": "Flooring & tiling", "title": "Approve tile samples with the client", "assignee": "Nadia Hosny", "due": d(3, 25),
+         "priority": "high", "status": "done", "done_at": d(3, 24)},
+        {"bu_code": "PRJ-D01", "phase": "Plumbing & electrical", "title": "Pressure-test the water lines", "assignee": "Nadia Hosny", "due": d(4, 5),
+         "priority": "high", "status": "todo"},
+        {"bu_code": "PRJ-D01", "phase": "Painting & finishing", "title": "Order paint (colour schedule)", "assignee": "Sara Kamal", "due": d(5, 28),
+         "status": "doing"},
+        {"bu_code": "PRJ-D02", "phase": "Finishes", "title": "Kitchen measurements for the joiner", "assignee": "Youssef Ali", "due": d(5, 26), "status": "todo"},
+        {"title": "Renew the contractors' union membership", "assignee": "Sara Kamal", "due": d(5, 30), "priority": "low", "status": "todo"}]
+    S["Contracts"] = (
+        [{"code": "CC-D001", "kind": "client", "party": "Laila Samir", "bu_code": "PRJ-D02", "title": "Apartment 14 — full finishing",
+          "value": 950000, "signed_on": d(0, 25), "start": d(1, 1), "finish": d(5, 28), "retention_pct": 0.05, "retention_release": d(5, 28),
+          "payment_terms": "Monthly progress invoices, 5 % retention released on handover", "status": "active"},
+         {"code": "CC-D002", "kind": "client", "party": "Delta Tech Solutions", "bu_code": "PRJ-D03", "title": "Office fit-out",
+          "value": 1800000, "signed_on": d(2, 1), "start": d(2, 10), "finish": d(5, 30), "vat_code": "VAT14", "status": "active"}] +
+        [{"code": "SC-D001", "kind": "sub", "party": "Eng. Fathy Plumbing", "bu_code": "PRJ-D01", "title": "Plastering — Villa 7",
+          "signed_on": d(0, 20), "start": d(1, 1), "finish": d(5, 15), "retention_pct": 0.05, "retention_release": d(5, 20),
+          "advance": 20000, "advance_recovery_pct": 0.2, "wht_code": "WHT1-S", "payment_terms": "Monthly certificates, paid within 15 days",
+          "status": "active", "item_no": no, "description": desc, "unit": u, "qty": q, "rate": r} if i == 0 else
+         {"code": "SC-D001", "kind": "sub", "party": "Eng. Fathy Plumbing", "item_no": no, "description": desc, "unit": u, "qty": q, "rate": r}
+         for i, (no, desc, u, q, r) in enumerate((("1", "Internal plaster", "m2", 1200, 65), ("2", "External plaster", "m2", 450, 85),
+                                                  ("3", "Gypsum ceilings", "m2", 300, 160)))])
+    S["Variation Orders"] = [
+        {"contract": "CC-D001", "code": "VO-01", "date": d(3, 5), "description": "Extra built-in wardrobe in the master bedroom", "amount": 45000,
+         "days": 10, "status": "approved", "decided_by": "Laila Samir"},
+        {"contract": "CC-D001", "code": "VO-02", "date": d(5, 2), "description": "Upgrade to imported sanitary ware", "amount": 28000, "status": "pending"},
+        {"contract": "SC-D001", "code": "VO-01", "date": d(3, 10), "description": "Plaster for the added roof room", "amount": 9500, "days": 5,
+         "status": "approved", "decided_by": "admin"}]
+    S["Subcontractor Certificates"] = (
+        [{"contract": "SC-D001", "number": 1, "date": eom(2), "period_to": eom(2), "description": dsc, "qty_to_date": q, "status": "posted"}
+         for dsc, q in (("Internal plaster", 500), ("External plaster", 100))] +
+        [{"contract": "SC-D001", "number": 2, "date": eom(4), "period_to": eom(4), "description": dsc, "qty_to_date": q, "status": "approved"}
+         for dsc, q in (("Internal plaster", 950), ("External plaster", 300), ("Gypsum ceilings", 80))])
+    S["Subcontract Payments"] = [{"contract": "SC-D001", "date": d(1, 2), "kind": "advance", "amount": 20000, "method": "Bank Transfer"},
+                                 {"contract": "SC-D001", "date": d(3, 10), "kind": "payment", "amount": 20000, "method": "Bank Transfer"}]
+    S["Purchase Requests"] = (
+        [{"code": "PR-D001", "date": d(4, 20), "requested_by": "Nadia Hosny", "bu_code": "PRJ-D01", "needed_by": d(5, 5), "status": "approved",
+          "kind": "cost", "description": "Wall paint 18L (white)", "qty": 30, "unit": "drum", "est_rate": 1450, "notes": "Painting phase"},
+         {"code": "PR-D001", "date": d(4, 20), "kind": "cost", "description": "Primer 18L", "qty": 12, "unit": "drum", "est_rate": 1100}] +
+        [{"code": "PR-D002", "date": d(5, 18), "requested_by": "Mahmoud Saber", "warehouse": "Main Store", "needed_by": d(5, 30), "status": "submitted",
+          "kind": "stock", "description": "Cement bag 50kg", "qty": 150, "unit": "bag", "est_rate": 100}])
+    S["Supplier Quotes"] = [
+        {"request": "PR-D001", "supplier": "El-Nour Building Materials", "date": d(4, 22), "delivery_days": 3, "description": "Wall paint 18L (white)", "rate": 1420},
+        {"request": "PR-D001", "supplier": "El-Nour Building Materials", "description": "Primer 18L", "rate": 1150},
+        {"request": "PR-D001", "supplier": "Colours House", "date": d(4, 23), "delivery_days": 7, "terms": "50 % advance", "description": "Wall paint 18L (white)", "rate": 1380},
+        {"request": "PR-D001", "supplier": "Colours House", "description": "Primer 18L", "rate": 1060}]
+    S["Equipment"] = [
+        {"code": "EQ-D01", "name": "Concrete mixer 350 L", "category": "Concrete mixer", "serial": "MX-3350-17", "hourly_rate": 120,
+         "meter_start": 1450, "bu_code": "PRJ-D01", "status": "in_use"},
+        {"code": "EQ-D02", "name": "Diesel generator 30 kVA", "category": "Generator", "serial": "GEN-30-552", "hourly_rate": 90,
+         "meter_start": 3200, "status": "available"},
+        {"code": "EQ-D03", "name": "Site pickup truck", "category": "Truck", "serial": "DEMO 456", "asset_code": "FA-D01", "hourly_rate": 150,
+         "meter_start": 0, "status": "available"}]
+    S["Maintenance Plans"] = [
+        {"equipment": "EQ-D01", "title": "Greasing & drum check", "every_hours": 100, "start_date": d(0, 3)},
+        {"equipment": "EQ-D02", "title": "Oil & filter change", "every_hours": 250, "every_days": 90, "start_date": d(0, 1)},
+        {"equipment": "EQ-D03", "title": "Service (10,000 km)", "every_days": 120, "start_date": d(0, 5)}]
+    S["Equipment Usage"] = [
+        {"equipment": "EQ-D01", "date": d(1, 18), "bu_code": "PRJ-D01", "hours": 26, "operator": "Mahmoud Saber", "fuel_qty": 40, "fuel_cost": 520, "method": "Cash"},
+        {"equipment": "EQ-D01", "date": d(3, 8), "bu_code": "PRJ-D01", "hours": 34, "operator": "Mahmoud Saber", "fuel_qty": 55, "fuel_cost": 715, "method": "Cash"},
+        {"equipment": "EQ-D02", "date": d(2, 12), "bu_code": "PRJ-D02", "hours": 60, "fuel_qty": 210, "fuel_cost": 2730, "method": "Cash"},
+        {"equipment": "EQ-D03", "date": d(4, 3), "bu_code": "PRJ-D03", "hours": 12, "operator": "Driver", "fuel_qty": 60, "fuel_cost": 780, "method": "Cash"}]
+    S["Maintenance Log"] = [
+        {"equipment": "EQ-D02", "date": d(2, 20), "plan": "Oil & filter change", "kind": "service", "description": "Oil, oil filter, fuel filter",
+         "hours_at": 3260, "cost": 1850, "vendor": "Power Gen Services", "method": "Cash"},
+        {"equipment": "EQ-D01", "date": d(3, 15), "kind": "repair", "description": "Replaced drum bearing", "cost": 2400, "vendor": "Ali Workshop",
+         "on_credit": "Yes"}]
+    S["Attendance"] = []
+    for k in range(1, 6):
+        day = d(5, k)
+        S["Attendance"] += [
+            {"date": day, "employee": "EMP-D01", "status": "present", "bu_code": "PRJ-D01", "hours": 8, "overtime": 2 if k == 2 else 0,
+             "qty": 18 + k, "unit": "m2", "task": "Block work"},
+            {"date": day, "employee": "EMP-D02", "status": "absent" if k == 3 else "present", "bu_code": "PRJ-D01", "hours": 8,
+             "qty": 0 if k == 3 else 30, "unit": "m2", "task": "Plaster"},
+            {"date": day, "employee": "EMP-D03", "status": "half" if k == 5 else "present", "bu_code": "PRJ-D02", "hours": 4 if k == 5 else 9,
+             "task": "Electrical second fix"},
+            {"date": day, "employee": "EMP-D04", "status": "leave" if k == 4 else "present", "bu_code": "PRJ-D01", "hours": 8}]
+    S["E-Receipts"] = [
+        {"number": "R-D000001", "date": d(5, 3), "time": "10:15", "kind": "sale", "buyer_type": "P", "buyer_name": "Walk-in customer",
+         "payment_method": "C", "description": "Tile adhesive 25 kg", "code": "EG-999888777-TA25", "unit": "EA", "qty": 4, "price": 180,
+         "vat_code": "VAT14", "issue": "Yes"},
+        {"number": "R-D000001", "date": d(5, 3), "description": "Grout 5 kg", "code": "EG-999888777-GR05", "unit": "EA", "qty": 2, "price": 95, "vat_code": "VAT14"},
+        {"number": "R-D000002", "date": d(5, 4), "time": "12:40", "kind": "sale", "buyer_type": "P", "buyer_name": "Hany Adel", "payment_method": "V",
+         "description": "Wall paint 18L", "code": "EG-999888777-PN18", "unit": "EA", "qty": 1, "price": 1650, "discount": 50, "vat_code": "VAT14",
+         "issue": "Yes"},
+        {"number": "R-D000003", "date": d(5, 5), "time": "09:05", "kind": "return", "ref_number": "R-D000001", "buyer_type": "P",
+         "payment_method": "C", "description": "Grout 5 kg", "code": "EG-999888777-GR05", "unit": "EA", "qty": 1, "price": 95, "vat_code": "VAT14",
+         "issue": "Yes"}]
     return S
 
 
@@ -525,6 +635,17 @@ def load(db, user="", replace=False):
             op2 = closing
             bankrec.save(db, {"account": bank, "name": f"Demo Bank {tm_from[:7]}", "date_from": tm_from, "date_to": acc.today(),
                               "opening": op2, "closing": round(op2 + sum(x["amount"] for x in lines), 2), "lines": lines})
+        # a stocktake of the main store: two tiles broken, one bathroom set missing — posted as adjustments
+        from . import stocktake
+        main = db.one("SELECT id FROM warehouses WHERE name='Main Store'")
+        if main:
+            cid = stocktake.start(db, {"warehouse_id": main["id"], "date": acc.today(), "counted_by": "Mahmoud Saber",
+                                       "notes": "Quarterly count"}, user)
+            short = {"Ceramic tiles 60x60": 2, "Bathroom set (basin + WC)": 1}
+            stocktake.save_counts(db, cid, {"lines": [{"item_id": ln["item_id"], "item": ln["item"], "counted": max(ln["system_qty"] - short.get(ln["item"], 0), 0),
+                                                       "note": "broken in the store" if ln["item"] in short else ""}
+                                                      for ln in stocktake.get(db, cid)["lines"]]})
+            stocktake.post(db, cid, user)
         db.conn.execute("INSERT OR REPLACE INTO settings(key,value) VALUES (?,?)", (TAG, acc.today()))
     return {"counts": res["counts"], "from": a0.isoformat(), "to": today.isoformat()}
 

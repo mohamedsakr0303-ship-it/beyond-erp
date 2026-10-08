@@ -16,7 +16,7 @@ import re
 
 from . import accounting as acc
 from . import bankrec, custody, loans, payroll, recurring, rentals, sales
-from .db import SUBTYPES, to_major, to_minor
+from .db import ETA_SECRETS, SUBTYPES, to_major, to_minor
 
 FORMAT = "beyond-erp"
 FORMAT_VERSION = 1
@@ -478,11 +478,12 @@ def export_data(db):
     period_to = db.setting("report_to") or f"{_dt.date.today().year}-12-31"
     out["Settings"] = [{"key": "report_from", "value": period_from}, {"key": "report_to", "value": period_to}]
     for r in db.q("SELECT key, value FROM settings ORDER BY key"):
-        if r["key"] not in ("schema_version", "report_from", "report_to", "docs_seeded", "eta_client_secret"):
+        if r["key"] not in ("schema_version", "report_from", "report_to", "docs_seeded", *ETA_SECRETS):
             out["Settings"].append({"key": r["key"], "value": r["value"]})
     from . import payroll as _pr   # employees and payroll rules carry no money: re-import updates them
     out["Employees"] = _pr.employee_sheet_rows(db)
     out["Payroll Settings"] = _pr.settings_sheet_rows(db)
+    _site_sheets(db, out)
     from . import budgets   # budgets carry no money, so the export can include them (re-import replaces, never doubles)
     out["Budgets"] = budgets.export_rows(db)
     for t in db.q("SELECT * FROM tax_codes ORDER BY kind, code"):
@@ -693,7 +694,8 @@ def _entry_to_row(e, accounts):
                                            "amount": dr[0]["debit"], "method": m.get("method", ""),
                                            "received_into": dr[0]["account"], "credit_account": cr[0]["account"],
                                            "withheld": m.get("withheld") or "", "vat_code": m.get("vat_code", "")}
-    if k == "Payment Voucher" and len(dr) == 1 and len(cr) == 1 and sub(cr[0]["account"]) == "cash":
+    if k == "Payment Voucher" and len(dr) == 1 and len(cr) == 1 and sub(cr[0]["account"]) == "cash" and \
+            (accounts.get(dr[0]["account"]) or {}).get("type") == "Liability":   # e.g. an advance to a supplier stays a journal
         return "Payment Vouchers", base | {"party": e["party"], "against": dr[0]["account"], "amount": dr[0]["debit"],
                                            "method": m.get("method", ""), "paid_from": cr[0]["account"],
                                            "ref": e["ref"], "memo": e["memo"]}
@@ -844,6 +846,66 @@ def read_json(content: bytes):
     return data
 
 
+def _site_sheets(db, out):
+    """Projects, contracts, requests, equipment and attendance carry no money of their own: export them so a re-import
+    brings them back. Certificates, equipment usage / maintenance, stock counts and e-receipts post entries — their money
+    is in the journal, and their records travel in the JSON backup (extras), never twice."""
+    from . import contracts, equipment, labour, procurement, projects
+    pj = projects.export_rows(db)
+    out["Project Phases"] = [{**p, "progress": p["progress"]} for p in pj["phases"]]
+    out["Project Tasks"] = [{k: t[k] for k in ("bu_code", "phase", "title", "assignee", "due", "priority", "status", "notes", "created_by", "done_at")}
+                            for t in pj["tasks"]]
+    out["Contracts"], out["Variation Orders"] = [], []
+    for c in contracts.export_rows(db):
+        head = {k: c[k] for k in ("code", "kind", "party", "bu_code", "title", "value", "signed_on", "start", "finish", "retention_pct",
+                                  "retention_release", "advance", "advance_recovery_pct", "vat_code", "wht_code", "payment_terms", "status")}
+        head["bu_code"] = head["bu_code"] or ""
+        for i, ln in enumerate(c["lines"] or [{}]):
+            out["Contracts"].append({**(head if i == 0 else {"code": c["code"], "kind": c["kind"], "party": c["party"]}), **ln})
+        out["Variation Orders"] += [{"contract": c["code"], **{k: v[k] for k in ("code", "date", "description", "amount", "days", "status", "decided_by", "decided_at")}}
+                                    for v in c["variations"]]
+    out["Purchase Requests"], out["Supplier Quotes"] = [], []
+    for r in procurement.export_rows(db):
+        head = {k: r[k] or "" for k in ("code", "date", "requested_by", "bu_code", "warehouse", "needed_by", "status", "notes")}
+        for i, ln in enumerate(r["lines"]):
+            out["Purchase Requests"].append({**(head if i == 0 else {"code": r["code"], "date": r["date"]}), **ln})
+        for q in r["quotes"]:
+            for j, (desc, rate) in enumerate(q["rates"].items()):
+                out["Supplier Quotes"].append({"request": r["code"], "supplier": q["supplier"], **({k: q[k] for k in ("date", "valid_until", "delivery_days",
+                                               "vat_code", "terms")} if j == 0 else {}), "description": desc, "rate": rate,
+                                               "awarded": "Yes" if desc in q["awarded"] else ""})
+    eq = equipment.export_rows(db)
+    out["Equipment"] = [{**e, "asset_code": e["asset_code"] or "", "bu_code": e["bu_code"] or ""} for e in eq["equipment"]]
+    out["Maintenance Plans"] = eq["plans"]
+    out["Attendance"] = labour.export_rows(db)
+
+
+def site_extras(db):
+    """Records that post entries (their money is restored from the journal; these link back to it by reference)."""
+    from . import contracts, equipment, ereceipt, labour, stocktake
+    eq = equipment.export_rows(db)
+    return {"certificates": {c["code"]: c["certificates"] for c in contracts.export_rows(db) if c["certificates"]},
+            "equipment_usage": eq["usage"], "maintenance_logs": eq["logs"], "stock_counts": stocktake.export_rows(db),
+            "ereceipts": ereceipt.export_rows(db), "attendance": labour.export_rows(db)}
+
+
+def site_extras_import(db, ex, counts):
+    from . import contracts, equipment, ereceipt, stocktake
+    for code, certs in (ex.get("certificates") or {}).items():
+        c = db.one("SELECT id FROM contracts WHERE code=?", (code,))
+        if c and not db.one("SELECT 1 FROM sub_certificates WHERE contract_id=?", (c["id"],)):
+            contracts.import_certificates(db, c["id"], code, certs)
+            counts["Subcontractor certificates"] = counts.get("Subcontractor certificates", 0) + len(certs)
+    if (ex.get("equipment_usage") or ex.get("maintenance_logs")) and not db.one("SELECT 1 FROM equipment_usage UNION SELECT 1 FROM maintenance_logs"):
+        equipment.import_rows(db, {"usage": ex.get("equipment_usage"), "logs": ex.get("maintenance_logs")}, counts)
+    if ex.get("stock_counts"):
+        stocktake.import_rows(db, ex["stock_counts"], counts)
+    if ex.get("ereceipts"):
+        ereceipt.import_rows(db, ex["ereceipts"], counts)
+    if ex.get("attendance") and not db.one("SELECT 1 FROM attendance"):   # after payroll re-created the employees
+        from . import labour
+        labour.import_rows(db, ex["attendance"], counts)
+
 def export_extras(db):
     """What the sheets cannot hold: letterhead images, offer types and offers (JSON backups only)."""
     return {"assets": db.q("SELECT key, mime, w, h, data FROM assets ORDER BY key"),
@@ -854,7 +916,8 @@ def export_extras(db):
             "sales": sales.export_rows(db), "bank": bankrec.export_rows(db), "recurring": recurring.export_rows(db),
             "entry_meta": _entry_meta_export(db), "attachments": _attachments_export(db),
             "purchase_orders": _po_export(db), "services": _svc_export(db), "chat": _chat_export(db),
-            "dashboard_groups": db.q("SELECT key, name, name_ar, layout, sort FROM user_groups ORDER BY sort, id")}
+            "dashboard_groups": db.q("SELECT key, name, name_ar, layout, sort FROM user_groups ORDER BY sort, id"),
+            "site": site_extras(db)}
 
 
 def _chat_export(db):
@@ -993,6 +1056,8 @@ def _imp_extras(db, ex, mode, counts):
         if mode == "replace":
             db.conn.execute("DELETE FROM purchase_orders")
         counts["Purchase orders"] = purchasing.import_rows(db, ex["purchase_orders"])
+    if isinstance(ex.get("site"), dict):
+        site_extras_import(db, ex["site"], counts)
     if ex.get("attachments"):
         from . import attachments
         if mode == "replace":
@@ -1047,7 +1112,9 @@ def to_csv(db, sheet_name, template=False):
     return ("﻿" + buf.getvalue()).encode("utf-8")
 
 
-WIPE_ORDER = ("payroll_lines", "payroll_runs", "crew_sheets", "employees", "sub_recognitions", "sub_visits", "sub_invoices", "subscriptions", "service_plans", "attachments", "po_receipts", "po_lines", "purchase_orders", "budgets", "bank_lines", "bank_statements", "bank_rules", "recurring_runs", "recurring", "sale_cheques", "sale_installments", "sale_lines", "sales_orders", "product_media", "products", "rent_moves", "rental_invoices", "rental_charges", "rental_handovers", "rental_lines", "rentals", "rent_lots",
+WIPE_ORDER = ("sub_cert_lines", "sub_certificates", "variation_orders", "contract_lines", "contracts", "pr_quote_lines", "pr_quotes",
+              "pr_lines", "purchase_requests", "stock_count_lines", "stock_counts", "equipment_usage", "maintenance_logs", "maintenance_plans",
+              "equipment", "attendance", "ereceipts", "project_tasks", "project_phases", "payroll_lines", "payroll_runs", "crew_sheets", "employees", "sub_recognitions", "sub_visits", "sub_invoices", "subscriptions", "service_plans", "attachments", "po_receipts", "po_lines", "purchase_orders", "budgets", "bank_lines", "bank_statements", "bank_rules", "recurring_runs", "recurring", "sale_cheques", "sale_installments", "sale_lines", "sales_orders", "product_media", "products", "rent_moves", "rental_invoices", "rental_charges", "rental_handovers", "rental_lines", "rentals", "rent_lots",
               "rent_kit_lines", "rent_kits", "rent_models", "rent_items", "loans", "custodies", "parties", "ownership_changes", "fixed_assets", "stock_moves", "stock_levels", "stock_items", "extract_lines", "extracts", "boq_lines", "boqs",
               "journal_lines", "journal_entries", "partner_shares", "partners", "rates", "business_units")
 
@@ -1118,7 +1185,20 @@ def import_data(db, data, mode="append", dry_run=False, user=""):
             # modules built on their own screens: rows create new records through the module itself
             rows_fn = dict(_setup.ROW_IMPORTERS)
             groups = {n: (k, f) for n, k, f in _setup.GROUP_IMPORTERS}
+            pays = data.get("Subcontract Payments") or []
             for name in _setup.ORDER:
+                if name == "Subcontractor Certificates":   # advances first: certificates recover them as they are posted
+                    for i, r in enumerate(pays, start=FIRST_DATA_ROW):
+                        if str(r.get("kind") or "").lower() == "advance":
+                            try:
+                                r["_done"] = True
+                                _setup.sub_payment(db, r, user)
+                            except (acc.ValidationError, LookupError) as e:
+                                errors.append({"sheet": "Subcontract Payments", "row": i, "error": str(e)})
+                if name == "Subcontract Payments":
+                    fn = rows_fn[name]
+                    run(name, lambda r, fn=fn: None if r.get("_done") else fn(db, r, user))
+                    continue
                 if name in rows_fn:
                     fn = rows_fn[name]
                     run(name, lambda r, fn=fn: fn(db, r, user))
@@ -1160,7 +1240,7 @@ def import_data(db, data, mode="append", dry_run=False, user=""):
 
 def _imp_setting(db, r):
     key = acc.text(r.get("key"))
-    if key in ("schema_version", "docs_seeded", "eta_client_secret"):
+    if key in ("schema_version", "docs_seeded", *ETA_SECRETS):
         return
     if key.startswith("default:"):  # fill only when empty
         key = key[8:]

@@ -174,7 +174,7 @@ MENU_ITEMS = [
     ("eq:distribute", "Profit distribution", "توزيع أرباح", "partners.transactions"),
     ("eq:transfer", "Transfer / sell a share", "تنازل / بيع حصة", "partners.ownership"),
     ("eq:admit", "Admit a new partner", "دخول شريك جديد", "partners.ownership"),
-    ("eq:exit", "Partner exit / buy-out", "خروج شريك", "partners.ownership"),
+    ("eq:exit", "Partner retirement / buy-out", "تخارج شريك", "partners.ownership"),
     ("asset:new", "New fixed asset", "أصل ثابت جديد", "assets.register"),
     ("asset:depr", "Run depreciation", "احتساب الإهلاك", "assets.depreciation"),
     ("po:new", "New purchase order", "أمر شراء جديد", "purchasing.orders"),
@@ -189,10 +189,18 @@ MENU_ITEMS = [
     ("bank:import", "Import a bank statement", "استيراد كشف حساب بنك", "accounting.bankrec"),
     ("contact:new", "New contact (supplier, subcontractor, driver…)", "جهة اتصال جديدة (مورد، مقاول، سائق…)", "purchasing.contacts"),
     ("custody:settle", "Custody expense report (settlement)", "تسوية عهدة (تقرير مصروفات)", "purchasing.custody"),
+    ("site:task", "New project task", "مهمة مشروع جديدة", "projects.tasks"),
+    ("site:contract", "New contract (client)", "عقد جديد (عميل)", "contracts.contracts"),
+    ("site:subcontract", "New subcontract", "عقد مقاول باطن جديد", "contracts.contracts"),
+    ("site:prq", "New purchase requisition", "طلب شراء جديد", "purchasing.requests"),
+    ("site:usage", "Equipment hours / fuel", "ساعات تشغيل / وقود معدة", "equipment.usage"),
+    ("site:maint", "Equipment maintenance done", "صيانة معدة تمت", "equipment.maintenance"),
+    ("site:attendance", "Today's attendance", "حضور اليوم", "payroll.attendance"),
+    ("site:ereceipt", "New e-receipt", "إيصال إلكتروني جديد", "tax.ereceipt"),
 ]
 DEFAULT_MENU = ["po:new", "doc:direct_cost", "doc:expense", "doc:payment", "doc:receipt", "doc:invoice", "doc:payroll",
                 "doc:stock_move", "doc:journal", "eq:contribute", "eq:distribute", "asset:new", "asset:depr", "loan:new", "loan:pay",
-                "custody:new", "custody:settle", "contact:new", "sale:new", "sale:collect", "sub:new", "doc:bu", "doc:offer"]
+                "custody:new", "custody:settle", "contact:new", "sale:new", "sale:collect", "sub:new", "doc:bu", "doc:offer", "site:prq", "site:task", "site:subcontract", "site:usage", "site:attendance"]
 
 
 def menu(db):

@@ -30,7 +30,8 @@ ENTRY_KINDS = ["Direct Cost", "Operating Expense", "Payroll Accrual", "Payment V
                "Loan Forgiven", "Loan Written Off", "Custody Issued", "Custody Settlement", "Custody Return",
                "Custody Deduction", "Rental Equipment Purchase", "Rental Equipment Loss", "Rental Equipment Depreciation",
                "Rental Deposit", "Installment Interest", "Advance Applied", "Cost of Sales", "Cheque Received",
-               "Cheque Cleared", "Cheque Bounced", "Sale Refund", "Bank Entry"]
+               "Cheque Cleared", "Cheque Bounced", "Sale Refund", "Bank Entry",
+               "Subcontractor Certificate", "Equipment Usage", "Equipment Maintenance", "E-Receipt"]
 
 
 class ValidationError(Exception):

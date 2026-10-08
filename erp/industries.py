@@ -45,7 +45,7 @@ _ACC = {
 }
 
 TYPES = {
-    "general": {"name": "General business", "ar": "نشاط عام", "hide": ["rentals", "shop", "estimating"],
+    "general": {"name": "General business", "ar": "نشاط عام", "hide": ["rentals", "shop", "estimating", "contracts", "equipment"],
                 "departments": ["Management", "Finance", "Sales", "Operations", "Admin"],
                 "jobs": ["General Manager", "Accountant", "Sales Representative", "Administrator", "Driver", "Worker"],
                 "bu": "Department / branch", "components": {"site": False},
@@ -68,7 +68,11 @@ TYPES = {
                     "guide": ["Each contract is a business unit; invoices are progress certificates (مستخلصات) with retention "
                               "(1150 retention receivable) and subcontractor retention (2110).",
                               "Issue materials to the project from stock, so its cost is in its profit when used.",
-                              "Measured subcontract work (formwork m², rebar ton, blockwork m²) is priced in the crew calculator."]},
+                              "Measured subcontract work (formwork m², rebar ton, blockwork m²) is priced in the crew calculator.",
+                              "Contracts: the client contract and approved variation orders set the project's value; subcontracts are paid "
+                              "by cumulative certificates (retention, advance recovery, VAT / withholding) — Projects & Contracts.",
+                              "Site: purchase requests → quotes compared → orders; daily attendance; equipment hours and maintenance; "
+                              "phases with % complete and tasks per project."]},
     "development": {"name": "Real-estate development", "ar": "التطوير العقاري", "hide": ["rentals"],
                     "departments": ["Development", "Construction", "Sales & Marketing", "Customer Care", "Finance", "Legal", "Admin"],
                     "jobs": ["Development Manager", "Project Manager", "Site Engineer", "Sales Manager", "Property Consultant",
@@ -78,19 +82,19 @@ TYPES = {
                               "move to 1230 and are released to cost of sales when each unit is sold.",
                               "Unit sales on installments with cheques run from Sales & showroom; reservation deposits sit in 2140.",
                               "Brokers' and consultants' commissions: payroll commission line or 6032."]},
-    "sales": {"name": "Trading & sales", "ar": "التجارة والمبيعات", "hide": ["rentals", "estimating"],
+    "sales": {"name": "Trading & sales", "ar": "التجارة والمبيعات", "hide": ["rentals", "estimating", "contracts", "equipment"],
               "departments": ["Sales", "Warehouse", "Purchasing", "Delivery", "Finance", "Admin"],
               "jobs": ["Sales Manager", "Sales Representative", "Cashier", "Storekeeper", "Purchasing Officer", "Driver", "Accountant"],
               "bu": "Branch / channel", "components": {"commission": True},
               "guide": ["Products, stock and installments live in Sales & showroom; business units split branches or channels.",
                         "Pay commission as a monthly payroll line so it is taxed and costed with the salary."]},
-    "investment": {"name": "Investment & holding", "ar": "الاستثمار والقابضة", "hide": ["rentals", "shop", "estimating", "stock"],
+    "investment": {"name": "Investment & holding", "ar": "الاستثمار والقابضة", "hide": ["rentals", "shop", "estimating", "stock", "projects", "contracts", "equipment"],
                    "departments": ["Investments", "Finance", "Legal", "Admin"],
                    "jobs": ["Investment Manager", "Financial Analyst", "Accountant", "Legal Counsel", "Administrator"],
                    "bu": "Portfolio / investment", "components": {"commission": False, "site": False},
                    "guide": ["Each holding or property is a business unit; dividends, gains and fair-value changes have their own accounts.",
                              "Loans given and taken run from Loans; partners' capital and distributions from Partners."]},
-    "scaffolding": {"name": "Scaffolding & equipment rental", "ar": "تأجير السقالات والمعدات", "hide": ["shop", "estimating"],
+    "scaffolding": {"name": "Scaffolding & equipment rental", "ar": "تأجير السقالات والمعدات", "hide": ["shop", "estimating", "contracts"],
                     "departments": ["Operations / Yard", "Installation Crews", "Sales", "Finance", "Admin"],
                     "jobs": ["Operations Manager", "Yard Keeper", "Installation Supervisor", "Scaffolder", "Safety Inspector",
                              "Driver", "Sales Representative", "Accountant"],

@@ -1802,7 +1802,7 @@ class Negotiations(unittest.TestCase):
             self.assertEqual(api.call(op, "GET", "/api/supplier-discount?party=Hani%20Ceramic")[1]["owed"], 0)
             self.assertEqual(api.call(op, "GET", "/api/negotiations")[1]["total"]["kept"], 1000)
             # search: account name, account code, amount, business unit
-            for word in ("Subcontractor", "5020", "14,000", "P1", "earnings"):
+            for word in ("Subcontract", "5020", "14,000", "P1", "Savings"):
                 rows = api.call(op, "GET", "/api/journal?q=" + urllib.parse.quote(word))[1]["rows"]
                 self.assertIn(eid, [x["id"] for x in rows], word)
             self.assertEqual(api.call(op, "GET", "/api/journal?q=nothing-like-this")[1]["rows"], [])
@@ -3261,3 +3261,138 @@ class AssistantAnyProvider(unittest.TestCase):
         self.assertIn("did not answer like an AI API", str(cm.exception))
         self.assertIn("<!doctype html>", str(cm.exception))
         srv.shutdown()
+
+
+class SiteModules(unittest.TestCase):
+    """Projects, contracts & certificates, purchase requests, stocktakes, equipment, attendance and e-receipts."""
+
+    def setUp(self):
+        self.db = seeded()
+
+    def test_variation_orders_change_the_project_contract_value(self):
+        from erp import contracts
+        cid = contracts.save(self.db, {"kind": "client", "bu_code": "PRJ-2", "party": "Client X", "value": 500000, "finish": "2026-12-31"})
+        vid = contracts.save_vo(self.db, cid, {"description": "Extra room", "amount": 50000, "days": 20, "date": "2026-03-01"})
+        self.assertEqual(contracts.client_value(self.db, 2)["revised"], 500000)   # pending: no change yet
+        contracts.decide_vo(self.db, vid, "approved", "admin")
+        self.assertEqual(contracts.client_value(self.db, 2)["revised"], 550000)
+        self.assertEqual(self.db.one("SELECT contract_value FROM business_units WHERE id=2")["contract_value"], 55000000)
+        self.assertEqual(contracts.get(self.db, cid)["revised_finish"], "2027-01-20")
+
+    def test_subcontract_certificates_are_cumulative_and_recover_the_advance(self):
+        from erp import contracts
+        sid = contracts.save(self.db, {"kind": "sub", "bu_code": "PRJ-2", "party": "Sub Co", "retention_pct": 10, "advance_recovery_pct": 20,
+                                       "lines": [{"description": "Plaster", "qty": 1000, "rate": 100}, {"description": "Paint", "qty": 1000, "rate": 50}]})
+        lines = contracts.get(self.db, sid)["lines"]
+        contracts.pay(self.db, sid, {"kind": "advance", "amount": 20000, "date": "2026-03-01"})
+        x1 = contracts.save_certificate(self.db, sid, {"date": "2026-03-15", "lines": [{"line_id": lines[0]["id"], "qty_to_date": 300}]})
+        with self.assertRaises(a.ValidationError):
+            contracts.post_certificate(self.db, x1)          # must be approved first
+        contracts.approve_certificate(self.db, x1)
+        e = a.get_entry(self.db, contracts.post_certificate(self.db, x1))
+        by = {ln["account"]: ln for ln in e["lines"]}
+        self.assertEqual((by["5020"]["debit"], by["2015"]["credit"], by["2110"]["credit"], by["1310"]["credit"]), (30000, 21000, 3000, 6000))
+        x2 = contracts.save_certificate(self.db, sid, {"date": "2026-04-15", "lines": [{"line_id": lines[0]["id"], "qty_to_date": 500},
+                                                                                        {"line_id": lines[1]["id"], "qty_to_date": 200}]})
+        contracts.approve_certificate(self.db, x2)
+        contracts.post_certificate(self.db, x2)
+        st = contracts.get(self.db, sid)["statement"]
+        self.assertEqual((st["certified"], st["retention_held"], st["advance_outstanding"], st["payable"]), (60000, 6000, 8000, 42000))
+        contracts.pay(self.db, sid, {"kind": "payment", "amount": 10000, "date": "2026-04-20"})
+        contracts.pay(self.db, sid, {"kind": "release", "amount": 5000, "date": "2026-04-21"})
+        with self.assertRaises(a.ValidationError):           # its retention was partly released
+            contracts.reopen_certificate(self.db, x2)
+        self.assertTrue(all(c["ok"] for c in a.audit(self.db)))
+
+    def test_purchase_request_quotes_award_to_orders(self):
+        from erp import procurement, purchasing
+        pid = procurement.save(self.db, {"bu_code": "PRJ-1", "lines": [{"description": "Cement", "qty": 100, "est_rate": 90},
+                                                                       {"description": "Sand", "qty": 10, "est_rate": 300}]}, "site")
+        ids = [ln["id"] for ln in procurement.get(self.db, pid)["lines"]]
+        procurement.save_quote(self.db, pid, {"supplier": "Sup A", "rates": {ids[0]: 85, ids[1]: 320}})
+        procurement.save_quote(self.db, pid, {"supplier": "Sup B", "rates": {ids[0]: 88, ids[1]: 290}})
+        with self.assertRaises(a.ValidationError):
+            procurement.award(self.db, pid, {"strategy": "lowest"})   # not approved
+        procurement.set_status(self.db, pid, "submitted")
+        procurement.set_status(self.db, pid, "approved", "boss")
+        cmp_ = procurement.get(self.db, pid)["comparison"]
+        self.assertEqual((cmp_["lowest_split_total"], cmp_["best_full_total"]), (11400, 11700))
+        codes = procurement.award(self.db, pid, {"strategy": "lowest"})
+        self.assertEqual(len(codes), 2)
+        self.assertEqual(sorted(purchasing.get(self.db, c)["supplier"] for c in codes), ["Sup A", "Sup B"])
+        self.assertEqual(procurement.get(self.db, pid)["status"], "ordered")
+
+    def test_stocktake_posts_only_the_differences(self):
+        from erp import stocktake
+        cid = stocktake.start(self.db, {"warehouse": "Site Store"})
+        stocktake.save_counts(self.db, cid, {"lines": [{"item": "Tiles", "counted": 18}]})
+        self.assertEqual(stocktake.post(self.db, cid), 1)
+        lvl = self.db.one("SELECT qty FROM stock_levels l JOIN warehouses w ON w.id=l.warehouse_id WHERE w.name='Site Store'")
+        self.assertEqual(lvl["qty"], 18)
+        with self.assertRaises(a.ValidationError):
+            stocktake.post(self.db, cid)
+
+    def test_equipment_hours_charge_projects_and_maintenance_falls_due(self):
+        from erp import equipment
+        e = equipment.save(self.db, {"name": "Mixer", "hourly_rate": 100, "meter_start": 50})
+        equipment.save_plan(self.db, {"equipment_id": e, "title": "Oil", "every_hours": 20})
+        equipment.log_usage(self.db, {"equipment_id": e, "bu_code": "PRJ-1", "hours": 19, "fuel_cost": 300, "date": "2026-03-05"})
+        self.assertEqual(equipment.alerts(self.db)["maintenance_due"][0]["state"], "due")
+        equipment.log_usage(self.db, {"equipment_id": e, "bu_code": "PRJ-1", "hours": 2, "date": "2026-03-06"})
+        self.assertEqual(equipment.alerts(self.db)["overdue"], 1)
+        equipment.log_maintenance(self.db, {"equipment_id": e, "plan_id": 1, "cost": 500, "date": "2026-03-07"})
+        self.assertEqual(equipment.alerts(self.db)["maintenance_due"], [])
+        rep = equipment.report(self.db)
+        self.assertEqual((rep["by_project"][0]["charge"], rep["pool_balance"]), (2100, -1600))
+
+    def test_attendance_fills_the_payroll_run(self):
+        from erp import labour, payroll
+        w = payroll.save_employee(self.db, {"name": "Ali", "emp_type": "daily", "daily_rate": 400, "bu_code": "PRJ-1"})
+        m = payroll.save_employee(self.db, {"name": "Omar", "emp_type": "monthly", "basic": 9000})
+        labour.save_day(self.db, {"date": "2026-03-02", "rows": [{"employee_id": w, "status": "present", "overtime": 2, "qty": 20, "unit": "m2"},
+                                                                 {"employee_id": m, "status": "absent"}]})
+        labour.save_day(self.db, {"date": "2026-03-03", "rows": [{"employee_id": w, "status": "half"}, {"employee_id": m, "status": "present"}]})
+        rid = payroll.create_run(self.db, {"period": "2026-03"})
+        labour.fill_payroll(self.db, rid)
+        got = {ln["employee_id"]: (ln["units"], ln["absent_days"], ln["ot_day"]) for ln in payroll.get_run(self.db, rid)["lines"]}
+        self.assertEqual(got[w], (1.5, 0, 2))
+        self.assertEqual(got[m], (0, 1, 0))
+
+    def test_e_receipts_chain_and_post(self):
+        from erp import ereceipt
+        r1 = ereceipt.save(self.db, {"date": "2026-03-05", "time": "10:00",
+                                     "lines": [{"description": "Paint", "qty": 2, "price": 250, "code": "EG-1", "vat_code": "VAT14"}]})
+        u1 = ereceipt.issue(self.db, r1)["uuid"]
+        r2 = ereceipt.save(self.db, {"date": "2026-03-06", "time": "10:00", "kind": "return", "ref_number": ereceipt.get(self.db, r1)["number"],
+                                     "lines": [{"description": "Paint", "qty": 1, "price": 250, "code": "EG-1", "vat_code": "VAT14"}]})
+        ereceipt.issue(self.db, r2)
+        self.assertEqual(ereceipt.get(self.db, r2)["previous_uuid"], u1)
+        self.assertTrue(ereceipt.verify_chain(self.db)["ok"])
+        with self.assertRaises(a.ValidationError):
+            ereceipt.delete(self.db, r1)
+        self.db.x("UPDATE ereceipts SET document=replace(document,'250','260') WHERE id=?", (r1,))
+        self.assertFalse(ereceipt.verify_chain(self.db)["ok"])   # tampering breaks the chain
+
+    def test_demo_company_and_backup_round_trip(self):
+        from erp import demo
+        db = Database(":memory:")
+        demo.load(db, "admin")
+        db2 = Database(":memory:")
+        interchange.import_data(db2, interchange.read_json(interchange.to_json(db).encode()), mode="replace", user="admin")
+        for t in ("contracts", "variation_orders", "sub_certificates", "purchase_requests", "pr_quotes", "stock_counts", "equipment",
+                  "equipment_usage", "maintenance_logs", "attendance", "ereceipts", "project_phases", "project_tasks"):
+            n = db.one(f"SELECT COUNT(*) n FROM {t}")["n"]
+            self.assertTrue(n, t)
+            self.assertEqual(n, db2.one(f"SELECT COUNT(*) n FROM {t}")["n"], t)
+        self.assertEqual(db2.one("SELECT COUNT(*) n FROM sub_certificates WHERE status='posted' AND entry_id IS NULL")["n"], 0)
+        tb = lambda d: {r["code"]: (r.get("debit"), r.get("credit")) for r in a.trial_balance(d)["rows"]}  # noqa: E731
+        self.assertEqual(tb(db), tb(db2))
+
+    def test_professional_account_titles_only_replace_defaults(self):
+        db = Database(":memory:")
+        self.assertEqual(db.one("SELECT name FROM accounts WHERE code='1100'")["name"], "Trade Receivables — Customers")
+        db.x("UPDATE accounts SET name='Bank Account' WHERE code='1020'")
+        db.x("UPDATE accounts SET name='Our clients' WHERE code='1100'")
+        db._migrate()
+        self.assertEqual(db.one("SELECT name FROM accounts WHERE code='1020'")["name"], "Cash at Bank")
+        self.assertEqual(db.one("SELECT name FROM accounts WHERE code='1100'")["name"], "Our clients")

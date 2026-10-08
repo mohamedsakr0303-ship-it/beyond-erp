@@ -46,7 +46,9 @@ def settings(db):
 def public_settings(db):
     s = settings(db)
     s = {k: v for k, v in s.items() if k.startswith("eta_")}
-    s["eta_client_secret"] = "••••••••" if s.get("eta_client_secret") else ""
+    from .db import ETA_SECRETS
+    for k in ETA_SECRETS:
+        s[k] = "••••••••" if s.get(k) else ""
     return s
 
 

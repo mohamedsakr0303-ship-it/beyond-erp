@@ -40,7 +40,7 @@ from . import db as _db
 # on every device would be wrong (e.g. submitting an e-invoice to the tax authority once per device).
 LOCAL_ONLY = [r"POST /api/login", r"POST /api/logout", r"POST /api/setup", r"PUT /api/me/password",
               r"POST /api/maintenance", r"POST /api/offers-preview", r"POST /api/einvoice/test",
-              r"POST /api/einvoice/submit", r"POST /api/einvoice/\d+/refresh", r"POST /api/einvoice/\d+/cancel",
+              r"POST /api/einvoice/submit", r"POST /api/ereceipts-submit", r"POST /api/einvoice/\d+/refresh", r"POST /api/einvoice/\d+/cancel",
               r"POST /api/[\w-]+-preview(?:/[\w-]+)?", r"\w+ /api/cloud/.*",
               r"\w+ /api/ai/.*"]   # the assistant's key, requests and conversations stay on the device
 _LOCAL_RX = re.compile("^(?:" + "|".join(LOCAL_ONLY) + ")$")

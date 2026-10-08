@@ -167,6 +167,9 @@ TERMS = {
     "Profit": "الربح", "Margin": "الهامش", "Line rent / month": "إيجار السطر / شهر", "Loss value": "قيمة الفقد", "Your rate (optional)": "سعرك (اختياري)",
     "Weight kg (line)": "الوزن كجم", "Rental period": "مدة الإيجار",
 }
+# the chart of accounts' professional titles (erp/db.py PRO_NAMES)
+from .db import PRO_NAMES as _PRO  # noqa: E402
+TERMS.update({new: ar for _old, new, ar in _PRO.values()})
 
 
 def _ar_half(v):

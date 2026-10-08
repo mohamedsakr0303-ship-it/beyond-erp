@@ -230,6 +230,125 @@ def _specs(C):
                      ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
                      ["يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو", "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"]))] +
                  [C("notes", "Notes", "ملاحظات", width=18)]},
+        # ---- projects, contracts & the site
+        {"name": "Project Phases", "ar": "مراحل المشروعات", "module": "projects", "setup": True,
+         "title": "Each project's phases with a weight (its share of the project), planned dates and % complete. Re-importing a phase "
+                  "with the same project and name updates it",
+         "cols": [C("bu_code", "Business Unit", "وحدة الأعمال", kind="bu", required=True), C("seq", "Order", "الترتيب", kind="num", width=6),
+                  C("name", "Phase", "المرحلة", width=26, required=True), C("weight", "Weight", "الوزن", kind="num", width=8),
+                  C("start", "Planned Start", "البداية المخططة", kind="date"), C("finish", "Planned Finish", "النهاية المخططة", kind="date"),
+                  C("progress", "% Complete", "نسبة الإنجاز", kind="pct", width=9),
+                  C("status", "Status", "الحالة", width=10, choices=["planned", "in_progress", "done", "on_hold"]), C("notes", "Notes", "ملاحظات", width=20)]},
+        {"name": "Project Tasks", "ar": "مهام المشروعات", "module": "projects", "setup": True,
+         "title": "Tasks with who is responsible and when they are due (business unit blank = a company task)",
+         "cols": [C("bu_code", "Business Unit", "وحدة الأعمال", kind="bu"), C("phase", "Phase", "المرحلة", width=18),
+                  C("title", "Task", "المهمة", width=30, required=True), C("assignee", "Assigned To", "المسؤول", width=16),
+                  C("due", "Due", "الاستحقاق", kind="date"), C("priority", "Priority", "الأولوية", width=8, choices=["low", "normal", "high"]),
+                  C("status", "Status", "الحالة", width=9, choices=["todo", "doing", "blocked", "done"]), C("notes", "Notes", "ملاحظات", width=20),
+                  C("created_by", "Created By", "أنشأها", width=12), C("done_at", "Done On", "تاريخ الإنجاز", width=12)]},
+        {"name": "Contracts", "ar": "العقود", "module": "contracts", "setup": True,
+         "title": "Client contracts and subcontracts. One row per bill-of-quantities line; rows with the same contract code form one "
+                  "contract (its details are read from the first row). Percentages as decimals: 0.1 = 10 %",
+         "cols": [C("code", "Contract Code", "كود العقد", width=10, required=True, note="e.g. CC-0001 / SC-0001"),
+                  C("kind", "Type", "النوع", width=8, required=True, choices=["client", "sub"]),
+                  C("party", "Client / Subcontractor", "العميل / مقاول الباطن", width=22, required=True), C("bu_code", "Business Unit", "وحدة الأعمال", kind="bu"),
+                  C("title", "Title", "العنوان", width=24), C("value", "Contract Value (blank = lines)", "قيمة العقد", kind="money"),
+                  C("signed_on", "Signed On", "تاريخ التوقيع", kind="date"), C("start", "Start", "البداية", kind="date"), C("finish", "End", "النهاية", kind="date"),
+                  C("retention_pct", "Retention %", "نسبة المحتجزات", kind="pct", width=8), C("retention_release", "Retention Due Back", "موعد رد المحتجزات", kind="date"),
+                  C("advance", "Advance Agreed", "الدفعة المقدمة", kind="money"), C("advance_recovery_pct", "Advance Recovery %", "نسبة استرداد المقدم", kind="pct", width=8),
+                  C("vat_code", "VAT Code", "كود الضريبة", width=8), C("wht_code", "WHT Code", "كود الخصم", width=8),
+                  C("payment_terms", "Payment Terms", "شروط الدفع", width=22), C("status", "Status", "الحالة", width=9, choices=["draft", "active", "completed", "terminated"]),
+                  C("item_no", "Item No.", "رقم البند", width=7), C("description", "Line Description", "بيان البند", width=26),
+                  C("unit", "Unit", "الوحدة", width=7), C("qty", "Qty", "الكمية", kind="num", width=8), C("rate", "Rate", "الفئة", kind="money")]},
+        {"name": "Variation Orders", "ar": "أوامر التغيير", "module": "contracts", "setup": True,
+         "title": "Changes to a contract. Only approved ones change its value and end date (and the project's contract value)",
+         "cols": [C("contract", "Contract Code", "كود العقد", width=10, required=True), C("code", "VO No.", "رقم الأمر", width=8),
+                  C("date", "Date", "التاريخ", kind="date", required=True), C("description", "Description", "البيان", width=30, required=True),
+                  C("amount", "Change in Value (− omission)", "التغير في القيمة", kind="money"), C("days", "Extension (days)", "مد المدة (أيام)", kind="num", width=8),
+                  C("status", "Status", "الحالة", width=9, choices=["pending", "approved", "rejected"]), C("decided_by", "Decided By", "صاحب القرار", width=12),
+                  C("decided_at", "Decided On", "تاريخ القرار", width=12)]},
+        {"name": "Subcontractor Certificates", "ar": "مستخلصات مقاولي الباطن", "module": "contracts", "setup": True,
+         "title": "One row per line of a certificate: the CUMULATIVE quantity executed to date. Rows with the same contract and number form "
+                  "one certificate; Status posted books it (cost, retention, advance recovery, taxes). " + MONEY_NOTE,
+         "cols": [C("contract", "Contract Code", "كود العقد", width=10, required=True), C("number", "Certificate No.", "رقم المستخلص", kind="num", width=7, required=True),
+                  C("date", "Date", "التاريخ", kind="date", required=True), C("period_to", "Work Up To", "الأعمال حتى", kind="date"),
+                  C("deductions", "Other Deductions", "خصومات أخرى", kind="money"), C("description", "Contract Line", "بند العقد", width=26, required=True),
+                  C("qty_to_date", "Qty to Date", "الكمية التراكمية", kind="num", width=9, required=True),
+                  C("status", "Status", "الحالة", width=9, choices=["draft", "approved", "posted"])]},
+        {"name": "Subcontract Payments", "ar": "مدفوعات مقاولي الباطن", "module": "contracts", "setup": True,
+         "title": "Advances, payments and retention released on a subcontract. " + MONEY_NOTE,
+         "cols": [C("contract", "Contract Code", "كود العقد", width=10, required=True), C("date", "Date", "التاريخ", kind="date", required=True),
+                  C("kind", "Type", "النوع", width=9, required=True, choices=["advance", "payment", "release"]),
+                  C("amount", "Amount", "المبلغ", kind="money", required=True), C("method", "Method", "طريقة الدفع", choices=acc.PAYMENT_METHODS),
+                  C("paid_from", "Paid From (account)", "الصرف من (حساب)", kind="acct")]},
+        {"name": "Purchase Requests", "ar": "طلبات الشراء", "module": "purchasing", "setup": True,
+         "title": "One row per requested line; rows with the same request code form one request (nothing is booked)",
+         "cols": [C("code", "Request Code", "كود الطلب", width=10, required=True), C("date", "Date", "التاريخ", kind="date", required=True),
+                  C("requested_by", "Requested By", "مقدم الطلب", width=14), C("bu_code", "Business Unit", "وحدة الأعمال", kind="bu"),
+                  C("warehouse", "For Store", "للمخزن", width=14), C("needed_by", "Needed By", "مطلوب قبل", kind="date"),
+                  C("status", "Status", "الحالة", width=10, choices=["draft", "submitted", "approved", "rejected", "ordered", "cancelled"]),
+                  C("kind", "Line Type", "نوع البند", width=8, choices=["cost", "expense", "stock"]), C("description", "Description", "البيان", width=26, required=True),
+                  C("qty", "Qty", "الكمية", kind="num", width=8), C("unit", "Unit", "الوحدة", width=7), C("est_rate", "Estimated Price", "السعر التقديري", kind="money"),
+                  C("notes", "Notes", "ملاحظات", width=18)]},
+        {"name": "Supplier Quotes", "ar": "عروض الموردين", "module": "purchasing", "setup": True,
+         "title": "Suppliers' prices against a request's lines (by description); rows with the same request and supplier form one quote",
+         "cols": [C("request", "Request Code", "كود الطلب", width=10, required=True), C("supplier", "Supplier", "المورد", width=22, required=True),
+                  C("date", "Date", "التاريخ", kind="date"), C("valid_until", "Valid Until", "صالح حتى", kind="date"),
+                  C("delivery_days", "Delivery (days)", "التوريد (أيام)", kind="num", width=7), C("vat_code", "VAT Code", "كود الضريبة", width=8),
+                  C("terms", "Terms", "الشروط", width=18), C("description", "Request Line", "بند الطلب", width=26, required=True),
+                  C("rate", "Unit Price", "سعر الوحدة", kind="money", required=True), C("awarded", "Awarded", "تمت الترسية", width=7, choices=["Yes", "No"])]},
+        {"name": "Stock Counts", "ar": "الجرد الدوري", "module": "stock", "setup": True,
+         "title": "A count sheet per warehouse: one row per item counted; rows with the same count code form one count. Post = Yes "
+                  "books the differences as stock adjustments. " + MONEY_NOTE,
+         "cols": [C("code", "Count Code", "كود الجرد", width=10, required=True), C("date", "Date", "التاريخ", kind="date", required=True),
+                  C("warehouse", "Warehouse", "المخزن", width=16, required=True), C("item", "Item", "الصنف", width=22, required=True),
+                  C("counted", "Counted Qty", "الكمية الفعلية", kind="num", width=9), C("note", "Note", "ملاحظة", width=16),
+                  C("counted_by", "Counted By", "القائم بالجرد", width=12), C("post", "Post", "ترحيل", width=6, choices=["Yes", "No"])]},
+        {"name": "Equipment", "ar": "المعدات", "module": "equipment", "setup": True,
+         "title": "Machines the company owns or runs. Re-importing a row with the same code updates it",
+         "cols": [C("code", "Code", "الكود", width=9, required=True), C("name", "Name", "الاسم", width=22, required=True),
+                  C("category", "Category", "الفئة", width=14), C("serial", "Serial / Plate", "الرقم التسلسلي", width=12),
+                  C("asset_code", "Fixed Asset Code", "كود الأصل", width=10), C("hourly_rate", "Charge per Hour", "الفئة لكل ساعة", kind="money"),
+                  C("meter_start", "Hour Meter at Start", "العداد عند التسجيل", kind="num", width=9), C("bu_code", "Now At", "موجودة في", kind="bu"),
+                  C("status", "Status", "الحالة", width=10, choices=["available", "in_use", "maintenance", "retired"]), C("notes", "Notes", "ملاحظات", width=18)]},
+        {"name": "Maintenance Plans", "ar": "خطط الصيانة", "module": "equipment", "setup": True,
+         "title": "Preventive maintenance: every N days and/or every N working hours",
+         "cols": [C("equipment", "Equipment Code", "كود المعدة", width=10, required=True), C("title", "Plan", "الخطة", width=24, required=True),
+                  C("every_days", "Every (days)", "كل (يوم)", kind="num", width=7), C("every_hours", "Every (hours)", "كل (ساعة)", kind="num", width=7),
+                  C("start_date", "Counting From", "الاحتساب من", kind="date"), C("notes", "Notes", "ملاحظات", width=18)]},
+        {"name": "Equipment Usage", "ar": "تشغيل المعدات", "module": "equipment", "setup": True,
+         "title": "Working hours (charged to the project at the machine's rate) and fuel per project. " + MONEY_NOTE,
+         "cols": [C("equipment", "Equipment Code", "كود المعدة", width=10, required=True), C("date", "Date", "التاريخ", kind="date", required=True),
+                  C("bu_code", "Business Unit", "وحدة الأعمال", kind="bu", required=True), C("hours", "Hours", "الساعات", kind="num", width=7),
+                  C("operator", "Operator", "المشغل", width=14), C("fuel_qty", "Fuel (L)", "الوقود (لتر)", kind="num", width=7),
+                  C("fuel_cost", "Fuel Cost", "تكلفة الوقود", kind="money"), C("method", "Fuel Paid By", "طريقة الدفع", choices=acc.PAYMENT_METHODS),
+                  C("notes", "Notes", "ملاحظات", width=16)]},
+        {"name": "Maintenance Log", "ar": "سجل الصيانة", "module": "equipment", "setup": True,
+         "title": "Service, repairs and inspections done (cost to the equipment running-costs pool). " + MONEY_NOTE,
+         "cols": [C("equipment", "Equipment Code", "كود المعدة", width=10, required=True), C("date", "Date", "التاريخ", kind="date", required=True),
+                  C("plan", "Plan", "الخطة", width=18), C("kind", "Type", "النوع", width=9, choices=["service", "repair", "inspection"]),
+                  C("description", "Description", "البيان", width=24), C("hours_at", "Hour Meter", "العداد", kind="num", width=8),
+                  C("cost", "Cost", "التكلفة", kind="money"), C("vendor", "Workshop / Supplier", "الورشة / المورد", width=16),
+                  C("on_credit", "On Credit", "آجل", width=6, choices=["Yes", "No"]), C("method", "Paid By", "طريقة الدفع", choices=acc.PAYMENT_METHODS)]},
+        {"name": "Attendance", "ar": "الحضور والانصراف", "module": "payroll", "setup": True,
+         "title": "One row per worker per day: status, project, hours, overtime and output (for productivity). Re-importing a day replaces it",
+         "cols": [C("date", "Date", "التاريخ", kind="date", required=True), C("employee", "Employee Code", "كود الموظف", width=10, required=True),
+                  C("status", "Status", "الحالة", width=8, required=True, choices=["present", "half", "absent", "leave", "sick"]),
+                  C("bu_code", "Business Unit", "وحدة الأعمال", kind="bu"), C("hours", "Hours", "الساعات", kind="num", width=6),
+                  C("overtime", "Overtime h", "إضافي (س)", kind="num", width=6), C("qty", "Output Qty", "الإنتاج", kind="num", width=7),
+                  C("unit", "Unit", "الوحدة", width=6), C("task", "Work Done", "العمل المنفذ", width=18), C("notes", "Notes", "ملاحظات", width=14)]},
+        {"name": "E-Receipts", "ar": "الإيصالات الإلكترونية", "module": "tax", "setup": True,
+         "title": "Point-of-sale receipts (B2C). One row per item; rows with the same receipt number form one receipt. Issue = Yes chains "
+                  "it and posts the sale. Item codes: your EGS / GS1 codes registered with the tax authority. " + MONEY_NOTE,
+         "cols": [C("number", "Receipt No.", "رقم الإيصال", width=10, required=True), C("date", "Date", "التاريخ", kind="date", required=True),
+                  C("time", "Time (UTC)", "الوقت", width=6), C("kind", "Type", "النوع", width=7, choices=["sale", "return"]),
+                  C("ref_number", "Return of Receipt", "مرتجع الإيصال", width=10), C("buyer_type", "Buyer Type", "نوع المشتري", width=6, choices=["P", "B", "F"]),
+                  C("buyer_name", "Buyer", "المشتري", width=16), C("buyer_id", "Buyer ID / Tax No.", "الرقم القومي / الضريبي", width=14),
+                  C("payment_method", "Payment", "الدفع", width=6, choices=["C", "V", "CC", "VC", "VO", "PR", "GC", "P", "O"]),
+                  C("bu_code", "Business Unit", "وحدة الأعمال", kind="bu"), C("description", "Item", "الصنف", width=22, required=True),
+                  C("code", "ETA Item Code", "كود الصنف", width=14), C("unit", "Unit", "الوحدة", width=6), C("qty", "Qty", "الكمية", kind="num", width=6),
+                  C("price", "Unit Price", "سعر الوحدة", kind="money"), C("discount", "Discount", "الخصم", kind="money"),
+                  C("vat_code", "VAT Code", "كود الضريبة", width=8), C("issue", "Issue", "إصدار", width=6, choices=["Yes", "No"])]},
     ]
 
 
@@ -461,6 +580,65 @@ def _standalone(sheets, C):
         role("x_arac", "ar"), role("x_sdef", "service_deferred"), role("x_vo", "vat_output")]
     by[ss]["legs"] = [("x_ar", "x_arac", "D"), ("x_earned", "x_racc", "C"), ("x_def", "x_sdef", "C"), ("x_vat", "x_vo", "C")]
 
+    # Subcontract payments: an advance (to supplier advances), a payment (settles what he is owed), retention released
+    sp_ = "Subcontract Payments"
+    by[sp_]["cols"] += [
+        calc("x_money", "money account", f'=IF({{paid_from}}<>"",{{paid_from}}&"",{money("method")})'),
+        calc("x_dr", "debit", f'=IF({{kind}}="advance",{ROLE("supplier_advances")},IF({{kind}}="release",{ROLE("retention_payable")},{ROLE("sub_payable")}))'),
+        calc("x_cr", "credit", f'=IF({{kind}}="release",{ROLE("sub_payable")},{{x_money}})')]
+    by[sp_]["legs"] = [("amount", "x_dr", "D"), ("amount", "x_cr", "C")]
+
+    # Subcontractor certificates (posted ones): this period = (qty to date − the previous certificate's) × the contract rate;
+    # retention, advance recovery (cumulative, never more than the advance paid) and taxes on the certificate's first row
+    sc_, cn = "Subcontractor Certificates", "Contracts"
+    head = lambda col: f'INDEX([[{cn}.{col}]],MATCH({{contract}},[[{cn}.code]],0))'  # noqa: E731
+    by[sc_]["cols"] += [
+        calc("x_key", "certificate", '=IF({contract}="","",{contract}&"|"&{number})'),
+        calc("x_on", "posted", '=IF(INDEX([[Subcontractor Certificates.status]],MATCH({x_key},[[Subcontractor Certificates.x_key]],0))="posted",1,0)'),
+        calc("x_prev", "previous qty", f'=SUMIFS([[{sc_}.qty_to_date]],[[{sc_}.contract]],{{contract}},[[{sc_}.description]],{{description}},'
+                                       f'[[{sc_}.number]],N({{number}})-1)'),
+        calc("x_rate", "rate", f'=SUMIFS([[{cn}.rate]],[[{cn}.code]],{{contract}},[[{cn}.description]],{{description}})'),
+        calc("x_val", "this period (line)", "=IF({contract}=\"\",0,ROUND((N({qty_to_date})-{x_prev})*{x_rate},2)*{x_on})"),
+        calc("x_first", "first row", f'=IF({{x_key}}="",0,IF(MATCH({{x_key}},[[{sc_}.x_key]],0)={{row}}-4,1,0))'),
+        calc("x_this", "this period", f'=IF({{x_first}}=1,SUMIFS([[{sc_}.x_val]],[[{sc_}.x_key]],{{x_key}}),0)'),
+        calc("x_base", "after deductions", "=IF({x_first}=1,{x_this}-N({deductions})*{x_on},0)"),
+        calc("x_ret", "retention", f'=IF({{x_first}}=1,ROUND({{x_this}}*N({head("retention_pct")}),2),0)'),
+        calc("x_adv", "advance paid", f'=SUMIFS([[{sp_}.amount]],[[{sp_}.contract]],{{contract}},[[{sp_}.kind]],"advance")'),
+        calc("x_cum", "certified to here", f'=SUMIFS([[{sc_}.x_val]],[[{sc_}.contract]],{{contract}},[[{sc_}.number]],"<="&N({{number}}))'),
+        calc("x_rec", "advance recovered", f'=IF({{x_first}}=1,MIN({{x_adv}},ROUND({{x_cum}}*N({head("advance_recovery_pct")}),2))'
+                                           f'-MIN({{x_adv}},ROUND(({{x_cum}}-{{x_this}})*N({head("advance_recovery_pct")}),2)),0)'),
+        calc("x_vatc", "VAT code", f'={head("vat_code")}&""'), calc("x_whtc", "WHT code", f'={head("wht_code")}&""'),
+        calc("x_vat", "VAT", f'=ROUND({{x_base}}*{TAXRATE("{x_vatc}")},2)'), calc("x_wht", "withholding", f'=ROUND({{x_base}}*{TAXRATE("{x_whtc}")},2)'),
+        calc("x_net", "owed to him", "={x_base}+{x_vat}-{x_ret}-{x_rec}-{x_wht}"),
+        role("x_cost", "subcontract_cost"), role("x_vin", "vat_input"), role("x_pay", "sub_payable"), role("x_retp", "retention_payable"),
+        role("x_sadv", "supplier_advances"), role("x_whtp", "wht_payable")]
+    by[sc_]["legs"] = [("x_base", "x_cost", "D"), ("x_vat", "x_vin", "D"), ("x_net", "x_pay", "C"), ("x_ret", "x_retp", "C"),
+                       ("x_rec", "x_sadv", "C"), ("x_wht", "x_whtp", "C")]
+
+    # Equipment: hours × the machine's rate to the project against the running-costs pool; fuel straight to the project
+    eu = "Equipment Usage"
+    by[eu]["cols"] += [
+        calc("x_charge", "hours charged", '=ROUND(N({hours})*N(IFERROR(INDEX([[Equipment.hourly_rate]],MATCH({equipment},[[Equipment.code]],0)),0)),2)'),
+        role("x_used", "equipment_charge"), role("x_pool", "equipment_pool"), calc("x_money", "money account", "=" + money("method"))]
+    by[eu]["legs"] = [("x_charge", "x_used", "D"), ("x_charge", "x_pool", "C"), ("fuel_cost", "x_used", "D"), ("fuel_cost", "x_money", "C")]
+    ml = "Maintenance Log"
+    by[ml]["cols"] += [
+        role("x_pool", "equipment_pool"),
+        calc("x_cr", "paid from / owed to", f'=IF(AND({{on_credit}}="Yes",{{vendor}}<>""),{ROLE("ap")},{money("method")})')]
+    by[ml]["legs"] = [("cost", "x_pool", "D"), ("cost", "x_cr", "C")]
+
+    # E-receipts (issued): the sale (or a return, reversed) into cash / bank, revenue and output VAT
+    er = "E-Receipts"
+    hd = lambda col: f'INDEX([[{er}.{col}]],MATCH({{number}},[[{er}.number]],0))'  # noqa: E731
+    by[er]["cols"] += [
+        calc("x_sign", "booked", f'=IF({{number}}="",0,IF({hd("issue")}="Yes",IF({hd("kind")}="return",-1,1),0))'),
+        calc("x_net", "net", "=ROUND((N(IF({qty}=\"\",1,{qty}))*N({price})-N({discount}))*{x_sign},2)"),
+        calc("x_vat", "VAT", f'=ROUND({{x_net}}*{TAXRATE("{vat_code}")},2)'),
+        calc("x_total", "total", "={x_net}+{x_vat}"),
+        calc("x_money", "money account", f'=IF(OR({hd("payment_method")}="C",{hd("payment_method")}="CC"),{ROLE("cash")},{ROLE("bank")})'),
+        role("x_rev", "revenue"), role("x_vo", "vat_output")]
+    by[er]["legs"] = [("x_total", "x_money", "D"), ("x_net", "x_rev", "C"), ("x_vat", "x_vo", "C")]
+
     # Purchase orders: commitments (no money until received): line value and the order's open amount
     po = "Purchase Orders"
     by[po]["cols"] += [
@@ -686,15 +864,176 @@ def payroll_run_rows(db, items, user=""):
     payroll.run_sheet_import(db, items, user)
 
 
+# ------------------------------------------------------------------ projects, contracts & the site
+def phase_row(db, r, user=""):
+    from . import projects
+    bu = db.one("SELECT id FROM business_units WHERE code=?", (text(r.get("bu_code")),))
+    ex = db.one("SELECT id FROM project_phases WHERE bu_id=? AND name=?", (bu["id"], text(r.get("name")))) if bu else None
+    projects.save_phase(db, r, ex["id"] if ex else None)
+
+
+def task_row(db, r, user=""):
+    from . import projects
+    bu = db.one("SELECT id FROM business_units WHERE code=?", (text(r.get("bu_code")),)) if r.get("bu_code") else None
+    ph = db.one("SELECT id FROM project_phases WHERE bu_id=? AND name=?", (bu["id"], text(r.get("phase")))) if bu and r.get("phase") else None
+    ex = db.one("SELECT id FROM project_tasks WHERE COALESCE(bu_id,0)=? AND title=?", (bu["id"] if bu else 0, text(r.get("title"))))
+    tid = projects.save_task(db, {**r, "bu_id": bu["id"] if bu else None, "phase_id": ph["id"] if ph else None},
+                             ex["id"] if ex else None, text(r.get("created_by")) or user)
+    if r.get("done_at"):
+        db.x("UPDATE project_tasks SET done_at=? WHERE id=?", (text(r["done_at"]), tid))
+
+
+def contract_rows(db, items, user=""):
+    from . import contracts
+    h = items[0][1]
+    lines = [{k: r.get(k) for k in ("item_no", "description", "unit", "qty", "rate")} for _, r in items if text(r.get("description"))]
+    ex = db.one("SELECT id FROM contracts WHERE code=?", (text(h.get("code")),))
+    contracts.save(db, {**h, "lines": lines}, ex["id"] if ex else None)
+
+
+def vo_row(db, r, user=""):
+    from . import contracts
+    c = contracts.get(db, text(r.get("contract")))
+    if r.get("code") and db.one("SELECT 1 FROM variation_orders WHERE contract_id=? AND code=?", (c["id"], text(r["code"]))):
+        return
+    vid = contracts.save_vo(db, c["id"], r)
+    st = text(r.get("status")).lower()
+    if st in ("approved", "rejected"):
+        contracts.decide_vo(db, vid, st, text(r.get("decided_by")) or user)
+        if r.get("decided_at"):
+            db.x("UPDATE variation_orders SET decided_at=? WHERE id=?", (text(r["decided_at"]), vid))
+
+
+def certificate_rows(db, items, user=""):
+    from . import contracts
+    h = items[0][1]
+    c = contracts.get(db, text(h.get("contract")))
+    by = {ln["description"]: ln["id"] for ln in c["lines"]}
+    lines = []
+    for _, r in items:
+        d = text(r.get("description"))
+        if d not in by:
+            raise ValidationError(f"'{d}' is not a line of contract {c['code']}")
+        lines.append({"line_id": by[d], "qty_to_date": r.get("qty_to_date")})
+    xid = contracts.save_certificate(db, c["id"], {**h, "lines": lines})
+    db.x("UPDATE sub_certificates SET number=? WHERE id=?", (int(float(h.get("number"))), xid))
+    st = text(h.get("status")).lower()
+    if st in ("approved", "posted"):
+        contracts.approve_certificate(db, xid, user)
+    if st == "posted":
+        contracts.post_certificate(db, xid, user)
+
+
+def sub_payment(db, r, user=""):
+    from . import contracts
+    contracts.pay(db, text(r.get("contract")), {**r, "allow_overpay": True}, user)
+
+
+def request_rows(db, items, user=""):
+    from . import procurement
+    h = items[0][1]
+    if db.one("SELECT 1 FROM purchase_requests WHERE code=?", (text(h.get("code")),)):
+        raise ValidationError(f"Request {h.get('code')} already exists")
+    pid = procurement.save(db, {**h, "warehouse": h.get("warehouse") or None,
+                                "lines": [{k: r.get(k) for k in ("kind", "description", "qty", "unit", "est_rate")} for _, r in items]},
+                           text(h.get("requested_by")) or user)
+    st = text(h.get("status")).lower()
+    if st and st != "draft":
+        db.x("UPDATE purchase_requests SET status=?, approved_by=? WHERE id=?",
+             (st, user if st in ("approved", "rejected", "ordered") else "", pid))
+
+
+def quote_rows(db, items, user=""):
+    from . import procurement
+    h = items[0][1]
+    pr = procurement.get(db, text(h.get("request")))
+    by = {ln["description"]: ln["id"] for ln in pr["lines"]}
+    rates = {}
+    for _, r in items:
+        d = text(r.get("description"))
+        if d not in by:
+            raise ValidationError(f"'{d}' is not a line of request {pr['code']}")
+        rates[by[d]] = r.get("rate")
+    qid = procurement.save_quote(db, pr["id"], {**h, "rates": rates})
+    db.conn.executemany("UPDATE pr_quote_lines SET awarded=1 WHERE quote_id=? AND line_id=?",
+                        [(qid, by[text(r.get("description"))]) for _, r in items if _yes(r.get("awarded"))])
+
+
+def count_rows(db, items, user=""):
+    from . import stocktake
+    h = items[0][1]
+    if db.one("SELECT 1 FROM stock_counts WHERE code=?", (text(h.get("code")),)):
+        raise ValidationError(f"Count {h.get('code')} already exists")
+    cid = stocktake.start(db, {"code": h.get("code"), "date": h.get("date"), "warehouse": h.get("warehouse"),
+                               "counted_by": h.get("counted_by")}, user)
+    stocktake.save_counts(db, cid, {"lines": [{"item": r.get("item"), "counted": r.get("counted"), "note": r.get("note")} for _, r in items]})
+    if _yes(h.get("post")):
+        stocktake.post(db, cid, user)
+
+
+def equipment_row(db, r, user=""):
+    from . import equipment
+    ex = db.one("SELECT id FROM equipment WHERE code=?", (text(r.get("code")),))
+    equipment.save(db, r, ex["id"] if ex else None)
+
+
+def plan_row(db, r, user=""):
+    from . import equipment
+    e = equipment.get(db, text(r.get("equipment")))
+    ex = db.one("SELECT id FROM maintenance_plans WHERE equipment_id=? AND title=?", (e["id"], text(r.get("title"))))
+    equipment.save_plan(db, {**r, "equipment_id": e["id"]}, ex["id"] if ex else None)
+
+
+def usage_row(db, r, user=""):
+    from . import equipment
+    equipment.log_usage(db, {**r, "equipment_id": equipment.get(db, text(r.get("equipment")))["id"]}, user)
+
+
+def maint_row(db, r, user=""):
+    from . import equipment
+    e = equipment.get(db, text(r.get("equipment")))
+    plan = db.one("SELECT id FROM maintenance_plans WHERE equipment_id=? AND title=?", (e["id"], text(r.get("plan")))) if r.get("plan") else None
+    equipment.log_maintenance(db, {**r, "equipment_id": e["id"], "plan_id": plan["id"] if plan else None,
+                                   "on_credit": _yes(r.get("on_credit"))}, user)
+
+
+def attendance_rows(db, items, user=""):
+    from . import labour
+    labour.save_day(db, {"date": items[0][1].get("date"), "rows": [r for _, r in items]}, user)
+
+
+def receipt_rows(db, items, user=""):
+    from . import ereceipt
+    h = items[0][1]
+    if db.one("SELECT 1 FROM ereceipts WHERE number=?", (text(h.get("number")),)):
+        raise ValidationError(f"Receipt {h.get('number')} already exists")
+    rid = ereceipt.save(db, {**h, "lines": [{k: r.get(k) for k in ("description", "code", "unit", "qty", "price", "discount", "vat_code")}
+                                            for _, r in items]})
+    if _yes(h.get("issue")):
+        ereceipt.issue(db, rid, user)
+
+
 ROW_IMPORTERS = [("Employees", employee_row), ("Loans", loan), ("Loan Transactions", loan_tx), ("Cash Custody", custody_row),
                  ("Rental Equipment", rent_item), ("Rental Stock Lots", rent_lot), ("Recurring Entries", recurring_row),
-                 ("Budgets", budget_row), ("Service Plans", service_plan), ("Service Subscriptions", service_sub)]
+                 ("Budgets", budget_row), ("Service Plans", service_plan), ("Service Subscriptions", service_sub),
+                 ("Project Phases", phase_row), ("Project Tasks", task_row), ("Variation Orders", vo_row), ("Subcontract Payments", sub_payment),
+                 ("Equipment", equipment_row), ("Maintenance Plans", plan_row), ("Equipment Usage", usage_row), ("Maintenance Log", maint_row)]
 GROUP_IMPORTERS = [("Payroll Settings", lambda r: "all", payroll_settings_rows),
                    ("Payroll Run", lambda r: str(r.get("date"))[:7], payroll_run_rows),
                    ("Custody Expenses", lambda r: (str(r.get("custody")), str(r.get("report") or r.get("date"))), custody_reports),
                    ("Rental Contracts", lambda r: str(r.get("ref")), rent_contract),
                    ("Sales Contracts", lambda r: str(r.get("code")), sale_contract),
                    ("Purchase Orders", lambda r: str(r.get("code")), purchase_order),
-                   ("Bank Statement Lines", lambda r: (str(r.get("account")), str(r.get("statement") or "")), bank_statement)]
+                   ("Bank Statement Lines", lambda r: (str(r.get("account")), str(r.get("statement") or "")), bank_statement),
+                   ("Contracts", lambda r: str(r.get("code")), contract_rows),
+                   ("Subcontractor Certificates", lambda r: (str(r.get("contract")), str(r.get("number"))), certificate_rows),
+                   ("Purchase Requests", lambda r: str(r.get("code")), request_rows),
+                   ("Supplier Quotes", lambda r: (str(r.get("request")), str(r.get("supplier"))), quote_rows),
+                   ("Stock Counts", lambda r: str(r.get("code")), count_rows),
+                   ("Attendance", lambda r: str(r.get("date"))[:10], attendance_rows),
+                   ("E-Receipts", lambda r: str(r.get("number")), receipt_rows)]
 ORDER = ["Payroll Settings", "Employees", "Payroll Run", "Loans", "Loan Transactions", "Cash Custody", "Custody Expenses", "Rental Equipment", "Rental Stock Lots",
-         "Rental Contracts", "Sales Contracts", "Recurring Entries", "Bank Statement Lines", "Purchase Orders", "Budgets", "Service Plans", "Service Subscriptions"]
+         "Rental Contracts", "Sales Contracts", "Recurring Entries", "Bank Statement Lines", "Purchase Orders", "Budgets", "Service Plans", "Service Subscriptions",
+         "Project Phases", "Project Tasks", "Contracts", "Variation Orders", "Subcontractor Certificates", "Subcontract Payments",
+         "Purchase Requests", "Supplier Quotes", "Stock Counts", "Equipment", "Maintenance Plans", "Equipment Usage", "Maintenance Log",
+         "Attendance", "E-Receipts"]
