@@ -74,6 +74,15 @@ def version_tuple(v):
     return tuple(int(x) for x in re.findall(r"\d+", str(v or "0"))[:3])
 
 
+# Changes that rewrite much of the books: right after one, the device that made it saves a fresh copy to the
+# workspace, so phones load that copy instead of replaying the whole change (see web-src/bridge.js catchUp)
+_HEAVY_RX = re.compile(r"^/api/(import(\?|$)|import-sheet|demo|erase|setup)")
+
+
+def is_heavy(method, path):
+    return method == "POST" and bool(_HEAVY_RX.match(path or ""))
+
+
 def replicated(method, target):
     """Is this API call a change every device must replay?"""
     if method not in ("POST", "PUT", "DELETE"):
@@ -606,7 +615,7 @@ class CloudSync:
                         continue
                     op["app_user"] = (stored or {}).get("app_user") or op["app_user"]  # exactly as the log has it
                     reply = apply(self.app, op)
-                    self._maybe_snapshot()
+                    self._maybe_snapshot(force=is_heavy(op["method"], op["path"]))
                     return reply
                 return ok({"error": "The workspace is very busy — please try again"}, 409)
             except Offline as e:
@@ -618,9 +627,9 @@ class CloudSync:
                 self.status.update(state="signed_out", error=str(e))
                 return ok({"error": f"Workspace: {e}"}, 403)
 
-    def _maybe_snapshot(self):
+    def _maybe_snapshot(self, force=False):
         seq, snap = last_seq(self.db), int(local_get(self.db, "snap_seq", "0") or 0)
-        if seq - snap < SNAPSHOT_EVERY:
+        if seq - snap < (1 if force else SNAPSHOT_EVERY):
             return
         try:
             self.client().rpc("put_snapshot", {"p_company": self._co(), "p_seq": seq, "p_version": __version__,

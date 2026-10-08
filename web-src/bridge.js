@@ -194,7 +194,8 @@ def cloud_device():
     return C.device_id(APP.db)
 
 def cloud_after_restore(keep_json):
-    C.restore_local_rows(APP.db, {"cloud_local": json.loads(keep_json), "sessions": []})
+    keep = json.loads(keep_json)
+    C.restore_local_rows(APP.db, keep if isinstance(keep, dict) else {"cloud_local": keep, "sessions": []})
 
 def cloud_ensure_admin(email):
     C.ensure_app_user(APP.db, email, admin=True)
@@ -297,9 +298,14 @@ def cloud_new_books(name, email):
         const copy = new SQL.Database(exportDb()); ["cloud_local", "sessions", "ai_threads", "ai_usage"].forEach(t => { try { copy.run("DELETE FROM " + t); } catch { /* older books */ } }); copy.run("VACUUM");
         const bytes = copy.export(); copy.close(); return toB64(await gz(bytes, true));
       }
-      async function restoreSnapshot(b64) {
-        const res = db.exec("SELECT key, value FROM cloud_local");
-        const keep = res.length ? res[0].values.map(([key, value]) => ({ key, value })) : [];
+      // keepAll: catching up from a newer copy keeps this device's own rows (sign-ins, assistant chats) — joining keeps only its settings
+      async function restoreSnapshot(b64, keepAll) {
+        const keep = {};
+        for (const t of keepAll ? ["cloud_local", "sessions", "ai_threads", "ai_usage"] : ["cloud_local"]) {
+          try { const res = db.exec("SELECT * FROM " + t); keep[t] = res.length ? res[0].values.map(v => Object.fromEntries(res[0].columns.map((c, i) => [c, v[i]]))) : []; }
+          catch { /* older books */ }
+        }
+        if (!keepAll) keep.sessions = [];
         const bytes = await gz(await b64bytes(b64), false);
         const old = db; db = new SQL.Database(bytes); db.run("PRAGMA foreign_keys = ON"); old.close();
         P("cloud_after_restore")(JSON.stringify(keep));
@@ -310,15 +316,41 @@ def cloud_new_books(name, email):
       let chain = Promise.resolve();
       const exclusive = fn => { const run = chain.then(fn, fn); chain = run.catch(() => {}); return run; };
       let blocked = "";
+      // Catching up must not lock the screen: changes are replayed one at a time with a pause for the page in between,
+      // and when this device is far behind — or would have to replay a whole import / demo / erase — it loads the
+      // latest copy of the books instead (a second instead of minutes of replaying on a phone).
+      const HEAVY = /^\/api\/(import(\?|$)|import-sheet|demo|erase|setup)/;
+      const heavy = op => op.method === "POST" && HEAVY.test(op.path || "");
+      const vt = v => String(v || "0").split(".").map(x => parseInt(x, 10) || 0);
+      const newer = v => { const a = vt(v), b = vt(window.BEYOND_VERSION); for (let i = 0; i < Math.max(a.length, b.length); i++) { if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) > (b[i] || 0); } return false; };
+      const breathe = () => new Promise(r => setTimeout(r, 0));
+      const CATCHUP_AFTER = 40;
+      async function catchUp(rows) {
+        if (rows.length < CATCHUP_AFTER && !rows.some(heavy)) return false;
+        const head = await select("snapshots", `select=seq,version&company_id=eq.${co()}&order=seq.desc&limit=1`);
+        if (!head.length || Number(head[0].seq) <= lastSeq() || newer(head[0].version)) return false;
+        // only worth it when the copy covers the heavy part (or most of the backlog)
+        const s = Number(head[0].seq), firstHeavy = rows.find(heavy);
+        if (firstHeavy ? s < Number(firstHeavy.seq) : s - lastSeq() < CATCHUP_AFTER / 2) return false;
+        setStatus("syncing", `Loading the latest copy of the books (${s - lastSeq()} changes)…`);
+        const full = await select("snapshots", `select=seq,data&company_id=eq.${co()}&seq=eq.${s}&limit=1`);
+        if (!full.length) return false;
+        await restoreSnapshot(full[0].data, true);
+        local("last_seq", s); local("snap_seq", Math.max(s, Number(local("snap_seq") || 0)));
+        return true;
+      }
       async function pullNow() {
-        let n = 0;
+        let n = 0, first = true;
         for (;;) {
           const rows = await select("ops", `select=*&company_id=eq.${co()}&seq=gt.${lastSeq()}&order=seq.asc&limit=500`);
-          for (const op of rows) {
+          if (first && rows.length) { first = false; if (await catchUp(rows)) { n++; continue; } }
+          for (const [i, op] of rows.entries()) {
             if (Number(op.seq) !== lastSeq() + 1) throw new CloudError("The workspace log has a gap — try again in a moment");
+            if (rows.length > 3) setStatus("syncing", `Syncing ${i + 1} of ${rows.length}…`);
             const r = unpackReply(P("cloud_apply")(JSON.stringify(op)));
             if (r.status === 0) { blocked = new TextDecoder().decode(r.body); setStatus("update", `A newer app version (${blocked}) is in use — reload this page to update`); throw new CloudError(status.error, "update"); }
             n++;
+            await breathe();   // let taps and scrolling through between changes
           }
           if (rows.length < 500) break;
         }
@@ -344,7 +376,7 @@ def cloud_new_books(name, email):
               } catch (e) { if (e.code === "40001") continue; throw e; }
               op.app_user = (stored && stored.app_user) || op.app_user;
               const r = unpackReply(P("cloud_apply")(JSON.stringify(op)));
-              schedule(); setStatus("ok"); maybeSnapshot();
+              schedule(); setStatus("ok"); maybeSnapshot(heavy(op));   // after an import / demo / erase: a fresh copy at once, so other devices load it instead of replaying
               for (const [m, p, d] of JSON.parse(P("cloud_followups")(method, url, h["content-type"] && raw ? new TextDecoder().decode(raw) : "{}")))
                 await write(m, p, { ...h, "content-type": "application/json" }, new TextEncoder().encode(d)).catch(() => {});
               return r;

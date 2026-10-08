@@ -908,3 +908,24 @@ tr.memo td{color:var(--muted);border-top:1px dashed var(--line)}
 .pbar{position:relative;height:8px;border-radius:6px;background:var(--line, rgba(127,127,127,.25));overflow:visible;margin:3px 0;min-width:90px}
 .pbar i{position:absolute;inset:0 auto 0 0;border-radius:6px;background:var(--good, #34c77b)}
 .pbar em{position:absolute;top:-3px;width:2px;height:14px;background:var(--warn, #ffa726);transform:translateX(-1px)}
+/* bulk selection: a checkbox column, picked rows highlighted, an action bar pinned to the bottom of the screen */
+th.bsel,td.bsel{width:34px;text-align:center;padding-inline:6px}
+.bsel input{width:18px;height:18px;cursor:pointer;accent-color:var(--brand,#047857)}
+tr.picked td{background:color-mix(in srgb,var(--brand,#047857) 9%,transparent)}
+#bulkbar{position:fixed;z-index:60;inset-inline:max(12px,env(safe-area-inset-left));bottom:max(12px,env(safe-area-inset-bottom));display:flex;flex-wrap:wrap;align-items:center;gap:8px;
+  padding:10px 14px;border-radius:12px;background:var(--panel);border:1px solid var(--line);box-shadow:0 8px 28px rgba(0,0,0,.18)}
+#bulkbar .spacer{flex:1}
+@media (min-width:900px){#bulkbar{inset-inline-start:calc(var(--side-w,260px) + 24px);inset-inline-end:24px}}
+.pager .pgsize{margin-inline-start:12px;font-size:.85em;color:var(--muted);display:inline-flex;gap:6px;align-items:center}
+.pager .pgsize select{width:auto;padding:2px 6px}
+@media (max-width:640px){
+  .tbl.stack tr[data-bsid]{position:relative;padding-inline-end:44px}
+  .tbl.stack td.bsel{position:absolute;top:8px;inset-inline-end:8px;padding:0;display:block}
+  .tbl.stack td.bsel:empty{display:none}
+  #bulkbar .btn{flex:1 1 auto}
+}
+body:has(.drawer-bg) #bulkbar{display:none}   /* a form is open: its own buttons, not the bar */
+@media (max-width:640px){
+  .tbl.stack tr.picked{background:color-mix(in srgb,var(--brand,#047857) 8%,var(--panel));border-color:var(--brand,#047857)}
+  .tbl.stack tr.picked td{background:none}
+}

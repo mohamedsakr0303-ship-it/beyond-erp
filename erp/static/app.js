@@ -335,6 +335,8 @@ document.addEventListener("click", e => {
     app.classList.remove("menu"); e.preventDefault(); return;
   }
   if (app && e.target.closest("a.brand")) app.classList.remove("menu");
+  const pick = e.target.closest(".bsel");   // the selection column: never opens the row
+  if (pick) { if (e.target.tagName !== "INPUT") { const cb = $("input", pick); if (cb) cb.click(); } return; }
   const el = e.target.closest("[data-a]");
   if (el && S.H[el.dataset.a]) { if (!el.closest(".drawer")) S.lastClick = { a: el.dataset.a, ds: { ...el.dataset }, value: el.value, hash: location.hash, at: Date.now() };
     e.preventDefault(); S.H[el.dataset.a](el, e); return; }
@@ -1229,12 +1231,15 @@ async function confirmDelete(what, path, after) {
   catch (e) { fail(e); return false; }
 }
 function pager(total, q) {
-  const limit = Number(q.limit || 50), offset = Number(q.offset || 0);
-  if (total <= limit && !offset) return `<div class="pager">${total} ${t("of")} ${total}</div>`;
+  const limit = Math.min(100, Number(q.limit || pageSize())), offset = Number(q.offset || 0);
+  // rows per page (up to 100, kept for next time): more rows = fewer pages when selecting many for a bulk change
+  S.H.pgsize = el => { store.set("pageSize", +el.value); setQ({ ...q, limit: el.value, offset: 0 }); };
+  const size = total > 10 ? `<label class="pgsize">${esc(L2("Rows per page", "صفوف في الصفحة"))} <select data-change="pgsize">${[10, 25, 50, 100].map(n => `<option ${n === limit ? "selected" : ""}>${n}</option>`).join("")}</select></label>` : "";
+  if (total <= limit && !offset) return `<div class="pager">${total} ${t("of")} ${total}${size}</div>`;
   S.H.pg = el => setQ({ ...q, offset: Math.max(0, offset + Number(el.dataset.d) * limit) });
   return `<div class="pager">${t("showing")} ${offset + 1}–${Math.min(offset + limit, total)} ${t("of")} ${total}
     <button class="btn sm" data-a="pg" data-d="-1" ${offset ? "" : "disabled"}>${t("prev")}</button>
-    <button class="btn sm" data-a="pg" data-d="1" ${offset + limit < total ? "" : "disabled"}>${t("next")}</button></div>`;
+    <button class="btn sm" data-a="pg" data-d="1" ${offset + limit < total ? "" : "disabled"}>${t("next")}</button>${size}</div>`;
 }
 
 // ------------------------------------------------------------- tables
@@ -1253,7 +1258,7 @@ function reportTable(tb) {
 }
 function voucherRows(rows) {
   if (!rows.length) return `<div class="empty">${t("nothing")}</div>`;
-  return `<div class="tbl stack"><table><thead><tr><th>${t("date")}</th><th>#</th><th>${t("kind")}</th><th>${t("description")}</th><th>${t("party")}</th><th>${t("bu")}</th><th class="num">${t("amount")}</th><th></th></tr></thead><tbody>
+  return `<div class="tbl stack"><table class="vtbl"><thead><tr><th>${t("date")}</th><th>#</th><th>${t("kind")}</th><th>${t("description")}</th><th>${t("party")}</th><th>${t("bu")}</th><th class="num">${t("amount")}</th><th></th></tr></thead><tbody>
     ${rows.map(e => `<tr class="click ${e.status === "void" || e.reversed_by ? "void" : ""}" data-a="openv" data-id="${e.id}"><td>${fd(e.date)}</td><td>${e.id}</td><td><span class="chip">${esc(tl(e.kind))}</span></td>
       <td>${esc(e.memo)}<div class="lines">${e.lines.map(l => `${l.debit ? t("debit") : "&nbsp;&nbsp;" + t("credit")} ${esc(l.account)} ${esc(aname(l))} ${money(l.debit || l.credit)}`).join("<br>")}</div></td>
       <td>${esc(e.party)}</td><td>${esc(e.bu_code || "")}</td><td class="num">${money(e.amount)}</td>
@@ -1302,6 +1307,122 @@ async function openVoucher(id) {
   mountAttach($(".attbox", f));
 }
 S.GLOBAL_H.openv = el => openVoucher(el.dataset.id);
+// ------------------------------------------------------------ bulk selection (select rows → edit / void / delete together)
+// Every selected record is done on the server with the same permission and rules as by hand; anything that cannot be
+// done is listed with the reason. The selection belongs to the page on screen (choose up to 100 rows per page).
+const pageSize = () => Math.min(100, Math.max(10, +store.get("pageSize", 50) || 50));
+const BULK = { key: "", sel: new Set(), cfg: null, table: null };
+const bulkTable = (view, sel) => { const r = $(sel, view); return r ? r.closest("table") : null; };
+const keepAsIs = () => ["", "— " + L2("leave as it is", "بدون تغيير") + " —"];
+function bulkify(table, cfg) {
+  if (!table) return;
+  const acts = (cfg.actions || []).filter(a => !a.need || can(...a.need));
+  const canEdit = cfg.edit && (!cfg.editNeed || can(...cfg.editNeed));
+  if (!acts.length && !canEdit) return;
+  if (BULK.key !== location.hash) { BULK.key = location.hash; BULK.sel = new Set(); }
+  BULK.cfg = { ...cfg, acts, canEdit }; BULK.table = table;
+  const idOf = tr => tr.dataset.bid || tr.dataset.id || (tr.dataset.href || "").split("?")[0].split("/").pop();
+  const hr = $("thead tr", table); if (hr) hr.insertAdjacentHTML("afterbegin", `<th class="bsel"><input type="checkbox" data-ball title="${esc(L2("Select all on this page", "تحديد كل ما في الصفحة"))}"></th>`);
+  $$("tbody tr", table).forEach(tr => { const id = idOf(tr);
+    if (!id || tr.classList.contains("total")) { tr.insertAdjacentHTML("afterbegin", `<td class="bsel"></td>`); return; }
+    tr.dataset.bsid = id;
+    tr.insertAdjacentHTML("afterbegin", `<td class="bsel"><input type="checkbox" data-bsel="${esc(id)}" ${BULK.sel.has(id) ? "checked" : ""} aria-label="${esc(L2("Select", "تحديد"))}"></td>`);
+    tr.classList.toggle("picked", BULK.sel.has(id)); });
+  bulkBar();
+}
+const bulkIds = () => BULK.table ? $$("tbody tr[data-bsid]", BULK.table).map(tr => tr.dataset.bsid) : [];
+function bulkBar() {
+  let bar = $("#bulkbar"); const c = BULK.cfg, n = BULK.sel.size;
+  if (!c || !n) { if (bar) bar.remove(); const all = BULK.table && $("[data-ball]", BULK.table); if (all) all.checked = false; return; }
+  if (!bar) { bar = document.createElement("div"); bar.id = "bulkbar"; document.body.appendChild(bar); }
+  const total = bulkIds().length, all = BULK.table && $("[data-ball]", BULK.table);
+  if (all) { all.checked = n === total; all.indeterminate = n > 0 && n < total; }
+  bar.innerHTML = `<b>${n} ${esc(L2("selected", "محدد"))}</b>${n < total ? `<button class="btn sm" data-a="bulkall">${esc(L2(`Select all ${total} on this page`, `تحديد الكل (${total})`))}</button>` : ""}
+    <span class="spacer"></span>${c.canEdit ? `<button class="btn sm pri" data-a="bulkedit">✎ ${esc(L2("Edit", "تعديل"))}</button>` : ""}
+    ${c.acts.map((a, i) => `<button class="btn sm ${a.danger ? "danger" : ""}" data-a="bulkact" data-i="${i}">${esc(a.label)}</button>`).join("")}
+    <button class="btn sm" data-a="bulkclear" aria-label="${esc(L2("Clear selection", "إلغاء التحديد"))}">✕</button>`;
+}
+function bulkSet(ids, on) { ids.forEach(id => { on ? BULK.sel.add(id) : BULK.sel.delete(id);
+  const cb = BULK.table && $(`[data-bsel="${CSS.escape(id)}"]`, BULK.table); if (cb) { cb.checked = on; cb.closest("tr").classList.toggle("picked", on); } }); bulkBar(); }
+document.addEventListener("change", e => {
+  const one = e.target.closest("[data-bsel]"); if (one) return bulkSet([one.dataset.bsel], one.checked);
+  if (e.target.closest("[data-ball]")) bulkSet(bulkIds(), e.target.checked);
+});
+window.addEventListener("hashchange", () => { if (BULK.key !== location.hash) { BULK.sel.clear(); BULK.cfg = null; const b = $("#bulkbar"); if (b) b.remove(); } });
+async function bulkRun(action, extra = {}) {
+  const c = BULK.cfg, ids = [...BULK.sel];
+  try {
+    const r = await api("POST", "/api/bulk", { target: c.target, action, ids, ...extra });
+    BULK.sel.clear(); const b = $("#bulkbar"); if (b) b.remove();
+    closeDrawer();
+    if (!r.failed.length) { toast(L2(`Done: ${r.done}`, `تم: ${r.done}`)); route(); return; }
+    const name = id => { const tr = BULK.table && $(`tr[data-bsid="${CSS.escape(id)}"]`, BULK.table); return tr ? tr.innerText.replace(/\s+/g, " ").trim().slice(0, 70) : "#" + id; };
+    const names = Object.fromEntries(r.failed.map(f => [f.id, name(f.id)])); await route();
+    drawer(L2(`Done: ${r.done} · Not done: ${r.failed.length}`, `تم: ${r.done} · لم يتم: ${r.failed.length}`),
+      `<p class="muted">${esc(L2("These were left as they were:", "لم تتغير هذه السجلات:"))}</p><div class="tbl"><table><tbody>${r.failed.map(f => `<tr><td>${esc(names[f.id])}</td><td class="neg">${esc(f.error)}</td></tr>`).join("")}</tbody></table></div>`,
+      null, { readOnly: true });
+  } catch (e) { fail(e); }
+}
+Object.assign(S.GLOBAL_H, {
+  bulkall: () => bulkSet(bulkIds(), true),
+  bulkclear: () => bulkSet([...BULK.sel], false),
+  bulkact: el => { const a = BULK.cfg.acts[+el.dataset.i], n = BULK.sel.size;
+    if (a.ask === "reason") { const r = prompt(L2(`Void ${n}: reason`, `إلغاء ${n}: السبب`)); if (r === null) return; if (!r.trim()) return toast(t("void_reason"), true); return bulkRun(a.a, { reason: r }); }
+    if (a.ask === "date") { const d = prompt(L2("Date of the reversing entries (YYYY-MM-DD):", "تاريخ القيود العكسية:"), today()); if (d === null) return; return bulkRun(a.a, { date: d }); }
+    if (a.danger && !confirm(L2(`${a.label}: ${n} selected? This cannot be undone.`, `${a.label}: ${n} محدد؟ لا يمكن التراجع.`))) return;
+    bulkRun(a.a); },
+  bulkedit: () => { const c = BULK.cfg, n = BULK.sel.size;
+    drawer(L2(`Edit ${n} selected`, `تعديل ${n} محدد`), form(c.edit()) + `<p class="muted" style="font-size:.85em">${esc(L2("Only the fields you fill in are changed; the rest stay as they are on each record. Entries keep their history.", "تتغير الحقول التي تملؤها فقط؛ ويبقى الباقي كما هو. وتحتفظ القيود بسجل تعديلاتها."))}</p>`,
+      async v => { const changes = Object.fromEntries(Object.entries(v).filter(([, x]) => x !== "" && x != null));
+        if (!Object.keys(changes).length) throw new Error(L2("Fill in at least one field", "املأ حقلاً واحداً على الأقل"));
+        await bulkRun("edit", { changes }); return false; }, { submitLabel: L2(`Apply to ${n}`, `تطبيق على ${n}`), noDraft: true }); },
+});
+// what each list offers
+const bulkBuOpts = () => [keepAsIs(), ["none", "— " + L2("no business unit", "بدون وحدة أعمال") + " —"], ...buOpts()];
+const BULKS = {
+  entries: mod => ({ target: "entries", editNeed: [mod, "edit"],
+    actions: [{ a: "void", label: L2("Void", "إلغاء القيد"), ask: "reason", danger: true, need: [mod, "edit"] },
+      { a: "reverse", label: L2("Reverse", "عكس"), ask: "date", need: [mod, "edit"] },
+      { a: "delete", label: L2("Delete (void ones)", "حذف (الملغاة)"), danger: true, need: [mod, "edit"] }],
+    edit: () => [{ k: "date", l: t("date"), type: "date" }, { k: "bu_id", l: t("bu"), type: "select", opts: bulkBuOpts() },
+      { k: "party", l: t("party"), list: "bkparty" }, { k: "ref", l: L2("Reference", "المرجع") },
+      { k: "memo", l: t("description"), span: "spanall" }, { html: partyList("bkparty"), span: "spanall" }] }),
+  bus: () => ({ target: "bus", editNeed: ["business_units.units", "edit"],
+    actions: [{ a: "delete", label: t("delete"), danger: true, need: ["business_units.units", "edit"] }],
+    edit: () => [{ k: "status", l: t("status"), type: "select", opts: [keepAsIs(), ...["Tendering", "In Progress", "On Hold", "Completed", "Closed"].map(s => [s, tl(s)])] },
+      { k: "wip_mode", l: L2("Work in progress", "الأعمال تحت التنفيذ"), type: "select", opts: [keepAsIs(), ["cost_plus", L2("Cost-plus (costs × fee)", "تكلفة + نسبة")], ["drafts", L2("Draft invoices", "المستخلصات المسودة")]] },
+      { k: "customer", l: L2("Client", "العميل"), list: "bkparty" }, { html: partyList("bkparty"), span: "spanall" }] }),
+  employees: () => ({ target: "employees", editNeed: ["payroll.employees", "edit"],
+    actions: [{ a: "delete", label: t("delete"), danger: true, need: ["payroll.employees", "edit"] }],
+    edit: () => [{ k: "status", l: t("status"), type: "select", opts: [keepAsIs(), ["active", L2("Active", "على رأس العمل")], ["left", L2("Left", "ترك العمل")]] },
+      { k: "end_date", l: L2("Left on", "تاريخ الترك"), type: "date" }, { k: "bu_id", l: t("bu"), type: "select", opts: bulkBuOpts() },
+      { k: "department", l: L2("Department", "القسم") }, { k: "job_title", l: L2("Job title", "الوظيفة") }] }),
+  tasks: () => ({ target: "tasks", editNeed: ["projects.tasks", "add"],
+    actions: [{ a: "delete", label: t("delete"), danger: true, need: ["projects.tasks", "edit"] }],
+    edit: () => [{ k: "status", l: t("status"), type: "select", opts: [keepAsIs(), ...stOpts(TK_ST)] }, { k: "priority", l: L2("Priority", "الأولوية"), type: "select", opts: [keepAsIs(), ...Object.entries(PRIO).map(([k, v]) => [k, L2(v[0], v[1])])] },
+      { k: "assignee", l: L2("Assigned to", "المسؤول") }, { k: "due", l: L2("Due", "الاستحقاق"), type: "date" }] }),
+  contracts: () => ({ target: "contracts", editNeed: ["contracts.contracts", "edit"],
+    actions: [{ a: "delete", label: t("delete"), danger: true, need: ["contracts.contracts", "edit"] }],
+    edit: () => [{ k: "status", l: t("status"), type: "select", opts: [keepAsIs(), ...stOpts(CON_ST)] }] }),
+  purchase_requests: () => ({ target: "purchase_requests",
+    actions: [{ a: "submit", label: L2("Send for approval", "إرسال للاعتماد"), need: ["purchasing.requests", "add"] },
+      { a: "approve", label: L2("Approve", "اعتماد"), need: ["purchasing.requests", "edit"] }, { a: "reject", label: L2("Reject", "رفض"), need: ["purchasing.requests", "edit"] },
+      { a: "cancel", label: L2("Cancel", "إلغاء"), need: ["purchasing.requests", "edit"] }, { a: "delete", label: t("delete"), danger: true, need: ["purchasing.requests", "edit"] }] }),
+  purchase_orders: () => ({ target: "purchase_orders",
+    actions: [{ a: "approve", label: L2("Approve", "اعتماد"), need: ["purchasing.orders", "edit"] }, { a: "close", label: L2("Close (rest not needed)", "إغلاق"), need: ["purchasing.orders", "edit"] },
+      { a: "cancel", label: L2("Cancel", "إلغاء"), danger: true, need: ["purchasing.orders", "edit"] }, { a: "delete", label: t("delete"), danger: true, need: ["purchasing.orders", "edit"] }] }),
+  equipment: () => ({ target: "equipment", editNeed: ["equipment.register", "edit"],
+    actions: [{ a: "delete", label: t("delete"), danger: true, need: ["equipment.register", "edit"] }],
+    edit: () => [{ k: "status", l: t("status"), type: "select", opts: [keepAsIs(), ...stOpts(EQ_ST)] }, { k: "bu_id", l: L2("Now at", "موجودة في"), type: "select", opts: bulkBuOpts() },
+      { k: "category", l: L2("Category", "الفئة") }] }),
+  parties: mod => ({ target: "parties", editNeed: [mod, "edit"],
+    actions: [{ a: "delete", label: t("delete"), danger: true, need: [mod, "edit"] }],
+    edit: () => [{ k: "category", l: L2("Category", "التصنيف"), type: "select", opts: [keepAsIs(), ...Object.entries(CONTACT_CATS).map(([k, v]) => [k, L2(...v)])] }, { k: "governate", l: t("governate") }] }),
+  invoices: () => ({ target: "invoices",
+    actions: [{ a: "post", label: L2("Post (drafts)", "ترحيل (المسودات)"), need: ["sales.invoices", "add"] }, { a: "delete", label: L2("Delete (drafts)", "حذف (المسودات)"), danger: true, need: ["sales.invoices", "edit"] }] }),
+  ereceipts: () => ({ target: "ereceipts",
+    actions: [{ a: "issue", label: L2("Issue (drafts)", "إصدار (المسودات)"), need: ["tax.ereceipt", "add"] }, { a: "delete", label: L2("Delete (drafts)", "حذف (المسودات)"), danger: true, need: ["tax.ereceipt", "edit"] }] }),
+};
 
 // ======================================================= document forms
 function paidSplitHelp() { return S.lang === "ar" ? "الجزء غير المدفوع يُسجّل تلقائياً على حساب الدائنين باسم المورد." : "Anything not paid now is booked to payables under the supplier's name."; }
@@ -1728,6 +1849,7 @@ PAGES.bus = async (view, parts, q) => {
     filterBar(q, ["dates", "q", ["select", "status", t("status"), ["Tendering", "In Progress", "On Hold", "Completed", "Closed"].map(s => [s, tl(s)])]]) +
     `<div class="banner ${alloc > 1.0001 ? "err" : "info"}">${t("shared_pool")}: <b>${money(d.shared_overhead)}</b> · ${t("alloc_total")}: <b>${pct(alloc)}</b> — ${t("overhead_note")}</div>` +
     `<div class="card">${buTable(d.rows)}</div>`;
+  bulkify(bulkTable(view, 'tr[data-href^="#/bu/"]'), BULKS.bus());
 };
 const BANK_F = () => [["label", L2("Name for this account", "اسم مختصر للحساب"), "CIB — EGP"], ["bank", t("bank_name")], ["acct", t("bank_account")], ["holder", t("bank_holder")], ["swift", t("swift")], ["iban", t("iban")]];
 const bankName = b => b.label || b.bank || b.acct || "—";
@@ -1760,7 +1882,7 @@ function buForm(b) {
 PAGES.bu = async (view, parts, q) => {
   const id = parts[1];
   const [list, tx] = await Promise.all([api("GET", "/api/bus?" + qs({ date_from: q.date_from, date_to: q.date_to })),
-    api("GET", "/api/bu-journal?" + qs({ ...q, bu_id: id, limit: q.limit || 50 }))]);
+    api("GET", "/api/bu-journal?" + qs({ ...q, bu_id: id, limit: Math.min(100, +(q.limit || pageSize())) }))]);
   const b = list.rows.find(x => String(x.id) === String(id));
   if (!b) { view.innerHTML = `<div class="banner err">Not found</div>`; return; }
   $("#ttl").textContent = `${b.code} — ${b.name}`;
@@ -1775,12 +1897,13 @@ PAGES.bu = async (view, parts, q) => {
       ${k(t("net_profit"), b.net_profit, b.net_profit < 0 ? "neg" : "pos")}${k(t("receivable"), b.receivable)}${k(t("expected_billing"), b.expected_billing)}${k(t("to_collect"), b.to_collect)}
       ${b.savings ? `<a class="kpi" href="#/negotiations?bu_id=${b.id}" style="text-decoration:none;color:inherit"><div class="l">${esc(t("m_nego"))}</div><div class="v pos">${money(b.savings_kept)}</div><div class="muted" style="font-size:.78em">${L2("of", "من")} ${money(b.savings)} ${L2("negotiated", "خصومات")}</div></a>` : ""}</div>` +
     filterBar(q, ["dates", ["kind", S.boot.enums.entry_kinds], "qv", "party", "account", "status"]) +
-    `<div class="card"><h2>${t("transactions")}</h2>${voucherRows(tx.rows)}${pager(tx.total, { ...q, limit: q.limit || 50 })}</div>`;
+    `<div class="card"><h2>${t("transactions")}</h2>${voucherRows(tx.rows)}${pager(tx.total, { ...q, limit: Math.min(100, +(q.limit || pageSize())) })}</div>`;
+  bulkify($("table.vtbl", view), BULKS.entries("accounting.journal"));
 };
 
 function voucherPage(dtype, kinds, opts = {}) {
   return async (view, parts, q) => {
-    const lq = { ...q, limit: q.limit || 50 };
+    const lq = { ...q, limit: Math.min(100, +(q.limit || pageSize())) };
     const d = await api("GET", `/api/docs/${dtype}?` + qs(lq));
     const mod = { direct_cost: "purchasing.costs", expense: "purchasing.expenses", payment: "purchasing.payments", payroll: "payroll", receipt: "sales.receipts", partner_tx: "partners.transactions", stock_move: "stock.moves" }[dtype];
     S.H.newdoc = () => openDoc(dtype);
@@ -1789,6 +1912,7 @@ function voucherPage(dtype, kinds, opts = {}) {
       ${exportMenu("vouchers", { ...q, kinds: kinds.join(","), title: t(opts.title) })}</div>${top}` +
       filterBar(q, ["dates", "bu", "qv", "party", ...(kinds.length > 1 ? [["kind", kinds]] : []), "status"]) +
       `<div class="card">${voucherRows(d.rows)}${pager(d.total, lq)}</div>`;
+    bulkify($("table.vtbl", view), BULKS.entries(mod));
   };
 }
 PAGES.costs = voucherPage("direct_cost", ["Direct Cost"], { title: "m_costs" });
@@ -1988,6 +2112,7 @@ PAGES.invoices = async (view, parts, q) => {
     filterBar(q, ["dates", "bu", ["select", "status", t("status"), [["draft", t("draft")], ["posted", t("invoiced")]]]]) +
     `<div class="card">${rows.length ? `<div class="tbl"><table><thead><tr><th>${t("invoice_no")}</th><th>${t("bu")}</th><th>${t("boq")}</th><th>${t("date")}</th><th class="num">${t("amount")}</th><th>${t("status")}</th></tr></thead><tbody>
     ${rows.map(x => `<tr class="click" data-href="#/invoice/${x.id}"><td><b>${esc(x.number)}</b><div class="lines">${esc(x.customer || "")}</div></td><td>${esc(x.bu_code)}</td><td>${esc(x.boq_title || t("standalone"))}</td><td>${fd(x.date)}</td><td class="num">${money(x.total)}</td><td><span class="chip ${x.status === "posted" ? "ok" : ""}">${x.status === "posted" ? t("invoiced") : t("draft")}</span> ${x.eta_status ? `<span class="chip">${esc(x.eta_status)}</span>` : ""}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${t("nothing")}</div>`}</div>`;
+  bulkify(bulkTable(view, 'tr[data-href^="#/invoice/"]'), BULKS.invoices());
 };
 function linesEditor(lines, withCost, withContract) {
   return `<div class="tbl"><table id="le"><thead><tr><th>${t("item_no")}</th><th>${t("category")}</th><th style="min-width:260px">${t("description")}</th><th>${t("unit")}</th>
@@ -2176,13 +2301,14 @@ PAGES.warehouses = async (view) => {
 
 // ------------------------------------------------------------- accounting
 PAGES.journal = async (view, parts, q) => {
-  const lq = { ...q, limit: q.limit || 50 };
+  const lq = { ...q, limit: Math.min(100, +(q.limit || pageSize())) };
   const d = await api("GET", "/api/journal?" + qs(lq));
   S.H.newjv = () => journalForm();
   view.innerHTML = `<div class="toolbar">${can("accounting.journal", "add") ? `<button class="btn pri" data-a="newjv">+ ${t("m_journal")}</button>` : ""}<span class="spacer"></span>
     <span class="chip">${d.total}</span><span class="chip">${money(d.posted_amount)} ${cur()}</span>${exportMenu("vouchers", { ...q, title: t("m_journal") })}</div>` +
     filterBar(q, ["dates", "bu", ["kind", S.boot.enums.entry_kinds], "account", "qv", "party", "status"]) +
     `<div class="card">${voucherRows(d.rows)}${pager(d.total, lq)}</div>`;
+  bulkify($("table.vtbl", view), BULKS.entries("accounting.journal"));
 };
 PAGES.ledger = async (view, parts, q) => reportPage(view, "general_ledger", q, ["dates", "account", "bu", "party", "lang"]);
 PAGES.coa = async (view, parts, q) => {
@@ -2527,6 +2653,7 @@ PAGES.parties = async (view, parts, q) => {
     filterBar(q, ["q", ["select", "type", t("type"), [["customer", t("customer")], ["supplier", t("supplier")]]]]) +
     `<div class="card">${d.rows.length ? `<div class="tbl"><table><thead><tr><th>${t("name")}</th><th>${t("type")}</th><th>${L2("Category", "التصنيف")}</th><th>${t("tax_id")}</th><th>${t("governate")}</th><th>${t("phone")}</th><th>${t("default_vat")}</th><th>${t("default_wht")}</th></tr></thead><tbody>
       ${d.rows.map(p => `<tr class="click" data-a="${ed ? "pedit" : ""}" data-id="${p.id}"><td><b>${esc(p.name)}</b></td><td>${esc(p.type)}</td><td>${esc(catLabel(p.category))}</td><td>${esc(p.tax_id || p.national_id)}</td><td>${esc(p.governate)}</td><td>${esc(p.phone)}</td><td>${esc(p.default_vat)}</td><td>${esc(p.default_wht)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${t("nothing")}</div>`}${pager(d.total, lq)}</div>`;
+  bulkify(bulkTable(view, 'tr[data-id]'), BULKS.parties("sales.parties"));
 };
 // ------------------------------------------------------ contacts directory
 const contactLinks = p => { const wa = waNumber(p.whatsapp || p.phone);
@@ -3013,7 +3140,7 @@ PAGES.audit = async (view, parts, q) => {
 // ------------------------------------------------------------ workspace
 const SYNC_LABEL = { ok: ["● Synced", "● متزامن", "ok"], offline: ["● Offline — view only", "● غير متصل — عرض فقط", "bad"],
   signed_out: ["● Sign in to the workspace", "● سجّل الدخول لمساحة العمل", "warn"], update: ["● Update available — reload", "● يوجد تحديث — أعد التحميل", "warn"],
-  error: ["● Sync problem", "● مشكلة في المزامنة", "bad"] };
+  error: ["● Sync problem", "● مشكلة في المزامنة", "bad"], syncing: ["● Syncing…", "● جارٍ المزامنة…", "warn"] };
 function syncDot(st) {
   const el = $("#syncdot"); if (!el) return;
   const l = cloudOn() && SYNC_LABEL[st.state]; if (!l) { el.style.display = "none"; return; }
@@ -5644,6 +5771,7 @@ PAGES.pos = async (view, parts, q) => {
       ${d.rows.map(r => `<tr class="click" data-href="#/po/${encodeURIComponent(r.code)}"><td><b>${esc(r.code)}</b></td><td>${fd(r.date)}</td><td>${esc(r.supplier)}</td><td>${esc(r.bu_code || "")}</td><td class="${r.overdue ? "neg" : ""}">${fd(r.expected)}</td>
         <td class="num">${money(r.grand_total)}</td><td class="num">${r.received_value ? money(r.received_value) : ""}</td><td class="num">${r.open_value ? money(r.open_value) : ""}</td><td>${poChip(r.status)}</td></tr>`).join("")}</tbody></table></div>`
       : `<div class="empty">${L2("No purchase orders here. Raise one before buying: it is approved, sent to the supplier, and each delivery is then received against it — the cost voucher is posted for you and the supplier's balance appears in payables.", "لا توجد أوامر شراء. أنشئ أمراً قبل الشراء: يُعتمد ويُرسل للمورد، ثم يُستلم كل توريد عليه — ويُرحّل قيد التكلفة تلقائياً ويظهر رصيد المورد في الدائنين.")}</div>`}</div>`;
+  bulkify(bulkTable(view, 'tr[data-href^="#/po/"]'), BULKS.purchase_orders());
 };
 PAGES.po = async (view, parts) => {
   const po = await api("GET", "/api/purchase-orders/" + encodeURIComponent(parts[1]));
@@ -6123,6 +6251,7 @@ PAGES.employees = async (view, parts, q) => {
         <td class="num">${money(monthly(r))}</td><td>${esc(r.bu_code || "—")}</td><td>${r.insured ? "✓" : "—"} / ${r.taxed ? "✓" : "—"}</td>
         <td>${r.status === "left" ? `<span class="chip">${L2("Left", "ترك")}</span>` : `<span class="chip ok">${L2("Active", "يعمل")}</span>`}</td></tr>`).join("")}</tbody></table></div>`
       : `<div class="empty">${L2("No employees yet. Add your staff (monthly salary) and site workers (daily wage or piece-rate). Each has a cost type and business unit, so their pay lands in the right project's profit.", "لا يوجد موظفون بعد. أضف الموظفين (راتب شهري) والعمالة (يومية أو بالإنتاج). لكل منهم نوع تكلفة ووحدة أعمال لتظهر أجورهم في ربح المشروع الصحيح.")}</div>`}</div>`;
+  bulkify(bulkTable(view, 'tr[data-a="empedit"]'), BULKS.employees());
 };
 
 function employeeForm(E, st) {
@@ -7220,6 +7349,7 @@ PAGES.projects = async (view) => {
         <td class="num">${r.contract_value ? money(r.contract_value) : ""}</td><td class="num">${money(r.revenue)}</td><td class="num ${r.net_profit < 0 ? "neg" : ""}">${money(r.net_profit)}</td>
         <td class="num">${r.open_tasks || ""}${r.overdue_tasks ? ` <span class="chip bad">${r.overdue_tasks} ${L2("overdue", "متأخرة")}</span>` : ""}</td></tr>`).join("")}</tbody></table></div>`
       : `<div class="empty">${L2("No business units yet.", "لا توجد وحدات أعمال بعد.")}</div>`}</div>`;
+  bulkify(bulkTable(view, 'tr[data-href^="#/project/"]'), BULKS.bus());
 };
 
 function phaseForm(buId, p) {
@@ -7254,7 +7384,7 @@ function taskForm(t0) {
   S.H.tkdel = () => confirmDelete(t0.title, "/api/project-tasks/" + t0.id);
 }
 const taskRows = (rows, withBu = true) => rows.length ? `<div class="tbl stack"><table><thead><tr><th>${L2("Task", "المهمة")}</th>${withBu ? `<th>${t("bu")}</th>` : ""}<th>${L2("Assigned to", "المسؤول")}</th><th>${L2("Due", "الاستحقاق")}</th><th>${L2("Priority", "الأولوية")}</th><th>${t("status")}</th><th></th></tr></thead><tbody>
-  ${rows.map(r => `<tr><td><b>${esc(r.title)}</b>${r.phase ? `<div class="lines">${esc(r.phase)}</div>` : ""}</td>${withBu ? `<td>${esc(r.bu_code || "")}</td>` : ""}<td>${esc(r.assignee || "")}</td>
+  ${rows.map(r => `<tr data-bid="${r.id}"><td><b>${esc(r.title)}</b>${r.phase ? `<div class="lines">${esc(r.phase)}</div>` : ""}</td>${withBu ? `<td>${esc(r.bu_code || "")}</td>` : ""}<td>${esc(r.assignee || "")}</td>
     <td class="${r.overdue ? "neg" : ""}">${fd(r.due)}</td><td>${r.priority && r.priority !== "normal" ? chipS(r.priority === "high" ? "warn" : "", L2(...PRIO[r.priority])) : ""}</td>
     <td>${chipS(TK_ST[r.status][0], L2(TK_ST[r.status][1], TK_ST[r.status][2]))}</td>
     <td style="white-space:nowrap">${can("projects.tasks", "add") ? `${r.status !== "done" ? `<button class="btn sm" data-a="tkdone" data-id="${r.id}">✓</button>` : ""}<button class="btn sm" data-a="tkedit" data-id="${r.id}">${t("edit")}</button>` : ""}</td></tr>`).join("")}</tbody></table></div>`
@@ -7299,6 +7429,7 @@ PAGES.tasks = async (view, parts, q) => {
   view.innerHTML = `<div class="toolbar">${can("projects.tasks", "add") ? `<button class="btn pri" data-a="tknew">+ ${L2("Task", "مهمة")}</button>` : ""}<span class="spacer"></span></div>
     ${filterBar(q, ["bu", ["select", "status", t("status"), [["open", L2("Open", "مفتوحة")], ["overdue", L2("Overdue", "متأخرة")], ...stOpts(TK_ST)]], "q"])}
     <div class="card">${taskRows(rows)}</div>`;
+  bulkify(bulkTable(view, 'tr[data-bid]'), BULKS.tasks());
 };
 
 // ------------------------------------------------------------ contracts
@@ -7320,6 +7451,7 @@ PAGES.contracts = async (view, parts, q) => {
         <td class="${r.expired ? "neg" : r.ending_soon ? "warn" : ""}">${fd(r.revised_finish)}</td><td class="num">${money(r.value)}</td><td class="num">${r.variations_total ? money(r.variations_total) : ""}${r.pending_vos ? ` <span class="chip warn">${r.pending_vos}</span>` : ""}</td>
         <td class="num"><b>${money(r.revised_value)}</b></td><td class="num">${r.kind === "sub" ? `${money(r.certified)}<div class="lines">${money(r.payable)}</div>` : ""}</td><td>${chipS(CON_ST[r.status][0], L2(CON_ST[r.status][1], CON_ST[r.status][2]))}</td></tr>`).join("")}</tbody></table></div>`
       : `<div class="empty">${L2("Record the client contract of each project (its value then follows approved variation orders) and every subcontract with its rates, retention and advance — subcontractors are then paid by certificates.", "سجّل عقد العميل لكل مشروع (تتبع قيمته أوامر التغيير المعتمدة) وكل عقد مقاول باطن بأسعاره ومحتجزاته ودفعته المقدمة — ثم يُصرف لمقاولي الباطن بالمستخلصات.")}</div>`}</div>`;
+  bulkify(bulkTable(view, 'tr[data-href^="#/contract/"]'), BULKS.contracts());
 };
 function contractForm(c) {
   const isNew = !c.id, sub = c.kind === "sub";
@@ -7487,6 +7619,7 @@ PAGES["purchase-requests"] = async (view, parts, q) => {
       ${rows.map(r => `<tr class="click" data-href="#/purchase-request/${r.id}"><td><b>${esc(r.code)}</b><div class="lines">${r.lines} ${L2("lines", "بند")}${r.orders ? " → " + esc(r.orders) : ""}</div></td><td>${fd(r.date)}</td><td>${esc(r.requested_by)}</td><td>${esc(r.bu_code || r.warehouse || "")}</td><td>${fd(r.needed_by)}</td>
         <td class="num">${money(r.estimate)}</td><td class="num">${r.quotes || ""}</td><td class="num">${r.best != null ? money(r.best) : ""}</td><td>${chipS(PR_ST[r.status][0], L2(PR_ST[r.status][1], PR_ST[r.status][2]))}</td></tr>`).join("")}</tbody></table></div>`
       : `<div class="empty">${L2("A site or store asks for what it needs; once approved, enter suppliers' quotes, compare them side by side and award — the purchase orders are raised for you.", "يطلب الموقع أو المخزن احتياجاته؛ وبعد الاعتماد تُدخل عروض الموردين وتُقارن جنباً إلى جنب ثم تُرسى — وتُنشأ أوامر الشراء تلقائياً.")}</div>`}</div>`;
+  bulkify(bulkTable(view, 'tr[data-href^="#/purchase-request/"]'), BULKS.purchase_requests());
 };
 function quoteForm(pr, qt) {
   qt = qt || { date: today(), rates: {} };
@@ -7636,6 +7769,7 @@ PAGES.equipment = async (view, parts, q) => {
         <td class="num">${money(e.charged)}</td><td class="num">${e.maintenance_cost ? money(e.maintenance_cost) : ""}</td><td>${e.due.length ? chipS(e.due.some(p => p.state === "overdue") ? "bad" : "warn", e.due.map(p => p.title).join(", ")) : fd(e.next_due)}</td>
         <td>${chipS(EQ_ST[e.status][0], L2(EQ_ST[e.status][1], EQ_ST[e.status][2]))}</td></tr>`).join("")}</tbody></table></div>`
       : `<div class="empty">${L2("Register the machines you own or run. Their working hours are charged to projects at an hourly rate, fuel goes straight to the project, and maintenance plans warn you when service is due.", "سجّل المعدات المملوكة أو المشغلة. تُحمّل ساعات تشغيلها على المشروعات بفئة الساعة، ويُحمّل الوقود مباشرة على المشروع، وتنبهك خطط الصيانة عند استحقاقها.")}</div>`}</div>`;
+  bulkify(bulkTable(view, 'tr[data-href^="#/machine/"]'), BULKS.equipment());
 };
 PAGES.machine = async (view, parts) => {
   const [e] = await Promise.all([api("GET", "/api/equipment/" + encodeURIComponent(parts[1])), eqLoad()]);
@@ -7790,10 +7924,11 @@ PAGES.ereceipts = async (view, parts, q) => {
       ${kpiBox(L2("VAT", "ض.ق.م"), issued.reduce((s, r) => s + (r.kind === "return" ? -r.vat : r.vat), 0))}${kpiBox(L2("Not sent yet", "لم يُرسل"), numf(rows.filter(r => r.status === "issued").length), rows.some(r => r.status === "issued") ? "warn" : "")}</div>
     ${filterBar(q, ["dates", ["select", "status", t("status"), stOpts(ER_ST)], "q"])}
     <div class="card">${rows.length ? `<div class="tbl stack"><table><thead><tr><th>${L2("Receipt", "الإيصال")}</th><th>${L2("Issued", "الإصدار")}</th><th>${L2("Buyer", "المشتري")}</th><th>${t("method")}</th><th class="num">${L2("Net", "الصافي")}</th><th class="num">${L2("VAT", "ض.ق.م")}</th><th class="num">${t("total")}</th><th>${t("status")}</th><th></th></tr></thead><tbody>
-      ${rows.map(r => `<tr><td><b>${esc(r.number)}</b>${r.kind === "return" ? ` ${chipS("warn", L2("return", "مرتجع"))}` : ""}${r.uuid ? `<div class="lines" title="${esc(r.uuid)}">${esc(r.uuid.slice(0, 16))}…</div>` : ""}</td><td>${fd(r.issued_at.slice(0, 10))} ${esc(r.issued_at.slice(11, 16))}</td><td>${esc(r.buyer_name || "—")}</td><td>${esc((ER_PAY.find(p => p[0] === r.payment_method) || [, r.payment_method])[1])}</td>
+      ${rows.map(r => `<tr data-bid="${r.id}"><td><b>${esc(r.number)}</b>${r.kind === "return" ? ` ${chipS("warn", L2("return", "مرتجع"))}` : ""}${r.uuid ? `<div class="lines" title="${esc(r.uuid)}">${esc(r.uuid.slice(0, 16))}…</div>` : ""}</td><td>${fd(r.issued_at.slice(0, 10))} ${esc(r.issued_at.slice(11, 16))}</td><td>${esc(r.buyer_name || "—")}</td><td>${esc((ER_PAY.find(p => p[0] === r.payment_method) || [, r.payment_method])[1])}</td>
         <td class="num">${money(r.net)}</td><td class="num">${money(r.vat)}</td><td class="num"><b>${money(r.total)}</b></td><td>${chipS(ER_ST[r.status][0], L2(ER_ST[r.status][1], ER_ST[r.status][2]))}${r.error ? `<div class="lines neg" title="${esc(r.error)}">${esc(r.error.slice(0, 60))}</div>` : ""}</td>
         <td style="white-space:nowrap">${r.status === "draft" && add ? `<button class="btn sm pri" data-a="eriss" data-id="${r.id}">${L2("Issue", "إصدار")}</button>` : ""}${r.status === "draft" && ed ? `<button class="btn sm danger" data-a="erdel" data-id="${r.id}" data-n="${esc(r.number)}">✕</button>` : ""}${r.entry_id ? `<a href="#" data-a="openv" data-id="${r.entry_id}">#${r.entry_id}</a>` : ""}</td></tr>`).join("")}</tbody></table></div>`
       : `<div class="empty">${L2("Point-of-sale receipts to consumers (B2C) for the tax authority: each is chained to the one before by its UUID, posts the sale, and can be exported or sent. Set the POS details first (⚙ POS settings).", "إيصالات البيع للمستهلك (B2C) لمصلحة الضرائب: كل إيصال مرتبط بالسابق عبر معرّفه، ويُرحّل البيع، ويمكن تصديره أو إرساله. اضبط بيانات نقطة البيع أولاً.")}</div>`}</div>`;
+  bulkify(bulkTable(view, 'tr[data-bid]'), BULKS.ereceipts());
 };
 
 (window.__beyondReady || Promise.resolve()).then(boot, () => {});

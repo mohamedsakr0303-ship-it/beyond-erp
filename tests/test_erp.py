@@ -3396,3 +3396,60 @@ class SiteModules(unittest.TestCase):
         db._migrate()
         self.assertEqual(db.one("SELECT name FROM accounts WHERE code='1020'")["name"], "Cash at Bank")
         self.assertEqual(db.one("SELECT name FROM accounts WHERE code='1100'")["name"], "Our clients")
+
+
+class BulkActions(unittest.TestCase):
+    """Select many records and edit / void / delete them together — each checked as if done by hand."""
+    setUpClass, tearDownClass = classmethod(Api.setUpClass.__func__), classmethod(Api.tearDownClass.__func__)
+    call, client = Api.call, Api.client
+
+    def test_bulk_entries_and_lists(self):
+        op = self.client()
+        if self.call(op, "POST", "/api/setup", {"username": "admin", "password": "secret123"})[0] != 200:
+            self.assertEqual(self.call(op, "POST", "/api/login", {"username": "admin", "password": "secret123"})[0], 200)
+        b1 = self.call(op, "POST", "/api/bus", {"code": "BK1", "name": "Bulk one"})[1]["id"]
+        b2 = self.call(op, "POST", "/api/bus", {"code": "BK2", "name": "Bulk two"})[1]["id"]
+        ids = [self.call(op, "POST", "/api/docs/expense", {"description": f"Fuel {i}", "amount": 100 + i, "account": "6090",
+                                                           "date": "2026-03-01"})[1]["id"] for i in range(3)]
+        # edit: only the fields given change; the entries keep their history
+        st, r = self.call(op, "POST", "/api/bulk", {"target": "entries", "action": "edit", "ids": ids, "changes": {"bu_id": b2, "ref": "BULK-1"}})
+        self.assertEqual((st, r["done"], r["failed"]), (200, 3, []))
+        e = self.call(op, "GET", f"/api/journal/{ids[0]}")[1]
+        self.assertEqual((e["bu_id"], e["ref"], e["memo"], len(e["history"])), (b2, "BULK-1", "Fuel 0", 1))
+        # delete only works on void entries: reported per record, the rest still done
+        st, r = self.call(op, "POST", "/api/bulk", {"target": "entries", "action": "delete", "ids": ids[:2]})
+        self.assertEqual((r["done"], len(r["failed"])), (0, 2))
+        self.assertIn("Void an entry before deleting it", r["failed"][0]["error"])
+        self.assertEqual(self.call(op, "POST", "/api/bulk", {"target": "entries", "action": "void", "ids": ids})[0], 400)  # needs a reason
+        r = self.call(op, "POST", "/api/bulk", {"target": "entries", "action": "void", "ids": ids[:2], "reason": "duplicates"})[1]
+        self.assertEqual(r["done"], 2)
+        r = self.call(op, "POST", "/api/bulk", {"target": "entries", "action": "delete", "ids": ids})[1]
+        self.assertEqual((r["done"], [f["id"] for f in r["failed"]]), (2, [str(ids[2])]))
+        self.assertEqual(self.call(op, "GET", f"/api/journal/{ids[0]}")[0], 404)
+        # business units: delete refuses one with transactions, status edit validates the value
+        r = self.call(op, "POST", "/api/bulk", {"target": "bus", "action": "delete", "ids": [b1, b2]})[1]
+        self.assertEqual((r["done"], r["failed"][0]["id"]), (1, str(b2)))
+        self.assertEqual(self.call(op, "POST", "/api/bulk", {"target": "bus", "action": "edit", "ids": [b2], "changes": {"status": "Bogus"}})[1]["failed"][0]["error"][:10], "Choose one")
+        self.assertEqual(self.call(op, "POST", "/api/bulk", {"target": "bus", "action": "edit", "ids": [b2], "changes": {"status": "On Hold"}})[1]["done"], 1)
+        self.assertEqual(self.db.one("SELECT status FROM business_units WHERE id=?", (b2,))["status"], "On Hold")
+        # someone without the voucher type's edit right cannot change it in bulk either
+        self.call(op, "POST", "/api/users", {"username": "viewer", "password": "viewer123", "perms": {"purchasing": "view", "accounting": "view"}})
+        v = self.client()
+        self.assertEqual(self.call(v, "POST", "/api/login", {"username": "viewer", "password": "viewer123"})[0], 200)
+        r = self.call(v, "POST", "/api/bulk", {"target": "entries", "action": "void", "ids": [ids[2]], "reason": "x"})[1]
+        self.assertEqual((r["done"], len(r["failed"])), (0, 1))
+        self.assertEqual(self.db.one("SELECT status FROM journal_entries WHERE id=?", (ids[2],))["status"], "posted")
+        self.assertEqual(self.call(op, "POST", "/api/bulk", {"target": "nope", "action": "edit", "ids": [1]})[0], 400)
+
+
+class WorkspaceCatchUp(unittest.TestCase):
+    def test_heavy_changes_are_recognised(self):
+        """After these, the device that made them saves a fresh copy at once, so phones load it instead of replaying."""
+        from erp import cloud
+        for path in ("/api/import?mode=replace&format=json", "/api/import", "/api/import-sheet", "/api/demo", "/api/erase"):
+            self.assertTrue(cloud.is_heavy("POST", path), path)
+        for m, path in (("POST", "/api/import-preview/check"), ("POST", "/api/docs/expense"), ("GET", "/api/import"), ("POST", "/api/bulk")):
+            self.assertFalse(cloud.is_heavy(m, path), path)
+        js = (Path(__file__).resolve().parents[1] / "web-src" / "bridge.js").read_text()
+        self.assertIn("HEAVY = /^\\/api\\/(import(\\?|$)|import-sheet|demo|erase|setup)/", js)   # same rule in the browser
+        self.assertIn("await breathe()", js)

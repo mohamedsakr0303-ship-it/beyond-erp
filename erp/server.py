@@ -3028,6 +3028,14 @@ def er_submit(ctx):
     return ok(ereceipt.submit(ctx.db, ctx.body.get("ids") or None, _u(ctx)))
 
 
+# ================================================================== bulk actions (erp/bulk.py)
+@route("POST", "/api/bulk")
+def bulk_action(ctx):
+    """Edit / void / reverse / delete many records; each one checked as if done by hand."""
+    from . import bulk
+    return ok(bulk.run(ctx, ctx.body))
+
+
 # =============================================================== dashboard
 @route("GET", "/api/dashboard/view")
 def dashboard_view(ctx):
