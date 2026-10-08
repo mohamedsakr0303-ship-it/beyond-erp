@@ -3469,6 +3469,28 @@ class BrandDefaults(unittest.TestCase):
         self.assertEqual(json.loads(d.one("SELECT value FROM settings WHERE key='appearance'")["value"])["app_name"], "Beyond Design")
 
 
+class Support(unittest.TestCase):
+    """Help & support tickets: a reference built from the date and record number; people see their own, admins all."""
+
+    def test_tickets(self):
+        from erp import auth, support
+        db = Database(":memory:")
+        auth.create_user(db, {"username": "boss", "password": "Passw0rd!long1"}, first=True)
+        auth.create_user(db, {"username": "sara", "password": "Passw0rd!long2"})
+        boss, sara = (dict(db.one("SELECT * FROM users WHERE username=?", (n,))) for n in ("boss", "sara"))
+        t = support.create(db, sara, {"kind": "bug", "subject": "Voucher will not save", "body": "steps", "channel": "whatsapp",
+                                      "diag": {"version": "1.2.0", "screen": "#/payments"}})
+        self.assertRegex(t["ref"], r"^BE-\d{6}-0001$")
+        self.assertEqual(t["diag"]["screen"], "#/payments")
+        support.create(db, boss, {"kind": "nonsense", "subject": "Question"})
+        self.assertEqual([x["kind"] for x in support.tickets(db, boss)], ["bug", "bug"])   # unknown kind -> a problem report
+        self.assertEqual(len(support.tickets(db, sara)), 1)
+        support.set_status(db, sara, t["id"], "solved")
+        self.assertEqual(support.tickets(db, sara)[0]["status"], "solved")
+        with self.assertRaises(Exception):
+            support.create(db, sara, {"subject": ""})
+
+
 class PackageOffers(unittest.TestCase):
     """Offers priced as packages (no BOQ): tiers side by side; the chosen one is the offer's value."""
 

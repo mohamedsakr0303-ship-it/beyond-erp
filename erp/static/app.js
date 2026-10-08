@@ -101,7 +101,12 @@ function toast(msg, err) {
   document.body.appendChild(el);
   setTimeout(() => el.remove(), err ? 6000 : 2600);
 }
-const fail = e => toast(e.message || String(e), true);
+// the last few errors, attached to a support report so a problem can be reproduced
+const RECENT_ERRS = [];
+const noteErr = m => { if (!m) return; RECENT_ERRS.push(`${new Date().toISOString().slice(11, 19)} ${String(m).slice(0, 300)}`); if (RECENT_ERRS.length > 8) RECENT_ERRS.shift(); };
+addEventListener("error", e => noteErr(e.message + (e.filename ? ` (${String(e.filename).split("/").pop()}:${e.lineno})` : "")));
+addEventListener("unhandledrejection", e => noteErr("Unhandled: " + ((e.reason && e.reason.message) || e.reason)));
+const fail = e => { noteErr(e.message || String(e)); toast(e.message || String(e), true); };
 // In-app dialogs in the app's own look (never the browser's pop-ups):
 //   await uiConfirm(msg) → true / false · await uiPrompt(msg, value) → text or null · await uiAlert(msg)
 // options: ok / cancel (button labels, cancel: false = no cancel button), danger (red OK button), title
@@ -406,6 +411,7 @@ async function route() {
   renderNav(parts.join("/"));
   if (cloudOn() && window.BeyondCloud && (!S.billingAt || Date.now() - S.billingAt > 10 * 60 * 1000)) refreshBilling();
   renderBillBar();
+  if (parts[0] !== "support") S.lastPage = location.hash || "#/dashboard";   // the screen a support report is about
   const page = PAGES[parts[0]] || PAGES.dashboard;
   // each visit draws into its own box: a slower page still loading when the person moved on draws off-screen
   const host = $("#view"), view = document.createElement("div");
@@ -562,7 +568,7 @@ function userMenu() {
   return `<button data-a="theme">${t("theme")}: ${esc(store.get("theme", "auto"))}</button>
     ${cloudOn() ? `<button data-a="coswitch">⇄ ${S.lang === "ar" ? "الشركات" : "Companies"}</button>` : ""}
     ${cloudOn() && window.BeyondCloud && window.BeyondCloud.billing ? `<a href="#/subscription">◎ ${S.lang === "ar" ? "الاشتراك" : "Subscription"}</a>` : ""}${S.billing && S.billing.is_owner ? `<a href="#/platform">⚙ ${S.lang === "ar" ? "إدارة الاشتراكات (المالك)" : "Platform billing (owner)"}</a>` : ""}
-    <a href="#/settings">${t("m_settings")}</a><button data-a="tour">➜ ${S.lang === "ar" ? "جولة في التطبيق" : "Take the tour"}</button>${STATIC && /^https?:$/.test(location.protocol) ? `<a href="#/download">⬇ ${S.lang === "ar" ? "تحميل التطبيق" : "Get the app"}</a>` : ""}<button data-a="pw">${t("change_pw")}</button><button data-a="logout">${t("logout")}</button>`;
+    <a href="#/settings">${t("m_settings")}</a><button data-a="tour">➜ ${S.lang === "ar" ? "جولة في التطبيق" : "Take the tour"}</button><a href="#/support">? ${S.lang === "ar" ? "المساعدة والدعم" : "Help & support"}</a>${STATIC && /^https?:$/.test(location.protocol) ? `<a href="#/download">⬇ ${S.lang === "ar" ? "تحميل التطبيق" : "Get the app"}</a>` : ""}<button data-a="pw">${t("change_pw")}</button><button data-a="logout">${t("logout")}</button>`;
 }
 // the bell: what needs attention (bills to issue, overdue installments, depreciation, books checks…)
 async function loadAlerts(force) {
@@ -8011,7 +8017,7 @@ const TOUR = () => [
   ['[data-g="g_acc"]', L2("General accounting", "المحاسبة العامة"), L2("Journal, chart of accounts and the books behind every screen.", "اليومية ودليل الحسابات والدفاتر خلف كل شاشة.")],
   ['[data-g="g_rep"]', L2("Reports", "التقارير"), L2("Statements and lists — export to PDF, Excel or Word.", "القوائم والكشوف — تصدير PDF أو Excel أو Word.")],
   [".dd.bell", L2("Alerts", "التنبيهات"), L2("What needs attention: bills to issue, dues, checks.", "ما يحتاج انتباهك: فواتير للإصدار، مستحقات، مراجعات.")],
-  [".ucard", L2("You & settings", "حسابك والإعدادات"), L2("Settings, import & export, users — and this tour again.", "الإعدادات والاستيراد والتصدير والمستخدمون — وهذه الجولة مجدداً.")],
+  [".ucard", L2("You & settings", "حسابك والإعدادات"), L2("Settings, this tour again — and Help & support to report a problem or ask us anything.", "الإعدادات، وهذه الجولة مجدداً — والمساعدة والدعم للإبلاغ عن مشكلة أو سؤالنا.")],
 ];
 function startTour() {
   const app = $(".app"), narrow = innerWidth <= 900, hadMenu = app && app.classList.contains("menu");
@@ -8105,5 +8111,71 @@ async function showWelcome() {
 }
 Object.assign(S.GLOBAL_H, { tour: () => { $$(".dd.open").forEach(d => d.classList.remove("open")); location.hash = "#/dashboard"; setTimeout(startTour, 400); },
   qsetup: () => quickSetup() });
+
+// ================================================== help & support
+// Where reports go. E-mail stays empty until the domain's support address exists (the button says "coming soon").
+const SUPPORT = { whatsapp: "201012884176", email: "" };
+const SUP_KINDS = () => [["bug", L2("Something isn't working", "شيء لا يعمل")], ["question", L2("A question", "سؤال")],
+  ["suggestion", L2("A suggestion", "اقتراح")], ["billing", L2("Subscription & billing", "الاشتراك والفواتير")]];
+const SUP_STATUS = () => ({ sent: L2("Sent", "أُرسل"), answered: L2("Answered", "تم الرد"), solved: L2("Solved", "تم الحل") });
+const supEdition = () => STATIC ? (cloudOn() ? L2("Online (shared workspace)", "أونلاين (مساحة عمل مشتركة)") : L2("Browser, this device only", "المتصفح، هذا الجهاز فقط"))
+  : (cloudOn() ? L2("Desktop + shared workspace", "سطح المكتب + مساحة عمل مشتركة") : L2("Desktop / offline", "سطح المكتب / بدون إنترنت"));
+function supDiag() {
+  const u = S.boot.user || {}, st = S.boot.settings || {};
+  return { version: S.boot.version || "", edition: supEdition(), company: st.company_name || "", user: u.username || "",
+    role: u.is_super ? "super admin" : u.is_admin ? "admin" : "user", screen: (S.lastPage || "").slice(0, 120), language: S.lang,
+    browser: navigator.userAgent.slice(0, 200), display: `${innerWidth}×${innerHeight} @${devicePixelRatio || 1}x`,
+    online: navigator.onLine ? "yes" : "no", errors: RECENT_ERRS.slice(-5).join(" | ") || "—" };
+}
+const supText = (t, withDiag) => {
+  const kind = (SUP_KINDS().find(k => k[0] === t.kind) || [])[1] || t.kind;
+  const lines = [`BeyondERP support — ${t.ref}`, `${kind}: ${t.subject}`];
+  if (t.body) lines.push("", t.body);
+  if (withDiag && t.diag && Object.keys(t.diag).length) lines.push("", "— Technical details —", ...Object.entries(t.diag).filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`));
+  return lines.join("\n").slice(0, 1800);
+};
+const supSend = (t, channel, withDiag) => {
+  const msg = supText(t, withDiag);
+  if (channel === "whatsapp") window.open(`https://wa.me/${SUPPORT.whatsapp}?text=${encodeURIComponent(msg)}`, "_blank", "noopener");
+  else if (channel === "email") location.href = `mailto:${SUPPORT.email}?subject=${encodeURIComponent(`[${t.ref}] ${t.subject}`)}&body=${encodeURIComponent(msg)}`;
+  else navigator.clipboard.writeText(msg).then(() => toast(L2("Copied — paste it wherever you contact us", "تم النسخ — الصقه حيث تتواصل معنا")), () => uiAlert(msg));
+};
+PAGES.support = async view => {
+  $("#ttl").textContent = L2("Help & support", "المساعدة والدعم"); $("#crumb").textContent = L2("BeyondERP team", "فريق BeyondERP");
+  const list = await api("GET", "/api/support/tickets").catch(() => []);
+  const wa = SUPPORT.whatsapp, em = SUPPORT.email, admin = S.boot.user.is_admin;
+  const d0 = supDiag();
+  view.innerHTML = `<div class="split sup"><div>
+    <div class="card"><h2>${esc(L2("Tell us what happened", "أخبرنا بما حدث"))}</h2>
+      <p class="muted" style="margin-top:0">${esc(L2("Reports reach the BeyondERP team directly. Each one gets a reference number and is kept below, so your team can see what was reported.", "تصل البلاغات مباشرة لفريق BeyondERP. لكل بلاغ رقم مرجعي ويُحفظ بالأسفل ليرى فريقك ما تم الإبلاغ عنه."))}</p>
+      <form id="supf" class="grid g2">
+        <label class="f">${esc(L2("About", "بخصوص"))}<select name="kind">${SUP_KINDS().map(([k, l]) => `<option value="${k}">${esc(l)}</option>`).join("")}</select></label>
+        <label class="f">${esc(L2("In one line", "في سطر واحد"))}<input name="subject" required maxlength="200" dir="auto" placeholder="${esc(L2("e.g. The receipt voucher will not save", "مثال: سند القبض لا يُحفظ"))}"></label>
+        <label class="f spanall">${esc(L2("Details", "التفاصيل"))}<textarea name="body" rows="6" dir="auto" placeholder="${esc(L2("What you did, what you expected, and what happened instead. Screenshots can be added in the chat after it opens.", "ما الذي فعلته، وما الذي توقعته، وما الذي حدث بدلاً منه. يمكن إضافة صور الشاشة في المحادثة بعد فتحها."))}"></textarea></label>
+        <label class="f chk spanall"><input type="checkbox" name="diag" checked>${esc(L2("Include technical details (recommended)", "إرفاق التفاصيل الفنية (يُنصح به)"))}</label>
+        <details class="spanall sup-diag"><summary>${esc(L2("What is included", "ما الذي يُرفق"))}</summary><div class="lines">${Object.entries(d0).map(([k, v]) => `<div><b>${esc(k)}</b>: ${esc(v)}</div>`).join("")}</div>
+          <div class="muted" style="font-size:.85em">${esc(L2("No passwords, figures or customer data are ever included.", "لا تُرفق أي كلمات مرور أو أرقام أو بيانات عملاء."))}</div></details>
+      </form>
+      <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:12px">
+        <button class="btn pri" data-a="supgo" data-c="whatsapp">${svg("chat")} ${esc(L2("Send on WhatsApp", "إرسال عبر واتساب"))}</button>
+        <button class="btn" data-a="supgo" data-c="email" ${em ? "" : `disabled title="${esc(L2("Coming soon", "قريباً"))}"`}>✉ ${esc(em ? L2("Send by e-mail", "إرسال بالبريد") : L2("E-mail — coming soon", "البريد — قريباً"))}</button>
+        <button class="btn" data-a="supgo" data-c="copy">${esc(L2("Copy the report", "نسخ البلاغ"))}</button></div></div>
+    <div class="card"><h2>${esc(L2("Reported so far", "البلاغات السابقة"))}</h2>${list.length ? `<div class="tbl stack"><table><thead><tr><th>${esc(L2("Reference", "المرجع"))}</th><th>${t("date")}</th><th>${esc(L2("About", "بخصوص"))}</th><th>${esc(L2("Subject", "الموضوع"))}</th>${admin ? `<th>${t("user")}</th>` : ""}<th>${t("status")}</th><th></th></tr></thead><tbody>
+      ${list.map(x => `<tr><td><b>${esc(x.ref || "")}</b></td><td>${fd((x.created_at || "").slice(0, 10))}</td><td>${esc((SUP_KINDS().find(k => k[0] === x.kind) || [])[1] || x.kind)}</td><td dir="auto">${esc(x.subject)}</td>
+        ${admin ? `<td>${esc(x.username || "")}</td>` : ""}<td><select data-change="supst" data-id="${x.id}">${Object.entries(SUP_STATUS()).map(([k, l]) => `<option value="${k}" ${x.status === k ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></td>
+        <td><button class="btn sm" data-a="supagain" data-id="${x.id}" title="${esc(L2("Send again on WhatsApp", "إعادة الإرسال عبر واتساب"))}">↻</button></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${esc(L2("Nothing reported yet.", "لا توجد بلاغات بعد."))}</div>`}</div></div>
+    <div><div class="card"><h2>${esc(L2("Contact us", "تواصل معنا"))}</h2>
+      <div class="sup-ch"><b>WhatsApp</b><a href="https://wa.me/${esc(wa)}" target="_blank" rel="noopener" dir="ltr">+${esc(wa)}</a></div>
+      <div class="sup-ch"><b>${esc(L2("E-mail", "البريد الإلكتروني"))}</b>${em ? `<a href="mailto:${esc(em)}" dir="ltr">${esc(em)}</a>` : `<span class="muted">${esc(L2("Coming soon", "قريباً"))}</span>`}</div>
+      <p class="muted" style="font-size:.9em">${esc(L2("Tip: quote the reference number (BE-…) when you follow up.", "نصيحة: اذكر الرقم المرجعي (BE-…) عند المتابعة."))}</p>
+      <button class="btn" data-a="tour">➜ ${esc(L2("Take the tour again", "إعادة الجولة"))}</button></div></div></div>`;
+  S.H.supgo = async el => {
+    const f = $("#supf"); if (!f.reportValidity()) return;
+    const v = readForm(f), withDiag = !!$("[name=diag]", f).checked;
+    try { const tk = await api("POST", "/api/support/tickets", { kind: v.kind, subject: v.subject, body: v.body, channel: el.dataset.c, diag: withDiag ? supDiag() : {} });
+      supSend(tk, el.dataset.c, withDiag); toast(L2(`Saved as ${tk.ref}`, `حُفظ برقم ${tk.ref}`)); route(); } catch (e) { fail(e); } };
+  S.H.supagain = el => { const tk = list.find(x => String(x.id) === el.dataset.id); if (tk) supSend(tk, "whatsapp", true); };
+  S.H.supst = async el => { try { await api("PUT", "/api/support/tickets/" + el.dataset.id, { status: el.value }); toast(t("saved")); } catch (e) { fail(e); route(); } };
+};
 
 })();

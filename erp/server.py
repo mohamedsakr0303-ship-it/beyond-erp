@@ -3672,6 +3672,28 @@ def ai_params(ctx):
     return ok({"params": params})
 
 
+# ================================================================= help & support
+@route("GET", "/api/support/tickets")
+def support_list(ctx):
+    from . import support
+    return ok(support.tickets(ctx.db, ctx.user))
+
+
+@route("POST", "/api/support/tickets")
+def support_new(ctx):
+    from . import support
+    t = support.create(ctx.db, ctx.user, ctx.body)
+    ctx.log("support.ticket", f"{t['ref']} {t['kind']}: {t['subject'][:80]}")
+    return ok(t)
+
+
+@route("PUT", "/api/support/tickets/<tid>")
+def support_status(ctx, tid):
+    from . import support
+    support.set_status(ctx.db, ctx.user, tid, ctx.body.get("status"))
+    return ok()
+
+
 @route("GET", "/api/ai/threads")
 def ai_threads(ctx):
     from . import ai

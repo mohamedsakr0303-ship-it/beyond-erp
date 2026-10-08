@@ -1005,6 +1005,20 @@ CREATE TABLE IF NOT EXISTS chat_reads (
     PRIMARY KEY (room_id, user_id)
 );
 
+-- Help & support: what the company reported to the BeyondERP team (sent by WhatsApp / e-mail; see support.py)
+CREATE TABLE IF NOT EXISTS support_tickets (
+    id         INTEGER PRIMARY KEY,
+    ref        TEXT,
+    kind       TEXT NOT NULL DEFAULT 'bug',
+    subject    TEXT NOT NULL DEFAULT '',
+    body       TEXT NOT NULL DEFAULT '',
+    diag       TEXT NOT NULL DEFAULT '{}',    -- version, edition, screen, recent errors: what makes a report reproducible
+    channel    TEXT NOT NULL DEFAULT 'copy',
+    status     TEXT NOT NULL DEFAULT 'sent',
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at TEXT,
+    updated_at TEXT
+);
 -- The AI assistant on this device (desktop edition without the shared workspace; with the workspace the settings
 -- and the provider key live in Supabase). Conversations stay on the device and are never replicated.
 CREATE TABLE IF NOT EXISTS ai_threads (

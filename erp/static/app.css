@@ -966,3 +966,10 @@ body:has(.drawer-bg) #bulkbar{display:none}   /* a form is open: its own buttons
 .pk-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px}
 .pk-card{border:1px solid var(--line);border-radius:12px;padding:10px;display:flex;flex-direction:column;gap:6px;background:var(--bg)}
 .pk-card.on{border-color:var(--brand);box-shadow:0 0 0 2px color-mix(in srgb,var(--brand) 25%,transparent)}
+
+/* help & support */
+.sup-ch{display:flex;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid var(--line)}
+.sup-ch a{color:var(--brand);font-weight:600;text-decoration:none}
+.sup-diag{border:1px dashed var(--line);border-radius:10px;padding:8px 12px}.sup-diag summary{cursor:pointer;color:var(--muted)}
+.sup-diag .lines{margin:8px 0;font-size:.85em;word-break:break-word}
+.sup td select{min-width:120px;width:auto}
