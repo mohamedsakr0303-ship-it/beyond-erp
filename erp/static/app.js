@@ -1,4 +1,4 @@
-/* Beyond ERP — single-page UI (vanilla JS, no build step, no external libraries). */
+/* BeyondERP — single-page UI (vanilla JS, no build step, no external libraries). */
 "use strict";
 (() => {
 const $ = (s, el = document) => el.querySelector(s);
@@ -312,7 +312,7 @@ function applyLook() {
   if (/^#[0-9a-fA-F]{6}$/.test(ap.accent || "")) { de.style.setProperty("--brand", ap.accent); de.style.setProperty("--accent", ap.accent); }
   de.dataset.sidebar = ap.sidebar || "light"; de.dataset.density = ap.density || "comfortable"; de.dataset.corners = ap.corners || "rounded";
   applyTheme(activeTheme());
-  document.title = (ap.app_name || ((st.company_name || "Beyond") + " ERP"));
+  document.title = appName();
 }
 // Settings → Menus presets: the sections a kind of business usually does not use (ticks only; nothing is saved until Save)
 const HIDE_PRESETS = {
@@ -568,9 +568,14 @@ function openPalette() {
 }
 document.addEventListener("keydown", e => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k" && S.boot && S.boot.user) { e.preventDefault(); if (!$(".pal-bg")) openPalette(); } });
 // ---- the app icon (Settings → Look): built-in marks or the company's own, applied to the tab and the installable app
-const APP_ICONS = [["rising", "Rising B", "B الصاعد"], ["seal", "Seal", "الختم"], ["original", "Original", "الأصلية"]];
-const appIconKey = () => ((S.boot && S.boot.settings.appearance) || {}).app_icon || "rising";
-const appIconSrc = k => k === "custom" && S.boot.app_icon ? `data:${S.boot.app_icon.mime};base64,${S.boot.app_icon.data}` : `icons/${k === "original" ? "original.png" : (APP_ICONS.some(x => x[0] === k) ? k : "rising") + ".svg"}`;
+const APP_ICONS = [["beyond", "BeyondERP", "BeyondERP"], ["rising", "Rising B", "B الصاعد"], ["seal", "Seal", "الختم"], ["original", "Original", "الأصلية"]];
+const appIconKey = () => ((S.boot && S.boot.settings.appearance) || {}).app_icon || "beyond";
+const appIconSrc = k => k === "custom" && S.boot.app_icon ? `data:${S.boot.app_icon.mime};base64,${S.boot.app_icon.data}` : `icons/${k === "original" ? "original.png" : !APP_ICONS.some(x => x[0] === k) || k === "beyond" ? "beyond.png" : k + ".svg"}`;
+// The app's name (Settings → Appearance); BeyondERP unless the company gave it another
+const appName = () => (((S.boot && S.boot.settings.appearance) || {}).app_name || "").trim() || "BeyondERP";
+// The sidebar / sign-in logo: the company's own (document or uploaded), none, or the built-in BeyondERP mark
+const brandLogoSrc = () => { const ap = (S.boot && S.boot.settings.appearance) || {};
+  return S.boot && S.boot.app_logo ? `data:${S.boot.app_logo.mime};base64,${S.boot.app_logo.data}` : ap.logo === "none" ? "" : "icons/beyond.png"; };
 // a square PNG of the icon; "filled" puts it on the dark green backdrop phones need for full-bleed icons
 function iconPng(src, size, filled = false) {
   return new Promise((ok, bad) => { const img = new Image(); img.onload = () => {
@@ -586,11 +591,11 @@ async function applyAppIcon() {
   const k = appIconKey(), src = appIconSrc(k); if (_iconApplied === src) return; _iconApplied = src;
   try {
     const fav = $("#appicon"); if (fav) fav.href = await iconPng(src, 64);
-    if (k === "rising") return;   // the default icons ship with the app
+    if (k === "beyond") return;   // the default icons ship with the app
     let at = document.querySelector("link[rel=apple-touch-icon]"); if (at) at.href = await iconPng(src, 180, true);
     const man = document.querySelector("link[rel=manifest]");
     if (man) { const base = new URL("./", location.href).href;
-      const m = { name: "Beyond ERP", short_name: "Beyond ERP", start_url: base, scope: base, display: "standalone", background_color: "#04221a", theme_color: "#047857",
+      const m = { name: appName(), short_name: appName(), start_url: base, scope: base, display: "standalone", background_color: "#04221a", theme_color: "#047857",
         icons: [{ src: await iconPng(src, 192), sizes: "192x192", type: "image/png" }, { src: await iconPng(src, 512), sizes: "512x512", type: "image/png" },
           { src: await iconPng(src, 512, true), sizes: "512x512", type: "image/png", purpose: "maskable" }] };
       man.href = URL.createObjectURL(new Blob([JSON.stringify(m)], { type: "application/manifest+json" })); }
@@ -598,10 +603,10 @@ async function applyAppIcon() {
 }
 // Sidebar header: logo and/or name (Settings → Appearance → Sidebar shows), and an optional tagline
 function brandBlock(st) {
-  const ap = st.appearance || {}, show = ap.brand_show || "logo_name";
-  const logo = S.boot.app_logo && show !== "name" ? `<img class="brand-logo ${show === "logo" ? "only" : ""}" src="data:${S.boot.app_logo.mime};base64,${S.boot.app_logo.data}" alt="${esc(ap.app_name || st.company_name || "")}">` : "";
-  const name = show !== "logo" || !logo ? `<b>${esc(ap.app_name || st.company_name || "BEYOND")}</b>` : "";
-  const tag = ap.tagline_show === false ? "" : (ap.tagline != null ? ap.tagline : st.company_tagline || "");
+  const ap = st.appearance || {}, show = ap.brand_show || "logo", src = brandLogoSrc();
+  const logo = src && show !== "name" ? `<img class="brand-logo ${show === "logo" ? "only" : ""}" src="${esc(src)}" alt="${esc(appName())}">` : "";
+  const name = show !== "logo" || !logo ? `<b>${esc(appName())}</b>` : "";
+  const tag = ap.tagline_show === false || show === "logo" ? "" : (ap.tagline != null ? ap.tagline : st.company_tagline || "");
   // each part (logo, name, tagline) has its own position and size; a blank position follows the logo's
   const pos = v => (["left", "center", "right"].includes(v) ? v : ""), px = (v, lo, hi) => (+v ? Math.min(hi, Math.max(lo, +v)) : 0);
   const la = pos(ap.brand_align), na = pos(ap.brand_name_align) || la, ta = pos(ap.brand_tag_align) || la;
@@ -779,8 +784,8 @@ async function renderCloudAuth(msg, kind = "info", mode = "start") {
       <button class="btn" type="button" data-a="cforgot">${ar ? "إرسال رابط إعادة تعيين كلمة المرور" : "Email me a password-reset link"}</button>
       <button class="btn" type="button" data-a="cresend">${ar ? "إعادة إرسال رسالة تأكيد الحساب" : "Resend my account confirmation email"}</button></form>
     <p class="muted" style="font-size:.85em">${ar ? "إن كنت تستخدم Google فسجّل الدخول بزر Google — لا توجد كلمة مرور لهذا الحساب هنا." : "Signed up with Google? Use “Sign in with Google” — that account has no password here."}</p>`;
-  $("#root").innerHTML = `<div class="login auth">${S.boot.app_logo ? `<img class="login-logo" src="data:${S.boot.app_logo.mime};base64,${S.boot.app_logo.data}" alt="">` : ""}
-    <div class="muted center" style="font-weight:600;letter-spacing:.4px">${esc(S.boot.settings.company_name || "Beyond")} ERP</div>
+  $("#root").innerHTML = `<div class="login auth">${brandLogoSrc() ? `<img class="login-logo" src="${esc(brandLogoSrc())}" alt="">` : ""}
+    <div class="muted center" style="font-weight:600;letter-spacing:.4px">${esc(appName())}</div>
     <h1 class="center">${esc(title)}</h1><div id="lerr">${msg ? `<div class="banner ${kind}">${esc(msg)}</div>` : ""}</div>${body}
     ${mode !== "start" ? `<p class="center">${back}</p>` : ""}
     <div class="row" style="justify-content:space-between;margin-top:14px;font-size:.8em"><a href="#" data-a="lang2">${ar ? "English" : "العربية"}</a>
@@ -992,7 +997,7 @@ async function renderAuth() {
   applyLook();
   const setup = S.boot.needs_setup;
   if (setup && S.boot.workspace_preset && !store.get("separateBooks", false)) return renderFirstJoin();
-  $("#root").innerHTML = `<div class="login"><h1>${esc(S.boot.settings.company_name || "Beyond")} ERP</h1>
+  $("#root").innerHTML = `<div class="login">${brandLogoSrc() ? `<img class="login-logo" src="${esc(brandLogoSrc())}" alt="">` : ""}<h1>${esc(appName())}</h1>
     <p class="muted">${setup ? t("setup_title") : t("sign_in")}</p><div id="lerr"></div>
     <form id="lf" class="grid">${setup ? `<label class="f">${t("company_name")}<input name="company_name" value="${esc(S.boot.settings.company_name || "")}"></label>
       <label class="f">${t("full_name")}<input name="full_name"></label>` : ""}
@@ -1020,7 +1025,7 @@ async function renderAuth() {
 // New desktop install that belongs to a workspace: sign in with the same account as the website, get the shared books.
 function renderFirstJoin() {
   const ar = S.lang === "ar";
-  $("#root").innerHTML = `<div class="login auth"><h1 class="center">${esc(S.boot.settings.company_name || "Beyond")} ERP</h1>
+  $("#root").innerHTML = `<div class="login auth">${brandLogoSrc() ? `<img class="login-logo" src="${esc(brandLogoSrc())}" alt="">` : ""}<h1 class="center">${esc(appName())}</h1>
     <p class="muted center">${ar ? "سجّل الدخول بنفس الحساب المستخدم على الموقع" : "Sign in with the same account you use on the website"}</p><div id="lerr"></div>
     <form id="lf" class="grid"><label class="f">${ar ? "البريد الإلكتروني أو اسم المستخدم" : "Email or username"}<input name="username" autocomplete="username" autocapitalize="none" required></label>
       ${pwFields(false)}<button class="btn pri" type="submit">${t("sign_in")}</button></form>
@@ -2858,9 +2863,9 @@ PAGES.settings = async (view, parts, q) => {
         <label class="f">${L2("Menu groups open on", "فتح مجموعات القائمة عند")}<select id="my_navmode" data-change="mysave">${[["hover", L2("Hover — open while the mouse is over them", "المرور — تفتح أثناء مرور الماوس")], ["click", L2("Click — stay open until clicked again", "النقر — تبقى مفتوحة حتى النقر مرة أخرى")]].map(([v, l]) => `<option value="${v}" ${navMode() === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label></div>
         <div class="row" style="margin-top:10px"><button class="btn" data-a="mysave">${t("save")}</button><button class="btn" data-a="myreset">${t("clear")}</button></div></div>
       ${can("settings.branding") ? `<div class="card" id="apcard"><h2>${t("appearance")} — ${S.lang === "ar" ? "لكل المستخدمين" : "for everyone"}</h2>${form([
-        { k: "app_name", l: t("app_name"), v: ap.app_name || "", ph: (st.company_name || "BEYOND") },
-        { k: "logo", l: t("app_logo"), type: "select", opts: [["", t("al_none")], ["document", t("al_doc")], ["custom", t("al_custom")]], v: ap.logo || "" },
-        { k: "brand_show", l: S.lang === "ar" ? "أعلى القائمة الجانبية يعرض" : "Sidebar top shows", type: "select", v: ap.brand_show || "logo_name",
+        { k: "app_name", l: t("app_name"), v: ap.app_name || "", ph: "BeyondERP" },
+        { k: "logo", l: t("app_logo"), type: "select", opts: [["", "BeyondERP"], ["none", t("al_none")], ["document", t("al_doc")], ["custom", t("al_custom")]], v: ap.logo || "" },
+        { k: "brand_show", l: S.lang === "ar" ? "أعلى القائمة الجانبية يعرض" : "Sidebar top shows", type: "select", v: ap.brand_show || "logo",
           opts: [["logo_name", S.lang === "ar" ? "الشعار والاسم" : "Logo and name"], ["logo", S.lang === "ar" ? "الشعار فقط" : "Logo only"], ["name", S.lang === "ar" ? "الاسم فقط" : "Name only"]] },
         { k: "brand_align", l: L2("Sidebar logo position", "موضع الشعار أعلى القائمة"), type: "select", v: ap.brand_align || "",
           opts: [["", L2("Default", "الافتراضي")], ["left", L2("Left", "يسار")], ["center", L2("Centre", "وسط")], ["right", L2("Right", "يمين")]] },
@@ -6206,7 +6211,7 @@ PAGES.download = async view => {
   const installed = window.matchMedia && window.matchMedia("(display-mode: standalone)").matches;
   view.innerHTML =
     card(L2("Phone or tablet (Android / iPhone)", "الموبايل أو التابلت (أندرويد / آيفون)"), installed ? `<div class="banner ok">${L2("You are using the installed app ✓", "أنت تستخدم التطبيق المثبت ✓")}</div>` :
-      `${installPrompt ? `<p><button class="btn pri" data-a="pwainstall">${L2("Install Beyond ERP", "تثبيت Beyond ERP")}</button></p>` : ""}
+      `${installPrompt ? `<p><button class="btn pri" data-a="pwainstall">${L2("Install BeyondERP", "تثبيت BeyondERP")}</button></p>` : ""}
       <p><b>Android (Chrome):</b> ${L2("open this site → menu ⋮ → “Install app” (or “Add to Home screen”).", "افتح الموقع ← القائمة ⋮ ← «تثبيت التطبيق» (أو «إضافة إلى الشاشة الرئيسية»).")}</p>
       <p><b>iPhone / iPad (Safari):</b> ${L2("open this site → Share □↑ → “Add to Home Screen”.", "افتح الموقع ← زر المشاركة □↑ ← «إضافة إلى الشاشة الرئيسية».")}</p>
       <p class="muted">${L2("It opens full-screen like an app, signs in to the same workspace and keeps working without a connection (changes need the connection to be saved).", "يفتح بملء الشاشة كتطبيق، ويدخل لنفس مساحة العمل، ويعمل بدون إنترنت للعرض (الحفظ يحتاج اتصالاً).")}</p>`) +
@@ -6484,7 +6489,7 @@ PAGES.industry = async (view) => {
 });
 
 // ================================================================== people, chat, notifications, AI assistant
-/* Beyond ERP — people, chat, notifications and the AI assistant (loaded after app.js, same helpers).
+/* BeyondERP — people, chat, notifications and the AI assistant (loaded after app.js, same helpers).
    Works the same in every edition: desktop/server (fetch), browser-only (the Python engine in the page) and the shared
    workspace (changes replicate like any other; chat between companies and the assistant's key live in Supabase). */
 

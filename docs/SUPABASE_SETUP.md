@@ -78,7 +78,7 @@ open from disk).
 4. More companies: top bar → your name → **Companies** → *New company*. Each company has its own books, members and
    invite code; people can belong to several and switch between them there.
 
-## Adding people (all from inside Beyond ERP)
+## Adding people (all from inside BeyondERP)
 
 **Users → New**: username, full name, a **sign-in password** (typed twice) and their permissions → **Save**. That
 creates their sign-in account on the spot — already confirmed, no emails — and they can sign in with
@@ -102,7 +102,7 @@ expired, the run says so plainly — create a new one, update the secret, and re
 The app shows a **Sign in with Google** button as soon as Google is switched on in Supabase.
 
 1. **Google Cloud Console** (console.cloud.google.com) → create a project (any name).
-2. **APIs & Services → OAuth consent screen**: *External*; app name (e.g. "Beyond ERP"), your support email,
+2. **APIs & Services → OAuth consent screen**: *External*; app name (e.g. "BeyondERP"), your support email,
    developer email. Scopes: leave the defaults (email, profile, openid). Under **Audience / Publishing status**
    choose **Publish app** — with only these basic scopes Google does not require a review. (While it stays in
    *Testing*, only the Google accounts you list as test users can sign in.)

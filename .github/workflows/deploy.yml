@@ -150,8 +150,8 @@ jobs:
       - name: Mac apps
         if: runner.os == 'macOS'
         run: |
-          ditto -c -k --keepParent "dist-online/Beyond ERP.app" BeyondERP-mac.zip
-          ditto -c -k --keepParent "dist/Beyond ERP Offline.app" BeyondERP-Offline-mac.zip
+          ditto -c -k --keepParent "dist-online/BeyondERP.app" BeyondERP-mac.zip
+          ditto -c -k --keepParent "dist/BeyondERP Offline.app" BeyondERP-Offline-mac.zip
       # The installers go on a GitHub release instead of the Actions artifact storage, which a private repository's
       # free quota runs out of; release files have no such limit and stay until the next build replaces them.
       - name: Publish the installers on the desktop-latest release

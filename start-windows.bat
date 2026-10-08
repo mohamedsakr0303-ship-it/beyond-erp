@@ -1,5 +1,5 @@
 @echo off
-rem Beyond ERP launcher for Windows. Double-click to start.
+rem BeyondERP launcher for Windows. Double-click to start.
 chcp 65001 >nul
 cd /d "%~dp0"
 where py >nul 2>nul

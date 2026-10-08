@@ -1,4 +1,4 @@
-"""Beyond ERP test-suite (stdlib unittest — run:  python -m unittest discover tests)."""
+"""BeyondERP test-suite (stdlib unittest — run:  python -m unittest discover tests)."""
 import http.cookiejar
 import json
 import sys
@@ -3440,6 +3440,33 @@ class BulkActions(unittest.TestCase):
         self.assertEqual((r["done"], len(r["failed"])), (0, 1))
         self.assertEqual(self.db.one("SELECT status FROM journal_entries WHERE id=?", (ids[2],))["status"], "posted")
         self.assertEqual(self.call(op, "POST", "/api/bulk", {"target": "nope", "action": "edit", "ids": [1]})[0], 400)
+
+
+class BrandDefaults(unittest.TestCase):
+    """The app is BeyondERP with a logo-only sidebar for old books too; a company's own logo is kept."""
+
+    def _book(self, ap):
+        path = Path(tempfile.mkdtemp()) / "b.db"
+        d = Database(str(path))
+        d.x("UPDATE settings SET value=? WHERE key='appearance'", (json.dumps(ap),))
+        d.x("DELETE FROM settings WHERE key='brand_v2'")
+        d.close()
+        d = Database(str(path))
+        return json.loads(d.one("SELECT value FROM settings WHERE key='appearance'")["value"])
+
+    def test_old_books_move_to_the_new_defaults(self):
+        ap = self._book({"app_name": "Beyond Design", "brand_show": "logo_name", "logo": "", "accent": "#123456"})
+        self.assertEqual((ap["app_name"], ap["brand_show"], ap["logo"], ap["accent"]), ("", "logo", "", "#123456"))
+        ap = self._book({"app_name": "Acme Books", "brand_show": "logo_name", "logo": "custom"})
+        self.assertEqual((ap["app_name"], ap["brand_show"], ap["logo"]), ("Acme Books", "logo_name", "custom"))
+
+    def test_runs_once(self):
+        path = Path(tempfile.mkdtemp()) / "b.db"
+        d = Database(str(path))
+        d.x("UPDATE settings SET value=? WHERE key='appearance'", (json.dumps({"app_name": "Beyond Design"}),))
+        d.close()
+        d = Database(str(path))   # flag already set on a new book: a name chosen later is never touched
+        self.assertEqual(json.loads(d.one("SELECT value FROM settings WHERE key='appearance'")["value"])["app_name"], "Beyond Design")
 
 
 class WorkspaceCatchUp(unittest.TestCase):

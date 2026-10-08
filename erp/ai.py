@@ -56,7 +56,7 @@ ALWAYS_BLOCKED = re.compile(r"^/api/(users|me|cloud|ai|ai-policy|licence|login|l
                             r"maintenance|demo|session|einvoice/(submit|test)|\w+/\d+/reopen-licence)(/|$|\?)")
 TOOL_NAMES = ("erp_find", "erp_read", "erp_write")
 
-BASE_PROMPT = """You are {name}, the assistant built into Beyond ERP, an accounting and operations system for a company \
+BASE_PROMPT = """You are {name}, the assistant built into BeyondERP, an accounting and operations system for a company \
 (business units / projects, sales and receivables, purchasing and payables, stock, rentals, payroll, fixed assets, \
 partners' equity, taxes and e-invoicing, financial reports).
 
@@ -619,7 +619,7 @@ def _openai_request(p, key, params):
     if key:
         headers["Authorization"] = "Bearer " + key
     if "openrouter.ai" in p["base_url"]:
-        headers["X-Title"] = "Beyond ERP"
+        headers["X-Title"] = "BeyondERP"
     return p["base_url"].rstrip("/") + "/chat/completions", headers, to_openai(params)
 
 

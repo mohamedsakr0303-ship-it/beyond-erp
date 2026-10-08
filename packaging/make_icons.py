@@ -1,11 +1,14 @@
 """Make every app icon from packaging/app-logo.png (the app's own logo — separate from the document / branding logo
 chosen inside the ERP). Replace that file and run:  python packaging/make_icons.py
 
-Writes: packaging/icon.ico (Windows exe + installers), packaging/icon.png (Mac app), and the installable-site icons in
-web-src/ (Android / iPhone home screen)."""
+Writes: packaging/icon.ico (Windows exe + installers), packaging/icon.png (Mac app), the installable-site icons in
+web-src/ (Android / iPhone home screen), the in-app default icon / sidebar logo (erp/static/icons/beyond.png) and the
+small icon carried inside both index pages.
+The mark itself stays transparent (no white square); where a platform needs a solid square (iPhone, Android's
+full-bleed "maskable" icon) it sits on the app's dark green."""
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
@@ -13,8 +16,19 @@ logo = Image.open(HERE / "app-logo.png").convert("RGBA")
 logo = logo.crop(logo.getbbox())            # trim empty edges
 
 
+def green(n):
+    """The app's dark green, lighter top-left to darker bottom-right (#064e3b → #022c22)."""
+    im = Image.new("RGBA", (n, n))
+    d = ImageDraw.Draw(im)
+    a, b = (6, 78, 59), (2, 44, 34)
+    for i in range(2 * n):
+        t = i / (2 * n - 1)
+        d.line([(i, 0), (0, i)], fill=tuple(round(a[k] + (b[k] - a[k]) * t) for k in range(3)) + (255,))
+    return im
+
+
 def icon(n, pad, bg=None):
-    im = Image.new("RGBA", (n, n), bg or (0, 0, 0, 0))
+    im = green(n) if bg == "green" else Image.new("RGBA", (n, n), bg or (0, 0, 0, 0))
     box = int(n * (1 - 2 * pad))
     lg = logo.copy()
     scale = box / max(lg.size)
@@ -25,12 +39,12 @@ def icon(n, pad, bg=None):
 
 icon(256, 0.04).save(HERE / "icon.ico", sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
 icon(1024, 0.08).save(HERE / "icon.png")
-white = (255, 255, 255, 255)
 for n in (192, 512):
-    icon(n, 0.1, white).convert("RGB").save(ROOT / "web-src" / f"icon-{n}.png", optimize=True)
-icon(512, 0.2, white).convert("RGB").save(ROOT / "web-src" / "icon-maskable-512.png", optimize=True)
-icon(180, 0.1, white).convert("RGB").save(ROOT / "web-src" / "apple-touch-icon.png", optimize=True)
+    icon(n, 0.06).save(ROOT / "web-src" / f"icon-{n}.png", optimize=True)
+icon(512, 0.2, "green").convert("RGB").save(ROOT / "web-src" / "icon-maskable-512.png", optimize=True)
+icon(180, 0.14, "green").convert("RGB").save(ROOT / "web-src" / "apple-touch-icon.png", optimize=True)
 icon(64, 0.04).save(ROOT / "web-src" / "favicon.png")
+icon(512, 0.0).save(ROOT / "erp" / "static" / "icons" / "beyond.png", optimize=True)   # in-app default icon + sidebar logo
 # the offline desktop app serves erp/static, and the page itself carries the small icon (works from a zip / file://
 # too): Edge / Chrome use it for the app window's title bar and taskbar
 import base64

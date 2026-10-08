@@ -1,4 +1,4 @@
-/* Beyond ERP — browser-only runtime (static hosting).
+/* BeyondERP — browser-only runtime (static hosting).
    Runs the same Python engine as the desktop app inside the browser (Pyodide) on SQLite compiled to
    WebAssembly (sql.js). Data is stored in this browser's IndexedDB; use Import & Export to back it up. */
 "use strict";

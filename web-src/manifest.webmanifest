@@ -1,7 +1,7 @@
 {
-  "name": "Beyond ERP",
-  "short_name": "Beyond ERP",
-  "description": "Accounting, projects, partners and assets for BEYOND DESIGN",
+  "name": "BeyondERP",
+  "short_name": "BeyondERP",
+  "description": "Accounting, projects, partners and assets",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
@@ -23,11 +23,6 @@
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
-    },
-    {
-      "src": "icons/rising.svg",
-      "sizes": "any",
-      "type": "image/svg+xml"
     }
   ]
 }

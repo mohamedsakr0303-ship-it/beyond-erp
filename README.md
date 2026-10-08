@@ -1,4 +1,4 @@
-# Beyond ERP
+# BeyondERP
 
 A small, complete ERP for a design & contracting business — double-entry accounting, business units
 (cost centres), sales invoices / progress billings, bills of quantities, purchasing, multi-warehouse
@@ -28,8 +28,8 @@ another company.
 ## Get the app
 
 On the hosted site open the user menu → **Get the app**:
-* **Beyond ERP** (Windows installer / Mac app) — opens the website in its own window: same sign-in, same books.
-* **Beyond ERP Offline** (Windows installer / Mac app) — the whole app on the computer; the first launch signs in with the
+* **BeyondERP** (Windows installer / Mac app) — opens the website in its own window: same sign-in, same books.
+* **BeyondERP Offline** (Windows installer / Mac app) — the whole app on the computer; the first launch signs in with the
   workspace account and downloads the shared books.
 * The installers (`packaging/`) are rebuilt by GitHub Actions only when the app code changes (`erp/`, `run.py`,
   `packaging/`, `requirements.txt`) or when the workflow is run by hand (Actions → deploy → Run workflow); other

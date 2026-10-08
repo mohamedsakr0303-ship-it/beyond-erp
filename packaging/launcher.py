@@ -1,4 +1,4 @@
-"""Beyond ERP (online) — opens the hosted app in its own clean window: no tabs, no address bar, its own icon.
+"""BeyondERP (online) — opens the hosted app in its own clean window: no tabs, no address bar, its own icon.
 
 It is the website itself, so it uses the same sign-in and the same shared books: whatever is done here is on the
 website and on every phone at once. Uses Edge or Chrome's app mode (a separate profile keeps the sign-in); falls back

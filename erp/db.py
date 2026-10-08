@@ -5,6 +5,7 @@ from floating-point rounding. Use to_minor()/to_major() at the edges.
 """
 import json
 import os
+import re
 try:
     import sqlite3
     _NATIVE = (sqlite3.Connection,)
@@ -1703,6 +1704,7 @@ class Database:
                 not self.conn.execute("SELECT 1 FROM settings WHERE key='coa_v2'").fetchone():
             self._add_new_accounts()
         self.conn.execute("INSERT OR IGNORE INTO settings(key,value) VALUES ('coa_v2','1')")
+        self._brand_v2()
         self._add_role_account("3015", "funding_partner")
         self._add_role_account("5052", "equipment_charge")
         self._add_role_account("6094", "equipment_pool")
@@ -1780,6 +1782,25 @@ class Database:
         if not self.conn.execute("SELECT 1 FROM settings WHERE key='docs_seeded'").fetchone():
             self.seed_documents()
             self.conn.execute("INSERT OR REPLACE INTO settings(key,value) VALUES ('docs_seeded','1')")
+
+    def _brand_v2(self):
+        """Once per book: the app is called BeyondERP and the sidebar shows only the BeyondERP logo — unless the company
+        put its own logo there (that and its sidebar choice are kept). An app name that was just the old "Beyond Design"
+        default is cleared so the new name shows."""
+        if self.conn.execute("SELECT 1 FROM settings WHERE key='brand_v2'").fetchone():
+            return
+        row = self.conn.execute("SELECT value FROM settings WHERE key='appearance'").fetchone()
+        try:
+            ap = json.loads(row[0]) if row and row[0] else {}
+        except ValueError:
+            ap = None
+        if isinstance(ap, dict) and ap:
+            if ap.get("logo") not in ("document", "custom"):
+                ap["logo"], ap["brand_show"] = "", "logo"
+            if re.fullmatch(r"\s*beyond[\s_-]*(design|erp)?\s*", str(ap.get("app_name") or ""), re.I):
+                ap["app_name"] = ""
+            self.conn.execute("UPDATE settings SET value=? WHERE key='appearance'", (json.dumps(ap),))
+        self.conn.execute("INSERT OR IGNORE INTO settings(key,value) VALUES ('brand_v2','1')")
 
     def _add_role_account(self, code, role):
         """An account added in a later version, for books that do not have its role yet (a used code moves on)."""

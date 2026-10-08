@@ -173,7 +173,7 @@ def template_xlsx(db, name, lang="en", rows=None):
         h.comment = Comment((T("Required. ", "مطلوب. ") if c["required"] else "") + _fmt(tip["kind"], ar) +
                             (f"{T('. Allowed: ', '. القيم: ')}{', '.join(map(str, tip['choices']))}" if tip["choices"] else "") +
                             (f". {note}" if note else "") +
-                            (T(". Blank = the default account", ". فارغ = الحساب الافتراضي") if tip["default_role"] else ""), "Beyond ERP")
+                            (T(". Blank = the default account", ". فارغ = الحساب الافتراضي") if tip["default_role"] else ""), "BeyondERP")
         ws.column_dimensions[L(i)].width = max(12, min(40, c["width"] + 2))
         if c["key"] in ex:
             e = ws.cell(3, i, ex[c["key"]])

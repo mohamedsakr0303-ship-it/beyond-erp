@@ -1,4 +1,4 @@
-# PyInstaller recipe for "Beyond ERP Offline" — the full app running on this computer (works without internet; can
+# PyInstaller recipe for "BeyondERP Offline" — the full app running on this computer (works without internet; can
 # also join the shared workspace). Built by .github/workflows/deploy.yml:
 #   pyinstaller packaging/beyond_erp.spec
 # The result runs without Python installed: it starts the local server and opens the browser.
@@ -20,7 +20,7 @@ exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name="BeyondERP", console=n
           icon=str(ROOT / "packaging" / ("icon.png" if mac else "icon.ico")))
 coll = COLLECT(exe, a.binaries, a.datas, name="BeyondERP")
 if mac:
-    app = BUNDLE(coll, name="Beyond ERP Offline.app", icon=str(ROOT / "packaging" / "icon.png"),
+    app = BUNDLE(coll, name="BeyondERP Offline.app", icon=str(ROOT / "packaging" / "icon.png"),
                  bundle_identifier="com.beyonddesign.erp.offline",
                  info_plist={"CFBundleShortVersionString": __import__("re").search(
                      r'__version__ = "([^"]+)"', (ROOT / "erp" / "__init__.py").read_text()).group(1),

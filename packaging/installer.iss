@@ -6,11 +6,11 @@
   #define AppVersion "1.0.0"
 #endif
 #ifdef Online
-  #define Name "Beyond ERP"
+  #define Name "BeyondERP"
   #define Id "{{6B7E8F52-2C1D-4A7B-9C55-0B3E0D0E0002}"
   #define Out "BeyondERP-Setup"
 #else
-  #define Name "Beyond ERP Offline"
+  #define Name "BeyondERP Offline"
   #define Id "{{6B7E8F52-2C1D-4A7B-9C55-0B3E0D0E0001}"
   #define Out "BeyondERP-Offline-Setup"
 #endif
@@ -44,6 +44,18 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "..\dist-online\BeyondERP.exe"; DestDir: "{app}"; Flags: ignoreversion
 #else
 Source: "..\dist\BeyondERP\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+#endif
+
+[InstallDelete]
+; shortcuts left by versions that were called "Beyond ERP"
+#ifdef Online
+Type: files; Name: "{group}\Beyond ERP.lnk"
+Type: files; Name: "{group}\Uninstall Beyond ERP.lnk"
+Type: files; Name: "{userdesktop}\Beyond ERP.lnk"
+#else
+Type: files; Name: "{group}\Beyond ERP Offline.lnk"
+Type: files; Name: "{group}\Uninstall Beyond ERP Offline.lnk"
+Type: files; Name: "{userdesktop}\Beyond ERP Offline.lnk"
 #endif
 
 [Icons]

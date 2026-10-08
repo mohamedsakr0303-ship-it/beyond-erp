@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Start Beyond ERP.
+"""Start BeyondERP.
 
     python run.py                    # open http://127.0.0.1:8765 in your browser
     python run.py --host 0.0.0.0     # share on your office network
@@ -19,7 +19,7 @@ import webbrowser
 from pathlib import Path
 
 if sys.version_info < (3, 9):
-    sys.exit("Beyond ERP needs Python 3.9 or newer — download it from https://www.python.org/downloads/")
+    sys.exit("BeyondERP needs Python 3.9 or newer — download it from https://www.python.org/downloads/")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -28,7 +28,7 @@ from erp.db import Database, default_data_dir  # noqa: E402
 
 
 def main(argv=None):
-    p = argparse.ArgumentParser(description=f"Beyond ERP {__version__}")
+    p = argparse.ArgumentParser(description=f"BeyondERP {__version__}")
     p.add_argument("command", nargs="?", default="serve",
                    choices=["serve", "reset-password", "import-legacy", "import", "build-workbook", "backup",
                             "licence-keygen", "licence-issue"])
@@ -131,7 +131,7 @@ def main(argv=None):
         except OSError:
             running = False
         if running and a.command == "serve":
-            print(f"Beyond ERP is already running — opening {url}")
+            print(f"BeyondERP is already running — opening {url}")
             if not a.no_browser:
                 if getattr(sys, "frozen", False):
                     from erp.appwindow import open_window
@@ -146,7 +146,7 @@ def main(argv=None):
         return
 
     server.daily_backup()
-    print(f"Beyond ERP {__version__}")
+    print(f"BeyondERP {__version__}")
     print(f"  Open:     {url}")
     print(f"  Data:     {data_dir}")
     if a.host == "0.0.0.0":

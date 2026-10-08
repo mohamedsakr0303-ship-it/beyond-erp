@@ -1,4 +1,4 @@
-/* Beyond ERP service worker: lets the installed app (phone / desktop "Install app") open without a connection.
+/* BeyondERP service worker: lets the installed app (phone / desktop "Install app") open without a connection.
    The engine files (packs/, named by their content, so they never change) come from the stored copy: downloaded
    once, then every start reads them from this device. Everything else is network first — so every deploy is picked
    up at once — and the last copy of each file is kept for offline use.

@@ -210,7 +210,7 @@ def build_workbook(db, template=False, data=None, hide=None, lang="en", extend=N
             h.fill = fill("7F8C8D" if calc else NAVY)
             h.alignment = Alignment(wrap_text=True, vertical="center")
             if c.get("note"):
-                h.comment = Comment(c["note"], "Beyond ERP")
+                h.comment = Comment(c["note"], "BeyondERP")
             if c["key"] in ex:
                 e = ws.cell(3, i, ex[c["key"]])
                 e.font = F(italic=True, size=8, color="999999")
