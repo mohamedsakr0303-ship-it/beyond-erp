@@ -3469,6 +3469,51 @@ class BrandDefaults(unittest.TestCase):
         self.assertEqual(json.loads(d.one("SELECT value FROM settings WHERE key='appearance'")["value"])["app_name"], "Beyond Design")
 
 
+class PackageOffers(unittest.TestCase):
+    """Offers priced as packages (no BOQ): tiers side by side; the chosen one is the offer's value."""
+
+    def _offer(self, chosen=-1, style="table"):
+        from erp import documents
+        return dict(documents._content({"title": "DESIGN PACKAGES :{project}", "sections": [
+            {"kind": "packages", "heading": "PACKAGES", "style": style, "chosen": chosen, "tiers": [
+                {"name": "Essential", "price": 40000, "includes": "Layout\nMood board"},
+                {"name": "Signature", "price": 70000, "includes": "Layout\nMood board\n3D renders"},
+                {"name": "", "price": 5, "includes": "ignored: no name"}]},
+            {"kind": "payment", "heading": "PAYMENT", "style": "table", "milestones": [{"label": "Advance", "pct": 50}, {"label": "Delivery", "pct": 50}]}]}),
+            client="Client Name", project="Villa", date="2026-10-08")
+
+    def test_not_chosen_yet(self):
+        from erp import documents
+        db = Database(":memory:")
+        o = self._offer()
+        self.assertIsNone(documents.pricing(o))
+        html = documents.offer_html(db, o, preview=True)
+        for s in ("Essential", "Signature", "3D renders", "✓", "—", "40,000", "70,000"):
+            self.assertIn(s, html)
+        self.assertNotIn("ignored", html)
+        self.assertNotIn("35,000", html)          # no payment amounts before a package is chosen
+        self.assertTrue(documents.offer_docx(db, o)[:2] == b"PK")
+
+    def test_chosen_package_is_the_value(self):
+        from erp import documents
+        db = Database(":memory:")
+        o = self._offer(chosen=1, style="lines")
+        self.assertEqual(documents.offer_totals(documents.pricing(o))["net"], 70000)
+        html = documents.offer_html(db, o, preview=True)
+        self.assertIn("★ Signature", html)
+        self.assertIn("35,000", html)             # 50% of the chosen package
+
+    def test_settings_preview_has_no_real_bank(self):
+        from erp import documents
+        db = Database(":memory:")
+        db.set_setting("banks", json.dumps([{"id": "m", "label": "Real", "bank": "Real Bank", "acct": "123456789"}]))
+        sec = documents._content({"sections": [{"kind": "bank", "heading": "BANK"}]})["sections"]
+        sec[0].update(bank_id="custom", bank_details=documents.SAMPLE_BANK)
+        html = documents.offer_html(db, {"title": "X", "sections": sec, "client": "", "project": ""}, preview=True)
+        self.assertNotIn("123456789", html)
+        self.assertIn("0000 0000 0000", html)
+
+
 class UniversalTemplates(unittest.TestCase):
     """Import templates carry the BeyondERP logo and 'Company Name' unless the company asks for its own identity."""
 

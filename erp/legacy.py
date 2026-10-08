@@ -349,13 +349,6 @@ def read_legacy_workbook(path):
     data.pop("_remap", None)
     data.pop("_funder", None)
     wb.close()
-    # BEYOND's own letterhead identity, as the first app version set it; only fills settings that are still empty
-    for k, v in (("company_name", "BEYOND DESIGN"), ("company_legal_name", "By SWAG For Contracting"),
-                 ("company_tagline", "Interior Design & Finishing · More than spaces"),
-                 ("bank_name", "CIB PHAROUS UNIVERSITY BRANCH"), ("bank_account", "100047359559"),
-                 ("bank_holder", "MOHAMED ABDEL MOHSEN ABDELKADER"), ("bank_swift", "CIBEEGCX87"),
-                 ("bank_iban", "EG790010008700000100018405541")):
-        data["Settings"].append({"key": "default:" + k, "value": v})
     data["_notes"] = notes
     return data
 

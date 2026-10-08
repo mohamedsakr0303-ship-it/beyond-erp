@@ -2377,7 +2377,11 @@ PAGES.coa = async (view, parts, q) => {
 };
 
 // ------------------------------------------------------------------ offers
-const SECTION_KINDS = ["text", "pricing", "payment", "bank", "signature"];
+const SECTION_KINDS = ["text", "pricing", "packages", "payment", "bank", "signature"];
+// tier names suggested for a new packages section (renamable): avoids "Standard / Basic", which read as cheap
+const PKG_TIERS = () => [[L2("Essential", "الأساسية"), L2("Layout and mood board", "التوزيع ولوحة الإلهام")],
+  [L2("Signature", "المميزة"), L2("Layout and mood board\n3D renders", "التوزيع ولوحة الإلهام\nتصميمات ثلاثية الأبعاد")],
+  [L2("Prestige", "الفاخرة"), L2("Layout and mood board\n3D renders\nShop drawings\nSite supervision visits", "التوزيع ولوحة الإلهام\nتصميمات ثلاثية الأبعاد\nالرسومات التنفيذية\nزيارات إشراف للموقع")]];
 const OFFER_STATUS = ["Draft", "Sent", "Accepted", "Rejected"];
 const offerTotals = sec => { if (!sec) return { total: 0, discount: 0, vat: 0, net: 0 };
   const total = (sec.items || []).reduce((a, i) => a + (+i.amount || 0), 0), discount = +sec.discount || 0, vat = (total - discount) * (+sec.vat || 0) / 100;
@@ -2417,6 +2421,18 @@ function offerEditor(view, d, opts) {
           <label class="f">${t("vat_pct")}<input class="num" type="number" step="any" value="${s.vat || 0}" data-input="osec" data-i="${i}" data-k="vat" data-num="1"></label>
           ${style(t("as_lines"), t("as_table"))}<label class="f chk"><input type="checkbox" data-change="osec" data-i="${i}" data-k="words" data-bool="1" ${s.words !== false ? "checked" : ""}>${t("words")}</label></div>
         <div class="muted" id="onet${i}">${t("net_payable")}: <b>${money(tt.net)}</b></div>`; }
+    if (s.kind === "packages") { const ts = s.tiers || [], ch = s.chosen ?? -1;
+      body = `<div class="pk-grid">${ts.map((p, j) => `<div class="pk-card ${ch === j ? "on" : ""}">
+          <div class="row" style="gap:6px"><input dir="auto" value="${esc(p.name || "")}" placeholder="${esc(L2("Package name", "اسم الباقة"))}" data-input="opk" data-i="${i}" data-j="${j}" data-k="name" style="flex:1;font-weight:700">
+            <button class="btn sm danger" data-a="opkdel" data-i="${i}" data-j="${j}" title="${esc(t("delete"))}">✕</button></div>
+          <label class="f">${t("amount")} (${esc(cur())})<input class="num" type="number" step="any" value="${p.price ?? 0}" data-input="opk" data-i="${i}" data-j="${j}" data-k="price"></label>
+          <label class="f">${esc(L2("What's included (one per line)", "ما تشمله (سطر لكل بند)"))}<textarea rows="5" dir="auto" data-input="opk" data-i="${i}" data-j="${j}" data-k="includes">${esc(p.includes || "")}</textarea></label>
+          <label class="f chk"><input type="radio" name="pkch${i}" data-change="opkch" data-i="${i}" data-j="${j}" ${ch === j ? "checked" : ""}>${esc(L2("Client chose this", "اختارها العميل"))}</label></div>`).join("")}</div>
+        <div class="row" style="margin-top:8px;gap:8px;flex-wrap:wrap">${ts.length < 6 ? `<button class="btn sm" data-a="opkadd" data-i="${i}">+ ${esc(L2("Package", "باقة"))}</button>` : ""}
+          ${ch >= 0 ? `<button class="btn sm" data-a="opkch" data-i="${i}" data-j="-1">${esc(L2("Not chosen yet", "لم يُختر بعد"))}</button>` : ""}
+          <label class="f" style="max-width:140px">${t("vat_pct")}<input class="num" type="number" step="any" value="${s.vat || 0}" data-input="osec" data-i="${i}" data-k="vat" data-num="1"></label>
+          ${style(L2("One after another", "واحدة تلو الأخرى"), L2("Comparison table", "جدول مقارنة"))}</div>
+        <div class="muted" style="font-size:.85em">${esc(ch >= 0 ? L2("The chosen package is the offer's value; payment terms are worked out from it.", "الباقة المختارة هي قيمة العرض؛ وتُحسب شروط الدفع منها.") : L2("Until the client chooses, payment terms show percentages only.", "حتى يختار العميل، تظهر شروط الدفع بالنسب فقط."))}</div>`; }
     if (s.kind === "payment") { const tot = (s.milestones || []).reduce((a, m) => a + (+m.pct || 0), 0);
       body = `<div class="tbl"><table><thead><tr><th>${t("milestone")}</th><th class="num" style="width:110px">%</th><th style="width:40px"></th></tr></thead><tbody>
         ${(s.milestones || []).map((m, j) => `<tr><td><input dir="auto" value="${esc(m.label)}" data-input="oms" data-i="${i}" data-j="${j}" data-k="label"></td><td><input class="num" type="number" step="any" value="${m.pct ?? 0}" data-input="oms" data-i="${i}" data-j="${j}" data-k="pct"></td><td><button class="btn sm danger" data-a="omsdel" data-i="${i}" data-j="${j}">✕</button></td></tr>`).join("")}</tbody></table></div>
@@ -2467,6 +2483,11 @@ function offerEditor(view, d, opts) {
     oms: el => { const m = d.sections[+el.dataset.i].milestones[+el.dataset.j]; m[el.dataset.k] = el.dataset.k === "pct" ? (+el.value || 0) : el.value; hints(+el.dataset.i); preview(); },
     oitemadd: el => { d.sections[+el.dataset.i].items.push({ desc: "", amount: 0 }); render(); },
     oitemdel: el => { d.sections[+el.dataset.i].items.splice(+el.dataset.j, 1); render(); },
+    opk: el => { const p = d.sections[+el.dataset.i].tiers[+el.dataset.j]; p[el.dataset.k] = el.dataset.k === "price" ? (+el.value || 0) : el.value; preview(); },
+    opkadd: el => { const s = d.sections[+el.dataset.i]; s.tiers = s.tiers || []; s.tiers.push({ name: "", price: 0, includes: "" }); render(); },
+    opkdel: async el => { const s = d.sections[+el.dataset.i], j = +el.dataset.j; if (!await uiConfirm(L2(`Remove the package “${s.tiers[j].name || "—"}”?`, `حذف الباقة «${s.tiers[j].name || "—"}»؟`))) return;
+      s.tiers.splice(j, 1); if (s.chosen === j) s.chosen = -1; else if (s.chosen > j) s.chosen--; render(); },
+    opkch: el => { d.sections[+el.dataset.i].chosen = +el.dataset.j; render(); },
     omsadd: el => { d.sections[+el.dataset.i].milestones.push({ label: "", pct: 0 }); render(); },
     omsdel: el => { d.sections[+el.dataset.i].milestones.splice(+el.dataset.j, 1); render(); },
     ofromboq: async el => { if (!el.value) return; const b = await api("GET", "/api/boqs/" + el.value);
@@ -2476,7 +2497,8 @@ function offerEditor(view, d, opts) {
     osecadd: el => { const ar = d.lang === "ar";
       const blank = { text: { heading: ar ? "قسم جديد" : "NEW SECTION", body: "" }, pricing: { heading: ar ? "التكلفة" : "PRICE", items: [{ desc: "", amount: 0 }], discount: 0, vat: 0, words: true },
         payment: { heading: ar ? "شروط الدفع" : "PAYMENT TERMS", milestones: [{ label: ar ? "دفعة مقدمة" : "Advance payment", pct: 50 }, { label: ar ? "عند التسليم" : "On completion", pct: 50 }] },
-        bank: { heading: ar ? "بيانات البنك" : "BANK DETAILS" }, signature: { heading: ar ? "القبول" : "ACCEPTANCE", body: ar ? "اسم العميل: ____________________\nالتوقيع: ____________________   التاريخ: __________" : "Client name: ____________________\nSignature: ____________________   Date: __________" } }[el.dataset.k];
+        bank: { heading: ar ? "بيانات البنك" : "BANK DETAILS" },
+        packages: { heading: ar ? "الباقات" : "PACKAGES", style: "table", chosen: -1, vat: 0, tiers: PKG_TIERS().map(([name, includes]) => ({ name, price: 0, includes })) }, signature: { heading: ar ? "القبول" : "ACCEPTANCE", body: ar ? "اسم العميل: ____________________\nالتوقيع: ____________________   التاريخ: __________" : "Client name: ____________________\nSignature: ____________________   Date: __________" } }[el.dataset.k];
       d.sections.push({ kind: el.dataset.k, ...blank }); render(); },
     obankpick: el => { const s = d.sections[+el.dataset.i]; s.bank_id = el.value;
       if (el.value === "custom" && !s.bank_details) { const b = (S.boot.settings.banks || []).find(x => x.id === S.boot.settings.bank_default) || {}; s.bank_details = { bank: b.bank || "", acct: b.acct || "", holder: b.holder || "", swift: b.swift || "", iban: b.iban || "" }; }
@@ -3043,7 +3065,7 @@ async function brandingTab(view, head) {
     let types = S.cache.otypes; if (!types || !types.length) { types = await api("GET", "/api/offer-types").catch(() => []); if (types.length) S.cache.otypes = types; }
     if (sel && !sel.options.length) sel.innerHTML = types.length ? types.map(x => `<option value="${x.id}">${esc(x.name)}</option>`).join("") : `<option value="">${esc(L2("Sample offer", "عرض نموذجي"))}</option>`;
     const ty = types.find(x => String(x.id) === (sel && sel.value)) || types[0] || { sample: true };
-    try { const r = await api("POST", "/api/offers-preview", { ...ty, client: L2("Client Name", "اسم العميل"), project: L2("Sample Project", "مشروع نموذجي") }); fr.srcdoc = r.html; }
+    try { const r = await api("POST", "/api/offers-preview", { ...ty, sample: true, client: L2("Client Name", "اسم العميل"), project: L2("Sample Project", "مشروع نموذجي") }); fr.srcdoc = r.html; }
     catch (e) { fr.srcdoc = `<p style="font:14px sans-serif;color:#b00;padding:16px">${esc(e.message || String(e))}</p>`; } };
   S.H.pvtype = pvShow; if ($("#pvtype")) $("#pvtype").setAttribute("data-change", "pvtype");
   $("#logofile").addEventListener("change", async e => { const f = e.target.files[0]; if (!f) return;

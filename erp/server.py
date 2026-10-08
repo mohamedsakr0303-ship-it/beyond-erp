@@ -3794,7 +3794,12 @@ def offer_del(ctx, oid):
 @route("POST", "/api/offers-preview", "sales.offers")
 def offer_preview(ctx):
     body = ctx.body if ctx.body.get("sections") else {**documents.DEFAULT_OFFER_TYPES[0], **{k: v for k, v in ctx.body.items() if v}}
-    o = dict(documents._content(body), client=ctx.body.get("client") or "Mr. Client",
+    content = documents._content(body)
+    if ctx.body.get("sample"):   # Settings preview: no real details — placeholder bank instead of the company's
+        for s in content["sections"]:
+            if s["kind"] == "bank":
+                s.update(bank_id="custom", bank_details=documents.SAMPLE_BANK)
+    o = dict(content, client=ctx.body.get("client") or "Client Name",
              project=ctx.body.get("project") or "Sample Project", date=ctx.body.get("date") or acc.today())
     return ok({"html": documents.offer_html(ctx.db, o, preview=True)})
 

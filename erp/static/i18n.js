@@ -252,7 +252,7 @@ Object.assign(window.I18N, {
   m_offers: ["Quotations", "عروض الأسعار"], offer: ["Offer", "عرض"], offer_types: ["Offer types", "أنواع العروض"], offer_type: ["Offer type", "نوع العرض"],
   new_offer_type: ["New offer type", "نوع عرض جديد"], doc_lang: ["Document language", "لغة المستند"], doc_title: ["Document title", "عنوان المستند"],
   opening: ["Opening", "الافتتاحية"], closing: ["Closing", "الختام"], sections: ["Sections", "الأقسام"], heading: ["Heading", "العنوان"],
-  sk_text: ["Text", "نص"], sk_pricing: ["Pricing", "التسعير"], sk_payment: ["Payment terms", "شروط الدفع"], sk_bank: ["Bank details", "بيانات البنك"],
+  sk_text: ["Text", "نص"], sk_pricing: ["Pricing", "التسعير"], sk_packages: ["Packages", "الباقات"], sk_payment: ["Payment terms", "شروط الدفع"], sk_bank: ["Bank details", "بيانات البنك"],
   sk_signature: ["Signature / acceptance", "التوقيع / القبول"], add_section: ["Add section", "إضافة قسم"], milestone: ["Milestone", "الدفعة"],
   discount: ["Discount", "الخصم"], vat_pct: ["VAT %", "ضريبة %"], words: ["Amounts in words", "المبلغ بالحروف"], bold_text: ["Bold text", "نص عريض"],
   show_as: ["Show as", "العرض"], as_lines: ["Written lines", "أسطر مكتوبة"], as_table: ["Table", "جدول"], net_payable: ["Net payable", "الصافي المستحق"],

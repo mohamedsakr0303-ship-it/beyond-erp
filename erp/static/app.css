@@ -961,3 +961,8 @@ body:has(.drawer-bg) #bulkbar{display:none}   /* a form is open: its own buttons
 .wl-opt{display:flex;flex-direction:column;gap:2px;text-align:start;padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:var(--bg);color:var(--ink);cursor:pointer;font:inherit}
 .wl-opt:hover,.wl-opt:focus-visible{border-color:var(--brand);background:var(--hover)}.wl-opt small{color:var(--muted)}
 .dlg.welcome .dlg-foot{justify-content:center}
+
+/* offer editor: packages side by side */
+.pk-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px}
+.pk-card{border:1px solid var(--line);border-radius:12px;padding:10px;display:flex;flex-direction:column;gap:6px;background:var(--bg)}
+.pk-card.on{border-color:var(--brand);box-shadow:0 0 0 2px color-mix(in srgb,var(--brand) 25%,transparent)}

@@ -72,6 +72,23 @@ DEFAULT_OFFER_TYPES = [
          {"kind": "signature", "heading": "ACCEPTANCE",
           "body": "Client name: ____________________\nSignature: ____________________   Date: __________"}],
      "closing": "Best regards,\n{company}"},
+    {"name": "Design Packages", "lang": "en", "title": "DESIGN PACKAGES :{project} ({client})",
+     "intro": "Dear {client},\nKindly find our design packages for {project}. Choose the one that suits you best.",
+     "sections": [
+         {"kind": "packages", "heading": "PACKAGES", "style": "table", "chosen": -1, "vat": 0,
+          "tiers": [{"name": "Essential", "price": 0,
+                     "includes": "Architectural and furniture layout\nMood board (look & feel)\n1 revision"},
+                    {"name": "Signature", "price": 0,
+                     "includes": "Architectural and furniture layout\nMood board (look & feel)\n3D renders\n2 revisions"},
+                    {"name": "Prestige", "price": 0,
+                     "includes": "Architectural and furniture layout\nMood board (look & feel)\n3D renders\nShop drawings\n"
+                                 "Site supervision visits\nUnlimited minor revisions"}]},
+         {"kind": "payment", "heading": "PAYMENT TERMS",
+          "milestones": [{"label": "Advance payment", "pct": 50}, {"label": "On delivery of the drawings", "pct": 50}]},
+         {"kind": "bank", "heading": "BANK DETAILS"},
+         {"kind": "signature", "heading": "ACCEPTANCE",
+          "body": "Chosen package: ____________________\nClient name: ____________________\nSignature: ____________________   Date: __________"}],
+     "closing": "Best regards,\n{company}"},
     {"name": "Supervision", "lang": "en", "title": "SUPERVISION OFFER : {project}",
      "intro": "Dear {client},\nPlease find below our offer for the technical supervision of the finishing works of {project}.",
      "sections": [
@@ -84,7 +101,8 @@ DEFAULT_OFFER_TYPES = [
          {"kind": "bank", "heading": "BANK DETAILS"}],
      "closing": "Best regards,\n{company}"},
 ]
-SECTION_KINDS = ("text", "pricing", "payment", "bank", "signature")
+SECTION_KINDS = ("text", "pricing", "packages", "payment", "bank", "signature")
+MAX_TIERS = 6
 OFFER_STATUS = ("Draft", "Sent", "Accepted", "Rejected")
 
 # ------------------------------------------------------------------ helpers
@@ -146,6 +164,8 @@ def r2(v):
 
 
 BANK_FIELDS = ("bank", "acct", "holder", "swift", "iban")
+SAMPLE_BANK = {"bank": "Bank Name — Branch", "acct": "0000 0000 0000", "holder": "Company Name", "swift": "XXXXXXXX",
+               "iban": "EG00 0000 0000 0000 0000 0000 000"}   # placeholders for previews
 
 
 def clean_bank(b):
@@ -296,10 +316,10 @@ def dmy(iso):
 DOC_LABELS = {
     "en": {"desc": "Description", "amount": "Amount", "total": "Total", "discount": "Discount", "vat": "VAT",
            "pay": "Total Payment", "milestone": "Milestone", "bank": "BANK", "acct": "BANK ACCOUNT NUMBER", "holder": "NAME",
-           "swift": "SWIFT CODE", "iban": "IBAN", "to": "TO :", "mob": "MOB"},
+           "swift": "SWIFT CODE", "iban": "IBAN", "to": "TO :", "mob": "MOB", "pk_inc": "What's included", "pk_price": "Package price"},
     "ar": {"desc": "البيان", "amount": "المبلغ", "total": "الإجمالي", "discount": "الخصم", "vat": "ضريبة القيمة المضافة",
            "pay": "الإجمالي المستحق", "milestone": "الدفعة", "bank": "البنك", "acct": "رقم الحساب", "holder": "اسم صاحب الحساب",
-           "swift": "SWIFT", "iban": "IBAN", "to": "إلى :", "mob": "موبايل"},
+           "swift": "SWIFT", "iban": "IBAN", "to": "إلى :", "mob": "موبايل", "pk_inc": "ما تشمله الباقة", "pk_price": "سعر الباقة"},
 }
 
 SHAPETYPE75 = ('<v:shapetype id="_x0000_t75" coordsize="21600,21600" o:spt="75" o:preferrelative="t" path="m@4@5l@4@11@9@11@9'
@@ -807,8 +827,38 @@ def offer_totals(sec):
     return {"total": total, "discount": discount, "vat": vat, "net": r2(total - discount + vat)}
 
 
+def tiers(s):
+    """A packages section's tiers (named ones only), each with its inclusions as a list of lines."""
+    out = []
+    for x in (s or {}).get("tiers") or []:
+        if str(x.get("name") or "").strip():
+            out.append({"name": str(x["name"]).strip(), "price": float(x.get("price") or 0),
+                        "lines": [ln.strip(" \t•-*") for ln in str(x.get("includes") or "").split("\n") if ln.strip(" \t•-*")]})
+    return out
+
+
+def chosen_tier(s):
+    try:
+        ch = int((s or {}).get("chosen", -1))
+    except (TypeError, ValueError):
+        return None
+    ts = tiers(s)
+    return ts[ch] if 0 <= ch < len(ts) else None
+
+
 def pricing(o):
-    return next((s for s in o.get("sections") or [] if s.get("kind") == "pricing"), None)
+    """The offer's price: its pricing section, or — for package offers — the package the client chose."""
+    sec = next((s for s in o.get("sections") or [] if s.get("kind") == "pricing"), None)
+    if sec:
+        return sec
+    pk = next((s for s in o.get("sections") or [] if s.get("kind") == "packages"), None)
+    t = chosen_tier(pk)
+    return {"items": [{"desc": t["name"], "amount": t["price"]}], "discount": 0, "vat": float(pk.get("vat") or 0)} if t else None
+
+
+def packages_open(o):
+    """Package offer where the client has not chosen yet: payment terms show percentages only."""
+    return pricing(o) is None and any(s.get("kind") == "packages" for s in o.get("sections") or [])
 
 
 def offer_ctx(db, o):
@@ -838,6 +888,7 @@ def offer_blocks(db, o):
     mny = lambda n: doc_money(n, lang, cur_code)  # noqa: E731
     cur = AR_SYMBOL.get(cur_code, cur_code) if lang == "ar" else cur_code
     net = offer_totals(pricing(o))["net"]
+    no_amounts = packages_open(o)
     T = fill(o.get("title"), cx)
     k = T.find(":")
     out = [{"t": "head"}, {"t": "title", "lead": T[:k + 1] if k >= 0 else T, "rest": T[k + 1:] if k >= 0 else ""}]
@@ -894,17 +945,40 @@ def offer_blocks(db, o):
                     line(f" {L['pay']} = {mny(t['net'])}")
                     if words:
                         line(" " + money_words(t["net"], lang, b))
+        if kind == "packages":
+            ts, ch = tiers(s), chosen_tier(s)
+            pick = ch and next(j for j, t in enumerate(ts) if t == ch)
+            if ts:
+                names = [("★ " if ch and j == pick else "") + fill(t["name"], cx) for j, t in enumerate(ts)]
+                if table:     # comparison: one column per package, a tick for what each includes
+                    feats = []
+                    for t in ts:
+                        feats += [ln for ln in t["lines"] if ln not in feats]
+                    n = len(ts)
+                    first = 40 if n <= 3 else 30
+                    out.append({"t": "table", "widths": [first] + [round((100 - first) / n, 2)] * n, "head": [L["pk_inc"]] + names,
+                                "align": ["left"] + ["center"] * n,
+                                "rows": [[fill(f, cx)] + ["✓" if f in t["lines"] else "—" for t in ts] for f in feats],
+                                "foot": [[L["pk_price"]] + [mny(t["price"]) for t in ts]]})
+                else:
+                    for j, t in enumerate(ts):
+                        out.append({"t": "p", "text": f"{names[j]} — {mny(t['price'])}", "bold": True, "before": 140 if j else 40})
+                        for ln in t["lines"]:
+                            out.append({"t": "p", "text": "• " + fill(ln, cx), "indent": 24})
+                if float(s.get("vat") or 0):
+                    out.append({"t": "p", "text": (f"الأسعار غير شاملة ضريبة القيمة المضافة {s.get('vat'):g}%" if lang == "ar"
+                                                   else f"Prices exclude VAT {float(s.get('vat')):g}%."), "before": 60})
         if kind == "payment":
             ms = s.get("milestones") or []
-            amt = lambda x: mny(net * float(x.get("pct") or 0) / 100)  # noqa: E731
+            amt = lambda x: "—" if no_amounts else mny(net * float(x.get("pct") or 0) / 100)  # noqa: E731
             if table:
                 tot = sum(float(x.get("pct") or 0) for x in ms)
                 out.append({"t": "table", "widths": [56, 12, 32], "head": [L["milestone"], "%", f"{L['amount']} ({cur})"],
                             "align": ["left", "center", "right"],
                             "rows": [[fill(x.get("label"), cx), f"{float(x.get('pct') or 0):g}%", amt(x)] for x in ms],
-                            "foot": [[L["total"], f"{tot:g}%", mny(net * tot / 100)]]})
+                            "foot": [[L["total"], f"{tot:g}%", "—" if no_amounts else mny(net * tot / 100)]]})
             else:
-                out.append({"t": "tabs", "rows": [[f"{float(x.get('pct') or 0):g}% {fill(x.get('label'), cx)}", amt(x)] for x in ms]})
+                out.append({"t": "tabs", "rows": [[f"{float(x.get('pct') or 0):g}% {fill(x.get('label'), cx)}", "" if no_amounts else amt(x)] for x in ms]})
     if o.get("closing"):
         out.append({"t": "p", "text": fill(o["closing"], cx), "before": 240})
     return out, cx
@@ -1246,6 +1320,16 @@ def _content(d):
             x.update(items=[{"desc": text(i.get("desc"), maxlen=1000), "amount": acc.num(i.get("amount"), "amount")}
                             for i in (s.get("items") or [])], discount=acc.num(s.get("discount"), "discount"),
                      vat=acc.num(s.get("vat"), "VAT %"), words=s.get("words") is not False)
+        if s["kind"] == "packages":
+            ts = [t for t in (s.get("tiers") or []) if isinstance(t, dict)][:MAX_TIERS]
+            x.update(tiers=[{"name": text(t.get("name"), maxlen=120), "price": acc.num(t.get("price"), "price"),
+                             "includes": text(t.get("includes"), maxlen=4000)} for t in ts],
+                     vat=acc.num(s.get("vat"), "VAT %"))
+            try:
+                ch = int(s.get("chosen", -1))
+            except (TypeError, ValueError):
+                ch = -1
+            x["chosen"] = ch if 0 <= ch < len(x["tiers"]) else -1
         if s["kind"] == "bank":
             pick = text(s.get("bank_id"), maxlen=40)
             if pick:
