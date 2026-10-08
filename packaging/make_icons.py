@@ -58,4 +58,21 @@ for page in (ROOT / "web-src" / "index.html", ROOT / "erp" / "static" / "index.h
     html = re.sub(r'(<link rel="icon" id="appicon" type="image/png" sizes="64x64" href=")[^"]*(">)',
                   lambda m: m.group(1) + "data:image/png;base64," + fav + m.group(2), html)
     page.write_text(html, encoding="utf-8")
+# the universal default letterhead logo (new books, import templates): the mark trimmed, at most 400 px
+mark = logo.copy()
+mark.thumbnail((400, 400), Image.LANCZOS)
+b = __import__("io").BytesIO()
+mark.save(b, "PNG", optimize=True)
+# the default watermark: the same mark, greyscale and faded (as Settings -> Documents & branding makes it from a logo)
+wm = mark.convert("LA").convert("RGBA")
+wm.putalpha(wm.getchannel("A").point(lambda v: int(v * 0.16)))
+wm.thumbnail((480, 480), Image.LANCZOS)
+wb = __import__("io").BytesIO()
+wm.save(wb, "PNG", optimize=True)
+(ROOT / "erp" / "brand_assets.py").write_text(
+    '"""The universal default logo (the BeyondERP mark), used where a company has not set its own: new books\' letterhead\n'
+    'and the import templates, plus its faded watermark. Replace them in Settings -> Documents & branding.\n'
+    'Built from packaging/app-logo.png by packaging/make_icons.py."""\n'
+    f'LOGO = {{"mime": "image/png", "w": {mark.width}, "h": {mark.height}, "data": "{base64.b64encode(b.getvalue()).decode()}"}}\n'
+    f'WATERMARK = {{"mime": "image/png", "w": {wm.width}, "h": {wm.height}, "data": "{base64.b64encode(wb.getvalue()).decode()}"}}\n')
 print("icons written")

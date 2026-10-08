@@ -35,7 +35,7 @@ PARTY_COL = {"Direct Costs": "vendor", "Operating Expenses": "vendor", "Payroll"
 _PLASTER_AR = {"category": "أعمال البياض", "description": "بياض حوائط", "unit": "م٢"}
 EXAMPLES_AR = {"Price List": _PLASTER_AR, "BOQ Lines": _PLASTER_AR, "Invoice Lines": _PLASTER_AR}
 EXAMPLES = {
-    "Settings": {"key": "company_name", "value": "BEYOND DESIGN"},
+    "Settings": {"key": "company_name", "value": "Company Name"},
     "Chart of Accounts": {"code": "6095", "name": "Cleaning & Hospitality", "type": "Expense",
                           "subtype": "general_admin", "role": "", "active": "Yes"},
     "Tax Codes": {"code": "VAT14", "name": "VAT 14% (standard)", "name_ar": "ضريبة القيمة المضافة 14%", "kind": "vat",
@@ -130,8 +130,15 @@ def _embed_extras(wb, db):
     ws.sheet_state = "veryHidden"
 
 
-def build_workbook(db, template=False, data=None, hide=None, lang="en", extend=None, cover_extra=None):
+# what a universal template's Settings sheet keeps: how the books work, nothing that names or identifies a company
+GENERIC_SETTING_KEYS = ("report_from", "report_to", "currency", "fiscal_year_start", "reserve_pct", "legal_reserve_pct",
+                        "legal_reserve_cap", "units", "offer_digits", "offer_prefix", "offer_validity_days")
+
+
+def build_workbook(db, template=False, data=None, hide=None, lang="en", extend=None, cover_extra=None, identity=None):
     """The Excel workbook. lang="ar": right-to-left with Arabic sheet names and labels (imports back the same).
+    A template is branded by branding.template_identity (the universal BeyondERP one unless the company chose its own);
+    identity= gives it explicitly (e.g. a business-type template built in a scratch book for this company).
     extend(wb) -> [sheet names]: add a company's own sheets before the cover is drawn (they are placed after the
     Dashboard and listed first on the cover with cover_extra = [(sheet, description), ...])."""
     _need()
@@ -154,7 +161,14 @@ def build_workbook(db, template=False, data=None, hide=None, lang="en", extend=N
     elif template:
         keep = {"Settings", "Chart of Accounts", "Warehouses", "Tax Codes"}
         data = {k: (v if k in keep else []) for k, v in data.items()}
-    company = db.setting("company_name", "BEYOND DESIGN")
+    from . import branding
+    ident = identity or (branding.template_identity(db) if template and given is None else None)   # not the demo file
+    if ident and not ident["own"]:   # universal: placeholders instead of this company's details (skipped on import)
+        rows = [r for r in data.get("Settings") or [] if r.get("key") in GENERIC_SETTING_KEYS]
+        data = {**data, "Settings": [{"key": "company_name", "value": ident["name"]},
+                                     {"key": "company_tagline", "value": ident["tagline"]}] + rows}
+    company = ident["name"] if ident else (db.setting("company_name", "") or branding.GENERIC_NAME)
+    tagline = ident["tagline"] if ident else db.setting("company_tagline", "")
     currency = db.setting("currency", "EGP")
     wb = Workbook()
     wb._lang = lang          # builders that hold their own two-language labels write only this language
@@ -1007,7 +1021,7 @@ def build_workbook(db, template=False, data=None, hide=None, lang="en", extend=N
     if lang != "ar":
         english_labels(wb)          # the Arabic workbook keeps the Arabic half instead (workbook_ar.localize)
     classic_style(wb, company)
-    _cover(wb, cover, company, db.setting("company_tagline", ""), template and not any((data or {}).values()), currency, audit_ref, hidden, F, fill,
+    _cover(wb, cover, company, tagline, template and not any((data or {}).values()), currency, audit_ref, hidden, F, fill,
            extra=cover_extra)
     _polish(wb, data, fill)
     if lang == "ar":
@@ -1019,9 +1033,9 @@ def build_workbook(db, template=False, data=None, hide=None, lang="en", extend=N
     check_formula_limits(wb)
     buf = io.BytesIO()
     wb.save(buf)
-    from . import branding, documents
-    return documents.inject_xlsx_images(buf.getvalue(), branding.logo_for(db, "workbook"),
-                                        branding.watermark_for(db, "workbook"), sheet_name="Cover" if lang != "ar" else "الغلاف",
+    from . import documents
+    return documents.inject_xlsx_images(buf.getvalue(), ident["logo"] if ident else branding.logo_for(db, "workbook"),
+                                        ident["watermark"] if ident else branding.watermark_for(db, "workbook"), sheet_name="Cover" if lang != "ar" else "الغلاف",
                                         col=4, row=2, px=110)
 
 
@@ -1076,7 +1090,7 @@ def classic_style(wb, company):
     tall navy header rows, and the brown cover page. Only fonts, fills and heights change — never values."""
     from openpyxl.styles import Font, PatternFill
     Font, PatternFill = _cached(Font), _cached(PatternFill)
-    brand = (company or "BEYOND DESIGN").upper()
+    brand = (company or "Company Name").upper()
     for ws in wb.worksheets:
         if ws.title == "Lists":
             continue
@@ -1997,7 +2011,7 @@ def _cover(wb, cover, company, tagline, template, currency, audit_ref, hidden, F
     for col, w in (("A", 3), ("B", 30), ("C", 62), ("D", 22)):
         cover.column_dimensions[col].width = w
     cover.row_dimensions[1].height = 10
-    cover["B2"] = (company or "BEYOND DESIGN").upper()
+    cover["B2"] = (company or "Company Name").upper()
     cover["B2"].font = F(bold=True, size=24, color=NAVY)
     cover.row_dimensions[2].height = 34
     cover["B3"] = "   ·   ".join(x.strip().upper() for x in str(tagline or "").split("·") if x.strip())

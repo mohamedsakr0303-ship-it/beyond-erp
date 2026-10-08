@@ -3166,11 +3166,13 @@ def template_workbook(ctx):
     lang = "ar" if ctx.q.get("lang") == "ar" else "en"
     if kind:
         db2 = Database(":memory:")
-        for k in ("company_name", "company_tagline", "currency", "company_address", "company_tax_id"):
+        ident = branding.template_identity(ctx.db)
+        keys = ("company_name", "company_tagline", "currency", "company_address", "company_tax_id") if ident["own"] else ("currency",)
+        for k in keys:
             if ctx.db.setting(k):
                 db2.set_setting(k, ctx.db.setting(k))
         industries.apply(db2, kind)
-        return download(workbook.build_workbook(db2, template=True, hide=industries.TYPES[kind]["hide"], lang=lang),
+        return download(workbook.build_workbook(db2, template=True, hide=industries.TYPES[kind]["hide"], lang=lang, identity=ident),
                         f"ERP_Template_{kind}{'_AR' if lang == 'ar' else ''}.xlsx", XLSX)
     return download(workbook.build_workbook(ctx.db, template=True, lang=lang), f"BEYOND_ERP_Import_Template{'_AR' if lang == 'ar' else ''}.xlsx", XLSX)
 
@@ -3791,7 +3793,8 @@ def offer_del(ctx, oid):
 
 @route("POST", "/api/offers-preview", "sales.offers")
 def offer_preview(ctx):
-    o = dict(documents._content(ctx.body), client=ctx.body.get("client") or "Mr. Client",
+    body = ctx.body if ctx.body.get("sections") else {**documents.DEFAULT_OFFER_TYPES[0], **{k: v for k, v in ctx.body.items() if v}}
+    o = dict(documents._content(body), client=ctx.body.get("client") or "Mr. Client",
              project=ctx.body.get("project") or "Sample Project", date=ctx.body.get("date") or acc.today())
     return ok({"html": documents.offer_html(ctx.db, o, preview=True)})
 

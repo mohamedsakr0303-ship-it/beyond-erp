@@ -23,7 +23,10 @@ DOC_KINDS = [
     ("report_xlsx", "Financial statements & lists — Excel", "القوائم المالية والكشوف — Excel", True, False),
     ("report_docx", "Financial statements & lists — Word", "القوائم المالية والكشوف — Word", True, False),
     ("workbook", "Full accounting workbook (Excel)", "مصنف الحسابات الكامل (Excel)", True, False),
+    # off = universal templates (BeyondERP logo, "Company Name", "Company Slogan"); on = this company's logo, name and slogan
+    ("template", "Excel import templates — use our own logo, name & slogan", "قوالب الاستيراد (Excel) — بشعارنا واسمنا ووصفنا", False, False),
 ]
+GENERIC_NAME, GENERIC_TAGLINE = "Company Name", "Company Slogan"
 KIND_KEYS = [k[0] for k in DOC_KINDS]
 
 DEFAULT_BOQ_NOTES = "\n".join([
@@ -140,6 +143,17 @@ def watermark_for(db, kind):
     if b["wm"]["mode"] == "none" or not b["apply"].get(kind, {}).get("wm"):
         return None
     return asset(db, "watermark")
+
+
+def template_identity(db):
+    """Who an Excel import template is branded for: the universal BeyondERP identity unless the company switched
+    'Excel import templates' on in Settings -> Documents & branding (then its own logo, name and slogan)."""
+    from . import brand_assets
+    if get(db)["apply"]["template"]["logo"]:
+        return {"own": True, "name": db.setting("company_name", "") or GENERIC_NAME,
+                "tagline": db.setting("company_tagline", ""), "logo": asset(db, "logo"), "watermark": watermark_for(db, "template")}
+    return {"own": False, "name": GENERIC_NAME, "tagline": GENERIC_TAGLINE, "logo": brand_assets.LOGO,
+            "watermark": watermark_for(db, "template")}
 
 
 def public(db):

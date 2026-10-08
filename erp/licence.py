@@ -147,7 +147,7 @@ def parse(text, public_key=None):
     """(payload, problem). problem is '' for a genuine licence."""
     t = "".join(str(text or "").split())
     if not t.startswith(PREFIX) or "." not in t:
-        return None, "This is not a BEYOND ERP licence key"
+        return None, "This is not a BeyondERP licence key"
     body_s, sig_s = t[len(PREFIX):].rsplit(".", 1)
     try:
         body, sig = _unb64(body_s), _unb64(sig_s)

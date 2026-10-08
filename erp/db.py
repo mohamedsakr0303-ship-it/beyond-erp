@@ -1548,8 +1548,8 @@ SUBMODULES = {
 }
 
 DEFAULT_SETTINGS = {
-    "company_name": "BEYOND DESIGN",
-    "company_tagline": "Interior Design & Finishing",
+    "company_name": "",       # asked at setup; until then files say "Company Name"
+    "company_tagline": "",
     "company_address": "",
     "company_tax_id": "",
     "currency": "EGP",
@@ -1840,6 +1840,8 @@ class Database:
                                   (t["name"], json.dumps({k: v for k, v in t.items() if k != "name"}, ensure_ascii=False)))
         if logo:
             for key, img in (("logo", brand_assets.LOGO), ("watermark", brand_assets.WATERMARK)):
+                if not img:
+                    continue
                 self.conn.execute("INSERT OR IGNORE INTO assets(key,mime,w,h,data) VALUES (?,?,?,?,?)",
                                   (key, img["mime"], img["w"], img["h"], img["data"]))
 

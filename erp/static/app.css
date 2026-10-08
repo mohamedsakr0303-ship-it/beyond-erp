@@ -929,3 +929,35 @@ body:has(.drawer-bg) #bulkbar{display:none}   /* a form is open: its own buttons
   .tbl.stack tr.picked{background:color-mix(in srgb,var(--brand,#047857) 8%,var(--panel));border-color:var(--brand,#047857)}
   .tbl.stack tr.picked td{background:none}
 }
+
+/* in-app dialogs (uiConfirm / uiPrompt / uiAlert) — instead of the browser's pop-ups */
+.dlg-bg{position:fixed;inset:0;z-index:95;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(0,0,0,.42);backdrop-filter:blur(3px);animation:dlgfade .14s ease-out}
+.dlg-bg.out{opacity:0;transition:opacity .12s}
+.dlg{background:var(--panel);color:var(--ink);width:min(440px,100%);border-radius:18px;box-shadow:var(--shadow-lg),0 20px 50px rgba(0,0,0,.3);padding:22px 22px 16px;border:1px solid var(--line);animation:dlgpop .16s cubic-bezier(.2,.9,.3,1.2)}
+.dlg h3{margin:0 0 8px;font-size:1.08em}
+.dlg-msg{white-space:pre-line;line-height:1.55;font-size:.97em}
+.dlg.danger{border-top:4px solid var(--bad)}
+.dlg-in{width:100%;margin-top:14px}
+.dlg-foot{display:flex;justify-content:flex-end;gap:8px;margin-top:18px;flex-wrap:wrap}
+.dlg-foot .btn{min-width:92px}
+.dlg-foot .btn.danger{background:var(--bad);color:#fff;border-color:var(--bad)}
+@keyframes dlgfade{from{opacity:0}to{opacity:1}}
+@keyframes dlgpop{from{transform:translateY(8px) scale(.97);opacity:0}to{transform:none;opacity:1}}
+@media (max-width:640px){.dlg-bg{align-items:flex-end;padding:0}.dlg{width:100%;border-radius:20px 20px 0 0;padding-bottom:calc(16px + env(safe-area-inset-bottom))}.dlg-foot .btn{flex:1}}
+
+/* guided tour: a spotlight on the part being explained and a small card with Back / Next / Skip */
+.tour{position:fixed;inset:0;z-index:96}
+.tour-ring{position:fixed;border-radius:14px;box-shadow:0 0 0 9999px rgba(0,0,0,.5),0 0 0 3px var(--brand);transition:all .25s ease;pointer-events:none}
+.tour-card{position:fixed;background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:16px;padding:16px 16px 12px;box-shadow:var(--shadow-lg),0 18px 40px rgba(0,0,0,.3);transition:left .25s ease,top .25s ease;opacity:0;transform:translateY(6px)}
+.tour-card.in{opacity:1;transform:none;transition:left .25s ease,top .25s ease,opacity .18s,transform .18s}
+.tour-card[data-side=center]{transform:translate(-50%,-50%)}.tour-card[data-side=center].in{transform:translate(-50%,-50%)}
+.tour-card h3{margin:2px 0 6px;font-size:1.05em}.tour-card p{margin:0;line-height:1.5;color:var(--muted);font-size:.95em}
+.tour-step{font-size:.75em;color:var(--brand);font-weight:700;letter-spacing:.4px}
+.tour-dots{display:flex;gap:5px;margin:12px 0 4px;flex-wrap:wrap}.tour-dots i{width:6px;height:6px;border-radius:50%;background:var(--line)}.tour-dots i.on{background:var(--brand);width:16px;border-radius:3px}
+.tour-foot{display:flex;align-items:center;gap:6px;margin-top:8px}
+/* welcome after a company is set up */
+.dlg.welcome{text-align:center}.wl-logo{width:64px;height:64px;object-fit:contain;margin:0 auto 6px;display:block}
+.wl-opts{display:grid;gap:8px;margin-top:14px}
+.wl-opt{display:flex;flex-direction:column;gap:2px;text-align:start;padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:var(--bg);color:var(--ink);cursor:pointer;font:inherit}
+.wl-opt:hover,.wl-opt:focus-visible{border-color:var(--brand);background:var(--hover)}.wl-opt small{color:var(--muted)}
+.dlg.welcome .dlg-foot{justify-content:center}

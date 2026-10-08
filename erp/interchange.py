@@ -1242,6 +1242,8 @@ def _imp_setting(db, r):
     key = acc.text(r.get("key"))
     if key in ("schema_version", "docs_seeded", *ETA_SECRETS):
         return
+    if (key, acc.text(r.get("value"))) in (("company_name", "Company Name"), ("company_tagline", "Company Slogan")):
+        return                      # a universal template's placeholders never replace the company's own details
     if key.startswith("default:"):  # fill only when empty
         key = key[8:]
         if (db.setting(key) or "").strip():

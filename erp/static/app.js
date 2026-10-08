@@ -102,6 +102,36 @@ function toast(msg, err) {
   setTimeout(() => el.remove(), err ? 6000 : 2600);
 }
 const fail = e => toast(e.message || String(e), true);
+// In-app dialogs in the app's own look (never the browser's pop-ups):
+//   await uiConfirm(msg) → true / false · await uiPrompt(msg, value) → text or null · await uiAlert(msg)
+// options: ok / cancel (button labels, cancel: false = no cancel button), danger (red OK button), title
+function uiDialog(msg, o = {}) {
+  return new Promise(resolve => {
+    const prev = document.activeElement, input = o.input != null;
+    const danger = o.danger != null ? o.danger : /\b(delete|erase|remove|discard|cannot be undone|replaces?)\b|حذف|مسح|استبدال|لا يمكن التراجع/i.test(msg);
+    const L = (en, ar) => (S.lang === "ar" ? ar : en);
+    const bg = document.createElement("div");
+    bg.className = "dlg-bg";
+    bg.innerHTML = `<div class="dlg${danger ? " danger" : ""}" role="${input ? "dialog" : "alertdialog"}" aria-modal="true">
+      ${o.title ? `<h3>${esc(o.title)}</h3>` : ""}<div class="dlg-msg">${esc(String(msg == null ? "" : msg))}</div>
+      ${input ? `<input class="dlg-in" value="${esc(String(o.input))}" dir="auto">` : ""}
+      <div class="dlg-foot">${o.cancel === false ? "" : `<button type="button" class="btn" data-r="0">${esc(o.cancel || L("Cancel", "إلغاء"))}</button>`}
+        <button type="button" class="btn ${danger ? "danger" : "pri"}" data-r="1">${esc(o.ok || (danger && !input && /\bdelete\b|حذف/i.test(msg) ? L("Delete", "حذف") : L("OK", "موافق")))}</button></div></div>`;
+    const inp = $(".dlg-in", bg);
+    const value = yes => (input ? (yes ? inp.value : null) : o.cancel === false ? undefined : yes);
+    const done = yes => { document.removeEventListener("keydown", key, true); bg.classList.add("out"); setTimeout(() => bg.remove(), 120);
+      try { if (prev && prev.focus) prev.focus(); } catch { /* gone */ } resolve(value(yes)); };
+    const key = e => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); done(false); }
+      else if (e.key === "Enter" && !e.shiftKey && (!inp || document.activeElement === inp)) { e.preventDefault(); e.stopPropagation(); done(true); } };
+    bg.addEventListener("click", e => { e.stopPropagation(); const b = e.target.closest("[data-r]"); if (b) done(b.dataset.r === "1"); else if (e.target === bg) done(false); });
+    document.addEventListener("keydown", key, true);
+    document.body.appendChild(bg);
+    const f = inp || $("[data-r='1']", bg); f.focus(); if (inp) inp.select();
+  });
+}
+const uiConfirm = (msg, o) => uiDialog(msg, o);
+const uiPrompt = (msg, value, o) => uiDialog(msg, { ...o, input: value == null ? "" : value });
+const uiAlert = (msg, o) => uiDialog(msg, { cancel: false, danger: false, ...o });
 const qs = o => Object.entries(o).filter(([, v]) => v !== "" && v != null && v !== false).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join("&");
 
 // ------------------------------------------------------------ permissions
@@ -532,7 +562,7 @@ function userMenu() {
   return `<button data-a="theme">${t("theme")}: ${esc(store.get("theme", "auto"))}</button>
     ${cloudOn() ? `<button data-a="coswitch">⇄ ${S.lang === "ar" ? "الشركات" : "Companies"}</button>` : ""}
     ${cloudOn() && window.BeyondCloud && window.BeyondCloud.billing ? `<a href="#/subscription">◎ ${S.lang === "ar" ? "الاشتراك" : "Subscription"}</a>` : ""}${S.billing && S.billing.is_owner ? `<a href="#/platform">⚙ ${S.lang === "ar" ? "إدارة الاشتراكات (المالك)" : "Platform billing (owner)"}</a>` : ""}
-    <a href="#/settings">${t("m_settings")}</a>${STATIC && /^https?:$/.test(location.protocol) ? `<a href="#/download">⬇ ${S.lang === "ar" ? "تحميل التطبيق" : "Get the app"}</a>` : ""}<button data-a="pw">${t("change_pw")}</button><button data-a="logout">${t("logout")}</button>`;
+    <a href="#/settings">${t("m_settings")}</a><button data-a="tour">➜ ${S.lang === "ar" ? "جولة في التطبيق" : "Take the tour"}</button>${STATIC && /^https?:$/.test(location.protocol) ? `<a href="#/download">⬇ ${S.lang === "ar" ? "تحميل التطبيق" : "Get the app"}</a>` : ""}<button data-a="pw">${t("change_pw")}</button><button data-a="logout">${t("logout")}</button>`;
 }
 // the bell: what needs attention (bills to issue, overdue installments, depreciation, books checks…)
 async function loadAlerts(force) {
@@ -571,6 +601,8 @@ document.addEventListener("keydown", e => { if ((e.ctrlKey || e.metaKey) && e.ke
 const APP_ICONS = [["beyond", "BeyondERP", "BeyondERP"], ["rising", "Rising B", "B الصاعد"], ["seal", "Seal", "الختم"], ["original", "Original", "الأصلية"]];
 const appIconKey = () => ((S.boot && S.boot.settings.appearance) || {}).app_icon || "beyond";
 const appIconSrc = k => k === "custom" && S.boot.app_icon ? `data:${S.boot.app_icon.mime};base64,${S.boot.app_icon.data}` : `icons/${k === "original" ? "original.png" : !APP_ICONS.some(x => x[0] === k) || k === "beyond" ? "beyond.png" : k + ".svg"}`;
+// Universal stand-ins where a company has not given its own details yet
+const GEN_NAME = () => L2("Company Name", "اسم الشركة"), GEN_TAG = () => L2("Company Slogan", "شعار الشركة النصي");
 // The app's name (Settings → Appearance); BeyondERP unless the company gave it another
 const appName = () => (((S.boot && S.boot.settings.appearance) || {}).app_name || "").trim() || "BeyondERP";
 // The sidebar / sign-in logo: the company's own (document or uploaded), none, or the built-in BeyondERP mark
@@ -633,7 +665,7 @@ function newMenuItems() {
 S.GLOBAL_H = {
   drafts: () => Drafts.list(),
   draftgo: el => { closeDrawer(true); Drafts.resume(el.dataset.id); },
-  draftdrop: el => { if (!confirm(L2("Discard this draft? What was typed is lost.", "تجاهل هذه المسودة؟ سيُفقد ما كُتب."))) return;
+  draftdrop: async el => { if (!await uiConfirm(L2("Discard this draft? What was typed is lost.", "تجاهل هذه المسودة؟ سيُفقد ما كُتب."))) return;
     Drafts.discard(el.dataset.id); const bar = el.closest(".draft-bar > div, tr"); if (bar) bar.remove(); $$(".draft-bar").forEach(b => { if (!b.children.length) b.remove(); }); },
   menu: () => { const app = $(".app"); if (innerWidth <= 900) app.classList.toggle("menu"); else { app.classList.toggle("mini"); store.set("navMini", app.classList.contains("mini") ? "1" : ""); } },
   palette: () => openPalette(),
@@ -939,7 +971,7 @@ async function renderOnboarding() {
   ["obstart", "obsrc", "obfile"].forEach(id => $("#" + id).addEventListener("change", sync)); sync();
   const fail2 = m => { $("#lerr").innerHTML = `<div class="banner err">${esc(m)}</div>`; };
   const busy = (on, label) => { const b = $(".onb [data-a=obgo]"); b.disabled = on; if (label) b.textContent = label; };
-  const finish = async () => { await api("POST", "/api/onboarding", { business_type: $("#obtype").value }); S.cache = {}; await boot(); };
+  const finish = async () => { await api("POST", "/api/onboarding", { business_type: $("#obtype").value }); S.cache = {}; store.set("welcome", "1"); await boot(); };
   let checked = null;   // the file that passed the check, imported on the second press
   const upload = async (dry) => {
     let file = src() === "link" ? await fetchGoogleSheet($("#oburl").value.trim()) : $("#obfile").files[0];
@@ -999,7 +1031,7 @@ async function renderAuth() {
   if (setup && S.boot.workspace_preset && !store.get("separateBooks", false)) return renderFirstJoin();
   $("#root").innerHTML = `<div class="login">${brandLogoSrc() ? `<img class="login-logo" src="${esc(brandLogoSrc())}" alt="">` : ""}<h1>${esc(appName())}</h1>
     <p class="muted">${setup ? t("setup_title") : t("sign_in")}</p><div id="lerr"></div>
-    <form id="lf" class="grid">${setup ? `<label class="f">${t("company_name")}<input name="company_name" value="${esc(S.boot.settings.company_name || "")}"></label>
+    <form id="lf" class="grid">${setup ? `<label class="f">${t("company_name")}<input name="company_name" value="${esc(S.boot.settings.company_name || "")}" placeholder="${esc(GEN_NAME())}"></label>
       <label class="f">${t("full_name")}<input name="full_name"></label>` : ""}
       <label class="f">${t("username")}<input name="username" autocomplete="username" required></label>
       ${setup ? pwFields(true).replace(/minlength="6"/g, 'minlength="8"') : `<label class="f">${t("password")}<input name="password" type="password" autocomplete="current-password" required minlength="1"></label>
@@ -1231,7 +1263,7 @@ function docMenu(base, formats, extra = "") {
 }
 // Delete after a clear confirmation; the server refuses anything still in use and says why.
 async function confirmDelete(what, path, after) {
-  if (!confirm((S.lang === "ar" ? "حذف " : "Delete ") + what + (S.lang === "ar" ? "؟ لا يمكن التراجع." : "? This cannot be undone."))) return false;
+  if (!await uiConfirm((S.lang === "ar" ? "حذف " : "Delete ") + what + (S.lang === "ar" ? "؟ لا يمكن التراجع." : "? This cannot be undone."))) return false;
   try { await api("DELETE", path); if (after) await after(); closeDrawer(); toast(S.lang === "ar" ? "تم الحذف" : "Deleted"); route(); return true; }
   catch (e) { fail(e); return false; }
 }
@@ -1301,9 +1333,9 @@ async function openVoucher(id) {
   S.H.vrc = () => recurringForm(null, e.doc ? { doc_type: e.doc, payload: { ...e.form }, name: e.memo, start: e.date }
     : { doc_type: "journal", name: e.memo, start: e.date, payload: { memo: e.memo, party: e.party, bu_id: e.bu_id || "", lines: e.lines.map(l => ({ account: l.account, debit: l.debit || "", credit: l.credit || "" })) } });
   if (edit && e.status === "void") btns.push(`<button class="btn danger" type="button" data-a="vdel" data-id="${e.id}">${t("delete")}</button>`);
-  S.H.vvoid = async () => { const r = prompt(t("void_reason")); if (r === null) return; try { await api("POST", `/api/journal/${e.id}/void`, { reason: r }); closeDrawer(); toast(t("saved")); route(); } catch (x) { fail(x); } };
+  S.H.vvoid = async () => { const r = await uiPrompt(t("void_reason")); if (r === null) return; try { await api("POST", `/api/journal/${e.id}/void`, { reason: r }); closeDrawer(); toast(t("saved")); route(); } catch (x) { fail(x); } };
   S.H.vrev = async () => { try { await api("POST", `/api/journal/${e.id}/reverse`, {}); closeDrawer(); toast(t("posted")); route(); } catch (x) { fail(x); } };
-  S.H.vdel = async () => { if (!confirm(t("confirm_delete"))) return; try { await api("DELETE", `/api/journal/${e.id}`); closeDrawer(); route(); } catch (x) { fail(x); } };
+  S.H.vdel = async () => { if (!await uiConfirm(t("confirm_delete"))) return; try { await api("DELETE", `/api/journal/${e.id}`); closeDrawer(); route(); } catch (x) { fail(x); } };
   S.H.vedit = () => journalForm(e);
   S.H.vform = () => openDoc(e.doc, null, e);
   S.H.vgo = el => { const h = el.getAttribute("href"); closeDrawer(); location.hash = h; };
@@ -1371,10 +1403,10 @@ async function bulkRun(action, extra = {}) {
 Object.assign(S.GLOBAL_H, {
   bulkall: () => bulkSet(bulkIds(), true),
   bulkclear: () => bulkSet([...BULK.sel], false),
-  bulkact: el => { const a = BULK.cfg.acts[+el.dataset.i], n = BULK.sel.size;
-    if (a.ask === "reason") { const r = prompt(L2(`Void ${n}: reason`, `إلغاء ${n}: السبب`)); if (r === null) return; if (!r.trim()) return toast(t("void_reason"), true); return bulkRun(a.a, { reason: r }); }
-    if (a.ask === "date") { const d = prompt(L2("Date of the reversing entries (YYYY-MM-DD):", "تاريخ القيود العكسية:"), today()); if (d === null) return; return bulkRun(a.a, { date: d }); }
-    if (a.danger && !confirm(L2(`${a.label}: ${n} selected? This cannot be undone.`, `${a.label}: ${n} محدد؟ لا يمكن التراجع.`))) return;
+  bulkact: async el => { const a = BULK.cfg.acts[+el.dataset.i], n = BULK.sel.size;
+    if (a.ask === "reason") { const r = await uiPrompt(L2(`Void ${n}: reason`, `إلغاء ${n}: السبب`)); if (r === null) return; if (!r.trim()) return toast(t("void_reason"), true); return bulkRun(a.a, { reason: r }); }
+    if (a.ask === "date") { const d = await uiPrompt(L2("Date of the reversing entries (YYYY-MM-DD):", "تاريخ القيود العكسية:"), today()); if (d === null) return; return bulkRun(a.a, { date: d }); }
+    if (a.danger && !await uiConfirm(L2(`${a.label}: ${n} selected? This cannot be undone.`, `${a.label}: ${n} محدد؟ لا يمكن التراجع.`))) return;
     bulkRun(a.a); },
   bulkedit: () => { const c = BULK.cfg, n = BULK.sel.size;
     drawer(L2(`Edit ${n} selected`, `تعديل ${n} محدد`), form(c.edit()) + `<p class="muted" style="font-size:.85em">${esc(L2("Only the fields you fill in are changed; the rest stay as they are on each record. Entries keep their history.", "تتغير الحقول التي تملؤها فقط؛ ويبقى الباقي كما هو. وتحتفظ القيود بسجل تعديلاتها."))}</p>`,
@@ -1816,7 +1848,7 @@ function groupsDrawer(d) {
       if (nn) { const r = await api("POST", "/api/dashboard/groups", { name: nn, copy_from: $("#gcopy").value }); store.set("dashGroup", r.key); }
       DASH.edit = null; toast(t("saved"));
     }, { noDraft: true });
-  S.H.gdel = async el => { if (!confirm(L2(`Delete the group “${el.dataset.n}”? Its people move to General.`, `حذف مجموعة «${el.dataset.n}»؟ ينتقل أفرادها إلى «عام».`))) return;
+  S.H.gdel = async el => { if (!await uiConfirm(L2(`Delete the group “${el.dataset.n}”? Its people move to General.`, `حذف مجموعة «${el.dataset.n}»؟ ينتقل أفرادها إلى «عام».`))) return;
     try { await api("DELETE", "/api/dashboard/groups/" + el.dataset.k); closeDrawer(); if (store.get("dashGroup", "") === el.dataset.k) store.set("dashGroup", ""); DASH.edit = null; route(); } catch (e) { fail(e); } };
 }
 function buTable(rows) {
@@ -1892,7 +1924,7 @@ PAGES.bu = async (view, parts, q) => {
   if (!b) { view.innerHTML = `<div class="banner err">Not found</div>`; return; }
   $("#ttl").textContent = `${b.code} — ${b.name}`;
   S.H.edbu = () => buForm(b);
-  S.H.delbu = async () => { if (!confirm(t("confirm_delete"))) return; try { await api("DELETE", "/api/bus/" + b.id); await refreshBoot(); location.hash = "#/bus"; } catch (e) { fail(e); } };
+  S.H.delbu = async () => { if (!await uiConfirm(t("confirm_delete"))) return; try { await api("DELETE", "/api/bus/" + b.id); await refreshBoot(); location.hash = "#/bus"; } catch (e) { fail(e); } };
   const k = (l, v, cls = "") => `<div class="kpi"><div class="l">${esc(l)}</div><div class="v ${cls}">${money(v)}</div></div>`;
   const rp = r => `#/report/${r}?` + qs({ bu_id: id, date_from: q.date_from || yearStart(), date_to: q.date_to || "" });
   view.innerHTML = `<div class="toolbar">${can("business_units.units", "edit") ? `<button class="btn" data-a="edbu">${t("edit")}</button><button class="btn danger" data-a="delbu">${t("delete")}</button>` : ""}
@@ -2073,11 +2105,11 @@ PAGES.extract = async (view, parts) => {
     xdel: el => { lines.splice(+el.dataset.i, 1); drawLines(); },
     xup: el => { const i = +el.dataset.i; if (i > 0) { [lines[i - 1], lines[i]] = [lines[i], lines[i - 1]]; drawLines(); } },
     xsave: async () => { try { await api("PUT", "/api/extracts/" + x.id, body()); toast(t("saved")); route(); } catch (e) { fail(e); } },
-    xissue: async () => { if (!confirm(L2("Issue this extract? It is booked as a sales invoice (clients owe it).", "إصدار المستخلص؟ يُسجل كفاتورة مبيعات (مستحق على العميل)."))) return;
+    xissue: async () => { if (!await uiConfirm(L2("Issue this extract? It is booked as a sales invoice (clients owe it).", "إصدار المستخلص؟ يُسجل كفاتورة مبيعات (مستحق على العميل)."))) return;
       try { await api("PUT", "/api/extracts/" + x.id, { ...body(), post: true }); toast(L2("Issued", "تم الإصدار")); route(); } catch (e) { fail(e); } },
-    xreopen: async () => { if (!confirm(L2("Reopen to adjust? Its invoice entry is reversed (kept in the audit trail) and it becomes a draft.", "إعادة الفتح للتعديل؟ يُلغى قيد الفاتورة (ويبقى في سجل المراجعة) ويصبح المستخلص مسودة."))) return;
+    xreopen: async () => { if (!await uiConfirm(L2("Reopen to adjust? Its invoice entry is reversed (kept in the audit trail) and it becomes a draft.", "إعادة الفتح للتعديل؟ يُلغى قيد الفاتورة (ويبقى في سجل المراجعة) ويصبح المستخلص مسودة."))) return;
       try { await api("POST", `/api/extracts/${x.id}/reopen`, {}); route(); } catch (e) { fail(e); } },
-    xdelete: async () => { if (!confirm(t("confirm_delete") || "Delete?")) return; try { await api("DELETE", "/api/extracts/" + x.id); location.hash = "#/extracts"; } catch (e) { fail(e); } },
+    xdelete: async () => { if (!await uiConfirm(t("confirm_delete") || "Delete?")) return; try { await api("DELETE", "/api/extracts/" + x.id); location.hash = "#/extracts"; } catch (e) { fail(e); } },
     xdoclang: el => store.set("xdocLang", el.value),
     xprint: () => openApi(`/api/extracts/${x.id}/doc?` + qs({ format: "pdf", lang: xdocLang() })),
     xexcel: () => openApi(`/api/extracts/${x.id}/doc?` + qs({ format: "xlsx", lang: xdocLang() })),
@@ -2186,8 +2218,8 @@ PAGES.invoice = async (view, parts, q) => {
     Drafts.done(view); toast(post ? t("posted") : t("saved")); location.hash = "#/invoice/" + r.id; if (!isNew) route(); };
   S.H.xsave = () => save(false).catch(fail);
   S.H.xpost = () => save(true).catch(fail);
-  S.H.xdel = async () => { if (!confirm(t("confirm_delete"))) return; await api("DELETE", "/api/extracts/" + x.id).catch(fail); location.hash = "#/invoices"; };
-  S.H.xreopen = async () => { if (!confirm(L2("Reopen this invoice to edit it? Its accounting entry is voided (kept in the audit trail) and it becomes a draft; post it again when ready.",
+  S.H.xdel = async () => { if (!await uiConfirm(t("confirm_delete"))) return; await api("DELETE", "/api/extracts/" + x.id).catch(fail); location.hash = "#/invoices"; };
+  S.H.xreopen = async () => { if (!await uiConfirm(L2("Reopen this invoice to edit it? Its accounting entry is voided (kept in the audit trail) and it becomes a draft; post it again when ready.",
     "إعادة فتح الفاتورة للتعديل؟ يُلغى قيدها المحاسبي (ويبقى في سجل المراجعة) وتعود مسودة؛ رحّلها مجدداً عند الجاهزية."))) return;
     try { await api("POST", `/api/extracts/${x.id}/reopen`, {}); toast(L2("Back to draft", "عادت مسودة")); route(); } catch (e) { fail(e); } };
   render();
@@ -2208,7 +2240,7 @@ async function etaPanel(x) {
   S.H.etaprev = () => drawer(t("eta_preview"), `<pre style="white-space:pre-wrap;font-size:.75em;direction:ltr;text-align:left">${esc(JSON.stringify(d.document, null, 2))}</pre>`, null, { readOnly: true });
   S.H.etasub = async () => { try { const r = await api("POST", "/api/einvoice/submit", { ids: [x.id] }); toast((r.results[0] || {}).status || "OK"); route(); } catch (e) { fail(e); } };
   S.H.etaref = async () => { try { const r = await api("POST", `/api/einvoice/${x.id}/refresh`, {}); toast(r.status); route(); } catch (e) { fail(e); } };
-  S.H.etacan = async () => { const why = prompt(S.lang === "ar" ? "سبب الإلغاء" : "Reason for cancelling"); if (!why) return; try { await api("POST", `/api/einvoice/${x.id}/cancel`, { reason: why }); route(); } catch (e) { fail(e); } };
+  S.H.etacan = async () => { const why = await uiPrompt(S.lang === "ar" ? "سبب الإلغاء" : "Reason for cancelling"); if (!why) return; try { await api("POST", `/api/einvoice/${x.id}/cancel`, { reason: why }); route(); } catch (e) { fail(e); } };
 }
 
 PAGES.boqs = async (view, parts, q) => {
@@ -2245,7 +2277,7 @@ PAGES.boq = async (view, parts, q = {}) => {
   S.H.lerm = el => { el.closest("tr").remove(); S.H.letot(); };
   S.H.padd = el => { const r = S.cache.rates[+el.dataset.i]; b = { ...b, ...header(), lines: [...readLines(), { item_no: r.item_no, category: r.category, sub: r.sub, description: r.description, unit: r.unit, qty: 1, price: r.price, cost: r.cost }] }; render(); };
   S.H.bsave = async () => { try { const body = { ...header(), lines: readLines() }; const r = isNew ? await api("POST", "/api/boqs", body) : await api("PUT", "/api/boqs/" + b.id, body); toast(t("saved")); location.hash = "#/boq/" + r.id; if (!isNew) route(); } catch (e) { fail(e); } };
-  S.H.bdel = async () => { if (!confirm(t("confirm_delete"))) return; await api("DELETE", "/api/boqs/" + b.id).catch(fail); location.hash = "#/boqs"; };
+  S.H.bdel = async () => { if (!await uiConfirm(t("confirm_delete"))) return; await api("DELETE", "/api/boqs/" + b.id).catch(fail); location.hash = "#/boqs"; };
   render();
 };
 PAGES.prices = async (view, parts, q) => {
@@ -2259,7 +2291,7 @@ PAGES.prices = async (view, parts, q) => {
     async v => { v.markup = (+v.markup || 0) / 100; if (r.id) await api("PUT", "/api/rates/" + r.id, v); else await api("POST", "/api/rates", v); toast(t("saved")); },
     { extraButtons: r.id && can("estimating.prices", "edit") ? `<button type="button" class="btn danger" data-a="rdel">${t("delete")}</button>` : "" });
   S.H.rnew = () => edit({});
-  S.H.redit = el => { const r = d.rows.find(x => String(x.id) === el.dataset.id); S.H.rdel = async () => { if (!confirm(t("confirm_delete"))) return; await api("DELETE", "/api/rates/" + r.id); closeDrawer(); route(); }; edit(r); };
+  S.H.redit = el => { const r = d.rows.find(x => String(x.id) === el.dataset.id); S.H.rdel = async () => { if (!await uiConfirm(t("confirm_delete"))) return; await api("DELETE", "/api/rates/" + r.id); closeDrawer(); route(); }; edit(r); };
   view.innerHTML = `<div class="toolbar">${can("estimating.prices", "add") ? `<button class="btn pri" data-a="rnew">+ ${t("new")}</button>` : ""}</div>` +
     filterBar(q, ["q", ["select", "category", t("category"), d.categories.map(c => [c, c])]]) +
     `<div class="card">${d.rows.length ? `<div class="tbl"><table><thead><tr><th>${t("item_no")}</th><th>${t("category")}</th><th>${t("description")}</th><th>${t("unit")}</th><th class="num">${t("unit_cost")}</th><th class="num">${t("markup")}</th><th class="num">${t("client_price")}</th></tr></thead><tbody>
@@ -2440,7 +2472,7 @@ function offerEditor(view, d, opts) {
     ofromboq: async el => { if (!el.value) return; const b = await api("GET", "/api/boqs/" + el.value);
       d.sections[+el.dataset.i].items.push({ desc: S.lang === "ar" || d.lang === "ar" ? `الأعمال طبقاً للمقايسة ${b.title}` : `Works as per quotation ${b.title}`, amount: b.total }); render(); },
     osecmv: el => { const a = d.sections, x = +el.dataset.i, y = x + +el.dataset.d; if (y < 0 || y >= a.length) return; [a[x], a[y]] = [a[y], a[x]]; render(); },
-    osecdel: el => { if (confirm(t("confirm_delete"))) { d.sections.splice(+el.dataset.i, 1); render(); } },
+    osecdel: async el => { if (await uiConfirm(t("confirm_delete"))) { d.sections.splice(+el.dataset.i, 1); render(); } },
     osecadd: el => { const ar = d.lang === "ar";
       const blank = { text: { heading: ar ? "قسم جديد" : "NEW SECTION", body: "" }, pricing: { heading: ar ? "التكلفة" : "PRICE", items: [{ desc: "", amount: 0 }], discount: 0, vat: 0, words: true },
         payment: { heading: ar ? "شروط الدفع" : "PAYMENT TERMS", milestones: [{ label: ar ? "دفعة مقدمة" : "Advance payment", pct: 50 }, { label: ar ? "عند التسليم" : "On completion", pct: 50 }] },
@@ -2473,14 +2505,14 @@ PAGES.offer = async (view, parts, q) => {
     offerEditor(view, d, { title: (id === "new" ? t("new") + " — " : d.number + " — ") + tyName, back: id === "new" ? "#/offers" : "#/offer/" + id, backLabel: t("m_offers"),
       extraButtons: can("sales.offers", "add") ? `<button class="btn" data-a="osavetype">${t("save_as_type")}</button>` : "",
       onSave: async v => { const r = id === "new" ? await api("POST", "/api/offers", v) : await api("PUT", "/api/offers/" + id, v); toast(t("saved")); location.hash = "#/offer/" + r.id; } });
-    S.H.osavetype = async () => { const n = prompt(t("name")); if (!n) return;
+    S.H.osavetype = async () => { const n = await uiPrompt(t("name")); if (!n) return;
       try { await api("POST", "/api/offer-types", { name: n, ...offerContent(d) }); toast(t("saved")); await refreshBoot(); } catch (e) { fail(e); } };
     return;
   }
   const o = await api("GET", "/api/offers/" + id);
   $("#ttl").textContent = `${o.number} — ${o.client || ""}`;
   const ed = can("sales.offers", "edit");
-  S.H.odel = async () => { if (!confirm(t("confirm_delete"))) return; try { await api("DELETE", "/api/offers/" + o.id); location.hash = "#/offers"; } catch (e) { fail(e); } };
+  S.H.odel = async () => { if (!await uiConfirm(t("confirm_delete"))) return; try { await api("DELETE", "/api/offers/" + o.id); location.hash = "#/offers"; } catch (e) { fail(e); } };
   S.H.odup = async () => { try { const r = await api("POST", "/api/offers", { ...o, number: "", status: "Draft", date: today(), bu_id: "" }); location.hash = `#/offer/${r.id}/edit`; } catch (e) { fail(e); } };
   S.H.obu = async () => { try { const r = await api("POST", `/api/offers/${o.id}/bu`, {}); await refreshBoot(); toast(`${t("saved")} ${r.code}`); route(); } catch (e) { fail(e); } };
   const r = await api("POST", "/api/offers-preview", o);
@@ -2495,7 +2527,7 @@ PAGES.offer = async (view, parts, q) => {
 PAGES.offertypes = async (view) => {
   const types = await api("GET", "/api/offer-types");
   const ed = can("sales.offers", "edit");
-  S.H.otdel = async el => { if (!confirm(t("confirm_delete"))) return; try { await api("DELETE", "/api/offer-types/" + el.dataset.id); route(); } catch (e) { fail(e); } };
+  S.H.otdel = async el => { if (!await uiConfirm(t("confirm_delete"))) return; try { await api("DELETE", "/api/offer-types/" + el.dataset.id); route(); } catch (e) { fail(e); } };
   S.H.otdup = async el => { const ty = types.find(x => String(x.id) === el.dataset.id); try { await api("POST", "/api/offer-types", { ...ty, name: ty.name + " (copy)" }); route(); } catch (e) { fail(e); } };
   view.innerHTML = `<div class="toolbar"><a class="btn" href="#/offers">← ${t("m_offers")}</a><span class="spacer"></span>${can("sales.offers", "add") ? `<a class="btn pri" href="#/offertype/new">+ ${t("new_offer_type")}</a>` : ""}</div>
     <div class="card"><div class="tbl"><table><thead><tr><th>${t("name")}</th><th>${t("doc_title")}</th><th>${t("sections")}</th><th></th></tr></thead><tbody>
@@ -2569,7 +2601,7 @@ PAGES.data = async (view) => {
   view.appendChild(demoCard);
   S.H.demoload = async el => { el.disabled = true; el.textContent = L2("Loading…", "جارٍ التحميل…");
     try { await api("POST", "/api/demo", {}); await refreshBoot(); toast(L2("Demo company loaded", "تم تحميل الشركة التجريبية")); location.hash = "#/dashboard"; } catch (e) { fail(e); el.disabled = false; } };
-  S.H.demorepl = async () => { const c = prompt(L2("This ERASES all data in these books (a backup is made first) and loads the demo company. Type DEMO to continue.", "سيتم مسح كل البيانات (بعد عمل نسخة احتياطية) وتحميل الشركة التجريبية. اكتب DEMO للمتابعة."), "");
+  S.H.demorepl = async () => { const c = await uiPrompt(L2("This ERASES all data in these books (a backup is made first) and loads the demo company. Type DEMO to continue.", "سيتم مسح كل البيانات (بعد عمل نسخة احتياطية) وتحميل الشركة التجريبية. اكتب DEMO للمتابعة."), "");
     if (c == null) return; try { await api("POST", "/api/demo", { replace: true, confirm: c }); await refreshBoot(); toast(L2("Demo company loaded", "تم تحميل الشركة التجريبية")); location.hash = "#/dashboard"; } catch (e) { fail(e); } };
   S.H.impopen = el => importWizard(el.dataset.sheet);
   S.H.csv = () => openApi("/api/export/csv?" + qs({ sheet: $("#csvs").value }));
@@ -2588,7 +2620,7 @@ PAGES.data = async (view) => {
       try { file = await fetchGoogleSheet(link); fmtSel.value = "xlsx"; } catch (e) { out.innerHTML = `<div class="banner err">${esc(e.message)}</div>`; return; }
     }
     if (!file) { toast(t("file") + "?", true); return; }
-    if ($("#impmode").value === "replace" && !$("#impdry").checked && !confirm(S.lang === "ar" ? "سيتم استبدال كل البيانات (مع نسخة احتياطية تلقائية). متابعة؟" : "This replaces ALL data (an automatic backup is taken first). Continue?")) return;
+    if ($("#impmode").value === "replace" && !$("#impdry").checked && !await uiConfirm(S.lang === "ar" ? "سيتم استبدال كل البيانات (مع نسخة احتياطية تلقائية). متابعة؟" : "This replaces ALL data (an automatic backup is taken first). Continue?")) return;
     out.innerHTML = `<div class="muted">${t("loading")}</div>`;
     try {
       const r = await api("POST", "/api/import?" + qs({ format: fmtSel.value, mode: $("#impmode").value, dry_run: $("#impdry").checked ? 1 : "", sheet: $("#impsheet").value }), undefined, await file.arrayBuffer());
@@ -2811,9 +2843,9 @@ PAGES.settings = async (view, parts, q) => {
   const st = S.boot.settings;
   if (tab === "company") {
     const ed = can("settings.company", "edit"), rg = st.regional || {};
-    view.innerHTML = head + `<div id="cocard"><div class="card"><h2>${t("company")}</h2>${form([
-      { k: "company_name", l: t("company_name"), v: st.company_name }, { k: "company_legal_name", l: t("legal_name"), v: st.company_legal_name },
-      { k: "company_tagline", l: t("tagline"), v: st.company_tagline }, { k: "company_tax_id", l: t("tax_id"), v: st.company_tax_id },
+    view.innerHTML = head + `<div id="cocard"><div class="card"><h2 class="row" style="gap:8px">${t("company")}<span class="spacer"></span>${ed ? `<button type="button" class="btn sm" data-a="qsetup">⚙ ${esc(L2("Quick setup", "الإعداد السريع"))}</button>` : ""}</h2>${form([
+      { k: "company_name", l: t("company_name"), v: st.company_name, ph: GEN_NAME() }, { k: "company_legal_name", l: t("legal_name"), v: st.company_legal_name, ph: L2("Legal Company Name", "الاسم القانوني للشركة") },
+      { k: "company_tagline", l: t("tagline"), v: st.company_tagline, ph: GEN_TAG() }, { k: "company_tax_id", l: t("tax_id"), v: st.company_tax_id },
       { k: "company_cr_no", l: t("cr_no"), v: st.company_cr_no }, { k: "company_address", l: t("address"), v: st.company_address },
       { k: "company_city", l: t("city"), v: st.company_city }, { k: "company_phone", l: t("phone"), v: st.company_phone },
       { k: "company_email", l: t("email"), v: st.company_email }, { k: "company_website", l: t("website"), v: st.company_website },
@@ -2874,7 +2906,7 @@ PAGES.settings = async (view, parts, q) => {
         { k: "brand_name_size", l: L2("Company name size (px, blank = automatic)", "حجم اسم الشركة (بكسل، فارغ = تلقائي)"), type: "number", v: ap.brand_name_size || "", ph: "18" },
         { k: "brand_tag_align", l: L2("Slogan position", "موضع الوصف"), type: "select", v: ap.brand_tag_align || "", opts: [["", L2("Same as the logo", "مثل الشعار")], ["left", L2("Left", "يسار")], ["center", L2("Centre", "وسط")], ["right", L2("Right", "يمين")]] },
         { k: "brand_tag_size", l: L2("Slogan size (px, blank = automatic)", "حجم الوصف (بكسل، فارغ = تلقائي)"), type: "number", v: ap.brand_tag_size || "", ph: "12" },
-        { k: "tagline", l: S.lang === "ar" ? "الوصف تحت الاسم" : "Tagline under the name", v: ap.tagline != null ? ap.tagline : (st.company_tagline || ""), ph: S.lang === "ar" ? "مثال: تصميم وتشطيب داخلي" : "e.g. Interior Design & Finishing" },
+        { k: "tagline", l: S.lang === "ar" ? "الوصف تحت الاسم" : "Tagline under the name", v: ap.tagline != null ? ap.tagline : (st.company_tagline || ""), ph: GEN_TAG() },
         { k: "tagline_show", l: S.lang === "ar" ? "إظهار الوصف" : "Show the tagline", type: "checkbox", v: ap.tagline_show !== false },
         { html: `<label class="f">${esc(L2("Colours", "الألوان"))}<a class="btn" href="#/settings?tab=theme">🎨 ${esc(L2("Open the Theme tab", "افتح تبويب السمات"))}</a></label>` },
         { k: "density", l: t("density"), type: "select", opts: [["comfortable", t("d_comfortable")], ["compact", t("d_compact")]], v: ap.density || "comfortable" },
@@ -2958,7 +2990,7 @@ PAGES.settings = async (view, parts, q) => {
   S.H.erase = async () => {
     const scope = ($("input[name=escope]:checked") || {}).value, word = $("#econfirm").value;
     if (word.trim().toUpperCase() !== "ERASE") { toast(t("erase_type"), true); return; }
-    if (!confirm(scope === "all" ? t("erase_all") + "?" : t("erase_tx") + "?")) return;
+    if (!await uiConfirm(scope === "all" ? t("erase_all") + "?" : t("erase_tx") + "?")) return;
     try { const r = await api("POST", "/api/erase", { scope, confirm: word }); await refreshBoot(); renderShell(); toast(`${t("erase_done")} ${r.backup}`); location.hash = "#/dashboard"; } catch (e) { fail(e); }
   };
 };
@@ -2979,7 +3011,7 @@ async function brandingTab(view, head) {
       <label class="f">${t("watermark")}<select name="wm.mode">${["none", "logo", "image", "text"].map(m => `<option value="${m}" ${b.wm.mode === m ? "selected" : ""}>${t("wm_" + m)}</option>`).join("")}</select></label>
       <label class="f">${t("wm_strength")} <input type="range" name="wm.opacity" min="4" max="40" value="${Math.round(b.wm.opacity * 100)}"></label>
       <label class="f chk"><input type="checkbox" name="wm.grey" ${b.wm.grey ? "checked" : ""}>${t("wm_grey")}</label>
-      <label class="f span2">${t("wm_textv")}<input name="wm.text" value="${esc(b.wm.text)}" placeholder="${esc(S.boot.settings.company_name || "")}"></label>
+      <label class="f span2">${t("wm_textv")}<input name="wm.text" value="${esc(b.wm.text)}" placeholder="${esc(GEN_NAME())}"></label>
       <div class="f">${t("wm_upload")}<input type="file" id="wmfile" accept="image/*"></div></div>
       <div class="imgbox" style="margin-top:10px">${imgTag(imgs.watermark)}${imgs.wm_image ? imgTag(imgs.wm_image) : ""}</div></div>
     <div class="card"><h2>${t("apply_to")}</h2><div class="tbl"><table class="perm"><thead><tr><th>${t("file_kind")}</th><th class="c">${t("logo")}</th><th class="c">${t("watermark")}</th></tr></thead><tbody>
@@ -3007,16 +3039,18 @@ async function brandingTab(view, head) {
     $$("[data-apply]").forEach(el => { v.apply[el.dataset.apply] = v.apply[el.dataset.apply] || {}; v.apply[el.dataset.apply][el.dataset.f] = el.checked; });
     return v; };
   const pvShow = async () => { const fr = $("#brpv"); if (!fr) return; const sel = $("#pvtype");
-    const types = S.cache.otypes || (S.cache.otypes = await api("GET", "/api/offer-types").catch(() => []));
-    if (sel && !sel.options.length) sel.innerHTML = types.map(x => `<option value="${x.id}">${esc(x.name)}</option>`).join("");
-    const ty = types.find(x => String(x.id) === (sel && sel.value)) || types[0]; if (!ty) return;
-    const r = await api("POST", "/api/offers-preview", { ...ty, client: "Mr. Client", project: "Sample Project" }); fr.srcdoc = r.html; };
+    // the company's offer types; with none (or when they cannot be read) a built-in sample offer is previewed
+    let types = S.cache.otypes; if (!types || !types.length) { types = await api("GET", "/api/offer-types").catch(() => []); if (types.length) S.cache.otypes = types; }
+    if (sel && !sel.options.length) sel.innerHTML = types.length ? types.map(x => `<option value="${x.id}">${esc(x.name)}</option>`).join("") : `<option value="">${esc(L2("Sample offer", "عرض نموذجي"))}</option>`;
+    const ty = types.find(x => String(x.id) === (sel && sel.value)) || types[0] || { sample: true };
+    try { const r = await api("POST", "/api/offers-preview", { ...ty, client: L2("Client Name", "اسم العميل"), project: L2("Sample Project", "مشروع نموذجي") }); fr.srcdoc = r.html; }
+    catch (e) { fr.srcdoc = `<p style="font:14px sans-serif;color:#b00;padding:16px">${esc(e.message || String(e))}</p>`; } };
   S.H.pvtype = pvShow; if ($("#pvtype")) $("#pvtype").setAttribute("data-change", "pvtype");
   $("#logofile").addEventListener("change", async e => { const f = e.target.files[0]; if (!f) return;
     try { logoRaw = await Img.fit(f, 900); logo = $("[name=clean_bg]").checked ? await Img.clean(logoRaw) : logoRaw; dirtyImgs = true; $("#logobox").innerHTML = imgTag(logo); } catch (x) { fail(x); } });
   $("[name=clean_bg]").addEventListener("change", async e => { if (!logoRaw) return; logo = e.target.checked ? await Img.clean(logoRaw) : logoRaw; dirtyImgs = true; $("#logobox").innerHTML = imgTag(logo); });
   $("#wmfile").addEventListener("change", async e => { const f = e.target.files[0]; if (!f) return; try { wmImage = await Img.fit(f, 900); dirtyImgs = true; } catch (x) { fail(x); } });
-  S.H.logorm = async () => { if (!confirm(t("confirm_delete"))) return; try { await api("PUT", "/api/branding/image/logo", {}); await api("PUT", "/api/branding/image/logo_raw", {}); route(); } catch (e) { fail(e); } };
+  S.H.logorm = async () => { if (!await uiConfirm(t("confirm_delete"))) return; try { await api("PUT", "/api/branding/image/logo", {}); await api("PUT", "/api/branding/image/logo_raw", {}); route(); } catch (e) { fail(e); } };
   S.H.brsave = async () => {
     const v = collect();
     try {
@@ -3179,7 +3213,7 @@ async function companySwitcher() {
   S.H.coopen = el => openCo(el.dataset.id);
   S.H.cojoin2 = async () => { try { const r = await CloudAPI.joinCompany($("#cocode").value.trim()); toast(r.is_member ? (ar ? "أنت عضو بالفعل" : "You are already a member") : (ar ? "تم إرسال الطلب" : "Request sent — waiting for approval")); companySwitcher(); } catch (e) { fail(e); } };
   S.H.conew2 = async () => { const n = $("#coname").value.trim(); if (!n) return;
-    try { const c = await CloudAPI.createCompany(n); toast(t("saved")); if (STATIC && confirm(ar ? "فتح الشركة الجديدة الآن؟" : "Open the new company now?")) openCo(c.id); else companySwitcher(); } catch (e) { fail(e); } };
+    try { const c = await CloudAPI.createCompany(n); toast(t("saved")); if (STATIC && await uiConfirm(ar ? "فتح الشركة الجديدة الآن؟" : "Open the new company now?")) openCo(c.id); else companySwitcher(); } catch (e) { fail(e); } };
 }
 async function workspaceTab(view, head) {
   const ar = S.lang === "ar";
@@ -3232,24 +3266,24 @@ async function workspaceTab(view, head) {
   S.H.wsin = () => { const v = readForm($("#wsin")); run(() => CloudAPI.signin(v.email, v.password, false)); };
   S.H.wsup = () => { const box = $("#wsin"); S.H.pwmatch(); const bad = $$("input", box).find(i => !i.checkValidity()); if (bad) { bad.reportValidity(); return; }
     const v = readForm(box); run(async () => { await CloudAPI.signin(v.email, v.password, true); S.wsCreate = false; }); };
-  S.H.wsclaim = () => { const name = prompt(ar ? "اسم الشركة الجديدة:" : "Name of the new company:", S.boot.settings.company_name || ""); if (!name) return;
+  S.H.wsclaim = async () => { const name = await uiPrompt(ar ? "اسم الشركة الجديدة:" : "Name of the new company:", S.boot.settings.company_name || ""); if (!name) return;
     run(() => CloudAPI.claim(name.trim()), t("saved")); };
   S.H.wschoose = el => run(async () => { await CloudAPI.chooseCompany(el.dataset.id); await CloudAPI.join(); if (!STATIC) { toast(ar ? "تم الانضمام — سجّل الدخول مجدداً" : "Joined — please sign in again"); setTimeout(() => location.reload(), 1200); } });
   S.H.wscoren = () => run(() => CloudAPI.renameCompany($("#wsconame").value.trim()), t("saved"));
-  S.H.wsconew = () => confirm(ar ? "إنشاء رمز دعوة جديد؟ الرمز القديم يتوقف عن العمل." : "Make a new invite code? The old one stops working.") && run(() => CloudAPI.newInviteCode(), t("saved"));
-  S.H.wscocopy = async el => { try { await navigator.clipboard.writeText(el.dataset.v); toast(ar ? "تم النسخ" : "Copied"); } catch { prompt("", el.dataset.v); } };
+  S.H.wsconew = async () => await uiConfirm(ar ? "إنشاء رمز دعوة جديد؟ الرمز القديم يتوقف عن العمل." : "Make a new invite code? The old one stops working.") && run(() => CloudAPI.newInviteCode(), t("saved"));
+  S.H.wscocopy = async el => { try { await navigator.clipboard.writeText(el.dataset.v); toast(ar ? "تم النسخ" : "Copied"); } catch { await uiPrompt("", el.dataset.v); } };
   S.H.wsapprove = el => run(async () => { const email = el.dataset.e; await CloudAPI.setMember({ email, is_admin: false, gateway: false, active: true });
     const username = email.split("@")[0].toLowerCase().replace(/[^a-z0-9._-]/g, "");
     await api("POST", "/api/users", { username, email, full_name: email.split("@")[0], _no_password: true, perms: { dashboard: "view" } }).catch(() => {}); },
     ar ? "تمت الموافقة — حدد صلاحياته من المستخدمين" : "Approved — set their permissions under Users");
-  S.H.wsdecline = el => confirm((ar ? "رفض طلب " : "Decline the request from ") + el.dataset.e + "?") && run(() => CloudAPI.removeMember(el.dataset.e), t("saved"));
-  S.H.wsjoin = () => confirm(ar ? "سيتم استبدال بيانات هذا الجهاز ببيانات مساحة العمل. متابعة؟" : "This device's books will be replaced by the workspace's. Continue?") && run(async () => {
+  S.H.wsdecline = async el => await uiConfirm((ar ? "رفض طلب " : "Decline the request from ") + el.dataset.e + "?") && run(() => CloudAPI.removeMember(el.dataset.e), t("saved"));
+  S.H.wsjoin = async () => await uiConfirm(ar ? "سيتم استبدال بيانات هذا الجهاز ببيانات مساحة العمل. متابعة؟" : "This device's books will be replaced by the workspace's. Continue?") && run(async () => {
     await CloudAPI.join(); if (!STATIC) { toast(ar ? "تم الانضمام — سجّل الدخول مجدداً" : "Joined — please sign in again"); setTimeout(() => location.reload(), 1200); } });
   S.H.wspull = () => run(() => CloudAPI.pull(), ar ? "تمت المزامنة" : "Synced");
-  S.H.wsoff = () => confirm(ar ? "فصل هذا الجهاز؟ تبقى البيانات الحالية عليه." : "Disconnect this device? Its current books stay on it.") && run(() => CloudAPI.disconnect(), t("saved"));
+  S.H.wsoff = async () => await uiConfirm(ar ? "فصل هذا الجهاز؟ تبقى البيانات الحالية عليه." : "Disconnect this device? Its current books stay on it.") && run(() => CloudAPI.disconnect(), t("saved"));
   const mrow = e => ({ email: e, is_admin: $(`[data-mf=is_admin][data-e="${e}"]`).checked, gateway: $(`[data-mf=gateway][data-e="${e}"]`).checked, active: $(`[data-mf=active][data-e="${e}"]`).checked });
   S.H.wsmsave = el => run(() => CloudAPI.setMember(mrow(el.dataset.e)), t("saved"));
-  S.H.wsmdel = el => confirm((ar ? "حذف حساب الدخول لـ " : "Delete the sign-in account of ") + el.dataset.e + (ar ? "؟ لن يتمكن من الدخول. (مستخدم التطبيق يبقى — احذفه من المستخدمين إن أردت.)" : "? They can no longer sign in. (Their app user stays — delete it under Users if you want.)"))
+  S.H.wsmdel = async el => await uiConfirm((ar ? "حذف حساب الدخول لـ " : "Delete the sign-in account of ") + el.dataset.e + (ar ? "؟ لن يتمكن من الدخول. (مستخدم التطبيق يبقى — احذفه من المستخدمين إن أردت.)" : "? They can no longer sign in. (Their app user stays — delete it under Users if you want.)"))
     && run(() => CloudAPI.deleteAccount({ email: el.dataset.e }), ar ? "تم الحذف" : "Deleted");
   S.H.wsmadd = () => { const email = $("#wsnew").value.trim().toLowerCase(); if (!email) return;
     run(async () => { await CloudAPI.setMember({ email, is_admin: $("#wsnewadm").checked, gateway: $("#wsnewgw").checked, active: true });
@@ -3278,6 +3312,7 @@ async function boot() {
   route();
   fixCompanyName();
   setTimeout(runRecurringOnOpen, 1500);
+  if (store.get("welcome", "") === "1") setTimeout(showWelcome, 700);   // a company just set up: quick setup / tour
   if (STATIC && window.BeyondCloud) window.BeyondCloud.onStatus(syncDot);
   else if (S.boot.cloud && S.boot.cloud.joined) {
     const poll = () => api("GET", "/api/cloud-status").then(syncDot).catch(() => {});
@@ -3506,7 +3541,7 @@ PAGES["partner-exit"] = async (view, parts, q) => {
     [L2("Amounts due to the partner (loans, interest)", "مستحقات للشريك (قروض، فوائد)"), "company_owes"]];
   const used = cols.filter(([, k]) => d.partners.some(p => Math.abs(p[k] || 0) >= 0.01) || ["capital", "undrawn_profit", "reserve_share"].includes(k));
   S.H.pxfund = async () => { const v = $("#pxfp").value, lim = $("#pxlim").value; try { await api("PUT", "/api/settings", { funding_partner: v, funding_limit: lim ? String(+lim) : "" }); toast(t("saved")); route(); } catch (e) { fail(e); } };
-  S.H.pxbook = async () => { if (!confirm(L2(`Book his capital up to the money he has actually put in (${money(f.own_money)})? A capital entry for the difference is posted.`, `تسجيل رأس ماله بما يساوي ما دفعه فعلاً (${money(f.own_money)})؟ يُرحّل قيد رأس مال بالفرق.`))) return;
+  S.H.pxbook = async () => { if (!await uiConfirm(L2(`Book his capital up to the money he has actually put in (${money(f.own_money)})? A capital entry for the difference is posted.`, `تسجيل رأس ماله بما يساوي ما دفعه فعلاً (${money(f.own_money)})؟ يُرحّل قيد رأس مال بالفرق.`))) return;
     try { await api("POST", "/api/equity/funding/book", {}); toast(t("posted")); route(); } catch (e) { fail(e); } };
   S.H.pxrows = () => { const el = $("#pxmov"); el.hidden = !el.hidden; };
   view.innerHTML = filterBar(q, ["asof"]) +
@@ -3584,7 +3619,7 @@ PAGES.partners = async (view, parts, q) => {
   S.H.eqa = el => equityForm(el.dataset.act, el.dataset.pid ? { partner: el.dataset.pid } : {});
   S.H.eqdraw = () => openDoc("partner_tx");
   S.H.eqreplace = () => equityForm("transfer", { all: true });
-  S.H.equndo = async el => { if (!confirm(L2("Undo this ownership change? The shares go back to what they were before.", "التراجع عن تغيير الملكية هذا؟ تعود النسب كما كانت."))) return;
+  S.H.equndo = async el => { if (!await uiConfirm(L2("Undo this ownership change? The shares go back to what they were before.", "التراجع عن تغيير الملكية هذا؟ تعود النسب كما كانت."))) return;
     try { await api("DELETE", "/api/equity/history/" + el.dataset.id); await refreshBoot(); toast(t("saved")); route(); } catch (e) { fail(e); } };
   S.H.lrsave = async () => { try { await api("PUT", "/api/settings", { legal_reserve_pct: (+$("#lrpct").value || 0) / 100, legal_reserve_cap: (+$("#lrcap").value || 0) / 100 }); await refreshBoot(); toast(t("saved")); route(); } catch (e) { fail(e); } };
   S.H.apprview = el => { const a = d.appropriations.find(x => String(x.id) === el.dataset.id); if (a && a.statement) drawer(L2("Profit appropriation", "توزيع الأرباح"), appropriationHtml(a.statement), null, { readOnly: true }); };
@@ -4030,13 +4065,13 @@ PAGES.rental = async (view, parts) => {
   Object.assign(S.H, {
     redit: () => rentalForm(d), rpo: () => rentPO(R), rsign: () => rentSign(R), rdel: () => handoverForm(d, "delivery"), rret: () => handoverForm(d, "return"),
     rchg: () => rentCharge(d), rinv: () => rentInvoice(d), rclose: act("close"), rreopen: act("reopen"), runsign: act("unsign"),
-    rcancel: async () => { if (confirm(L2("Cancel this rental?", "إلغاء هذا العقد؟"))) await act("cancel")(); },
+    rcancel: async () => { if (await uiConfirm(L2("Cancel this rental?", "إلغاء هذا العقد؟"))) await act("cancel")(); },
     rdelete: () => confirmDelete(R.code, "/api/rentals/" + R.id, async () => { location.hash = "#/rentals"; }),
     rdoc: el => openDocTab(`/api/rentals/${R.id}/doc?kind=${el.dataset.k}&lang=${el.dataset.l}`),
     ralloc: el => rentAllocation(R, +el.dataset.id),
     rhopen: el => { const h = d.handovers.find(x => x.id === +el.dataset.id); handoverForm(d, h.kind, h); },
     rhprint: el => openDocTab(`/api/rental-handovers/${el.dataset.id}/doc?lang=${el.dataset.l || R.lang}`),
-    rchdel: async el => { if (!confirm(t("confirm_delete"))) return; try { await api("DELETE", "/api/rental-charges/" + el.dataset.id); route(); } catch (e) { fail(e); } },
+    rchdel: async el => { if (!await uiConfirm(t("confirm_delete"))) return; try { await api("DELETE", "/api/rental-charges/" + el.dataset.id); route(); } catch (e) { fail(e); } },
     rbill: async el => { try { await api("POST", `/api/rentals/${R.id}/charge`, { line_id: +el.dataset.id }); toast(t("saved")); route(); } catch (e) { fail(e); } },
     rdep: el => rentDeposit(R, el.dataset.k) });
   const docs = k => `<div class="dd"><button class="btn">${k === "offer" ? L2("Print offer", "طباعة العرض") : L2("Print contract", "طباعة العقد")} ▾</button><div class="dd-menu">
@@ -4290,12 +4325,12 @@ async function handoverForm(d, kind, h) {
             } else x[k] = el.value; chg(); },
           rhc: el => { checklist[+el.dataset.i][el.dataset.k] = el.value; },
           rhall: () => { checklist.forEach(c => { c.ok = "yes"; }); draw(); },
-          rhconf: async () => { if (!confirm(del ? L2("Confirm the delivery? Pieces leave the yard and rent starts.", "اعتماد التسليم؟ تخرج القطع من المخزن ويبدأ الإيجار.") : L2("Confirm the return? Pieces come back; lost / damaged are charged.", "اعتماد الإرجاع؟ تعود القطع ويُطالب بالمفقود / التالف."))) return;
+          rhconf: async () => { if (!await uiConfirm(del ? L2("Confirm the delivery? Pieces leave the yard and rent starts.", "اعتماد التسليم؟ تخرج القطع من المخزن ويبدأ الإيجار.") : L2("Confirm the return? Pieces come back; lost / damaged are charged.", "اعتماد الإرجاع؟ تعود القطع ويُطالب بالمفقود / التالف."))) return;
             try { const id = await save(f); h = h || { id }; await api("POST", `/api/rental-handovers/${id}/confirm`, {}); toast(t("saved")); closeDrawer(); S.cache.rentCat = null; route(); }
             catch (e) { $("#derr").innerHTML = `<div class="banner err">${esc(e.message)}</div>`; $("#derr").scrollIntoView({ block: "nearest" }); } },
           rhprint2: async () => { try { const id = await save(f); h = h || { id }; openDocTab(`/api/rental-handovers/${id}/doc?lang=${R.lang}`); } catch (e) { fail(e); } },
-          rhdel: async () => { if (!confirm(t("confirm_delete"))) return; try { await api("DELETE", "/api/rental-handovers/" + h.id); closeDrawer(); route(); } catch (e) { fail(e); } },
-          rhundo: async () => { if (!confirm(L2("Undo this handover? Its pieces, charges and write-off are reversed.", "التراجع عن هذا المحضر؟ تُعكس حركات القطع والمطالبات والإعدام."))) return;
+          rhdel: async () => { if (!await uiConfirm(t("confirm_delete"))) return; try { await api("DELETE", "/api/rental-handovers/" + h.id); closeDrawer(); route(); } catch (e) { fail(e); } },
+          rhundo: async () => { if (!await uiConfirm(L2("Undo this handover? Its pieces, charges and write-off are reversed.", "التراجع عن هذا المحضر؟ تُعكس حركات القطع والمطالبات والإعدام."))) return;
             try { await api("POST", `/api/rental-handovers/${h.id}/undo`, {}); toast(t("saved")); closeDrawer(); route(); } catch (e) { fail(e); } } });
         draw(); } });
 }
@@ -4362,7 +4397,7 @@ async function rentItemView(id) {
       ed ? `<button type="button" class="btn" data-a="riedit">${t("edit")}</button>` : "", ed && !d.lots.length ? `<button type="button" class="btn danger" data-a="ridel">${t("delete")}</button>` : ""].join("") });
   Object.assign(S.H, { riedit: () => rentItemForm(it), rlot: () => rentLotForm(it), rscrap: () => rentScrapForm(it),
     ridel: () => confirmDelete(it.code, "/api/rent-items/" + it.id), vgo2: el => { const hh = el.getAttribute("href"); closeDrawer(); location.hash = hh; },
-    rlotdel: async el => { if (!confirm(t("confirm_delete"))) return; try { await api("DELETE", "/api/rent-lots/" + el.dataset.id); rentItemView(id); } catch (e) { fail(e); } } });
+    rlotdel: async el => { if (!await uiConfirm(t("confirm_delete"))) return; try { await api("DELETE", "/api/rent-lots/" + el.dataset.id); rentItemView(id); } catch (e) { fail(e); } } });
 }
 function rentLotForm(it) {
   drawer(`${L2("Stock in", "إدخال مخزون")} — ${it.code} ${nm(it)}`, `<p class="muted">${L2("Each purchase is a lot with its own cost; pieces go out oldest lot first (FIFO).", "كل عملية شراء دفعة بتكلفتها؛ تخرج القطع من الأقدم أولاً.")}</p>` + form([
@@ -4563,7 +4598,7 @@ function rentModelEditor(m, after) {
       Object.assign(S.H, { rme: el => { const r = sp[el.dataset.s][+el.dataset.i]; r[el.dataset.k] = el.dataset.k === "value" ? +el.value : el.value; },
         rmeadd: el => { const s = el.dataset.s; sp[s].push(s === "components" ? { item: "", expr: "0" } : s === "derived" ? { key: "", expr: "0", label: "" } : { key: "", label: "", value: 0 }); redraw(); },
         rmedel: el => { sp[el.dataset.s].splice(+el.dataset.i, 1); redraw(); }, rmearea: el => { sp.area = el.value; },
-        rmdel: async () => { if (!confirm(t("confirm_delete"))) return; try { await api("DELETE", "/api/rent-models/" + m.id); closeDrawer(); location.hash = "#/rentcalc"; route(); } catch (e) { fail(e); } } }); } });
+        rmdel: async () => { if (!await uiConfirm(t("confirm_delete"))) return; try { await api("DELETE", "/api/rent-models/" + m.id); closeDrawer(); location.hash = "#/rentcalc"; route(); } catch (e) { fail(e); } } }); } });
 }
 const models_del = m => can("rentals.calculator", "edit") ? `<button type="button" class="btn danger" data-a="rmdel">${t("delete")}</button>` : "";
 
@@ -4868,10 +4903,10 @@ async function mountAttach(box) {
     try {
       if (k === "open") { const f = await attFile(aid); window.open(f.url || f.blob, "_blank", "noopener"); }
       else if (k === "dl") { const f = await attFile(aid); const l = document.createElement("a"); l.href = f.blob; l.download = a.title; document.body.appendChild(l); l.click(); l.remove(); }
-      else if (k === "ren") { const n = prompt(L2("File name", "اسم الملف"), a.title); if (!n) return; await api("PUT", "/api/attachments/" + aid, { title: n }); reload(); }
-      else if (k === "del") { if (!confirm(L2(`Remove “${a.title}”?`, `حذف «${a.title}»؟`))) return; await api("DELETE", "/api/attachments/" + aid); reload(); }
-      else if (k === "link") { const u = prompt(L2("Paste the link (Google Drive, Dropbox, OneDrive…)", "الصق الرابط (جوجل درايف، دروب بوكس…)")); if (!u) return;
-        const n = prompt(L2("Name", "الاسم"), u.replace(/^https?:\/\//, "").slice(0, 60)); await api("POST", "/api/attachments", { owner, id, url: u.trim(), title: n || "" }); reload(); }
+      else if (k === "ren") { const n = await uiPrompt(L2("File name", "اسم الملف"), a.title); if (!n) return; await api("PUT", "/api/attachments/" + aid, { title: n }); reload(); }
+      else if (k === "del") { if (!await uiConfirm(L2(`Remove “${a.title}”?`, `حذف «${a.title}»؟`))) return; await api("DELETE", "/api/attachments/" + aid); reload(); }
+      else if (k === "link") { const u = await uiPrompt(L2("Paste the link (Google Drive, Dropbox, OneDrive…)", "الصق الرابط (جوجل درايف، دروب بوكس…)")); if (!u) return;
+        const n = await uiPrompt(L2("Name", "الاسم"), u.replace(/^https?:\/\//, "").slice(0, 60)); await api("POST", "/api/attachments", { owner, id, url: u.trim(), title: n || "" }); reload(); }
     } catch (e) { fail(e); }
   };
   $$("input[data-k=files]", box).forEach(inp => inp.onchange = async () => {
@@ -4951,8 +4986,8 @@ PAGES.product = async (view, parts) => {
     pdel: () => confirmDelete(`${p.code} — ${p.name}`, "/api/products/" + p.id, async () => { location.hash = "#/products"; }),
     pmcover: async () => { await api("PUT", "/api/product-media/" + cur.id, { cover: 1 }); toast(t("saved")); route(); },
     pmmove: async el => { await api("PUT", "/api/product-media/" + cur.id, { move: el.dataset.d }); route(); },
-    pmren: async () => { const v = prompt(L2("Title", "العنوان"), cur.title || ""); if (v == null) return; await api("PUT", "/api/product-media/" + cur.id, { title: v }); route(); },
-    pmdel: async () => { if (!confirm(L2("Delete this file?", "حذف هذا الملف؟"))) return; await api("DELETE", "/api/product-media/" + cur.id); route(); } });
+    pmren: async () => { const v = await uiPrompt(L2("Title", "العنوان"), cur.title || ""); if (v == null) return; await api("PUT", "/api/product-media/" + cur.id, { title: v }); route(); },
+    pmdel: async () => { if (!await uiConfirm(L2("Delete this file?", "حذف هذا الملف؟"))) return; await api("DELETE", "/api/product-media/" + cur.id); route(); } });
   if (cur) show(cur);
   const keys = e => { if (!view.isConnected) return document.removeEventListener("keydown", keys); if ($(".drawer-bg") || /INPUT|TEXTAREA|SELECT/.test((document.activeElement || {}).tagName || "")) return;
     const i = media.indexOf(cur); if (e.key === "ArrowRight" || e.key === "ArrowLeft") { const n = (i + ((e.key === "ArrowRight") !== (document.dir === "rtl") ? 1 : -1) + media.length) % media.length; if (media[n]) show(media[n]); } };
@@ -5216,7 +5251,7 @@ PAGES.sale = async (view, parts) => {
       { html: `<p class="muted">${s.invoiced ? L2("The sale is already invoiced; this records the handover.", "تم إصدار الفاتورة بالفعل؛ هذا يسجل التسليم.") : L2("The sales invoice is issued now, the money received so far moves from advances to the invoice, and the cost of what was sold is booked.", "تصدر فاتورة البيع الآن، وتُنقل المبالغ المحصلة من الدفعات المقدمة إلى الفاتورة، وتُسجل تكلفة المبيعات.")}</p>`, span: "spanall" }]),
       async v => { await act("deliver", v); toast(t("posted")); }, { submitLabel: L2("Deliver", "تسليم") }),
     scan: async () => { if (s.status === "draft") return confirmDelete(s.code, "/api/sales/" + s.id, async () => { location.hash = "#/sales"; });
-      const reason = prompt(L2("Cancel this sale? Units go back to available and the invoice is reversed. Reason:", "إلغاء هذا البيع؟ ستعود الوحدات متاحة وتُعكس الفاتورة. السبب:"), ""); if (reason == null) return;
+      const reason = await uiPrompt(L2("Cancel this sale? Units go back to available and the invoice is reversed. Reason:", "إلغاء هذا البيع؟ ستعود الوحدات متاحة وتُعكس الفاتورة. السبب:"), ""); if (reason == null) return;
       try { await act("cancel", { date: today(), reason }); toast(t("saved")); route(); } catch (e) { fail(e); } },
     chclr: el => chequeAction(el.dataset.id, "clear"), chbnc: el => chequeAction(el.dataset.id, "bounce") });
 };
@@ -5529,7 +5564,7 @@ PAGES.subscription = async (view, parts, q) => {
     bpay: async el => { const plan = el.dataset.plan;
       try { el.disabled = true; const r = await C.checkout(plan, months, extra); location.href = r.url; }
       catch (e) { el.disabled = false; fail(e); } },
-    bcancel: async () => { const n = prompt(L2("Not renewing? Tell us why (optional). You keep full access until the end of the period already paid.", "لن تجدد؟ أخبرنا بالسبب (اختياري). يبقى الوصول كاملاً حتى نهاية الفترة المدفوعة.")); if (n === null) return;
+    bcancel: async () => { const n = await uiPrompt(L2("Not renewing? Tell us why (optional). You keep full access until the end of the period already paid.", "لن تجدد؟ أخبرنا بالسبب (اختياري). يبقى الوصول كاملاً حتى نهاية الفترة المدفوعة.")); if (n === null) return;
       try { await C.billingCancel(n); toast(t("saved")); route(); } catch (e) { fail(e); } } });
   const paidNote = q.paid ? `<div class="banner ok">${L2("Thank you! Your payment is being confirmed — this page updates within a minute.", "شكراً! يجري تأكيد الدفع — تتحدث هذه الصفحة خلال دقيقة.")}</div>` : "";
   if (q.paid && b.status !== "active") setTimeout(() => { if (location.hash.startsWith("#/subscription")) route(); }, 8000);
@@ -5562,7 +5597,7 @@ PAGES.platform = async (view, parts, q) => {
   const counts = d.companies.reduce((a, x) => { a[x.state.status] = (a[x.state.status] || 0) + 1; return a; }, {});
   Object.assign(S.H, {
     pftoggle: async () => { const on = !c.enabled;
-      if (!confirm(on ? L2(`Switch billing ON? Every company gets a ${c.trial_days}-day free trial starting now; after it, changes need a paid subscription.`, `تفعيل الاشتراكات؟ كل شركة تحصل على ${c.trial_days} يوم تجربة مجانية تبدأ الآن، وبعدها يلزم اشتراك مدفوع للحفظ.`)
+      if (!await uiConfirm(on ? L2(`Switch billing ON? Every company gets a ${c.trial_days}-day free trial starting now; after it, changes need a paid subscription.`, `تفعيل الاشتراكات؟ كل شركة تحصل على ${c.trial_days} يوم تجربة مجانية تبدأ الآن، وبعدها يلزم اشتراك مدفوع للحفظ.`)
         : L2("Switch billing OFF? Everyone can use the app free again.", "إيقاف الاشتراكات؟ يعود الاستخدام مجانياً للجميع."))) return;
       try { await C.billingConfig({ enabled: on }); S.billingPublic = null; toast(t("saved")); route(); } catch (e) { fail(e); } },
     pfcfg: () => platformConfigForm(c), pfplans: () => platformPlansForm(c),
@@ -5667,8 +5702,8 @@ PAGES.sub = async (view, parts) => {
   const st = async (status, extra = {}) => { try { await api("POST", `/api/subscriptions/${s.id}/status`, { status, ...extra }); toast(t("saved")); route(); } catch (e) { fail(e); } };
   Object.assign(S.H, { subedit: () => subForm(s), subaddon: () => subForm({ parent_id: s.id, customer: s.customer, bu_id: s.bu_id, vat_code: s.vat_code }),
     subpause: () => st("paused"), subresume: () => st("active"),
-    subcancel: () => { const end = confirm(L2(`Stop at the end of the period already invoiced (${fd(s.period_to)})?\nOK = at period end · Cancel = choose “stop now”.`, `الإيقاف في نهاية الفترة المفوترة (${fd(s.period_to)})؟\nموافق = في نهاية الفترة · إلغاء = لاختيار الإيقاف الآن.`));
-      if (end) return st("cancelled", { at_period_end: true }); if (confirm(L2("Stop now? No more invoices will be issued.", "إيقاف الآن؟ لن تصدر فواتير أخرى."))) st("cancelled"); },
+    subcancel: async () => { const end = await uiConfirm(L2(`Stop at the end of the period already invoiced (${fd(s.period_to)})?`, `الإيقاف في نهاية الفترة المفوترة (${fd(s.period_to)})؟`), { ok: L2("At period end", "في نهاية الفترة"), cancel: L2("Stop now instead…", "إيقاف الآن بدلاً من ذلك…"), danger: false });
+      if (end) return st("cancelled", { at_period_end: true }); if (await uiConfirm(L2("Stop now? No more invoices will be issued.", "إيقاف الآن؟ لن تصدر فواتير أخرى."))) st("cancelled"); },
     subvisit: () => visitForm(s), subvedit: el => visitForm(s, s.visits.find(v => String(v.id) === el.dataset.id)),
     subbill: async () => { try { await api("POST", `/api/subscriptions/${s.id}/bill-charges`, {}); toast(L2("Invoiced", "تمت الفوترة")); route(); } catch (e) { fail(e); } },
     subrun: async () => { try { const r = await api("POST", "/api/subscriptions-run", { through: today() }); toast(r.invoices ? `${r.invoices} ${L2("invoices", "فاتورة")}` : L2("Nothing due", "لا يوجد مستحق")); route(); } catch (e) { fail(e); } },
@@ -5753,7 +5788,7 @@ function visitForm(s, v) {
     <p class="muted" style="font-size:.85em">${L2("Pay the technician as usual (expense or direct cost); the cost here is for tracking.", "ادفع للفني كالمعتاد (مصروف أو تكلفة مباشرة)؛ التكلفة هنا للمتابعة فقط.")}</p>`,
     async x => { if (v.id) await api("PUT", `/api/subscriptions/${s.id}/visits/${v.id}`, x); else await api("POST", `/api/subscriptions/${s.id}/visits`, x); toast(t("saved")); },
     { extraButtons: v.id ? `<button type="button" class="btn danger" data-a="vdelv">${t("delete")}</button>` : "" });
-  S.H.vdelv = async () => { if (!confirm(t("confirm_delete"))) return; try { await api("DELETE", `/api/subscriptions/${s.id}/visits/${v.id}`); closeDrawer(); route(); } catch (e) { fail(e); } };
+  S.H.vdelv = async () => { if (!await uiConfirm(t("confirm_delete"))) return; try { await api("DELETE", `/api/subscriptions/${s.id}/visits/${v.id}`); closeDrawer(); route(); } catch (e) { fail(e); } };
 }
 // ------------------------------------------------------------ purchase orders
 const PO_ST = { draft: ["Draft", "مسودة", "warn"], approved: ["Approved", "معتمد", ""], partial: ["Part received", "استلام جزئي", "warn"], received: ["Received", "تم الاستلام", "ok"], closed: ["Closed", "مغلق", ""], cancelled: ["Cancelled", "ملغى", "bad"] };
@@ -5765,7 +5800,7 @@ PAGES.pos = async (view, parts, q) => {
   const add = can("purchasing.orders", "add");
   S.H.ponew = () => poForm();
   const lim = +(S.boot.settings.po_self_approve_limit || 0);
-  S.H.polim = async () => { const v = prompt(L2("Orders above this total need a second person to approve them (the one who raised it cannot). 0 = anyone with approval rights may approve any order.", "الأوامر التي يزيد إجماليها عن هذا المبلغ تحتاج شخصاً آخر لاعتمادها (لا يعتمدها من أنشأها). 0 = أي صاحب صلاحية اعتماد."), lim || 0);
+  S.H.polim = async () => { const v = await uiPrompt(L2("Orders above this total need a second person to approve them (the one who raised it cannot). 0 = anyone with approval rights may approve any order.", "الأوامر التي يزيد إجماليها عن هذا المبلغ تحتاج شخصاً آخر لاعتمادها (لا يعتمدها من أنشأها). 0 = أي صاحب صلاحية اعتماد."), lim || 0);
     if (v === null) return; try { await api("PUT", "/api/settings", { po_self_approve_limit: String(+v || 0) }); await refreshBoot(); route(); } catch (e) { fail(e); } };
   view.innerHTML = `<div class="toolbar">${add ? `<button class="btn pri" data-a="ponew">+ ${L2("Purchase order", "أمر شراء")}</button>` : ""}<span class="spacer"></span>${exportMenu("purchase_orders", q)}</div>
     <div class="kpis">${kpiBox(L2("Still on order (committed)", "المتبقي تحت الطلب (التزامات)"), d.open_value)}${kpiBox(L2("Waiting for approval", "بانتظار الاعتماد"), numf(d.to_approve), d.to_approve ? "warn" : "")}${kpiBox(L2("Late deliveries", "تأخر التسليم"), numf(d.rows.filter(r => r.overdue).length), d.rows.some(r => r.overdue) ? "neg" : "")}</div>
@@ -5782,14 +5817,14 @@ PAGES.po = async (view, parts) => {
   const po = await api("GET", "/api/purchase-orders/" + encodeURIComponent(parts[1]));
   $("#ttl").textContent = `${po.code} — ${po.supplier}`;
   const add = can("purchasing.orders", "add"), ed = can("purchasing.orders", "edit"), open = ["approved", "partial"].includes(po.status);
-  const st = async (status, ask) => { let reason = ""; if (ask) { reason = prompt(ask); if (reason === null) return; }
+  const st = async (status, ask) => { let reason = ""; if (ask) { reason = await uiPrompt(ask); if (reason === null) return; }
     try { await api("POST", `/api/purchase-orders/${po.id}/status`, { status, reason }); toast(t("saved")); route(); } catch (e) { fail(e); } };
   Object.assign(S.H, {
     poapp: async () => { try { await api("POST", `/api/purchase-orders/${po.id}/approve`, {}); toast(L2("Approved", "تم الاعتماد")); route(); } catch (e) { fail(e); } },
     poedit: () => poForm(po), podup: () => poForm({ ...po, id: null, code: "", date: today(), expected: "", status: "draft" }),
     porec: () => poReceive(po), poclose: () => st("closed", L2("Close the order — the rest is not needed. Reason (optional):", "إغلاق الأمر — الباقي غير مطلوب. السبب (اختياري):")),
     pocancel: () => st("cancelled", L2("Cancel the order. Reason (optional):", "إلغاء الأمر. السبب (اختياري):")), podraft: () => st("draft"),
-    podel: async () => { if (!confirm(t("confirm_delete"))) return; try { await api("DELETE", "/api/purchase-orders/" + po.id); location.hash = "#/pos"; } catch (e) { fail(e); } },
+    podel: async () => { if (!await uiConfirm(t("confirm_delete"))) return; try { await api("DELETE", "/api/purchase-orders/" + po.id); location.hash = "#/pos"; } catch (e) { fail(e); } },
     poprint: () => openApi(`/api/reports/purchase_order?` + qs({ id: po.id, lang: S.lang, format: "pdf" }), true) });
   const nothingIn = !po.receipts.length;
   view.innerHTML = `<div class="toolbar"><a class="btn" href="#/pos">← ${L2("Purchase orders", "أوامر الشراء")}</a>${poChip(po.status)}<span class="spacer"></span>
@@ -5932,7 +5967,7 @@ PAGES.recurring = async (view) => {
   Object.assign(S.H, { rcnew: () => recurringForm(), rcopen: el => recurringView(+el.dataset.id),
     rcrun: async () => { try { const r = await api("POST", "/api/recurring-run", { through: today() }); toast(`${r.posted} ${L2("posted", "قيد")}${r.errors.length ? ` · ${r.errors.length} ${L2("failed", "فشل")}` : ""}`); route(); } catch (e) { fail(e); } },
     rcpost: el => { const x = d.due[+el.dataset.i]; recurringPostForm(d.rows.find(r => r.id === x.id), x.due); },
-    rcskip: async el => { const x = d.due[+el.dataset.i]; if (!confirm(L2(`Skip ${x.name} due ${x.due}?`, `تخطي ${x.name} المستحق ${x.due}؟`))) return; try { await api("POST", `/api/recurring/${x.id}/skip`, { due: x.due }); route(); } catch (e) { fail(e); } } });
+    rcskip: async el => { const x = d.due[+el.dataset.i]; if (!await uiConfirm(L2(`Skip ${x.name} due ${x.due}?`, `تخطي ${x.name} المستحق ${x.due}؟`))) return; try { await api("POST", `/api/recurring/${x.id}/skip`, { due: x.due }); route(); } catch (e) { fail(e); } } });
   view.innerHTML = `<div class="toolbar">${add ? `<button class="btn pri" data-a="rcnew">+ ${L2("Recurring entry", "قيد متكرر")}</button>` : ""}${add && autoDue.length ? `<button class="btn" data-a="rcrun">▶ ${L2("Post automatic ones now", "ترحيل التلقائية الآن")} (${autoDue.length})</button>` : ""}</div>
     <div class="card"><h2>${L2("Due now", "المستحق الآن")} <span class="muted" style="font-weight:400">(${d.due.length})</span></h2>${d.due.length ? `<div class="tbl stack"><table><thead><tr><th>${L2("Due", "الاستحقاق")}</th><th>${L2("Entry", "القيد")}</th><th>${L2("Type", "النوع")}</th><th class="num">${t("amount")}</th><th>${L2("Mode", "الطريقة")}</th><th></th></tr></thead><tbody>
       ${d.due.map((x, i) => `<tr><td>${fd(x.due)}</td><td><b>${esc(fillMonth(x.name, x.due))}</b>${x.last_error ? `<div class="neg" style="font-size:.85em">⚠ ${esc(x.last_error)}</div>` : ""}</td><td>${esc(rcType(x.doc_type))}</td><td class="num">${x.amount ? money(x.amount) : "—"}</td>
@@ -6185,7 +6220,7 @@ function entryOptionWire(view) {
   S.H.nmsave = async () => { try { await api("PUT", "/api/new-menu", { items: $$("#nmtab tr", view).map(tr => ({ key: tr.dataset.key, show: $(".nm-show", tr).checked })) }); await after(); } catch (e) { fail(e); } };
   S.H.nmreset = async () => { try { await api("PUT", "/api/new-menu", { items: [] }); await after(); } catch (e) { fail(e); } };
   S.H.etadd = () => { $("#ettab tbody", view).insertAdjacentHTML("beforeend", etRow({ kind: "Journal Voucher", debit: "type:Expense", credit: "subtype:cash", party: "optional", bu: "optional" })); };
-  S.H.etdel = el => { if (confirm(L2("Remove this entry type? Entries already booked with it stay.", "حذف نوع القيد؟ القيود المسجلة به تبقى."))) el.closest("tr").remove(); };
+  S.H.etdel = async el => { if (await uiConfirm(L2("Remove this entry type? Entries already booked with it stay.", "حذف نوع القيد؟ القيود المسجلة به تبقى."))) el.closest("tr").remove(); };
   S.H.etsave = async () => {
     const types = $$("#ettab tbody tr", view).map(tr => ({ id: tr.dataset.id, name: $(".et-name", tr).value.trim() || $(".et-name-ar", tr).value.trim(), name_ar: $(".et-name-ar", tr).value.trim(), kind: $(".et-kind", tr).value.trim(),
       debit: $(".et-debit", tr).value, credit: $(".et-credit", tr).value, party: $(".et-party", tr).value, bu: $(".et-bu", tr).value, active: $(".et-active", tr).checked })).filter(x => x.name);
@@ -6207,7 +6242,7 @@ PAGES.download = async view => {
   const dl = (x, label) => x ? `<a class="btn ${x.kind.includes("offline") ? "" : "pri"}" href="downloads/${encodeURIComponent(x.file)}" download>⬇ ${esc(label)}</a> <span class="muted">${mb(x)} · ${L2("version", "إصدار")} ${esc(d.version || "")}</span>`
     : `<div class="muted">${L2("Not built yet — it appears here after the next update is published.", "لم يُجهز بعد — يظهر هنا بعد نشر التحديث القادم.")}</div>`;
   S.H.pwainstall = async () => { if (!installPrompt) return; installPrompt.prompt(); await installPrompt.userChoice.catch(() => {}); installPrompt = null; route(); };
-  S.H.copycfg = async el => { try { await navigator.clipboard.writeText(el.dataset.v); toast(L2("Copied", "تم النسخ")); } catch { prompt("", el.dataset.v); } };
+  S.H.copycfg = async el => { try { await navigator.clipboard.writeText(el.dataset.v); toast(L2("Copied", "تم النسخ")); } catch { await uiPrompt("", el.dataset.v); } };
   const installed = window.matchMedia && window.matchMedia("(display-mode: standalone)").matches;
   view.innerHTML =
     card(L2("Phone or tablet (Android / iPhone)", "الموبايل أو التابلت (أندرويد / آيفون)"), installed ? `<div class="banner ok">${L2("You are using the installed app ✓", "أنت تستخدم التطبيق المثبت ✓")}</div>` :
@@ -6330,7 +6365,7 @@ PAGES.payrun = async (view, parts) => {
     prset: (el) => { const r = rows[+el.dataset.i]; const k = el.dataset.k; if (k.startsWith("c_")) r.components[k.slice(2)] = el.value; else r[k] = el.value; },
     prsave: async () => { try { await save(); toast(t("saved")); route(); } catch (e) { fail(e); } },
     prpost: async () => { try { if (draft) await save(); await api("POST", `/api/payroll/runs/${d.id}/post`, {}); toast(t("posted")); route(); } catch (e) { fail(e); } },
-    prunpost: async () => { if (!confirm(L2("Reopen this month? Its entries are voided (kept in the audit trail) and the lines become editable.", "إعادة فتح هذا الشهر؟ تُلغى قيوده (وتبقى في سجل المراجعة) وتصبح السطور قابلة للتعديل."))) return;
+    prunpost: async () => { if (!await uiConfirm(L2("Reopen this month? Its entries are voided (kept in the audit trail) and the lines become editable.", "إعادة فتح هذا الشهر؟ تُلغى قيوده (وتبقى في سجل المراجعة) وتصبح السطور قابلة للتعديل."))) return;
       try { await api("POST", `/api/payroll/runs/${d.id}/unpost`, {}); route(); } catch (e) { fail(e); } },
     prdel: () => confirmDelete(d.period, "/api/payroll/runs/" + d.id, async () => { location.hash = "#/payruns"; }),
     prslip: el => openApi(`/api/payroll/runs/${d.id}/payslip/${el.dataset.e}?print=1&lang=${S.lang}`, true),
@@ -6467,7 +6502,7 @@ PAGES.industry = async (view) => {
   const d = await api("GET", "/api/industries");
   const ed = can("settings.menus", "edit");
   S.H.indapply = async el => { const k = el.dataset.k, ty = d.types.find(x => x.key === k);
-    if (!confirm(L2(`Set up this company as “${ty.name}”? Missing accounts are added, the sections it does not use are hidden (not deleted — Settings → Menus brings them back), and payroll gets its departments and pay items. Nothing is deleted.`, `ضبط الشركة كـ «${ty.name_ar}»؟ تُضاف الحسابات الناقصة وتُخفى الأقسام غير المستخدمة (لا تُحذف — الإعدادات ← القوائم تعيدها) وتُضبط أقسام الرواتب وبنودها. لا يُحذف شيء.`))) return;
+    if (!await uiConfirm(L2(`Set up this company as “${ty.name}”? Missing accounts are added, the sections it does not use are hidden (not deleted — Settings → Menus brings them back), and payroll gets its departments and pay items. Nothing is deleted.`, `ضبط الشركة كـ «${ty.name_ar}»؟ تُضاف الحسابات الناقصة وتُخفى الأقسام غير المستخدمة (لا تُحذف — الإعدادات ← القوائم تعيدها) وتُضبط أقسام الرواتب وبنودها. لا يُحذف شيء.`))) return;
     try { const r = await api("POST", "/api/industries/apply", { type: k }); toast(L2(`Done — ${r.accounts_added.length} account(s) added`, `تم — أُضيف ${r.accounts_added.length} حساب`)); await refreshBoot(); route(); } catch (e) { fail(e); } };
   view.innerHTML = `<div class="banner info">${L2("Pick what this company does. Each template switches on the sections it uses, adds the accounts it needs and sets payroll's departments, job titles, pay items and the crew calculator's work items. Download a ready Excel workbook for any type.", "اختر نشاط الشركة. كل قالب يفعّل الأقسام المستخدمة ويضيف الحسابات اللازمة ويضبط أقسام الرواتب والوظائف وبنود الأجر وبنود حاسبة الأطقم. ويمكن تحميل ملف إكسل جاهز لأي نشاط.")}</div>
     <div class="grid g2">${d.types.map(ty => `<div class="card"><h2>${esc(S.lang === "ar" ? ty.name_ar : ty.name)} ${d.current === ty.key ? `<span class="chip ok">${L2("current", "الحالي")}</span>` : ""}</h2>
@@ -6888,13 +6923,13 @@ async function openRoom(room, rooms) {
   S.H.chmore = async () => { const r = await api("GET", `/api/chat/rooms/${room.id}/messages?before=${CH.msgs[0].id}&limit=60`); CH.msgs = [...r.messages, ...CH.msgs]; CH.more = r.more; draw("top"); };
   S.H.chfile = async el => { try { const u = await apiBlobUrl(el.dataset.k); if (/^image\//.test(el.dataset.mime)) openViewer(u, el.dataset.name); else { const a = document.createElement("a"); a.href = u; a.download = el.dataset.name; document.body.appendChild(a); a.click(); a.remove(); } } catch (e) { fail(e); } };
   S.H.chedit = el => { const m = CH.msgs.find(x => x.id === +el.dataset.id); if (m) CH.startEdit(m.id, m.body); };
-  S.H.chdel = async el => { if (!confirm(L2("Delete this message?", "حذف هذه الرسالة؟"))) return; try { await api("DELETE", "/api/chat/messages/" + el.dataset.id); await refresh(); } catch (e) { fail(e); } };
+  S.H.chdel = async el => { if (!await uiConfirm(L2("Delete this message?", "حذف هذه الرسالة؟"))) return; try { await api("DELETE", "/api/chat/messages/" + el.dataset.id); await refresh(); } catch (e) { fail(e); } };
   S.H.chroomset = () => roomDrawer(room);
   S.H.chexport = () => openApi(`/api/chat/rooms/${room.id}/export`);
   S.H.charch = async () => { try { await api("POST", `/api/chat/rooms/${room.id}/archive`, { archived: !room.archived }); route(); } catch (e) { fail(e); } };
   S.H.chdelroom = async () => {
     const word = L2("DELETE", "حذف");
-    if (prompt(L2(`This deletes "${room.name}" and all its messages and files for everyone. Export it first if you may need it.\nType ${word} to confirm.`, `سيتم حذف "${room.name}" وكل رسائلها وملفاتها للجميع. صدّرها أولاً إن احتجت إليها.\nاكتب ${word} للتأكيد.`)) !== word) return;
+    if (await uiPrompt(L2(`This deletes "${room.name}" and all its messages and files for everyone. Export it first if you may need it.\nType ${word} to confirm.`, `سيتم حذف "${room.name}" وكل رسائلها وملفاتها للجميع. صدّرها أولاً إن احتجت إليها.\nاكتب ${word} للتأكيد.`)) !== word) return;
     try { await api("DELETE", "/api/chat/rooms/" + room.id); location.hash = "#/chat"; } catch (e) { fail(e); }
   };
   wireComposer(async (body, files, editing) => {
@@ -6956,9 +6991,9 @@ async function openLink(l) {
     try { const f = await CloudAPI.call("rpc", "chat_link_file", { p_message: +mid, p_index: +i }); const blob = b64ToBlob(f.data, f.mime);
       if (/^image\//.test(f.mime)) openViewer(URL.createObjectURL(blob), f.name); else saveBlob(blob, f.name); } catch (e) { fail(e); } };
   S.H.chedit = el => { const m = CH.msgs.find(x => x.id === +el.dataset.id); if (m) CH.startEdit(m.id, m.body); };
-  S.H.chdel = async el => { if (!confirm(L2("Delete this message?", "حذف هذه الرسالة؟"))) return;
+  S.H.chdel = async el => { if (!await uiConfirm(L2("Delete this message?", "حذف هذه الرسالة؟"))) return;
     try { await CloudAPI.call("rpc", "chat_link_edit", { p_message: +el.dataset.id, p_body: "", p_delete: true }); load(); } catch (e) { fail(e); } };
-  S.H.lnkend = async () => { if (!confirm(l.status === "pending" ? L2("Withdraw this code?", "سحب هذا الرمز؟") : L2("End this connection? Nobody can write any more; both companies keep the history.", "إنهاء هذا الربط؟ لن يتمكن أحد من الكتابة، وتحتفظ الشركتان بالسجل."))) return;
+  S.H.lnkend = async () => { if (!await uiConfirm(l.status === "pending" ? L2("Withdraw this code?", "سحب هذا الرمز؟") : L2("End this connection? Nobody can write any more; both companies keep the history.", "إنهاء هذا الربط؟ لن يتمكن أحد من الكتابة، وتحتفظ الشركتان بالسجل."))) return;
     try { await CloudAPI.call("rpc", "chat_link_end", { p_link: l.id }); route(); } catch (e) { fail(e); } };
   wireComposer(async (body, files, editing) => {
     if (editing) await CloudAPI.call("rpc", "chat_link_edit", { p_message: editing, p_body: body, p_delete: false });
@@ -7070,7 +7105,7 @@ PAGES.assistant = async (view, parts) => {
   zone.addEventListener("drop", e => { e.preventDefault(); zone.classList.remove("drop"); add([...e.dataTransfer.files]); });
   S.H.aiunpend = el => { AI.pending.splice(+el.dataset.i, 1); drawPend(); };
   S.H.aiemo = el => { const p = ta.selectionStart || ta.value.length; ta.value = ta.value.slice(0, p) + el.dataset.e + ta.value.slice(p); ta.focus(); ta.selectionStart = ta.selectionEnd = p + el.dataset.e.length; $$(".dd.open").forEach(d => d.classList.remove("open")); };
-  S.H.aidel = async el => { if (!confirm(L2("Delete this conversation?", "حذف هذه المحادثة؟"))) return; await api("DELETE", "/api/ai/threads/" + el.dataset.id); location.hash = "#/assistant"; route(); };
+  S.H.aidel = async el => { if (!await uiConfirm(L2("Delete this conversation?", "حذف هذه المحادثة؟"))) return; await api("DELETE", "/api/ai/threads/" + el.dataset.id); location.hash = "#/assistant"; route(); };
   S.H.aiok = el => { const w = AI.waiting && AI.waiting[el.dataset.id]; if (w) w(true); };
   S.H.aino = el => { const w = AI.waiting && AI.waiting[el.dataset.id]; if (w) w(false); };
   aiDraw();
@@ -7328,7 +7363,7 @@ async function aiSettingsTab(view, head) {
   $("#aiform").addEventListener("submit", async e => { e.preventDefault();
     try { const k = $("#aikey").value.trim(); await save(k ? k : undefined); toast(t("saved")); await loadAiPolicy(); route(); }
     catch (err) { $("#derr").innerHTML = `<div class="banner err">${esc(err.message)}</div>`; } });
-  S.H.aikeydel = async () => { if (!confirm(L2("Remove the provider key? The assistant stops working until a new key is added.", "إزالة مفتاح المزوّد؟ سيتوقف المساعد حتى يُضاف مفتاح جديد."))) return;
+  S.H.aikeydel = async () => { if (!await uiConfirm(L2("Remove the provider key? The assistant stops working until a new key is added.", "إزالة مفتاح المزوّد؟ سيتوقف المساعد حتى يُضاف مفتاح جديد."))) return;
     try { await save(""); toast(t("saved")); route(); } catch (err) { fail(err); } };
 }
 
@@ -7545,7 +7580,7 @@ PAGES.contract = async (view, parts) => {
     vodec: async el => { try { await api("POST", `/api/variations/${el.dataset.id}/decide`, { decision: el.dataset.d }); toast(t("saved")); route(); } catch (e) { fail(e); } },
     vodel: el => confirmDelete(L2("this variation", "أمر التغيير"), "/api/variations/" + el.dataset.id),
     crnew: () => certForm(c), credit: el => certForm(c, c.certificates.find(x => String(x.id) === el.dataset.id)),
-    cract: async el => { if (el.dataset.do === "reopen" && !confirm(L2("Reopen this certificate? Its posted entry is voided (kept in the audit trail).", "إعادة فتح المستخلص؟ يُلغى قيده المرحّل (يبقى في سجل التدقيق)."))) return;
+    cract: async el => { if (el.dataset.do === "reopen" && !await uiConfirm(L2("Reopen this certificate? Its posted entry is voided (kept in the audit trail).", "إعادة فتح المستخلص؟ يُلغى قيده المرحّل (يبقى في سجل التدقيق)."))) return;
       try { await api("POST", `/api/sub-certificates/${el.dataset.id}/${el.dataset.do}`, {}); toast(t("saved")); route(); } catch (e) { fail(e); } },
     crdel: el => confirmDelete(L2("this certificate", "المستخلص"), "/api/sub-certificates/" + el.dataset.id),
     cpay: el => conPay(c, el.dataset.k) });
@@ -7695,11 +7730,11 @@ PAGES["stock-count"] = async (view, parts) => {
   const collect = () => $$("tr[data-item]", view).map(tr => ({ item_id: +tr.dataset.item, item: tr.dataset.name, counted: $("[data-c]", tr).value, note: $("[data-n]", tr).value }));
   Object.assign(S.H, {
     scsave: async () => { try { await api("PUT", "/api/stock-counts/" + c.id, { lines: collect() }); toast(t("saved")); route(); } catch (e) { fail(e); } },
-    scpost: async () => { if (!confirm(L2("Post the differences as stock adjustments and close this count?", "ترحيل الفروق كتسويات مخزنية وإغلاق الجرد؟"))) return;
+    scpost: async () => { if (!await uiConfirm(L2("Post the differences as stock adjustments and close this count?", "ترحيل الفروق كتسويات مخزنية وإغلاق الجرد؟"))) return;
       try { await api("PUT", "/api/stock-counts/" + c.id, { lines: collect() }); const r = await api("POST", `/api/stock-counts/${c.id}/post`, {}); toast(`${r.adjustments} ${L2("adjustments posted", "تسوية مرحّلة")}`); route(); } catch (e) { fail(e); } },
-    sccancel: async () => { if (!confirm(L2("Cancel this count?", "إلغاء هذا الجرد؟"))) return; try { await api("POST", `/api/stock-counts/${c.id}/cancel`, {}); route(); } catch (e) { fail(e); } },
+    sccancel: async () => { if (!await uiConfirm(L2("Cancel this count?", "إلغاء هذا الجرد؟"))) return; try { await api("POST", `/api/stock-counts/${c.id}/cancel`, {}); route(); } catch (e) { fail(e); } },
     scfill: () => $$("tr[data-item]", view).forEach(tr => { const i = $("[data-c]", tr); if (i.value === "") i.value = tr.dataset.sys; }),
-    scadd: () => { const name = prompt(L2("Item found that is not on the sheet (name):", "صنف موجود غير مدرج (الاسم):")); if (!name) return;
+    scadd: async () => { const name = await uiPrompt(L2("Item found that is not on the sheet (name):", "صنف موجود غير مدرج (الاسم):")); if (!name) return;
       $("#sctb", view).insertAdjacentHTML("beforeend", `<tr data-item="" data-name="${esc(name)}" data-sys="0"><td><b>${esc(name)}</b></td><td class="num">0</td><td><input type="number" step="any" data-c style="width:100px"></td><td class="num"></td><td class="num"></td><td><input data-n></td></tr>`); } });
   view.innerHTML = `<div class="toolbar"><a class="btn" href="#/stock-counts">← ${t("m_counts")}</a><span class="spacer"></span>
       ${add ? `<button class="btn" data-a="scfill">${L2("Fill blanks with book qty", "ملء الفراغات برصيد الدفاتر")}</button><button class="btn" data-a="scadd">+ ${L2("Item not listed", "صنف غير مدرج")}</button><button class="btn" data-a="scsave">${t("save")}</button>` : ""}
@@ -7839,7 +7874,7 @@ PAGES.attendance = async (view, parts, q) => {
   S.H.attab = el => setQ({ ...q, tab: el.dataset.k });
   if (tab === "summary") {
     const d = await api("GET", "/api/attendance-summary?" + qs(q));
-    S.H.atpay = async () => { const period = prompt(L2("Carry this month's attendance into the payroll run for (YYYY-MM):", "نقل حضور الشهر إلى مسير رواتب شهر (YYYY-MM):"), (q.date_from || today()).slice(0, 7)); if (!period) return;
+    S.H.atpay = async () => { const period = await uiPrompt(L2("Carry this month's attendance into the payroll run for (YYYY-MM):", "نقل حضور الشهر إلى مسير رواتب شهر (YYYY-MM):"), (q.date_from || today()).slice(0, 7)); if (!period) return;
       try { const runs = await api("GET", "/api/payroll/runs"); const run = (runs.rows || runs).find(r => r.period === period); if (!run) throw new Error(L2("Create the payroll run for that month first.", "أنشئ مسير رواتب ذلك الشهر أولاً."));
         const r = await api("POST", `/api/payroll/runs/${run.id}/from-attendance`, {}); toast(`${r.lines} ${L2("employees updated", "موظف تم تحديثه")}`); location.hash = "#/payrun/" + run.id; } catch (e) { fail(e); } };
     view.innerHTML = tabs + `<div class="toolbar">${can("payroll.runs", "add") ? `<button class="btn" data-a="atpay">⇢ ${L2("Fill a payroll run from attendance", "تعبئة مسير الرواتب من الحضور")}</button>` : ""}<span class="spacer"></span></div>
@@ -7893,7 +7928,7 @@ function erForm(r, ret) {
     const lines = $$("tr.erl", f).map(tr => Object.fromEntries($$("[data-f]", tr).map(i => [i.dataset.f, i.value]))).filter(l => l.description.trim());
     if (r.id) { await api("PUT", "/api/ereceipts/" + r.id, { ...v, lines }); toast(t("saved")); return; }
     const res = await api("POST", "/api/ereceipts", { ...v, lines }); toast(res.uuid ? L2("Issued", "تم الإصدار") : t("saved"));
-    if (res.warnings && res.warnings.length) setTimeout(() => alert(L2("Issued, but it will not be accepted until fixed:\n• ", "صدر، لكن لن يُقبل قبل إصلاح:\n• ") + res.warnings.join("\n• ")), 50);
+    if (res.warnings && res.warnings.length) setTimeout(() => uiAlert(L2("Issued, but it will not be accepted until fixed:\n• ", "صدر، لكن لن يُقبل قبل إصلاح:\n• ") + res.warnings.join("\n• ")), 50);
   }, { wide: true });
   const calc = () => { let s = 0; $$("tr.erl", f).forEach(tr => { const g = k => +$(`[data-f=${k}]`, tr).value || 0; const n = g("qty") * g("price") - g("discount"); const tt = n * (1 + rateOf($("[data-f=vat_code]", tr).value)); s += tt; $(".eamt", tr).textContent = n ? money(tt) : ""; }); $("#ertot", f).textContent = `${t("total")}: ${money(s)}`; };
   f.addEventListener("input", calc); f.addEventListener("change", calc); calc();
@@ -7916,11 +7951,11 @@ PAGES.ereceipts = async (view, parts, q) => {
   const rows = await api("GET", "/api/ereceipts?" + qs(q));
   const add = can("tax.ereceipt", "add"), ed = can("tax.ereceipt", "edit");
   Object.assign(S.H, { ernew: () => erForm(), erret: () => erForm(null, true), erset: () => erSettings(),
-    eriss: async el => { try { const r = await api("POST", `/api/ereceipts/${el.dataset.id}/issue`, {}); toast(L2("Issued", "تم الإصدار")); if (r.warnings.length) alert("• " + r.warnings.join("\n• ")); route(); } catch (e) { fail(e); } },
+    eriss: async el => { try { const r = await api("POST", `/api/ereceipts/${el.dataset.id}/issue`, {}); toast(L2("Issued", "تم الإصدار")); if (r.warnings.length) uiAlert("• " + r.warnings.join("\n• ")); route(); } catch (e) { fail(e); } },
     erdel: el => confirmDelete(el.dataset.n, "/api/ereceipts/" + el.dataset.id),
-    erchain: async () => { try { const r = await api("GET", "/api/ereceipts-chain"); alert(r.ok ? L2("The chain is intact: every receipt's UUID matches its content and points at the one before.", "السلسلة سليمة: كل إيصال يطابق محتواه ويشير للسابق.") : r.problems.map(p => `${p.number}: ${p.problem}`).join("\n")); } catch (e) { fail(e); } },
+    erchain: async () => { try { const r = await api("GET", "/api/ereceipts-chain"); uiAlert(r.ok ? L2("The chain is intact: every receipt's UUID matches its content and points at the one before.", "السلسلة سليمة: كل إيصال يطابق محتواه ويشير للسابق.") : r.problems.map(p => `${p.number}: ${p.problem}`).join("\n")); } catch (e) { fail(e); } },
     erexp: () => openApi("/api/ereceipts-export", false),
-    ersend: async () => { if (!confirm(L2("Send all issued receipts to the tax authority now?", "إرسال كل الإيصالات الصادرة لمصلحة الضرائب الآن؟"))) return;
+    ersend: async () => { if (!await uiConfirm(L2("Send all issued receipts to the tax authority now?", "إرسال كل الإيصالات الصادرة لمصلحة الضرائب الآن؟"))) return;
       try { const r = await api("POST", "/api/ereceipts-submit", {}); toast(`${r.results.length} ${L2("processed", "تمت معالجتها")}`); route(); } catch (e) { fail(e); } } });
   const issued = rows.filter(r => r.status !== "draft");
   view.innerHTML = `<div class="toolbar">${add ? `<button class="btn pri" data-a="ernew">+ ${L2("E-receipt", "إيصال")}</button><button class="btn" data-a="erret">↩ ${L2("Return", "مرتجع")}</button>` : ""}<span class="spacer"></span>
@@ -7937,4 +7972,116 @@ PAGES.ereceipts = async (view, parts, q) => {
 };
 
 (window.__beyondReady || Promise.resolve()).then(boot, () => {});
+// ================================================== welcome: quick setup + guided tour (both optional)
+// Shown once to the person who just set up a new company; both stay in the user menu ("Take the tour") and
+// Settings → Company ("Quick setup") for later.
+const TOUR = () => [
+  [".side .brand, .side .brand-logo", L2("Welcome to BeyondERP", "مرحباً بك في BeyondERP"),
+    L2("A quick look around — about a minute. Use Next, or Skip any time.", "جولة سريعة — حوالي دقيقة. اضغط التالي، أو تخطَّ في أي وقت.")],
+  ["#nav", L2("The menu", "القائمة"), L2("Everything lives here, grouped by area. Click a group to open its screens.", "كل شيء هنا، مجمّع حسب المجال. اضغط على مجموعة لفتح شاشاتها.")],
+  [".newbtn", L2("+ New", "+ جديد"), L2("Record anything from anywhere: payments, receipts, invoices, entries…", "سجّل أي شيء من أي مكان: مدفوعات، مقبوضات، فواتير، قيود…")],
+  [".top .search", L2("Search", "البحث"), L2("Jump to any screen or action — or press Ctrl K.", "انتقل لأي شاشة أو إجراء — أو اضغط Ctrl K.")],
+  ['#nav a[href="#/dashboard"]', L2("Dashboard", "لوحة التحكم"), L2("Cash, receivables, payables and profit at a glance.", "النقدية والمستحقات والالتزامات والربح في لمحة.")],
+  ['[data-g="g_bu"]', L2("Business units", "وحدات الأعمال"), L2("Each project or branch keeps its own costs, billing and profit.", "كل مشروع أو فرع له تكاليفه وفواتيره وربحه.")],
+  ['[data-g="g_sales"]', L2("Sales & receivables", "المبيعات والمستحقات"), L2("Invoices, client payments and who owes you what.", "الفواتير ومقبوضات العملاء ومن يدين لك بماذا.")],
+  ['[data-g="g_buy"]', L2("Procurement & payables", "المشتريات والالتزامات"), L2("Suppliers, purchase orders and payments out.", "الموردون وأوامر الشراء والمدفوعات.")],
+  ['[data-g="g_equity"]', L2("Owners' equity", "حقوق الملكية"), L2("Partners, shares, the funding partner and profit sharing.", "الشركاء والحصص والشريك الممول وتوزيع الأرباح.")],
+  ['[data-g="g_acc"]', L2("General accounting", "المحاسبة العامة"), L2("Journal, chart of accounts and the books behind every screen.", "اليومية ودليل الحسابات والدفاتر خلف كل شاشة.")],
+  ['[data-g="g_rep"]', L2("Reports", "التقارير"), L2("Statements and lists — export to PDF, Excel or Word.", "القوائم والكشوف — تصدير PDF أو Excel أو Word.")],
+  [".dd.bell", L2("Alerts", "التنبيهات"), L2("What needs attention: bills to issue, dues, checks.", "ما يحتاج انتباهك: فواتير للإصدار، مستحقات، مراجعات.")],
+  [".ucard", L2("You & settings", "حسابك والإعدادات"), L2("Settings, import & export, users — and this tour again.", "الإعدادات والاستيراد والتصدير والمستخدمون — وهذه الجولة مجدداً.")],
+];
+function startTour() {
+  const app = $(".app"), narrow = innerWidth <= 900, hadMenu = app && app.classList.contains("menu");
+  if (narrow && app) app.classList.add("menu");          // phones: the menu slides in for the steps that point into it
+  const steps = TOUR().map(([sel, h, p]) => { const el = $$(sel).find(e => e.getBoundingClientRect().width > 0); return { el, h, p, side: !!(el && el.closest(".side")) }; })
+    .filter((s, i) => i === 0 || s.el);
+  if (!steps.length) return;
+  const wrap = document.createElement("div"); wrap.className = "tour";
+  wrap.innerHTML = `<div class="tour-ring"></div><div class="tour-card" role="dialog" aria-live="polite"></div>`;
+  document.body.appendChild(wrap);
+  const ring = $(".tour-ring", wrap), card = $(".tour-card", wrap);
+  let i = 0;
+  const end = () => { document.removeEventListener("keydown", key, true); removeEventListener("resize", place); wrap.remove(); store.set("tourSeen", "1");
+    if (narrow && app && !hadMenu) app.classList.remove("menu"); };
+  const place = () => {
+    const s = steps[i], r = s.el && s.el.getBoundingClientRect();
+    if (r && r.width) { s.el.scrollIntoView({ block: "nearest" }); const q = s.el.getBoundingClientRect(), pad = 6;
+      Object.assign(ring.style, { display: "", left: q.left - pad + "px", top: q.top - pad + "px", width: q.width + pad * 2 + "px", height: q.height + pad * 2 + "px" });
+      const cw = Math.min(320, innerWidth - 24), ch = card.offsetHeight;
+      let x = q.right + 14, y = q.top;                                   // beside the target, else below / above it
+      if (x + cw > innerWidth - 12) { x = Math.min(Math.max(12, q.left), innerWidth - cw - 12); y = q.bottom + 14; if (y + ch > innerHeight - 12) y = q.top - ch - 14; }
+      Object.assign(card.style, { left: x + "px", top: Math.max(12, Math.min(y, innerHeight - ch - 12)) + "px", width: cw + "px" });
+      card.dataset.side = x > q.right ? "right" : y > q.bottom ? "below" : "above";
+    } else { ring.style.display = "none"; Object.assign(card.style, { left: "50%", top: "50%", width: Math.min(340, innerWidth - 24) + "px" }); card.dataset.side = "center"; }
+  };
+  const show = () => { const s = steps[i];
+    if (narrow && app) app.classList.toggle("menu", s.side || i === 0);
+    card.innerHTML = `<div class="tour-step">${i + 1} / ${steps.length}</div><h3>${esc(s.h)}</h3><p>${esc(s.p)}</p>
+      <div class="tour-dots">${steps.map((_, k) => `<i class="${k === i ? "on" : ""}"></i>`).join("")}</div>
+      <div class="tour-foot"><button type="button" class="btn sm" data-t="skip">${esc(L2("Skip", "تخطي"))}</button><span class="spacer"></span>
+        ${i ? `<button type="button" class="btn sm" data-t="back" aria-label="${esc(L2("Back", "السابق"))}">${S.lang === "ar" ? "→" : "←"}</button>` : ""}
+        <button type="button" class="btn sm pri" data-t="next">${esc(i === steps.length - 1 ? L2("Done", "تم") : L2("Next", "التالي"))} ${i === steps.length - 1 ? "" : S.lang === "ar" ? "←" : "→"}</button></div>`;
+    card.classList.remove("in"); place(); requestAnimationFrame(() => card.classList.add("in")); $("[data-t=next]", card).focus(); };
+  const go = d => { i += d; if (i < 0) i = 0; if (i >= steps.length) return end(); show(); };
+  const key = e => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); end(); }
+    else if (e.key === "ArrowRight") { e.preventDefault(); go(S.lang === "ar" ? -1 : 1); } else if (e.key === "ArrowLeft") { e.preventDefault(); go(S.lang === "ar" ? 1 : -1); } };
+  wrap.addEventListener("click", e => { e.stopPropagation(); const b = e.target.closest("[data-t]"); if (!b) return;
+    if (b.dataset.t === "skip") end(); else go(b.dataset.t === "back" ? -1 : 1); });
+  document.addEventListener("keydown", key, true); addEventListener("resize", place);
+  show();
+}
+// the essentials of a new company in one short form: name, slogan, logo, currency, year, partners, funding partner
+async function quickSetup(then) {
+  const st = S.boot.settings, ar = S.lang === "ar";
+  let partners = []; try { const r = await api("GET", "/api/partners"); partners = (Array.isArray(r) ? r : r.partners || []).filter(p => p.active !== 0); } catch { /* no equity access */ }
+  const canEq = can("partners.equity", "add");
+  const rowsHtml = list => list.map((p, k) => `<div class="row qs-p" style="gap:6px;margin-bottom:6px"><input data-skip="1" class="qs-pn" value="${esc(p.name || "")}" placeholder="${esc(L2("Partner name", "اسم الشريك"))}" style="flex:2" ${p.id ? "disabled" : ""}>
+    <input data-skip="1" class="qs-ps num" type="number" step="any" min="0" max="100" value="${p.default_share != null ? +(p.default_share * 100).toFixed(2) : ""}" placeholder="%" style="flex:1" ${p.id ? "disabled" : ""}></div>`).join("");
+  const f = drawer(L2("Quick setup", "الإعداد السريع"), `<p class="muted" style="margin-top:0">${esc(L2("The basics most companies set first. Everything can be changed later in Settings.", "الأساسيات التي تضبطها معظم الشركات أولاً. يمكن تغيير كل شيء لاحقاً من الإعدادات."))}</p>` + form([
+      { k: "company_name", l: t("company_name"), v: st.company_name || "", ph: GEN_NAME() }, { k: "company_tagline", l: t("tagline"), v: st.company_tagline || "", ph: GEN_TAG() },
+      { k: "currency", l: t("currency"), v: st.currency || "EGP" }, { k: "fiscal_year_start", l: L2("Financial year starts (MM-DD)", "بداية السنة المالية (MM-DD)"), v: st.fiscal_year_start || "01-01", ph: "01-01" },
+      { html: `<label class="f spanall">${esc(L2("Logo (for documents and the sidebar)", "الشعار (للمستندات والقائمة الجانبية)"))}<input type="file" id="qslogo" accept="image/*" data-skip="1"></label>` }], 2) +
+    (canEq ? `<h3 style="margin:16px 0 6px">${esc(L2("Partners", "الشركاء"))}</h3><p class="muted" style="margin-top:0">${esc(L2("Name and profit share. Leave empty if there are none yet.", "الاسم ونسبة الربح. اتركها فارغة إن لم يوجد بعد."))}</p>
+      <div id="qsps">${rowsHtml(partners.length ? partners : [{}, {}])}</div><button type="button" class="btn sm" id="qsadd">+ ${esc(L2("Partner", "شريك"))}</button>
+      <label class="f" style="margin-top:12px">${esc(L2("Funding partner (pays and receives for the company — account 3015)", "الشريك الممول (يدفع ويقبض نيابة عن الشركة — حساب 3015)"))}<select name="funding_partner" id="qsfund"></select></label>
+      <label class="f">${esc(L2("Profit kept in the company (reserve %)", "الربح المحتجز في الشركة (نسبة الاحتياطي %)"))}<input name="reserve_pct" type="number" step="any" min="0" max="100" value="${st.reserve_pct != null && st.reserve_pct !== "" ? +(st.reserve_pct * 100).toFixed(2) : ""}"></label>` : ""),
+    async v => {
+      const logoF = $("#qslogo").files[0];
+      const body = { company_name: v.company_name.trim(), company_tagline: v.company_tagline.trim(), currency: v.currency.trim() || "EGP", fiscal_year_start: v.fiscal_year_start.trim() || "01-01" };
+      if (canEq) {
+        for (const r of $$("#qsps .qs-p")) { const [n, s] = [$(".qs-pn", r), $(".qs-ps", r)]; if (n.disabled || !n.value.trim()) continue;
+          await api("POST", "/api/partners", { name: n.value.trim(), default_share: (+s.value || 0) / 100 }); }
+        body.funding_partner = v.funding_partner || ""; if (v.reserve_pct !== "") body.reserve_pct = String((+v.reserve_pct || 0) / 100);
+      }
+      await api("PUT", "/api/settings", body);
+      if (logoF) { const raw = await Img.fit(logoF, 900), clean = await Img.clean(raw);
+        await api("PUT", "/api/branding/image/logo_raw", raw); await api("PUT", "/api/branding/image/logo", clean); }
+      await refreshBoot(); applyLook(); renderShell(); toast(t("saved")); if (then) setTimeout(then, 300);
+    }, { submitLabel: L2("Save", "حفظ"), noDraft: true });
+  const fund = () => { const sel = $("#qsfund", f); if (!sel) return; const cur = sel.value || st.funding_partner || "";
+    const names = [...new Set($$(".qs-pn", f).map(x => x.value.trim()).filter(Boolean))];
+    sel.innerHTML = `<option value="">— ${esc(L2("none — the company's own bank and cash", "لا يوجد — بنك الشركة وخزينتها"))} —</option>` + names.map(n => `<option ${n === cur ? "selected" : ""}>${esc(n)}</option>`).join(""); };
+  const add = $("#qsadd", f); if (add) add.addEventListener("click", () => { $("#qsps", f).insertAdjacentHTML("beforeend", rowsHtml([{}])); });
+  f.addEventListener("input", e => { if (e.target.classList.contains("qs-pn")) fund(); }); fund();
+}
+async function showWelcome() {
+  store.set("welcome", "");
+  const admin = S.boot.user && S.boot.user.is_admin, ar = S.lang === "ar";
+  const bg = document.createElement("div"); bg.className = "dlg-bg";
+  bg.innerHTML = `<div class="dlg welcome" role="dialog" aria-modal="true"><img src="icons/beyond.png" alt="" class="wl-logo">
+    <h3>${esc(L2("Your books are ready", "دفاترك جاهزة"))}</h3>
+    <p class="dlg-msg">${esc(admin ? L2("Set the basics in a minute, take a short tour — or skip both and start.", "اضبط الأساسيات في دقيقة، وخذ جولة قصيرة — أو تخطَّ الاثنين وابدأ.") : L2("Take a short tour of the app, or skip it and start.", "خذ جولة قصيرة في التطبيق، أو تخطَّها وابدأ."))}</p>
+    <div class="wl-opts">${admin ? `<button type="button" class="wl-opt" data-w="setup"><b>⚙ ${esc(L2("Quick setup", "الإعداد السريع"))}</b><small>${esc(L2("Name, logo, currency, partners, funding partner", "الاسم والشعار والعملة والشركاء والشريك الممول"))}</small></button>` : ""}
+      <button type="button" class="wl-opt" data-w="tour"><b>➜ ${esc(L2("Take the tour", "ابدأ الجولة"))}</b><small>${esc(L2("What each part of the app does — about a minute", "ما يفعله كل جزء من التطبيق — حوالي دقيقة"))}</small></button></div>
+    <div class="dlg-foot"><button type="button" class="btn" data-w="skip">${esc(L2("Skip for now", "تخطي الآن"))}</button></div></div>`;
+  document.body.appendChild(bg);
+  bg.addEventListener("click", e => { e.stopPropagation(); const b = e.target.closest("[data-w]"); if (!b && e.target !== bg) return; bg.remove();
+    const w = b ? b.dataset.w : "skip";
+    if (w === "setup") quickSetup(async () => { if (await uiConfirm(L2("Saved. Take the short tour now?", "تم الحفظ. هل تريد الجولة القصيرة الآن؟"), { ok: L2("Take the tour", "ابدأ الجولة"), cancel: L2("Not now", "ليس الآن"), danger: false })) startTour(); });
+    else if (w === "tour") startTour(); });
+}
+Object.assign(S.GLOBAL_H, { tour: () => { $$(".dd.open").forEach(d => d.classList.remove("open")); location.hash = "#/dashboard"; setTimeout(startTour, 400); },
+  qsetup: () => quickSetup() });
+
 })();

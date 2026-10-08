@@ -3469,6 +3469,57 @@ class BrandDefaults(unittest.TestCase):
         self.assertEqual(json.loads(d.one("SELECT value FROM settings WHERE key='appearance'")["value"])["app_name"], "Beyond Design")
 
 
+class UniversalTemplates(unittest.TestCase):
+    """Import templates carry the BeyondERP logo and 'Company Name' unless the company asks for its own identity."""
+
+    def _company(self):
+        from erp import branding
+        db = Database(":memory:")
+        db.set_setting("company_name", "Acme Interiors")
+        db.set_setting("company_tagline", "Fit-out")
+        db.set_setting("company_address", "1 Nile St")
+        branding.set_asset(db, "logo", {"mime": "image/png", "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg=="})
+        return db
+
+    def _cover(self, xlsx):
+        import io
+        import zipfile
+        import openpyxl
+        wb = openpyxl.load_workbook(io.BytesIO(xlsx))
+        sets = {r[0]: r[1] for r in wb["Settings"].iter_rows(min_row=5, values_only=True) if r and r[0]}
+        media = [n for n in zipfile.ZipFile(io.BytesIO(xlsx)).namelist() if n.startswith("xl/media/")]
+        return wb["Cover"]["B2"].value, wb["Cover"]["B3"].value, sets, media
+
+    def test_universal_by_default_and_safe_to_import(self):
+        from erp import brand_assets, workbook
+        db = self._company()
+        x = workbook.build_workbook(db, template=True)
+        name, tag, sets, media = self._cover(x)
+        self.assertEqual((name, tag), ("COMPANY NAME", "COMPANY SLOGAN"))
+        self.assertEqual(sets.get("company_name"), "Company Name")
+        self.assertNotIn("company_address", sets)
+        self.assertTrue(media)                      # the BeyondERP logo
+        self.assertTrue(brand_assets.LOGO["data"])
+        p = Path(tempfile.mkdtemp()) / "t.xlsx"
+        p.write_bytes(x)
+        interchange.import_data(db, interchange.read_xlsx(p))
+        self.assertEqual((db.setting("company_name"), db.setting("company_tagline"), db.setting("company_address")),
+                         ("Acme Interiors", "Fit-out", "1 Nile St"))
+
+    def test_own_identity_when_chosen(self):
+        from erp import branding, workbook
+        db = self._company()
+        branding.save(db, {"apply": {"template": {"logo": True, "wm": False}}})
+        name, tag, sets, media = self._cover(workbook.build_workbook(db, template=True))
+        self.assertEqual((name, sets.get("company_name")), ("ACME INTERIORS", "Acme Interiors"))
+        self.assertTrue(media)
+
+    def test_new_books_are_not_branded_for_anyone(self):
+        db = Database(":memory:")
+        self.assertEqual(db.setting("company_name", ""), "")
+        self.assertTrue(db.one("SELECT 1 FROM assets WHERE key='watermark'"))   # the faded BeyondERP mark
+
+
 class WorkspaceCatchUp(unittest.TestCase):
     def test_heavy_changes_are_recognised(self):
         """After these, the device that made them saves a fresh copy at once, so phones load it instead of replaying."""
