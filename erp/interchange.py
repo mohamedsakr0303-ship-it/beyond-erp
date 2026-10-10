@@ -209,7 +209,10 @@ SHEETS = [
               C("account", "Inventory Account", "حساب المخزون", kind="acct", width=12)]},
     {"name": "Stock Items", "ar": "الأصناف", "module": "stock", "title": "Item master",
      "cols": [C("name", "Item", "الصنف", width=30, required=True), C("unit", "Unit", "الوحدة", width=9),
-              C("sku", "SKU", "كود الصنف", width=10), C("reorder_level", "Reorder Level", "حد إعادة الطلب", kind="num", width=10)]},
+              C("sku", "SKU", "كود الصنف", width=10), C("reorder_level", "Reorder Level", "حد إعادة الطلب", kind="num", width=10),
+              C("category", "Category", "التصنيف", width=16), C("std_cost", "Standard Cost", "التكلفة المعيارية", kind="money", width=12,
+                note="the usual buying cost per unit — kept even with no stock"),
+              C("price", "Selling Price", "سعر البيع", kind="money", width=12), C("notes", "Notes", "ملاحظات", width=24)]},
     {"name": "Products", "ar": "المنتجات والوحدات", "module": "shop",
      "title": "Showroom catalog — items, units (apartments, villas, cars…) and services; photos are added in the app",
      "cols": [C("code", "Code", "الكود", width=10, note="blank = automatic; an existing code is updated"),
@@ -524,7 +527,9 @@ def export_data(db):
         out["Warehouses"].append({"name": w["name"], "location": w["location"], "account": w["account"] or ""})
     items = {i["id"]: i for i in db.q("SELECT * FROM stock_items ORDER BY name")}
     for i in items.values():
-        out["Stock Items"].append({"name": i["name"], "unit": i["unit"], "sku": i["sku"], "reorder_level": i["reorder_level"]})
+        out["Stock Items"].append({"name": i["name"], "unit": i["unit"], "sku": i["sku"], "reorder_level": i["reorder_level"],
+                                   "category": i.get("category") or "", "std_cost": to_major(i.get("std_cost") or 0),
+                                   "price": to_major(i.get("price") or 0), "notes": i.get("notes") or ""})
     bus_ = {b["id"]: b["code"] for b in db.q("SELECT id, code FROM business_units")}
     for p in db.q("SELECT * FROM products ORDER BY code"):
         out["Products"].append({k: p[k] for k in ("code", "name", "name_ar", "kind", "category", "unit", "vat_code", "status",
@@ -1119,11 +1124,98 @@ WIPE_ORDER = ("sub_cert_lines", "sub_certificates", "variation_orders", "contrac
               "journal_lines", "journal_entries", "partner_shares", "partners", "rates", "business_units")
 
 
+# "New rows only": what identifies a record that is already in the books. Rows of these sheets are skipped when their
+# key is there (so changes made in the app are never overwritten); several rows sharing a key (an invoice and its
+# lines, an order and its items) come in or stay out together. Other sheets compare the whole row.
+ONLY_NEW_KEYS = {
+    "Chart of Accounts": ("code",), "Tax Codes": ("code",), "Business Units": ("code",), "Parties": ("name",), "Partners": ("name",),
+    "Fixed Assets": ("code",), "Warehouses": ("name",), "Stock Items": ("name",), "Products": ("code",), "Employees": ("code",),
+    "Loans": ("code",), "Cash Custody": ("code",), "Rental Equipment": ("code",), "Rental Contracts": ("ref",), "Sales Contracts": ("code",),
+    "Service Plans": ("code",), "Service Subscriptions": ("code",), "Purchase Orders": ("code",), "Contracts": ("code",),
+    "Purchase Requests": ("code",), "Sales Invoices": ("number",), "Invoice Lines": ("number",), "E-Receipts": ("number",),
+    "Stock Counts": ("code",), "BOQ Lines": ("title",), "Subcontractor Certificates": ("contract", "number"),
+    "Equipment": ("code",), "Variation Orders": ("contract", "code"), "Recurring Entries": ("name",), "Settings": ("key",),
+}
+
+
+def _norm_cell(v):
+    if v is None:
+        return ""
+    if isinstance(v, bool):
+        return "1" if v else "0"
+    if isinstance(v, (int, float)):
+        return f"{round(float(v), 2):.2f}"
+    if isinstance(v, (_dt.date, _dt.datetime)):
+        return v.isoformat()[:10]
+    t = re.sub(r"\s+", " ", str(v)).strip().lower()
+    try:
+        return f"{round(float(t.replace(',', '')), 2):.2f}"
+    except ValueError:
+        pass
+    return t[:10] if re.match(r"^\d{4}-\d{2}-\d{2}", t) else t
+
+
+def only_new(db, data):
+    """Keep only what is not in the books yet; returns (data, {sheet: {"new": n, "skipped": n}})."""
+    have, out, report = export_data(db), {}, {}
+    for name, rows in data.items():
+        if name.startswith("_") or name not in SHEET_BY_NAME or not rows:
+            out[name] = rows
+            continue
+        cols = [c["key"] for c in input_cols(SHEET_BY_NAME[name])]
+        existing = have.get(name) or []
+        if name in ONLY_NEW_KEYS:
+            kc = ONLY_NEW_KEYS[name]
+            key = lambda r: tuple(_norm_cell(r.get(k)) for k in kc)  # noqa: E731
+            if name == "Settings":
+                key = lambda r: (_norm_cell(str(r.get("key") or "").replace("default:", "")),)  # noqa: E731
+            known = {key(r) for r in existing}
+            keep = [r for r in rows if key(r) not in known]
+        elif name == "Journal Vouchers":     # a voucher is known when an entry has the same date and the same lines
+            def groups(rs):
+                g = {}
+                for r in rs:
+                    g.setdefault(_norm_cell(r.get("voucher")) or id(r), []).append(r)
+                return g
+            fp = lambda rs: (_norm_cell(rs[0].get("date")), tuple(sorted((_norm_cell(r.get("account")), _norm_cell(r.get("debit")),  # noqa: E731
+                                                                          _norm_cell(r.get("credit"))) for r in rs)))
+            pool = {}
+            for rs in groups(existing).values():
+                pool[fp(rs)] = pool.get(fp(rs), 0) + 1
+            keep = []
+            for rs in groups(rows).values():
+                f = fp(rs)
+                if pool.get(f):
+                    pool[f] -= 1
+                else:
+                    keep += rs
+        else:                                # same content, counted: two equal rows in the file against one in the books → one new
+            pool = {}
+            for r in existing:
+                f = tuple(_norm_cell(r.get(k)) for k in cols)
+                pool[f] = pool.get(f, 0) + 1
+            keep = []
+            for r in rows:
+                f = tuple(_norm_cell(r.get(k)) for k in cols)
+                if pool.get(f):
+                    pool[f] -= 1
+                else:
+                    keep.append(r)
+        out[name] = keep
+        report[name] = {"new": len(keep), "skipped": len(rows) - len(keep)}
+    return out, report
+
+
 def import_data(db, data, mode="append", dry_run=False, user=""):
-    """Import sheets. All-or-nothing: any row error rolls everything back and is reported."""
-    if mode not in ("append", "replace"):
-        raise acc.ValidationError("mode must be append or replace")
+    """Import sheets. All-or-nothing: any row error rolls everything back and is reported.
+    mode "new": only rows that are not in the books yet (see only_new), then as "append"."""
+    if mode not in ("append", "replace", "new"):
+        raise acc.ValidationError("mode must be append, new or replace")
     errors, counts = [], {}
+    skipped = None
+    if mode == "new":
+        data, skipped = only_new(db, data)
+        mode = "append"
 
     def run(name, fn):
         rows = data.get(name) or []
@@ -1235,7 +1327,10 @@ def import_data(db, data, mode="append", dry_run=False, user=""):
         pass
     if errors:
         raise ImportErrors(errors[:200])
-    return {"counts": counts, "dry_run": dry_run, "mode": mode}
+    out = {"counts": counts, "dry_run": dry_run, "mode": "new" if skipped is not None else mode}
+    if skipped is not None:
+        out["skipped"] = {k: v["skipped"] for k, v in skipped.items() if v["skipped"]}
+    return out
 
 
 def _imp_setting(db, r):
@@ -1348,10 +1443,13 @@ def _imp_wh(db, r):
 
 
 def _imp_item(db, r):
-    db.conn.execute("INSERT INTO stock_items(name,unit,sku,reorder_level) VALUES (?,?,?,?) ON CONFLICT(name) DO UPDATE "
-                    "SET unit=excluded.unit, sku=excluded.sku, reorder_level=excluded.reorder_level",
+    db.conn.execute("INSERT INTO stock_items(name,unit,sku,reorder_level,category,std_cost,price,notes) VALUES (?,?,?,?,?,?,?,?) "
+                    "ON CONFLICT(name) DO UPDATE SET unit=excluded.unit, sku=excluded.sku, reorder_level=excluded.reorder_level, "
+                    "category=excluded.category, std_cost=excluded.std_cost, price=excluded.price, notes=excluded.notes",
                     (acc.text(r.get("name")), acc.text(r.get("unit")) or "pcs", acc.text(r.get("sku")),
-                     acc.num(r.get("reorder_level"), "reorder level")))
+                     acc.num(r.get("reorder_level"), "reorder level"), acc.text(r.get("category")),
+                     to_minor(acc.num(r.get("std_cost"), "standard cost")), to_minor(acc.num(r.get("price"), "selling price")),
+                     acc.text(r.get("notes"), maxlen=1000)))
 
 
 def _imp_rate(db, r):

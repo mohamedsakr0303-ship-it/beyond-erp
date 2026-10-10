@@ -1112,3 +1112,20 @@ body:has(.drawer-bg) #bulkbar{display:none}   /* a form is open: its own buttons
 .tb-acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.tb-acts .tb-never{border:0;background:none;color:var(--muted);padding-inline:6px}
 body:has(.drawer-bg) .tourbar,body:has(#bulkbar) .tourbar{display:none}
 @media (max-width:640px){.tourbar{bottom:calc(76px + env(safe-area-inset-bottom));inset-inline:10px;max-width:none}.tour-pill{bottom:calc(80px + env(safe-area-inset-bottom))}}
+
+/* type-to-search pickers (long drop-downs and name fields with suggestions) */
+.pick-w{display:block;position:relative;width:100%}
+.pick-w>select{position:absolute!important;inset:0;opacity:0;pointer-events:none;width:100%}
+.pick-in{width:100%;padding-inline-end:30px;background-image:linear-gradient(45deg,transparent 50%,currentColor 50%),linear-gradient(135deg,currentColor 50%,transparent 50%);
+  background-position:calc(100% - 15px) 52%,calc(100% - 10px) 52%;background-size:5px 5px;background-repeat:no-repeat;text-overflow:ellipsis}
+[dir=rtl] .pick-in{background-position:15px 52%,10px 52%}
+.pick-list{position:fixed;z-index:120;overflow-y:auto;overscroll-behavior:contain;padding:5px;border-radius:12px;background:var(--panel);border:1px solid var(--line);
+  box-shadow:var(--shadow-lg);font-size:.92em}
+:root[data-theme="dark"] .pick-list{background:rgba(12,13,46,.97);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
+.pick-o{padding:8px 10px;border-radius:8px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pick-o.on,.pick-o:hover{background:var(--hover);color:var(--accent)}
+.pick-o.sel{font-weight:700}
+.pick-more{padding:8px 10px;color:var(--muted);font-size:.85em}
+td .pick-w{min-width:180px}
+.fc-in{width:118px;padding:6px 8px;text-align:end}.fc-ed{border-color:var(--warn)!important;background:color-mix(in srgb,var(--warn) 12%,var(--input))!important}
+.fc-cat{min-width:140px}.fc-tabs{margin:6px 0 10px}

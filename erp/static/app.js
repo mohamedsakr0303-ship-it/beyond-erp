@@ -2322,11 +2322,31 @@ PAGES.stock = async (view, parts, q) => {
   const ed = can("stock.moves", "add");
   for (const ty of ["Receipt", "Issue", "Transfer", "Adjustment"]) S.H["sm" + ty] = el => openDoc("stock_move", { type: ty, item: el && el.dataset && el.dataset.item, warehouse_id: el && el.dataset && el.dataset.wh });
   S.H.itemdel = el => confirmDelete(el.dataset.n, "/api/items/" + el.dataset.id, refreshBoot);
-  view.innerHTML = `<div class="toolbar">${ed ? ["Receipt", "Issue", "Transfer", "Adjustment"].map(ty => `<button class="btn ${ty === "Receipt" ? "pri" : ""}" data-a="sm${ty}">${tl(ty)}</button>`).join("") : ""}<span class="spacer"></span>${exportMenu("stock", q)}</div>` +
+  // the item list with prices — items can be kept for their price alone, with nothing in stock
+  const itemForm = it => drawer(it.id ? it.name : L2("New item", "صنف جديد"), form([
+      { k: "name", l: t("item"), v: it.name || "", req: 1 }, { k: "category", l: L2("Category", "التصنيف"), v: it.category || "", list: "itcats" },
+      { k: "unit", l: t("unit"), v: it.unit || "pcs", list: "units" }, { k: "sku", l: "SKU", v: it.sku || "" },
+      { k: "std_cost", l: L2("Standard cost (per unit)", "التكلفة المعيارية (للوحدة)"), type: "number", v: it.std_cost || "" },
+      { k: "price", l: L2("Selling price (per unit)", "سعر البيع (للوحدة)"), type: "number", v: it.price || "" },
+      { k: "reorder_level", l: t("reorder"), type: "number", v: it.reorder_level || "" }, { k: "notes", l: t("notes"), v: it.notes || "", span: "spanall" }]) +
+      datalist("itcats", (d.catalog || []).map(x => x.category).filter(Boolean)) + unitsList() +
+      `<p class="muted" style="font-size:.85em">${esc(L2("Quantities and stock value change only through receipts, issues, transfers and counts — so the books and the stock always agree.", "الكميات وقيمة المخزون تتغير فقط بالاستلام والصرف والتحويل والجرد — فتتطابق الدفاتر والمخزون دائماً."))}</p>`,
+    async v => { if (it.id) await api("PUT", "/api/items/" + it.id, v); else await api("POST", "/api/items", v); await refreshBoot(); toast(t("saved")); });
+  S.H.itemnew = () => itemForm({});
+  S.H.itemedit = el => itemForm((d.catalog || []).find(x => String(x.id) === el.dataset.id) || {});
+  view.innerHTML = `<div class="toolbar">${ed ? ["Receipt", "Issue", "Transfer", "Adjustment"].map(ty => `<button class="btn ${ty === "Receipt" ? "pri" : ""}" data-a="sm${ty}">${tl(ty)}</button>`).join("") : ""}${can("stock.balances", "add") ? `<button class="btn" data-a="itemnew">+ ${esc(L2("Item", "صنف"))}</button>` : ""}<span class="spacer"></span>${exportMenu("stock", q)}</div>` +
     filterBar(q, ["warehouse", "q"]) +
     `<div class="card"><h2>${t("inventory")} — ${money(tot)} ${cur()}</h2>${d.levels.length ? `<div class="tbl"><table><thead><tr><th>${t("item")}</th><th>${t("warehouse")}</th><th>${t("unit")}</th><th class="num">${t("on_hand")}</th><th class="num">${t("avg_cost")}</th><th class="num">${t("value")}</th><th></th></tr></thead><tbody>
       ${d.levels.map(r => `<tr><td>${esc(r.name)} ${r.low ? `<span class="chip warn">${t("reorder")}</span>` : ""}</td><td>${esc(r.warehouse)}</td><td>${esc(r.unit)}</td><td class="num ${r.qty < 0 ? "neg" : ""}">${numf(r.qty)}</td><td class="num">${money(r.avg_cost)}</td><td class="num">${money(r.value)}</td>
       <td>${can("stock.balances", "edit") && !r.qty && !r.value ? `<button class="btn sm danger" data-a="itemdel" data-id="${r.item_id}" data-n="${esc(r.name)}" title="${S.lang === "ar" ? "حذف صنف بدون حركات" : "Delete an item that has no movements"}">✕</button> ` : ""}${ed ? `<button class="btn sm" data-a="smIssue" data-item="${esc(r.name)}" data-wh="${r.warehouse_id}">${tl("Issue")}</button> <button class="btn sm" data-a="smAdjustment" data-item="${esc(r.name)}" data-wh="${r.warehouse_id}">${tl("Adjustment")}</button>` : ""}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${t("nothing")}</div>`}</div>`;
+  const cat = d.catalog || [];
+  if (cat.length) view.insertAdjacentHTML("beforeend", `<div class="card"><h2>${esc(L2("Items & prices", "الأصناف والأسعار"))} <span class="chip">${cat.length}</span></h2>
+    <p class="muted" style="margin-top:0">${esc(L2("Every item, with or without stock: its standard cost, selling price and the last price you paid.", "كل الأصناف، بمخزون أو بدونه: التكلفة المعيارية وسعر البيع وآخر سعر شراء."))}</p>
+    <div class="tbl stack"><table><thead><tr><th>${t("item")}</th><th>${esc(L2("Category", "التصنيف"))}</th><th>${t("unit")}</th><th class="num">${t("on_hand")}</th>
+      <th class="num">${esc(L2("Standard cost", "التكلفة المعيارية"))}</th><th class="num">${esc(L2("Last paid", "آخر سعر شراء"))}</th><th class="num">${esc(L2("Selling price", "سعر البيع"))}</th></tr></thead><tbody>
+    ${cat.map(r => `<tr class="${can("stock.balances", "edit") ? "click" : ""}" data-a="${can("stock.balances", "edit") ? "itemedit" : ""}" data-id="${r.id}"><td><b>${esc(r.name)}</b>${r.sku ? ` <span class="muted">${esc(r.sku)}</span>` : ""}</td><td>${esc(r.category || "")}</td><td>${esc(r.unit)}</td>
+      <td class="num">${r.on_hand ? numf(r.on_hand) : "—"}</td><td class="num">${r.std_cost ? money(r.std_cost) : "—"}</td>
+      <td class="num">${r.last_rate != null ? money(r.last_rate) + `<div class="lines">${fd(r.last_date)}</div>` : "—"}</td><td class="num">${r.price ? money(r.price) : "—"}</td></tr>`).join("")}</tbody></table></div></div>`);
 };
 PAGES.moves = async (view, parts, q) => {
   const lq = { ...q, limit: q.limit || 100 };
@@ -2619,7 +2639,7 @@ PAGES.data = async (view) => {
       <label class="f spanall">${L2("…or a Google Sheets link", "…أو رابط Google Sheets")}<input id="impurl" type="url" placeholder="https://docs.google.com/spreadsheets/d/…" dir="ltr"></label>
       <label class="f">${t("format")}<select id="impfmt"><option value="xlsx">Excel (.xlsx)</option><option value="json">JSON</option><option value="csv">CSV</option></select></label>
       <label class="f" id="impsheetl" style="display:none">CSV → <select id="impsheet">${sheets.map(s => `<option value="${esc(s.name)}">${esc(s.name)}</option>`).join("")}</select></label>
-      <label class="f">${t("mode")}<select id="impmode"><option value="append">${t("append")}</option>${S.boot.user.is_super ? `<option value="replace">${t("replace")}</option>` : ""}</select></label>
+      <label class="f">${t("mode")}<select id="impmode"><option value="new">${esc(L2("New rows only — skip what is already in the books", "الجديد فقط — تخطي الموجود بالفعل"))}</option><option value="append">${t("append")}</option>${S.boot.user.is_super ? `<option value="replace">${t("replace")}</option>` : ""}</select></label>
       <label class="f chk"><input type="checkbox" id="impdry" checked>${t("dry_run")}</label>
       <button class="btn pri" data-a="imp">${t("import_btn")}</button></div><div id="impres" style="margin-top:12px"></div>` : `<div class="muted">${t("view_only")}</div>`}</div></div>`;
   await impSheets();
@@ -2663,7 +2683,8 @@ PAGES.data = async (view) => {
     try {
       const r = await api("POST", "/api/import?" + qs({ format: fmtSel.value, mode: $("#impmode").value, dry_run: $("#impdry").checked ? 1 : "", sheet: $("#impsheet").value }), undefined, await file.arrayBuffer());
       out.innerHTML = `<div class="banner ok">${r.dry_run ? (S.lang === "ar" ? "الفحص ناجح — لم يتم تغيير أي شيء. أزل علامة الفحص للاستيراد." : "Check passed — nothing was changed. Untick “check only” to import.") : t("saved")}</div>
-        <div class="tbl"><table><tbody>${Object.entries(r.counts).map(([k, v]) => `<tr><td>${esc(k)}</td><td class="num">${v}</td></tr>`).join("")}</tbody></table></div>
+        <div class="tbl"><table><tbody>${Object.entries(r.counts).map(([k, v]) => `<tr><td>${esc(k)}</td><td class="num">${v}</td></tr>`).join("") || `<tr><td>${esc(L2("Nothing new to import", "لا يوجد جديد للاستيراد"))}</td><td></td></tr>`}</tbody></table></div>
+        ${r.skipped && Object.keys(r.skipped).length ? `<div class="banner info" style="margin-top:6px">${esc(L2("Already in the books, skipped: ", "موجود بالفعل وتم تخطيه: "))}${Object.entries(r.skipped).map(([k, v]) => `${esc(sheetLabel(k))} ${v}`).join(" · ")}</div>` : ""}
         ${(r.notes || []).map(n => `<div class="banner info" style="margin-top:6px">${esc(n)}</div>`).join("")}`;
       if (!r.dry_run) await refreshBoot();
     } catch (e) {
@@ -6144,14 +6165,16 @@ function importWizard(sheet) {
     <p class="muted" style="margin-top:0">${L2("Use the app's template, or your own sheet: its columns are matched by name (English or Arabic) and you can fix the matching below. A check runs first and lists every problem with its row number — nothing is saved until you press Import.", "استخدم قالب البرنامج أو ملفك الخاص: تتم مطابقة الأعمدة بالاسم (عربي أو إنجليزي) ويمكنك تعديل المطابقة بالأسفل. يتم الفحص أولاً ويعرض كل خطأ برقم الصف — ولا يُحفظ شيء حتى تضغط استيراد.")}</p>
     <div class="row" style="gap:6px;flex-wrap:wrap;margin-bottom:8px"><a class="btn sm" href="${tplUrl(sheet, "xlsx")}">⬇ ${L2("Excel template", "قالب Excel")}</a><a class="btn sm" href="${tplUrl(sheet, "csv")}">⬇ ${L2("CSV template", "قالب CSV")}</a></div>
     <div class="f">${L2("Your file (Excel or CSV)", "ملفك (Excel أو CSV)")}<input type="file" id="impwf" data-skip="1" accept=".xlsx,.xlsm,.csv,.txt"></div>
+    <label class="f chk"><input type="checkbox" id="impwnew" data-skip="1" checked>${esc(L2("New rows only — skip rows already in the books (your edits in the app are kept)", "الجديد فقط — تخطي الصفوف الموجودة (تبقى تعديلاتك في التطبيق كما هي)"))}</label>
     <div id="impwa"></div><div id="impwr"></div>`,
   async () => { if (!an) throw new Error(L2("Choose a file first", "اختر ملفاً أولاً")); if (!checked) { await check(); return false; }
     const r = await api("POST", "/api/import-sheet?" + qs(params()), undefined, await file.arrayBuffer());
-    toast(`${Object.values(r.counts || {}).reduce((a, b) => a + b, 0)} ${L2("imported", "تم استيرادها")}`); S.cache.impSheets = null; await refreshBoot(); },
+    const sk = Object.values(r.skipped || {}).reduce((a, b) => a + b, 0);
+    toast(`${Object.values(r.counts || {}).reduce((a, b) => a + b, 0)} ${L2("imported", "تم استيرادها")}${sk ? ` · ${sk} ${L2("already there, skipped", "موجودة وتم تخطيها")}` : ""}`); S.cache.impSheets = null; await refreshBoot(); },
   { wide: true, submitLabel: L2("Check", "فحص"), onOpen: f => {
     const btn = () => $("button[type=submit]", f);
     const mapping = () => { const m = {}; $$("#impwm select", f).forEach(sel => { if (sel.value !== "") m[sel.value] = sel.dataset.key; }); return m; };
-    params = () => ({ sheet, filename: file.name, table: an.table, header_row: an.header_row, mapping: JSON.stringify(mapping()) });
+    params = () => ({ sheet, filename: file.name, table: an.table, header_row: an.header_row, mapping: JSON.stringify(mapping()), only_new: $("#impwnew") && $("#impwnew").checked ? 1 : "" });
     const draw = () => {
       const cols = an.columns, used = mapping();
       $("#impwa", f).innerHTML = `${an.tables.length > 1 ? `<label class="f">${L2("Sheet in your file", "الورقة في ملفك")}<select id="impwt" data-skip="1">${an.tables.map(t => `<option ${t === an.table ? "selected" : ""}>${esc(t)}</option>`).join("")}</select></label>` : ""}
@@ -6176,7 +6199,8 @@ function importWizard(sheet) {
     check = async () => { const out = $("#impwr", f);
       try { const r = await api("POST", "/api/import-preview/check?" + qs(params()), undefined, await file.arrayBuffer());
         try { localStorage.setItem(mapKey(sheet, an.headers), JSON.stringify(mapping())); } catch { /* private mode */ }
-        out.innerHTML = `<div class="banner ok">✓ ${r.rows} ${L2("rows checked — no problems. Press Import to save them.", "صف تم فحصها — لا توجد أخطاء. اضغط استيراد للحفظ.")}</div>`;
+        const sk = Object.values(r.skipped || {}).reduce((x, y) => x + y, 0);
+        out.innerHTML = `<div class="banner ok">✓ ${r.rows} ${L2("rows checked — no problems. Press Import to save them.", "صف تم فحصها — لا توجد أخطاء. اضغط استيراد للحفظ.")}</div>${sk ? `<div class="banner info" style="margin-top:6px">${esc(L2(`${sk} of them are already in the books and will be skipped; ${Math.max(0, r.rows - sk)} new.`, `${sk} منها موجودة بالفعل وسيتم تخطيها؛ ${Math.max(0, r.rows - sk)} جديدة.`))}</div>` : ""}`;
         checked = true; btn().textContent = L2("Import", "استيراد");
       } catch (e) { const errs = (e.data && e.data.errors) || [];
         out.innerHTML = `<div class="banner err">${esc(e.message)}</div>${errs.length ? `<div class="tbl" style="max-height:300px;overflow:auto"><table><thead><tr><th>${L2("Row in your file", "الصف في ملفك")}</th><th>${L2("Problem", "المشكلة")}</th></tr></thead><tbody>
@@ -8311,5 +8335,173 @@ function renderLanding() {
     $$(".lp-rv", root).forEach(el => io.observe(el));
   } else $$(".lp-rv", root).forEach(el => el.classList.add("in"));
 }
+
+// ================================================== type-to-search pickers
+// Every long drop-down (accounts, business units, items, warehouses…) and every name field with suggestions (parties,
+// suppliers, categories…) becomes a search box: digits match codes from the start (5 → all 5xxx accounts, 50 → 50xx),
+// words match anywhere in the name — English or Arabic, whichever the screen shows — plus an account's type. The
+// original <select> stays in the form (hidden) so saving, filters and every existing handler work unchanged.
+const PICK_MIN = 12;
+const normAr = s => String(s || "").toLowerCase().replace(/[إأآا]/g, "ا").replace(/ى/g, "ي").replace(/ة/g, "ه").replace(/[ً-ْ]/g, "");
+function pickHay(label, value) {
+  let h = label;
+  const a = S.boot && S.boot.accounts && /^\d{3,}/.test(String(value)) && S.boot.accounts.find(x => String(x.code) === String(value));
+  if (a) h += ` ${a.name || ""} ${a.name_ar || ""} ${a.type || ""} ${String(a.subtype || "").replace(/_/g, " ")}`;
+  return normAr(h);
+}
+function pickMatch(q, items) {
+  q = normAr(q).trim(); if (!q) return items;
+  if (/^\d+$/.test(q)) return items.filter(it => String(it.v).startsWith(q) || it.l.trim().startsWith(q));
+  const words = q.split(/\s+/);
+  const hit = (h, w) => h.includes(w) || (w.length > 4 && /(es|s)$/.test(w) && h.includes(w.replace(/(es|s)$/, "")));
+  const out = items.filter(it => words.every(w => hit(it.h, w)));
+  // names that start with what was typed come first
+  return out.sort((x, y) => (normAr(y.l).startsWith(q) ? 1 : 0) - (normAr(x.l).startsWith(q) ? 1 : 0));
+}
+let pickOpen = null;
+function pickClose() { if (pickOpen) { pickOpen.list.remove(); pickOpen = null; } }
+function pickShow(inp, items, onPick, cur) {
+  pickClose();
+  const list = document.createElement("div"); list.className = "pick-list"; list.setAttribute("role", "listbox");
+  document.body.appendChild(list);
+  const st = pickOpen = { list, inp, items: [], i: 0, onPick };
+  const draw = () => {
+    const m = pickMatch(inp.dataset.q || "", items); st.items = m.slice(0, 80);
+    if (st.i >= st.items.length) st.i = 0;
+    list.innerHTML = st.items.length ? st.items.map((it, k) => `<div class="pick-o ${k === st.i ? "on" : ""} ${String(it.v) === String(cur) ? "sel" : ""}" data-k="${k}" role="option">${esc(it.l)}</div>`).join("")
+      + (m.length > 80 ? `<div class="pick-more">${esc(L2(`${m.length - 80} more — keep typing`, `${m.length - 80} أخرى — تابع الكتابة`))}</div>` : "")
+      : `<div class="pick-more">${esc(L2("Nothing matches", "لا توجد نتائج"))}</div>`;
+    const r = inp.getBoundingClientRect(), below = innerHeight - r.bottom, h = Math.min(300, Math.max(below - 12, r.top - 12));
+    Object.assign(list.style, { left: Math.max(8, Math.min(r.left, innerWidth - Math.max(r.width, 300) - 8)) + "px", width: Math.min(innerWidth - 16, Math.max(r.width, 300)) + "px", maxHeight: h + "px",
+      top: (below >= 180 || below >= r.top ? r.bottom + 4 : r.top - Math.min(h, list.scrollHeight) - 4) + "px" });
+    const on = $(".pick-o.on", list); if (on) on.scrollIntoView({ block: "nearest" });
+  };
+  st.draw = draw; draw();
+  list.addEventListener("mousedown", e => { e.preventDefault(); const o = e.target.closest(".pick-o"); if (o) { onPick(st.items[+o.dataset.k]); pickClose(); } });
+}
+addEventListener("scroll", e => { if (pickOpen && !pickOpen.list.contains(e.target)) pickOpen.draw(); }, true);
+addEventListener("resize", () => pickOpen && pickOpen.draw());
+function pickKeys(e, inp) {
+  const st = pickOpen; if (!st || st.inp !== inp) return false;
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); st.i = Math.max(0, Math.min(st.items.length - 1, st.i + (e.key === "ArrowDown" ? 1 : -1))); st.draw(); return true; }
+  if ((e.key === "Enter" || e.key === "Tab") && st.items[st.i] && (inp.dataset.q || e.key === "Enter")) { if (e.key === "Enter") e.preventDefault(); st.onPick(st.items[st.i]); pickClose(); return true; }
+  if (e.key === "Escape") { e.stopPropagation(); pickClose(); return true; }
+  return false;
+}
+function enhanceSelect(sel) {
+  if (sel.dataset.pick || sel.multiple || sel.options.length <= PICK_MIN || sel.closest(".no-pick,.pick-w")) return;
+  sel.dataset.pick = "1";
+  const w = document.createElement("span"); w.className = "pick-w";
+  const inp = document.createElement("input"); inp.type = "text"; inp.className = "pick-in"; inp.autocomplete = "off"; inp.spellcheck = false;
+  inp.setAttribute("role", "combobox"); inp.setAttribute("dir", "auto");
+  inp.placeholder = L2("Type a code or a name…", "اكتب رقماً أو اسماً…");
+  if (sel.disabled) inp.disabled = true; if (sel.required) inp.required = true;
+  sel.parentNode.insertBefore(w, sel); w.appendChild(inp); w.appendChild(sel);
+  const items = () => [...sel.options].filter(o => !o.disabled).map(o => ({ v: o.value, l: o.textContent, h: pickHay(o.textContent, o.value) }));
+  const label = () => { const o = sel.options[sel.selectedIndex]; inp.value = o ? o.textContent : ""; inp.dataset.q = ""; };
+  label();
+  const pick = it => { if (sel.value !== it.v) { sel.value = it.v; sel.dispatchEvent(new Event("change", { bubbles: true })); sel.dispatchEvent(new Event("input", { bubbles: true })); } label(); };
+  inp.addEventListener("focus", () => { inp.select(); inp.dataset.q = ""; pickShow(inp, items(), pick, sel.value); });
+  inp.addEventListener("input", () => { inp.dataset.q = inp.value; if (pickOpen && pickOpen.inp === inp) pickOpen.draw(); else pickShow(inp, items(), pick, sel.value); });
+  inp.addEventListener("keydown", e => { pickKeys(e, inp); });
+  inp.addEventListener("blur", () => setTimeout(() => { if (!pickOpen || pickOpen.inp !== inp) label(); else { pickClose(); label(); } }, 120));
+  sel.addEventListener("change", label);
+  new MutationObserver(label).observe(sel, { childList: true, subtree: true, attributes: true, attributeFilter: ["disabled"] });
+  sel.tabIndex = -1;
+}
+function enhanceList(inp) {
+  if (inp.dataset.pick || !inp.getAttribute("list") || inp.closest(".no-pick")) return;
+  const id = inp.getAttribute("list"); inp.dataset.pick = "1"; inp.dataset.listId = id; inp.removeAttribute("list"); inp.autocomplete = "off";
+  const items = () => { const dl = document.getElementById(id); return dl ? [...dl.options].map(o => ({ v: o.value, l: o.textContent || o.value, h: normAr((o.textContent || "") + " " + o.value) })) : []; };
+  const pick = it => { inp.value = it.v; inp.dispatchEvent(new Event("input", { bubbles: true })); inp.dispatchEvent(new Event("change", { bubbles: true })); };
+  const open = () => { const its = items(); if (its.length) { inp.dataset.q = inp.value; pickShow(inp, its, pick, inp.value); } };
+  inp.addEventListener("focus", () => { inp.dataset.q = ""; const its = items(); if (its.length) pickShow(inp, its, pick, inp.value); });
+  inp.addEventListener("input", e => { if (!e.isTrusted) return; inp.dataset.q = inp.value; if (pickOpen && pickOpen.inp === inp) pickOpen.draw(); else open(); });
+  inp.addEventListener("keydown", e => { pickKeys(e, inp); });
+  inp.addEventListener("blur", () => setTimeout(() => { if (pickOpen && pickOpen.inp === inp) pickClose(); }, 120));
+}
+function enhancePickers(root) {
+  $$("select", root).forEach(enhanceSelect);
+  $$("input[list]", root).forEach(enhanceList);
+}
+// new screens, drawers and rows are enhanced as they appear
+let pickTimer = 0;
+new MutationObserver(() => { if (pickTimer) return; pickTimer = requestAnimationFrame(() => { pickTimer = 0; enhancePickers(document); }); })
+  .observe(document.documentElement, { childList: true, subtree: true });
+
+// ================================================== forecasting
+// Drivers (per quarter, with their source) → categories (what each kind of cost is made of) → every price, item,
+// expense, salary, depreciation, loan instalment and sales line moved forward. Cells can be overwritten; edits stay.
+const FC_SECTIONS = () => ({ prices: L2("Price list (client prices)", "قائمة الأسعار (أسعار العملاء)"), items: L2("Items & materials (unit cost)", "الأصناف والخامات (تكلفة الوحدة)"),
+  expenses: L2("Spending by account (per quarter)", "المصروفات حسب الحساب (للربع)"), payroll: L2("Payroll (per quarter)", "الرواتب (للربع)"),
+  depreciation: L2("Depreciation & amortisation", "الإهلاك والاستهلاك"), loans: L2("Loan instalments due", "أقساط القروض المستحقة"), sales: L2("Sales", "المبيعات") });
+const FC_MIX = () => [["local", L2("Local", "محلي")], ["imported", L2("Imported", "مستورد")], ["labour", L2("Labour", "عمالة")], ["energy", L2("Energy", "طاقة")]];
+PAGES.forecast = async (view) => {
+  let d = await api("GET", "/api/forecast");
+  const ed = can("reports.forecast", "edit"), pct = v => (+(v * 100).toFixed(2)), n = () => d.periods.length;
+  let tab = store.get("fcTab", "prices"), dirty = false;
+  const st = { drivers: {}, mixes: {}, assign: {}, overrides: {} };
+  const draw = () => {
+    const sec = d.sections.find(s => s.key === tab) || d.sections[0];
+    const head = d.periods.map(p => `<th class="num">${esc(p.label)}</th>`).join("");
+    view.innerHTML = `<div class="toolbar"><span class="muted">${esc(L2("Nothing is imported here — the forecast reads your books and moves them forward.", "لا يُستورد شيء هنا — التوقعات تقرأ دفاترك وتمدها للأمام."))}</span><span class="spacer"></span>
+        <label class="f" style="flex:none">${esc(L2("Quarters", "الأرباع"))}<select id="fch" ${ed ? "" : "disabled"}>${[4, 8, 12].map(k => `<option ${k === d.horizon ? "selected" : ""}>${k}</option>`).join("")}</select></label>
+        ${ed ? `<button class="btn" data-a="fcfetch">↻ ${esc(L2("Fetch latest (World Bank)", "جلب أحدث البيانات (البنك الدولي)"))}</button><button class="btn pri" data-a="fcsave" ${dirty ? "" : "disabled"}>${t("save")}</button>` : ""}</div>
+      <div class="card"><h2>${esc(L2("1 · Drivers (% change per quarter)", "١ · المحركات (نسبة التغير لكل ربع)"))}</h2>
+        <div class="tbl"><table><thead><tr><th>${esc(L2("Driver", "المحرك"))}</th>${head}<th>${esc(L2("Source / basis", "المصدر / الأساس"))}</th></tr></thead><tbody>
+        ${d.drivers.map(x => `<tr><td><b>${esc(L2(x.en, x.ar))}</b></td>${d.periods.map((p, i) => `<td class="num"><input class="num fc-in" type="number" step="0.01" ${ed ? "" : "disabled"} data-input="fcdrv" data-k="${x.key}" data-i="${i}" value="${pct(x.rates[i] || 0)}"></td>`).join("")}
+          <td><input ${ed ? "" : "disabled"} data-input="fcsrc" data-k="${x.key}" value="${esc(x.source || "")}" placeholder="${esc(L2("e.g. CAPMAS, CBE, your own estimate", "مثال: الجهاز المركزي للإحصاء، البنك المركزي، تقديرك"))}">${x.as_of ? `<div class="lines">${esc(x.as_of)}</div>` : ""}</td></tr>`).join("")}</tbody></table></div>
+        <p class="muted" style="font-size:.85em;margin-bottom:0">${esc(L2("Imported content moves with the dollar and global prices together. A driver left at 0 means no change.", "المكوّن المستورد يتحرك مع الدولار والأسعار العالمية معاً. المحرك المتروك عند 0 يعني بلا تغيير."))}</p></div>
+      <div class="card"><h2>${esc(L2("2 · What each category is made of", "٢ · مكونات كل فئة"))}</h2>
+        <div class="tbl"><table><thead><tr><th>${esc(L2("Category", "الفئة"))}</th>${FC_MIX().map(([, l]) => `<th class="num">${esc(l)} %</th>`).join("")}<th>${esc(L2("Quick fill", "تعبئة سريعة"))}</th>${head}</tr></thead><tbody>
+        ${d.categories.map(c => `<tr><td><b>${esc(FC_PRESET()[c.name] || c.name)}</b>${c.set ? "" : ` <span class="chip">${esc(L2("CPI only", "التضخم فقط"))}</span>`}</td>
+          ${FC_MIX().map(([k]) => `<td class="num"><input class="num fc-in" type="number" step="1" min="0" ${ed ? "" : "disabled"} data-input="fcmix" data-c="${esc(c.name)}" data-k="${k}" value="${Math.round((c.mix[k] || 0) * 100)}"></td>`).join("")}
+          <td><select ${ed ? "" : "disabled"} data-change="fcpre" data-c="${esc(c.name)}" class="no-pick"><option value="">—</option>${Object.keys(d.presets).map(k => `<option value="${k}">${esc(FC_PRESET()[k] || k)}</option>`).join("")}</select></td>
+          ${c.rates.map(r => `<td class="num">${pct(r)}%</td>`).join("")}</tr>`).join("") || `<tr><td colspan="9" class="muted">${esc(L2("Categories appear from your price list and items.", "تظهر الفئات من قائمة الأسعار والأصناف."))}</td></tr>`}</tbody></table></div></div>
+      <div class="tabs fc-tabs">${d.sections.map(s => `<a role="button" tabindex="0" style="cursor:pointer" data-a="fctab" data-k="${s.key}" class="${s.key === sec.key ? "on" : ""}">${esc(FC_SECTIONS()[s.key])} <span class="chip">${s.rows.length}</span></a>`).join("")}</div>
+      <div class="card">${sec.rows.length ? `<div class="tbl"><table class="fc-t"><thead><tr><th>${esc(L2("Line", "البند"))}</th><th class="num">${esc(sec.key === "sales" || sec.key === "expenses" ? L2("Quarterly average", "متوسط الربع") : L2("Today", "الآن"))}</th>${head}${sec.rows.some(r => r.cat) ? `<th>${esc(L2("Category", "الفئة"))}</th>` : ""}</tr></thead><tbody>
+        ${sec.rows.map(r => `<tr><td><b dir="auto">${esc(r.label)}</b>${r.sub ? `<div class="lines" dir="auto">${esc(r.sub)}</div>` : ""}</td><td class="num">${money(r.base)}</td>
+          ${r.values.map((v, i) => `<td class="num"><input class="num fc-in ${r.edited.includes(i) ? "fc-ed" : ""}" type="number" step="any" ${ed ? "" : "disabled"} data-change="fcov" data-k="${esc(r.key)}" data-i="${i}" value="${(+v).toFixed(2)}" title="${esc(r.edited.includes(i) ? L2("Edited by hand — clear it to go back to the forecast", "معدّل يدوياً — امسحه للعودة للتوقع") : "")}"></td>`).join("")}
+          ${sec.rows.some(x => x.cat) ? `<td>${r.cat ? `<input ${ed ? "" : "disabled"} class="fc-cat" list="fccats" data-change="fcassign" data-k="${esc(r.key.split(":").slice(0, 2).join(":"))}" value="${esc(r.cat)}">` : ""}</td>` : ""}</tr>`).join("")}
+        </tbody></table></div>${datalist("fccats", d.categories.map(c => c.name))}
+        ${sec.history ? `<p class="muted" style="font-size:.85em">${esc(L2("Small figures under each line: the quarters seen in your books", "الأرقام الصغيرة تحت كل بند: الأرباع المسجلة في دفاترك"))} (${esc(sec.history.join(" · "))}).${sec.key === "sales" ? " " + esc(L2("Sales accounts follow their own trend; unit prices follow their category.", "حسابات المبيعات تتبع اتجاهها؛ وأسعار الوحدات تتبع فئتها.")) : ""}</p>` : ""}`
+        : `<div class="empty">${esc(L2("Nothing in the books for this yet.", "لا يوجد شيء في الدفاتر لهذا بعد."))}</div>`}</div>`;
+  };
+  const changed = () => { dirty = true; const b = $("[data-a=fcsave]", view); if (b) b.disabled = false; };
+  const body = () => {
+    const drivers = {}; d.drivers.forEach(x => { drivers[x.key] = { rates: (st.drivers[x.key] || x.rates).slice(0, n()), source: x.source || "", as_of: x.as_of || "" }; });
+    const mixes = {}; d.categories.forEach(c => { if (c.set || st.mixes[c.name]) mixes[c.name] = st.mixes[c.name] || c.mix; });
+    const overrides = {}; d.sections.forEach(s => s.rows.forEach(r => { if (r.edited.length) overrides[r.key] = Object.fromEntries(r.edited.map(i => [i, r.values[i]])); }));
+    Object.entries(st.overrides).forEach(([k, o]) => { overrides[k] = { ...(overrides[k] || {}), ...o }; Object.keys(overrides[k]).forEach(i => { if (overrides[k][i] === null) delete overrides[k][i]; }); });
+    return { horizon: +($("#fch") || {}).value || d.horizon, drivers, mixes, assign: st.assign, overrides };
+  };
+  Object.assign(S.H, {
+    fctab: el => { tab = el.dataset.k; store.set("fcTab", tab); draw(); },
+    fcdrv: el => { const x = d.drivers.find(y => y.key === el.dataset.k); const r = (st.drivers[x.key] = st.drivers[x.key] || x.rates.slice()); r[+el.dataset.i] = (+el.value || 0) / 100; changed(); },
+    fcsrc: el => { d.drivers.find(y => y.key === el.dataset.k).source = el.value; changed(); },
+    fcmix: el => { const c = d.categories.find(y => y.name === el.dataset.c); const m = (st.mixes[c.name] = st.mixes[c.name] || { ...c.mix }); m[el.dataset.k] = (+el.value || 0) / 100; changed(); },
+    fcpre: el => { if (!el.value) return; st.mixes[el.dataset.c] = { ...d.presets[el.value] }; changed(); S.H.fcsave(); },
+    fcov: el => { const o = (st.overrides[el.dataset.k] = st.overrides[el.dataset.k] || {}); o[el.dataset.i] = el.value === "" ? null : +el.value; el.classList.add("fc-ed"); changed(); },
+    fcassign: el => { st.assign[el.dataset.k] = el.value.trim(); changed(); },
+    fcsave: async () => { try { d = await api("PUT", "/api/forecast", body()); Object.assign(st, { drivers: {}, mixes: {}, assign: {}, overrides: {} }); dirty = false; toast(t("saved")); draw(); } catch (e) { fail(e); } },
+    // official figures from the World Bank's open data: Egypt's consumer-price inflation, the pound against the dollar,
+    // and world inflation for global prices — the latest year published, spread evenly over the quarters
+    fcfetch: async el => { el.disabled = true; const wb = (c, ind) => fetch(`https://api.worldbank.org/v2/country/${c}/indicator/${ind}?format=json&mrnev=2`).then(r => r.json()).then(j => (j[1] || []).filter(x => x.value != null));
+      try {
+        const [cpi, fx, wld] = await Promise.all([wb("EGY", "FP.CPI.TOTL.ZG"), wb("EGY", "PA.NUS.FCRF"), wb("WLD", "FP.CPI.TOTL.ZG")]);
+        const q = a => Math.pow(1 + a, 0.25) - 1, set = (k, annual, src) => { const x = d.drivers.find(y => y.key === k); st.drivers[k] = Array(n()).fill(q(annual)); x.source = src; x.as_of = today(); };
+        if (cpi[0]) set("cpi", cpi[0].value / 100, `World Bank (WDI): Egypt consumer-price inflation ${cpi[0].date} = ${cpi[0].value.toFixed(1)}% a year`);
+        if (fx.length > 1) { const a = fx[0].value / fx[1].value - 1; set("fx", a, `World Bank (WDI): EGP per USD ${fx[1].date} ${fx[1].value.toFixed(2)} → ${fx[0].date} ${fx[0].value.toFixed(2)} (${(a * 100).toFixed(1)}% a year)`); }
+        if (wld[0]) set("global", wld[0].value / 100, `World Bank (WDI): world inflation ${wld[0].date} = ${wld[0].value.toFixed(1)}% a year`);
+        ["wages", "fuel"].forEach(k => { const x = d.drivers.find(y => y.key === k); if (!x.rates.some(Boolean) && cpi[0]) { st.drivers[k] = st.drivers.cpi.slice(); x.source = L2("Assumed equal to CPI — change it if you expect more or less", "مفترض مساوٍ للتضخم — غيّره إن توقعت أكثر أو أقل"); } });
+        d.drivers.forEach(x => { if (st.drivers[x.key]) x.rates = st.drivers[x.key]; });
+        changed(); draw(); toast(L2("Fetched — check the figures, then Save", "تم الجلب — راجع الأرقام ثم احفظ"));
+      } catch (e) { fail(new Error(L2("Could not reach the World Bank's data — check the connection, or type the figures yourself.", "تعذر الوصول لبيانات البنك الدولي — تحقق من الاتصال أو اكتب الأرقام بنفسك."))); } finally { el.disabled = false; } },
+  });
+  view.addEventListener("change", e => { if (e.target.id === "fch") { changed(); S.H.fcsave(); } });
+  draw();
+};
+const FC_PRESET = () => ({ general: L2("General (CPI)", "عام (التضخم)"), local_materials: L2("Local materials", "خامات محلية"), imported_materials: L2("Imported materials", "خامات مستوردة"),
+  labour: L2("Labour", "عمالة"), works: L2("Works (mixed)", "أعمال (مختلطة)"), energy: L2("Energy & transport", "طاقة ونقل") });
 
 })();

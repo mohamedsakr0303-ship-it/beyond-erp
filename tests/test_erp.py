@@ -3469,6 +3469,39 @@ class BrandDefaults(unittest.TestCase):
         self.assertEqual(json.loads(d.one("SELECT value FROM settings WHERE key='appearance'")["value"])["app_name"], "Beyond Design")
 
 
+class ImportOnlyNew(unittest.TestCase):
+    """'New rows only': a sheet exported earlier, edited in the app since, plus new rows — only the new rows come in."""
+
+    def test_only_new_rows(self):
+        from erp import demo
+        db = Database(":memory:")
+        demo.load(db)
+        tables = ("journal_entries", "journal_lines", "parties", "stock_moves", "extracts", "employees", "attendance", "budgets")
+        count = lambda: {t: db.one(f"SELECT COUNT(*) n FROM {t}")["n"] for t in tables}  # noqa: E731
+        data = interchange.export_data(db)
+        before = count()
+        # the whole book again: nothing new
+        res = interchange.import_data(db, data, mode="new")
+        self.assertEqual(count(), before)
+        self.assertFalse(any(res["counts"].values()))
+        self.assertTrue(res["skipped"])
+        # a party edited in the app since the export keeps the app's version; a new voucher and party come in
+        first = data["Parties"][0]["name"]
+        db.x("UPDATE parties SET tax_id='999' WHERE name=?", (first,))
+        sheet = {"Journal Vouchers": data["Journal Vouchers"] + [
+                     {"voucher": "NEW-1", "date": "2026-03-03", "kind": "Journal Entry", "memo": "brand new", "account": "6010", "debit": 123.45},
+                     {"voucher": "NEW-1", "date": "2026-03-03", "kind": "Journal Entry", "memo": "brand new", "account": "1010", "credit": 123.45}],
+                 "Parties": data["Parties"] + [{"name": "Brand New Client", "type": "customer"}]}
+        res = interchange.import_data(db, sheet, mode="new")
+        after = count()
+        self.assertEqual(after["journal_entries"], before["journal_entries"] + 1)
+        self.assertEqual(after["parties"], before["parties"] + 1)
+        self.assertEqual(db.one("SELECT tax_id FROM parties WHERE name=?", (first,))["tax_id"], "999")
+        # and the same file a second time adds nothing
+        interchange.import_data(db, sheet, mode="new")
+        self.assertEqual(count(), after)
+
+
 class Support(unittest.TestCase):
     """Help & support tickets: a reference built from the date and record number; people see their own, admins all."""
 
@@ -3598,3 +3631,37 @@ class WorkspaceCatchUp(unittest.TestCase):
         js = (Path(__file__).resolve().parents[1] / "web-src" / "bridge.js").read_text()
         self.assertIn("HEAVY = /^\\/api\\/(import(\\?|$)|import-sheet|demo|erase|setup)/", js)   # same rule in the browser
         self.assertIn("await breathe()", js)
+
+
+class Forecasting(unittest.TestCase):
+    """Driver-based price forecast: escalation from CPI/wages/FX/fuel/global, category mixes, overrides kept."""
+
+    def test_forecast(self):
+        import datetime as _dt
+        from erp import demo, forecast
+        db = Database(":memory:")
+        demo.load(db)
+        db.x("INSERT INTO stock_items(name, unit, category, std_cost, price) VALUES ('Price-only tile','m2','imported_materials',10000,15000)")
+        self.assertEqual(db.one("SELECT COALESCE(SUM(qty),0) q FROM stock_moves WHERE item_id=(SELECT id FROM stock_items WHERE name='Price-only tile')")["q"], 0)
+        forecast.save(db, {"horizon": 4, "drivers": {"cpi": {"rates": [0.03]}, "fx": {"rates": [0.02]}, "global": {"rates": [0.01]},
+                                                     "wages": {"rates": [0.04]}, "fuel": {"rates": [0.05]}},
+                           "overrides": {"item:x": {"1": 7}}})
+        q = forecast.quarters(4, _dt.date(2026, 11, 5))
+        self.assertEqual([p["key"] for p in q], ["2027-Q1", "2027-Q2", "2027-Q3", "2027-Q4"])
+        a = forecast.assumptions(db)
+        _dr, blocks = forecast.escalation(a, 4)
+        self.assertAlmostEqual(blocks["imported"][0], 1.02 * 1.01 - 1)
+        self.assertAlmostEqual(blocks["local"][3], 0.03)                     # the last quarter's rate carries on
+        out = forecast.build(db, _dt.date(2026, 11, 5))
+        items = next(s for s in out["sections"] if s["key"] == "items")["rows"]
+        tile = next(r for r in items if r["label"] == "Price-only tile")   # zero stock still gets a price path
+        self.assertEqual(tile["base"], 100.0)
+        self.assertGreater(tile["values"][0], 100.0)
+        self.assertGreater(tile["values"][3], tile["values"][0])
+        # an override replaces that quarter only
+        forecast.save(db, {**forecast.assumptions(db), "overrides": {tile["key"]: {"2": 150}}})
+        tile2 = next(r for r in next(s for s in forecast.build(db, _dt.date(2026, 11, 5))["sections"] if s["key"] == "items")["rows"]
+                     if r["label"] == "Price-only tile")
+        self.assertEqual(tile2["values"][2], 150)
+        self.assertEqual(tile2["edited"], [2])
+        self.assertEqual(tile2["values"][0], tile["values"][0])

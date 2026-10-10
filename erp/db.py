@@ -1554,7 +1554,7 @@ SUBMODULES = {
     "assets": ["overview", "cash", "register", "depreciation"],
     "accounting": ["journal", "ledger", "coa", "loans", "bankrec", "recurring", "budgets"],
     "partners": ["equity", "transactions", "ownership"],
-    "reports": ["partner_pack", "income_statement", "balance_sheet", "cash_flow", "trial_balance", "budget", "aging", "statement"],
+    "reports": ["partner_pack", "income_statement", "balance_sheet", "cash_flow", "trial_balance", "budget", "aging", "statement", "forecast"],
     "tax": ["codes", "report", "einvoice", "ereceipt"],
     "import_export": ["export", "import"],
     "settings": ["company", "branding", "menus", "system"],
@@ -1705,6 +1705,9 @@ class Database:
                                     ("prev_paid", "INTEGER"), ("deductions", "INTEGER DEFAULT 0"), ("notes", "TEXT DEFAULT ''"),
                                     ("final", "INTEGER DEFAULT 0")])
         self._add_cols("extract_lines", [("pct", "REAL DEFAULT 1")])
+        # items can carry their standard cost and selling price, so a price list can live here even with nothing in stock
+        self._add_cols("stock_items", [("category", "TEXT DEFAULT ''"), ("std_cost", "INTEGER DEFAULT 0"), ("price", "INTEGER DEFAULT 0"),
+                                       ("notes", "TEXT DEFAULT ''")])
         self._add_cols("rent_items", [("life_months", "INTEGER NOT NULL DEFAULT 120"), ("residual_pct", "REAL NOT NULL DEFAULT 0.1")])
         self._add_cols("rent_lots", [("opening_accum", "INTEGER NOT NULL DEFAULT 0"), ("depr_start", "TEXT DEFAULT ''")])
         self._add_cols("rentals", [("min_days", "INTEGER NOT NULL DEFAULT 0"), ("deposit", "INTEGER NOT NULL DEFAULT 0"),

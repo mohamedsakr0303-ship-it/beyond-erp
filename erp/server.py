@@ -923,7 +923,40 @@ def stock(ctx):
         raise PermissionError()
     return ok({"levels": acc.stock_report(ctx.db, ctx.q.get("warehouse_id"), ctx.q.get("q")),
                "warehouses": ctx.db.q("SELECT * FROM warehouses ORDER BY id"),
-               "items": ctx.db.q("SELECT * FROM stock_items ORDER BY name")})
+               "items": ctx.db.q("SELECT * FROM stock_items ORDER BY name"), "catalog": item_catalog(ctx.db, ctx.q.get("q"))})
+
+
+def item_catalog(db, q=None):
+    """Every item — with stock or not — with its standard cost, selling price, what is on hand and the last price paid."""
+    rows = db.q("""SELECT i.*, COALESCE((SELECT SUM(qty) FROM stock_levels WHERE item_id=i.id),0) AS on_hand,
+                          COALESCE((SELECT SUM(qty*avg_cost) FROM stock_levels WHERE item_id=i.id),0) AS value_minor,
+                          (SELECT rate FROM stock_moves WHERE item_id=i.id AND qty>0 AND kind='Receipt'
+                           ORDER BY date DESC, id DESC LIMIT 1) AS last_rate,
+                          (SELECT date FROM stock_moves WHERE item_id=i.id AND qty>0 AND kind='Receipt' ORDER BY date DESC, id DESC LIMIT 1) AS last_date
+                   FROM stock_items i""" + (" WHERE i.name LIKE ? OR i.sku LIKE ? OR i.category LIKE ?" if q else "") + " ORDER BY i.category, i.name",
+                ([f"%{q}%"] * 3) if q else [])
+    for r in rows:
+        r["std_cost"], r["price"] = to_major(r.get("std_cost") or 0), to_major(r.get("price") or 0)
+        r["value"], r["last_rate"] = to_major(r.pop("value_minor") or 0), to_major(r["last_rate"]) if r["last_rate"] is not None else None
+    return rows
+
+
+def _item_vals(b):
+    return (acc.text(b.get("name"), "name", required=True), acc.text(b.get("unit")) or "pcs", acc.text(b.get("sku")),
+            acc.num(b.get("reorder_level"), "reorder level"), acc.text(b.get("category")),
+            to_minor(acc.num(b.get("std_cost"), "standard cost")), to_minor(acc.num(b.get("price"), "selling price")),
+            acc.text(b.get("notes"), maxlen=1000))
+
+
+@route("POST", "/api/items", "stock.balances", "add")
+def item_add(ctx):
+    """An item can exist with nothing in stock — just its prices, for quotations and forecasting."""
+    v = _item_vals(ctx.body)
+    if ctx.db.one("SELECT 1 FROM stock_items WHERE name=?", (v[0],)):
+        raise acc.ValidationError(f"{v[0]} already exists")
+    iid = ctx.db.x("INSERT INTO stock_items(name,unit,sku,reorder_level,category,std_cost,price,notes) VALUES (?,?,?,?,?,?,?,?)", v).lastrowid
+    ctx.log("item.add", v[0])
+    return ok({"id": iid})
 
 
 @route("GET", "/api/stock/moves", "stock.moves")
@@ -998,9 +1031,8 @@ def item_del(ctx, iid):
 @route("PUT", "/api/items/<iid>", "stock.balances", "edit")
 def item_edit(ctx, iid):
     b = ctx.body
-    ctx.db.x("UPDATE stock_items SET name=?, unit=?, sku=?, reorder_level=? WHERE id=?",
-             (acc.text(b.get("name"), "name", required=True), acc.text(b.get("unit")) or "pcs", acc.text(b.get("sku")),
-              acc.num(b.get("reorder_level"), "reorder level"), int(iid)))
+    ctx.db.x("UPDATE stock_items SET name=?, unit=?, sku=?, reorder_level=?, category=?, std_cost=?, price=?, notes=? WHERE id=?",
+             (*_item_vals(b), int(iid)))
     return ok()
 
 
@@ -3304,7 +3336,8 @@ def _sheet_import(ctx, dry):
     rows, nums = importkit.read(ctx.db, name, ctx.raw, ctx.q.get("filename") or "", mapping, ctx.q.get("table") or None,
                           ctx.q.get("header_row") if ctx.q.get("header_row") not in (None, "") else None)
     try:
-        res = interchange.import_data(ctx.db, {name: rows}, mode="append", dry_run=dry, user=ctx.user["username"])
+        res = interchange.import_data(ctx.db, {name: rows}, mode="new" if ctx.q.get("only_new") in ("1", "true") else "append",
+                                      dry_run=dry, user=ctx.user["username"])
     except interchange.ImportErrors as e:
         from .interchange import FIRST_DATA_ROW
         errs = []
@@ -3673,6 +3706,21 @@ def ai_params(ctx):
     from . import ai
     p, params = ai.request_params(ctx.db, ctx.user, ctx.body)
     return ok({"params": params})
+
+
+# ================================================================= forecasting
+@route("GET", "/api/forecast", "reports.forecast")
+def forecast_get(ctx):
+    from . import forecast
+    return ok(forecast.build(ctx.db))
+
+
+@route("PUT", "/api/forecast", "reports.forecast", "edit")
+def forecast_put(ctx):
+    from . import forecast
+    forecast.save(ctx.db, ctx.body)
+    ctx.log("forecast.assumptions", "")
+    return ok(forecast.build(ctx.db))
 
 
 # ================================================================= help & support
