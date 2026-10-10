@@ -402,7 +402,7 @@ function setQ(q) { const { parts } = parseHash(); location.hash = "#/" + parts.j
 
 const PAGES = {};
 async function route() {
-  if (!S.boot || !S.boot.user) return;
+  if (!S.boot || !S.boot.user || !$("#nav")) return;   // still on sign-in / set-up: nothing to route yet
   S.H = { ...S.GLOBAL_H };
   const { parts, q } = parseHash();
   // land on the first screen this user may open when the requested one is not permitted
@@ -1306,9 +1306,39 @@ function reportTable(tb) {
     }
     return esc(v);
   };
-  return `<div class="tbl"><table><thead><tr>${tb.columns.map(c => `<th class="${c.align === "right" ? "num" : ""}">${esc(c.label)}</th>`).join("")}</tr></thead>
-    <tbody>${tb.rows.map(r => `<tr class="${r.style}">${r.cells.map((v, i) => `<td class="${tb.columns[i].align === "right" ? "num" : ""} ${typeof v === "number" && v < 0 ? "neg" : ""}" ${i === 0 && r.indent ? `style="padding-inline-start:${10 + 16 * r.indent}px"` : ""}>${fmtCell(v, tb.columns[i], r)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+  const row = r => `<tr class="${r.style}">${r.cells.map((v, i) => `<td class="${tb.columns[i].align === "right" ? "num" : ""} ${typeof v === "number" && v < 0 ? "neg" : ""}" ${i === 0 && r.indent ? `style="padding-inline-start:${10 + 16 * r.indent}px"` : ""}>${fmtCell(v, tb.columns[i], r)}</td>`).join("")}</tr>`;
+  // a long report (a whole year's ledger) shows in pages so the screen stays quick; totals at the end stay visible and exports hold every row
+  let rows = tb.rows, more = "";
+  if (rows.length > (tb.shown || RT_PAGE)) {
+    const shown = tb.shown || RT_PAGE, tail = [];
+    for (let i = rows.length - 1; i >= shown && tail.length < 3 && /total|grand/.test(rows[i].style || ""); i--) tail.unshift(rows[i]);
+    const id = "rt" + (++RT_SEQ); RT_TABLES[id] = tb; delete RT_TABLES["rt" + (RT_SEQ - 6)];
+    more = `<div class="rt-more"><span class="muted">${esc(L2(`Showing ${numf(shown)} of ${numf(rows.length)} rows — narrow the dates or account, or export for all.`, `يظهر ${numf(shown)} من ${numf(rows.length)} سطر — ضيّق التواريخ أو الحساب، أو صدّر الملف لكل الأسطر.`))}</span>
+      <button class="btn sm" data-a="rtmore" data-rt="${id}">${esc(L2(`Show ${numf(Math.min(RT_PAGE, rows.length - shown))} more`, `عرض ${numf(Math.min(RT_PAGE, rows.length - shown))} أخرى`))}</button>
+      ${rows.length <= 8000 ? `<button class="btn sm" data-a="rtmore" data-rt="${id}" data-all="1">${esc(L2("Show all", "عرض الكل"))}</button>` : ""}</div>`;
+    rows = rows.slice(0, shown).concat(tail);
+  }
+  return `<div class="rt-wrap"><div class="tbl"><table><thead><tr>${tb.columns.map(c => `<th class="${c.align === "right" ? "num" : ""}">${esc(c.label)}</th>`).join("")}</tr></thead>
+    <tbody>${rows.map(row).join("")}</tbody></table></div>${more}</div>`;
 }
+// long lists on a screen: the first rows, then "show all" (filters and exports still cover everything)
+const LIST_CAP = 300;
+function capRows(rows, key) {
+  S.showAll = S.showAll || {};
+  if (rows.length <= LIST_CAP || S.showAll[key] === location.hash) return { rows, foot: "" };
+  return { rows: rows.slice(0, LIST_CAP), foot: `<div class="rt-more"><span class="muted">${esc(L2(`Showing ${numf(LIST_CAP)} of ${numf(rows.length)} — search or filter to narrow it down.`, `يظهر ${numf(LIST_CAP)} من ${numf(rows.length)} — ابحث أو صفِّ لتضييق القائمة.`))}</span>
+    <button class="btn sm" data-a="capall" data-k="${esc(key)}">${esc(L2("Show all", "عرض الكل"))}</button></div>` };
+}
+S.GLOBAL_H.capall = el => { S.showAll[el.dataset.k] = location.hash; route(); };
+const RT_PAGE = 1500, RT_TABLES = {};
+let RT_SEQ = 0;
+S.GLOBAL_H.rtmore = el => {
+  const tb = RT_TABLES[el.dataset.rt], box = el.closest(".rt-wrap");
+  if (!tb || !box) return;
+  delete RT_TABLES[el.dataset.rt];
+  tb.shown = el.dataset.all ? tb.rows.length : (tb.shown || RT_PAGE) + RT_PAGE;
+  box.outerHTML = reportTable(tb);
+};
 function voucherRows(rows) {
   if (!rows.length) return `<div class="empty">${t("nothing")}</div>`;
   return `<div class="tbl stack"><table class="vtbl"><thead><tr><th>${t("date")}</th><th>#</th><th>${t("kind")}</th><th>${t("description")}</th><th>${t("party")}</th><th>${t("bu")}</th><th class="num">${t("amount")}</th><th></th></tr></thead><tbody>
@@ -2334,19 +2364,20 @@ PAGES.stock = async (view, parts, q) => {
     async v => { if (it.id) await api("PUT", "/api/items/" + it.id, v); else await api("POST", "/api/items", v); await refreshBoot(); toast(t("saved")); });
   S.H.itemnew = () => itemForm({});
   S.H.itemedit = el => itemForm((d.catalog || []).find(x => String(x.id) === el.dataset.id) || {});
+  const SLV = capRows(d.levels, "stocklv"), CT = capRows(d.catalog || [], "stockcat");
   view.innerHTML = `<div class="toolbar">${ed ? ["Receipt", "Issue", "Transfer", "Adjustment"].map(ty => `<button class="btn ${ty === "Receipt" ? "pri" : ""}" data-a="sm${ty}">${tl(ty)}</button>`).join("") : ""}${can("stock.balances", "add") ? `<button class="btn" data-a="itemnew">+ ${esc(L2("Item", "صنف"))}</button>` : ""}<span class="spacer"></span>${exportMenu("stock", q)}</div>` +
     filterBar(q, ["warehouse", "q"]) +
     `<div class="card"><h2>${t("inventory")} — ${money(tot)} ${cur()}</h2>${d.levels.length ? `<div class="tbl"><table><thead><tr><th>${t("item")}</th><th>${t("warehouse")}</th><th>${t("unit")}</th><th class="num">${t("on_hand")}</th><th class="num">${t("avg_cost")}</th><th class="num">${t("value")}</th><th></th></tr></thead><tbody>
-      ${d.levels.map(r => `<tr><td>${esc(r.name)} ${r.low ? `<span class="chip warn">${t("reorder")}</span>` : ""}</td><td>${esc(r.warehouse)}</td><td>${esc(r.unit)}</td><td class="num ${r.qty < 0 ? "neg" : ""}">${numf(r.qty)}</td><td class="num">${money(r.avg_cost)}</td><td class="num">${money(r.value)}</td>
-      <td>${can("stock.balances", "edit") && !r.qty && !r.value ? `<button class="btn sm danger" data-a="itemdel" data-id="${r.item_id}" data-n="${esc(r.name)}" title="${S.lang === "ar" ? "حذف صنف بدون حركات" : "Delete an item that has no movements"}">✕</button> ` : ""}${ed ? `<button class="btn sm" data-a="smIssue" data-item="${esc(r.name)}" data-wh="${r.warehouse_id}">${tl("Issue")}</button> <button class="btn sm" data-a="smAdjustment" data-item="${esc(r.name)}" data-wh="${r.warehouse_id}">${tl("Adjustment")}</button>` : ""}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${t("nothing")}</div>`}</div>`;
+      ${SLV.rows.map(r => `<tr><td>${esc(r.name)} ${r.low ? `<span class="chip warn">${t("reorder")}</span>` : ""}</td><td>${esc(r.warehouse)}</td><td>${esc(r.unit)}</td><td class="num ${r.qty < 0 ? "neg" : ""}">${numf(r.qty)}</td><td class="num">${money(r.avg_cost)}</td><td class="num">${money(r.value)}</td>
+      <td>${can("stock.balances", "edit") && !r.qty && !r.value ? `<button class="btn sm danger" data-a="itemdel" data-id="${r.item_id}" data-n="${esc(r.name)}" title="${S.lang === "ar" ? "حذف صنف بدون حركات" : "Delete an item that has no movements"}">✕</button> ` : ""}${ed ? `<button class="btn sm" data-a="smIssue" data-item="${esc(r.name)}" data-wh="${r.warehouse_id}">${tl("Issue")}</button> <button class="btn sm" data-a="smAdjustment" data-item="${esc(r.name)}" data-wh="${r.warehouse_id}">${tl("Adjustment")}</button>` : ""}</td></tr>`).join("")}</tbody></table></div>${SLV.foot}` : `<div class="empty">${t("nothing")}</div>`}</div>`;
   const cat = d.catalog || [];
   if (cat.length) view.insertAdjacentHTML("beforeend", `<div class="card"><h2>${esc(L2("Items & prices", "الأصناف والأسعار"))} <span class="chip">${cat.length}</span></h2>
     <p class="muted" style="margin-top:0">${esc(L2("Every item, with or without stock: its standard cost, selling price and the last price you paid.", "كل الأصناف، بمخزون أو بدونه: التكلفة المعيارية وسعر البيع وآخر سعر شراء."))}</p>
     <div class="tbl stack"><table><thead><tr><th>${t("item")}</th><th>${esc(L2("Category", "التصنيف"))}</th><th>${t("unit")}</th><th class="num">${t("on_hand")}</th>
       <th class="num">${esc(L2("Standard cost", "التكلفة المعيارية"))}</th><th class="num">${esc(L2("Last paid", "آخر سعر شراء"))}</th><th class="num">${esc(L2("Selling price", "سعر البيع"))}</th></tr></thead><tbody>
-    ${cat.map(r => `<tr class="${can("stock.balances", "edit") ? "click" : ""}" data-a="${can("stock.balances", "edit") ? "itemedit" : ""}" data-id="${r.id}"><td><b>${esc(r.name)}</b>${r.sku ? ` <span class="muted">${esc(r.sku)}</span>` : ""}</td><td>${esc(r.category || "")}</td><td>${esc(r.unit)}</td>
+    ${CT.rows.map(r => `<tr class="${can("stock.balances", "edit") ? "click" : ""}" data-a="${can("stock.balances", "edit") ? "itemedit" : ""}" data-id="${r.id}"><td><b>${esc(r.name)}</b>${r.sku ? ` <span class="muted">${esc(r.sku)}</span>` : ""}</td><td>${esc(r.category || "")}</td><td>${esc(r.unit)}</td>
       <td class="num">${r.on_hand ? numf(r.on_hand) : "—"}</td><td class="num">${r.std_cost ? money(r.std_cost) : "—"}</td>
-      <td class="num">${r.last_rate != null ? money(r.last_rate) + `<div class="lines">${fd(r.last_date)}</div>` : "—"}</td><td class="num">${r.price ? money(r.price) : "—"}</td></tr>`).join("")}</tbody></table></div></div>`);
+      <td class="num">${r.last_rate != null ? money(r.last_rate) + `<div class="lines">${fd(r.last_date)}</div>` : "—"}</td><td class="num">${r.price ? money(r.price) : "—"}</td></tr>`).join("")}</tbody></table></div>${CT.foot}</div>`);
 };
 PAGES.moves = async (view, parts, q) => {
   const lq = { ...q, limit: q.limit || 100 };

@@ -7,9 +7,12 @@ the right debit/credit lines, so every report comes from one source of truth.
 System accounts are looked up by *role* (db.acct('bank')), never by a
 hard-coded number, so the chart of accounts can be renumbered freely.
 """
+import copy
 import datetime as _dt
+import functools
 import json
 import re
+import weakref
 
 from .db import SUBTYPES, normal_for, to_major, to_minor
 
@@ -1026,7 +1029,48 @@ def post_extract(db, xid, date=None, user="", ar_account=None, revenue_account=N
 # ====================================================================== REPORTS
 LIVE = "e.status='posted'"
 PARTY = "COALESCE(NULLIF(l.party,''), e.party)"  # a line's own party, else the entry's
+def ref_prefix(prefix):
+    """A GLOB pattern for references starting with this text (case-sensitive, so the ref index is used)."""
+    return re.sub(r"([*?\[])", r"[\1]", prefix) + "*"
 
+
+PARTY_IS = "l.id IN (SELECT id FROM party_lines WHERE party=?)"  # same as {PARTY_IS} but uses the indexes
+
+
+
+_MEMO = weakref.WeakKeyDictionary()
+
+
+def memo(fn):
+    """Figures read from the books, reused until anything is written. Keyed on the connection's change count
+    and SQLite's data_version (which moves when another connection commits) plus today's date, so a cached
+    answer can never be stale; callers get their own copy."""
+    @functools.wraps(fn)
+    def wrap(db, *a, **kw):
+        conn = getattr(db, "conn", None)
+        ver = getattr(conn, "total_changes", None)
+        if ver is None:                       # browser build: no cheap change counter
+            return fn(db, *a, **kw)
+        try:
+            with db.lock:
+                dv = conn.execute("PRAGMA data_version").fetchone()[0]
+            key = (fn.__name__, a, tuple(sorted(kw.items())))
+            hash(key)
+        except (TypeError, AttributeError):
+            return fn(db, *a, **kw)
+        stamp = (ver, dv, today())
+        try:
+            box = _MEMO.get(db)
+        except TypeError:
+            return fn(db, *a, **kw)
+        if not box or box[0] != stamp or box[2] is not conn:     # a restore opens a new connection: start again
+            box = _MEMO[db] = (stamp, {}, conn)
+        if key not in box[1]:
+            if len(box[1]) > 200:
+                box[1].clear()
+            box[1][key] = fn(db, *a, **kw)
+        return copy.deepcopy(box[1][key])
+    return wrap
 
 def _where(date_from=None, date_to=None, bu_id=None):
     w, p = [LIVE], []
@@ -1045,13 +1089,14 @@ def _where(date_from=None, date_to=None, bu_id=None):
     return " AND ".join(w), p
 
 
+@memo
 def account_totals(db, **kw):
     w, p = _where(**kw)
     rows = db.q(f"""SELECT a.code, a.name, a.type, a.subtype, a.normal, a.role,
-                    COALESCE(SUM(l.debit),0) AS dr, COALESCE(SUM(l.credit),0) AS cr
-                    FROM accounts a LEFT JOIN journal_lines l ON l.account=a.code
-                     AND l.entry_id IN (SELECT e.id FROM journal_entries e WHERE {w})
-                    GROUP BY a.code ORDER BY a.code""", p)
+                    COALESCE(t.dr,0) AS dr, COALESCE(t.cr,0) AS cr
+                    FROM accounts a LEFT JOIN (SELECT l.account, SUM(l.debit) AS dr, SUM(l.credit) AS cr
+                         FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id WHERE {w} GROUP BY l.account) t
+                      ON t.account=a.code ORDER BY a.code""", p)
     for r in rows:
         r["net"] = r["dr"] - r["cr"]  # debit-positive
     return rows
@@ -1088,6 +1133,7 @@ def _by_subtype(rows):
     return m
 
 
+@memo
 def income_statement(db, date_from=None, date_to=None, bu_id=None, allocate_overhead=False):
     """Revenue → Net sales → Gross profit → Operating expenses → EBITDA → D&A → EBIT
     → interest & other → EBT → income tax → Net profit."""
@@ -1154,6 +1200,7 @@ BS_NONCURRENT_LIABILITIES = ["long_term_debt", "other_noncurrent_liability"]
 BS_EQUITY = ["capital", "partner_current", "reserves", "retained_earnings", "other_equity", "drawings"]
 
 
+@memo
 def balance_sheet(db, date_to=None, bu_id=None):
     rows = account_totals(db, date_to=date_to, bu_id=bu_id)
     sub = _by_subtype([r for r in rows if r["dr"] or r["cr"]])
@@ -1200,6 +1247,7 @@ CF_FINANCING = [("short_term_debt", "Short-term debt issued / (repaid)"),
                 (("drawings", "dividends_payable"), "Dividends / partner drawings paid")]
 
 
+@memo
 def cash_flow(db, date_from=None, date_to=None, bu_id=None):
     """Indirect-method statement: net income, add back non-cash, working-capital
     changes, investing and financing — reconciled to the change in cash."""
@@ -1247,7 +1295,7 @@ def general_ledger(db, account=None, date_from=None, date_to=None, bu_id=None, p
         w += " AND l.account=?"
         p.append(account)
     if party:
-        w += f" AND {PARTY}=?"
+        w += f" AND {PARTY_IS}"
         p.append(party)
     opening = 0
     if acc and date_from:
@@ -1271,7 +1319,7 @@ def general_ledger(db, account=None, date_from=None, date_to=None, bu_id=None, p
 
 def party_balance(db, account, party):
     r = db.one(f"SELECT COALESCE(SUM(l.credit-l.debit),0) AS n FROM journal_lines l JOIN journal_entries e "
-               f"ON e.id=l.entry_id WHERE {LIVE} AND l.account=? AND {PARTY}=?", (account, party))
+               f"ON e.id=l.entry_id WHERE {LIVE} AND l.account=? AND {PARTY_IS}", (account, party))
     return to_major(r["n"])
 
 
@@ -1284,7 +1332,7 @@ def contact_summary(db, name, limit=30):
     """What the books say about one contact: open balances per account, totals and the latest vouchers."""
     rows = db.q(f"""SELECT l.account, a.name, a.name_ar, a.type, a.subtype, a.role, SUM(l.debit) dr, SUM(l.credit) cr
                     FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id JOIN accounts a ON a.code=l.account
-                    WHERE {LIVE} AND {PARTY}=? GROUP BY l.account ORDER BY l.account""", (name,))
+                    WHERE {LIVE} AND {PARTY_IS} GROUP BY l.account ORDER BY l.account""", (name,))
     balances, spent, earned = [], 0, 0
     for r in rows:
         if r["type"] in ("COGS", "Expense") or r["subtype"] in ("fixed_asset", "inventory"):
@@ -1297,13 +1345,13 @@ def contact_summary(db, name, limit=30):
             balances.append({"account": r["account"], "name": r["name"], "name_ar": r["name_ar"], "type": r["type"],
                              "we_owe": to_major(-bal) if liab else 0, "owes_us": 0 if liab else to_major(bal)})
     recent = db.q(f"""SELECT DISTINCT e.id, e.date, e.kind, e.memo, e.ref FROM journal_entries e
-                      JOIN journal_lines l ON l.entry_id=e.id WHERE {LIVE} AND {PARTY}=?
+                      JOIN journal_lines l ON l.entry_id=e.id WHERE {LIVE} AND {PARTY_IS}
                       ORDER BY e.date DESC, e.id DESC LIMIT ?""", (name, int(limit)))
     for r in recent:
         t = db.one("SELECT SUM(debit) n FROM journal_lines WHERE entry_id=?", (r["id"],))
         r["amount"] = to_major(t["n"] or 0)
     n = db.one(f"""SELECT COUNT(DISTINCT e.id) n, MIN(e.date) first, MAX(e.date) last FROM journal_entries e
-                   JOIN journal_lines l ON l.entry_id=e.id WHERE {LIVE} AND {PARTY}=?""", (name,))
+                   JOIN journal_lines l ON l.entry_id=e.id WHERE {LIVE} AND {PARTY_IS}""", (name,))
     return {"balances": balances, "spent": to_major(spent), "earned": to_major(earned), "vouchers": n["n"],
             "first": n["first"], "last": n["last"], "recent": recent}
 
@@ -1344,6 +1392,7 @@ def allocated_overhead(db, bu_id, date_from=None, date_to=None):
     return round(shared_overhead_total(db, date_from, date_to) * (bu["overhead_pct"] or 0 if bu else 0), 2)
 
 
+@memo
 def bu_summaries(db, date_from=None, date_to=None, status=None, q=None):
     w, p = _where(date_from=date_from, date_to=date_to)
     agg = {r["bid"]: r for r in db.q(f"""
@@ -1510,6 +1559,7 @@ def deals(db):
     return sorted(m.values(), key=lambda g: g["ref"])
 
 
+@memo
 def partner_report(db, date_from=None, date_to=None):
     partners = db.q("SELECT * FROM partners ORDER BY id")
     shares = {(r["partner_id"], r["bu_id"]): r["share"] for r in db.q("SELECT * FROM partner_shares")}
@@ -1609,6 +1659,7 @@ def dashboard(db, date_from=None, date_to=None, bu_id=None):
             "cash_position": cash_position(db), "audit": audit(db)}
 
 
+@memo
 def audit(db):
     tb = trial_balance(db)
     bs = balance_sheet(db)

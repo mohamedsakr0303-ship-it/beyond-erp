@@ -85,8 +85,8 @@ def default_accounts(db, direction, term_months=12):
 
 # ------------------------------------------------------------------ ledger
 def _entries(db, code):
-    return db.q(f"SELECT e.* FROM journal_entries e WHERE {LIVE_REF} AND (e.ref=? OR e.ref LIKE ?) ORDER BY e.date, e.id",
-                (f"LN:{code}", f"LN:{code}:%"))
+    return db.q(f"SELECT e.* FROM journal_entries e WHERE {LIVE_REF} AND (e.ref=? OR e.ref GLOB ?) ORDER BY e.date, e.id",
+                (f"LN:{code}", acc.ref_prefix(f"LN:{code}:")))
 
 
 def _sign(ln):
@@ -98,11 +98,11 @@ def _sum(db, ln, account, types=None, upto=None):
     """Signed movement on one account across this loan's entries (+ = more owed on the loan side)."""
     if not account:
         return 0
-    w = [LIVE_REF, "(e.ref=? OR e.ref LIKE ?)", "l.account=?"]
-    p = [f"LN:{ln['code']}", f"LN:{ln['code']}:%", account]
+    w = [LIVE_REF, "(e.ref=? OR e.ref GLOB ?)", "l.account=?"]
+    p = [f"LN:{ln['code']}", acc.ref_prefix(f"LN:{ln['code']}:"), account]
     if types:
-        w.append("(" + " OR ".join("e.ref LIKE ?" for _ in types) + ")")
-        p += [f"LN:{ln['code']}:{t}%" for t in types]
+        w.append("(" + " OR ".join("e.ref GLOB ?" for _ in types) + ")")
+        p += [acc.ref_prefix(f"LN:{ln['code']}:{t}") for t in types]
     if upto:
         w.append("e.date<=?")
         p.append(upto)
@@ -154,8 +154,8 @@ def earned(db, ln, upto):
     # declining: day by day on the outstanding balance
     moves = {}
     for r in db.q(f"""SELECT e.date, SUM(l.debit-l.credit) AS n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
-                      WHERE {LIVE_REF} AND (e.ref=? OR e.ref LIKE ?) AND l.account=? AND e.date<=? GROUP BY e.date""",
-                  (f"LN:{ln['code']}", f"LN:{ln['code']}:%", ln["account"], upto.isoformat())):
+                      WHERE {LIVE_REF} AND (e.ref=? OR e.ref GLOB ?) AND l.account=? AND e.date<=? GROUP BY e.date""",
+                  (f"LN:{ln['code']}", acc.ref_prefix(f"LN:{ln['code']}:"), ln["account"], upto.isoformat())):
         moves[r["date"]] = r["n"] * _sign(ln)
     bal = ln["opening_balance"] + sum(v for k, v in moves.items() if k <= start.isoformat())
     total, day = 0.0, start + _dt.timedelta(days=1)

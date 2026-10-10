@@ -953,6 +953,8 @@ def build(db, name, p):
     if name == "sales":
         return sales_table(db, p, lang)
     if name == "bank_reconciliation":
+        if not str(p.get("id") or "").isdigit():
+            raise acc.ValidationError("Choose a bank statement")
         return bankrec_table(db, p.get("id"), lang)
     if name == "installments":
         return installments_table(db, p, lang)

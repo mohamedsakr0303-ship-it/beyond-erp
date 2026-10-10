@@ -40,7 +40,7 @@ def balances(db, name, date_to=None):
     w, p = acc._where(date_to=date_to)
     rows = db.q(f"""SELECT a.subtype, a.role, SUM(l.credit-l.debit) AS n FROM journal_lines l
                     JOIN journal_entries e ON e.id=l.entry_id JOIN accounts a ON a.code=l.account
-                    WHERE {w} AND {acc.PARTY}=? GROUP BY a.subtype, a.role""", p + [name])
+                    WHERE {w} AND {acc.PARTY_IS} GROUP BY a.subtype, a.role""", p + [name])
     out = {"capital": 0, "current": 0, "drawings": 0, "loan": 0, "interest": 0, "distributions_payable": 0,
            "due_to": 0, "due_from": 0}
     for r in rows:
@@ -298,7 +298,7 @@ def plan_repay(db, d):
 def _daily_interest(db, name, account, start, end, rate):
     """Σ balance × rate / 365 over the days start..end (inclusive), from the loan account's movements."""
     rows = db.q(f"""SELECT e.date, SUM(l.credit-l.debit) AS n FROM journal_lines l JOIN journal_entries e
-                    ON e.id=l.entry_id WHERE {acc.LIVE} AND l.account=? AND {acc.PARTY}=? AND e.date<=?
+                    ON e.id=l.entry_id WHERE {acc.LIVE} AND l.account=? AND {acc.PARTY_IS} AND e.date<=?
                     GROUP BY e.date ORDER BY e.date""", (account, name, end.isoformat()))
     bal = sum(r["n"] for r in rows if r["date"] < start.isoformat())
     changes = {r["date"]: r["n"] for r in rows if r["date"] >= start.isoformat()}
@@ -327,7 +327,7 @@ def plan_interest(db, d):
         start = _dt.date.fromisoformat(last) + _dt.timedelta(days=1)
     else:
         first = db.one(f"SELECT MIN(e.date) AS d FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id "
-                       f"WHERE {acc.LIVE} AND l.account=? AND {acc.PARTY}=?", (loan, p["name"]))["d"]
+                       f"WHERE {acc.LIVE} AND l.account=? AND {acc.PARTY_IS}", (loan, p["name"]))["d"]
         if not first:
             raise ValidationError(f"{p['name']} has no loan to the company")
         start = _dt.date.fromisoformat(first) + _dt.timedelta(days=1)
@@ -640,7 +640,7 @@ def capital_interest(db, date_from, date_to):
     for p in db.q("SELECT * FROM partners WHERE capital_interest>0"):
         if not date_from:
             first = db.one(f"SELECT MIN(e.date) AS d FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id "
-                           f"WHERE {acc.LIVE} AND {acc.PARTY}=? AND l.account IN ({','.join('?' * len(capital))})",
+                           f"WHERE {acc.LIVE} AND {acc.PARTY_IS} AND l.account IN ({','.join('?' * len(capital))})",
                            [p["name"]] + capital)["d"]
             if not first:
                 continue
@@ -680,7 +680,7 @@ def _months(start, end):
 def _drawings_interest(db, name, account, start, end, rate):
     """Σ drawings outstanding × rate / 365 over the days, counting only what was drawn inside the period."""
     rows = db.q(f"""SELECT e.date, SUM(l.debit-l.credit) AS n FROM journal_lines l JOIN journal_entries e
-                    ON e.id=l.entry_id WHERE {acc.LIVE} AND e.kind<>? AND l.account=? AND {acc.PARTY}=?
+                    ON e.id=l.entry_id WHERE {acc.LIVE} AND e.kind<>? AND l.account=? AND {acc.PARTY_IS}
                     AND e.date>=? AND e.date<=? GROUP BY e.date""",
                 (APPROPRIATION, account, name, start.isoformat(), end.isoformat()))
     changes = {r["date"]: r["n"] for r in rows}

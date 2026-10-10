@@ -261,8 +261,8 @@ def advance_outstanding(db, code, party, before=None):
         return 0
     n = 0
     for r in db.q(f"""SELECT e.ref, SUM(l.debit-l.credit) AS n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
-                      WHERE {acc.LIVE} AND l.account=? AND {acc.PARTY}=? AND (e.ref=? OR e.ref LIKE ?) GROUP BY e.ref""",
-                  (acct, party, code, f"{code}/%")):
+                      WHERE {acc.LIVE} AND l.account=? AND {acc.PARTY_IS} AND (e.ref=? OR e.ref GLOB ?) GROUP BY e.ref""",
+                  (acct, party, code, acc.ref_prefix(f"{code}/"))):
         tail = r["ref"][len(code) + 1:]
         if tail.startswith("C") and tail[1:].isdigit() and before is not None and int(tail[1:]) >= before:
             continue
@@ -425,14 +425,14 @@ def statement(db, c):
         except LookupError:
             return 0
         r = db.one(f"""SELECT COALESCE(SUM(l.debit-l.credit),0) n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
-                       WHERE {acc.LIVE} AND l.account=? AND {acc.PARTY}=? AND (e.ref=? OR e.ref LIKE ?)""", (a, party, code, f"{code}/%"))
+                       WHERE {acc.LIVE} AND l.account=? AND {acc.PARTY_IS} AND (e.ref=? OR e.ref GLOB ?)""", (a, party, code, acc.ref_prefix(f"{code}/")))
         return sign * (r["n"] or 0)
     certified = sum(to_minor(x["this_period"]) for x in c.get("certificates") or [] if x["status"] == "posted") \
         if isinstance(c.get("certificates"), list) else 0
     paid = db.one(f"""SELECT COALESCE(SUM(l.debit),0) n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
-                      WHERE {acc.LIVE} AND e.kind='Payment Voucher' AND {acc.PARTY}=? AND e.ref=?""", (party, f"{code}/PAY"))["n"]
+                      WHERE {acc.LIVE} AND e.kind='Payment Voucher' AND {acc.PARTY_IS} AND e.ref=?""", (party, f"{code}/PAY"))["n"]
     advance_paid = db.one(f"""SELECT COALESCE(SUM(l.debit),0) n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
-                              WHERE {acc.LIVE} AND {acc.PARTY}=? AND e.ref=? AND l.debit>0""", (party, f"{code}/ADV"))["n"]
+                              WHERE {acc.LIVE} AND {acc.PARTY_IS} AND e.ref=? AND l.debit>0""", (party, f"{code}/ADV"))["n"]
     return {"certified": to_major(certified), "retention_held": to_major(bal("retention_payable")),
             "advance_paid": to_major(advance_paid), "advance_outstanding": to_major(advance_outstanding(db, code, party)),
             "paid": to_major(paid), "payable": to_major(bal("sub_payable"))}

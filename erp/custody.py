@@ -46,19 +46,19 @@ def get(db, cid):
 
 
 def _entries(db, code):
-    return db.q(f"SELECT e.* FROM journal_entries e WHERE {LIVE_REF} AND (e.ref=? OR e.ref LIKE ?) ORDER BY e.date, e.id",
-                (f"CU:{code}", f"CU:{code}:%"))
+    return db.q(f"SELECT e.* FROM journal_entries e WHERE {LIVE_REF} AND (e.ref=? OR e.ref GLOB ?) ORDER BY e.date, e.id",
+                (f"CU:{code}", acc.ref_prefix(f"CU:{code}:")))
 
 
 def _moves(db, c, tag=None):
     """Signed movement on the custody account (+ = more money with the holder)."""
     w, p = [LIVE_REF, "l.account=?"], [c["account"]]
     if tag:
-        w.append("e.ref LIKE ?")
-        p.append(f"CU:{c['code']}:{tag}%")
+        w.append("e.ref GLOB ?")
+        p.append(acc.ref_prefix(f"CU:{c['code']}:{tag}"))
     else:
-        w.append("(e.ref=? OR e.ref LIKE ?)")
-        p += [f"CU:{c['code']}", f"CU:{c['code']}:%"]
+        w.append("(e.ref=? OR e.ref GLOB ?)")
+        p += [f"CU:{c['code']}", acc.ref_prefix(f"CU:{c['code']}:")]
     return db.one(f"SELECT COALESCE(SUM(l.debit-l.credit),0) AS n FROM journal_lines l JOIN journal_entries e "
                   f"ON e.id=l.entry_id WHERE {' AND '.join(w)}", p)["n"]
 

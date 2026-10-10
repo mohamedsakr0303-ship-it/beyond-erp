@@ -35,7 +35,7 @@ def _lines(db, party=None, date_to=None):
         return []
     w, p = [acc.LIVE, f"l.account IN ({','.join('?' * len(codes))})", f"{acc.PARTY}<>''"], list(codes)
     if party is not None:
-        w.append(f"{acc.PARTY}=?")
+        w.append(f"{acc.PARTY_IS}")
         p.append(party)
     if date_to:
         w.append("e.date<=?")

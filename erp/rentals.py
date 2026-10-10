@@ -1243,8 +1243,8 @@ def detail(db, rid):
              "one_time": round(sum(ln["qty"] * ln["rate"] for ln in out_lines if ln["kind"] == "charge"), 2)}
     quote["estimate"] = round(quote["monthly"] * (r["duration_months"] or 0) + quote["one_time"], 2)
     bu = db.one("SELECT code FROM business_units WHERE id=?", (r["bu_id"],)) if r["bu_id"] else None
-    deposits = [acc.get_entry(db, e["id"]) for e in db.q(f"SELECT e.id FROM journal_entries e WHERE {LIVE_REF} AND e.ref LIKE ? ORDER BY e.date, e.id",
-                                                             (f"RENT:{r['code']}:DEP%",))]
+    deposits = [acc.get_entry(db, e["id"]) for e in db.q(f"SELECT e.id FROM journal_entries e WHERE {LIVE_REF} AND e.ref GLOB ? ORDER BY e.date, e.id",
+                                                             (acc.ref_prefix(f"RENT:{r['code']}:DEP"),))]
     return {"rental": {**r, "bu_code": bu["code"] if bu else "", "deposit": to_major(r["deposit"]), "deposit_held": to_major(deposit_balance(db, r))},
             "deposits": [{"id": e["id"], "date": e["date"], "type": e["meta"].get("deposit"), "memo": e["memo"], "amount": e["amount"]} for e in deposits], "lines": out_lines, "held": sorted(held.values(), key=lambda x: x["code"] or ""),
             "handovers": handovers, "charges": charges, "invoices": invoices, "quote": quote,
@@ -1594,7 +1594,7 @@ def deposit_balance(db, r):
     """Security deposit the company holds for this rental (minor units)."""
     acc_code = _role_or(db, "rental_deposits")
     row = db.one(f"SELECT COALESCE(SUM(l.credit-l.debit),0) AS n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id "
-                 f"WHERE {LIVE_REF} AND l.account=? AND e.ref LIKE ?", (acc_code, f"RENT:{r['code']}:DEP%"))
+                 f"WHERE {LIVE_REF} AND l.account=? AND e.ref GLOB ?", (acc_code, acc.ref_prefix(f"RENT:{r['code']}:DEP")))
     return row["n"]
 
 

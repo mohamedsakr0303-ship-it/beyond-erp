@@ -16,6 +16,7 @@ from .db import to_major, to_minor
 
 LIVE = acc.LIVE
 PARTY = acc.PARTY
+PARTY_IS = acc.PARTY_IS
 
 
 def funding_partner(db):
@@ -78,7 +79,7 @@ def funding_ledger(db, name=None, date_to=None):
     for e in db.q(f"""SELECT e.id, e.date, e.kind, e.ref, e.memo, b.code AS bu_code, b.name AS bu_name, SUM(l.credit-l.debit) AS n
                       FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id JOIN accounts a ON a.code=l.account
                       LEFT JOIN business_units b ON b.id=e.bu_id
-                      WHERE {LIVE} AND e.date<=? AND {PARTY}=? AND a.subtype IN ('capital','partner_current')
+                      WHERE {LIVE} AND e.date<=? AND {PARTY_IS} AND a.subtype IN ('capital','partner_current')
                         AND COALESCE(a.role,'')<>'funding_partner' AND e.kind<>'Profit Appropriation'
                         AND e.id NOT IN (SELECT entry_id FROM journal_lines WHERE account IN ({marks}))
                       GROUP BY e.id ORDER BY e.date, e.id""", [date_to, name] + cash):
@@ -111,7 +112,7 @@ def _bal(db, name, date_to, subtypes):
     """Credit-positive balance on accounts of these subtypes in a party's name."""
     marks = ",".join("?" * len(subtypes))
     r = db.one(f"""SELECT COALESCE(SUM(l.credit-l.debit),0) AS n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
-                   JOIN accounts a ON a.code=l.account WHERE {LIVE} AND e.date<=? AND {PARTY}=? AND a.subtype IN ({marks})""",
+                   JOIN accounts a ON a.code=l.account WHERE {LIVE} AND e.date<=? AND {PARTY_IS} AND a.subtype IN ({marks})""",
                (date_to, name) + tuple(subtypes))
     return to_major(r["n"])
 
@@ -152,13 +153,13 @@ def exit_view(db, date_to=None):
         # profit already moved into his current account by "Share profit" is not counted again
         shared = db.one(f"""SELECT COALESCE(SUM(l.credit-l.debit),0) AS n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
                             JOIN accounts a ON a.code=l.account WHERE {LIVE} AND e.date<=? AND e.kind='Profit Appropriation'
-                            AND {PARTY}=? AND a.subtype IN ('partner_current','drawings')""", (date_to, name))["n"]
+                            AND {PARTY_IS} AND a.subtype IN ('partner_current','drawings')""", (date_to, name))["n"]
         shared = to_major(shared)
         billed = round(p["billed_share"] - shared, 2) if shared else p["billed_share"]
         r = db.one(f"""SELECT COALESCE(SUM(CASE WHEN a.type='Asset' THEN l.debit-l.credit ELSE 0 END),0) AS owes,
                               COALESCE(SUM(CASE WHEN a.type='Liability' THEN l.credit-l.debit ELSE 0 END),0) AS owed
                        FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id JOIN accounts a ON a.code=l.account
-                       WHERE {LIVE} AND e.date<=? AND {PARTY}=? AND a.subtype<>'cash'""", (date_to, name))
+                       WHERE {LIVE} AND e.date<=? AND {PARTY_IS} AND a.subtype<>'cash'""", (date_to, name))
         owes, owed = to_major(r["owes"]), to_major(r["owed"])
         unbooked = led["unbooked"] if led and name == fund else 0
         # his billed profit splits into what he may take (less what he already took) and the reserve the company

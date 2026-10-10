@@ -1129,3 +1129,7 @@ body:has(.drawer-bg) .tourbar,body:has(#bulkbar) .tourbar{display:none}
 td .pick-w{min-width:180px}
 .fc-in{width:118px;padding:6px 8px;text-align:end}.fc-ed{border-color:var(--warn)!important;background:color-mix(in srgb,var(--warn) 12%,var(--input))!important}
 .fc-cat{min-width:140px}.fc-tabs{margin:6px 0 10px}
+
+/* long report: the first rows, then "show more" under the table (always on screen, also on phones) */
+.rt-more{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:10px;font-size:.88em}
+.rt-more .muted{flex:1 1 220px}

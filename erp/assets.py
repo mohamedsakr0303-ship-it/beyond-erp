@@ -157,7 +157,7 @@ def next_code(db):
 # ------------------------------------------------------------------- status
 def _entries(db, code):
     return db.q(f"SELECT e.id, e.date, e.kind, e.ref FROM journal_entries e WHERE {LIVE_REF} AND "
-                f"(e.ref=? OR e.ref LIKE ?) ORDER BY e.date, e.id", (f"FA:{code}", f"FA:{code}:%"))
+                f"(e.ref=? OR e.ref GLOB ?) ORDER BY e.date, e.id", (f"FA:{code}", acc.ref_prefix(f"FA:{code}:")))
 
 
 def status(db, a, as_of=None, pol=None):

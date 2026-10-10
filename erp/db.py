@@ -112,6 +112,7 @@ CREATE INDEX IF NOT EXISTS ix_je_date ON journal_entries(date);
 CREATE INDEX IF NOT EXISTS ix_je_bu ON journal_entries(bu_id);
 CREATE INDEX IF NOT EXISTS ix_je_kind ON journal_entries(kind);
 CREATE INDEX IF NOT EXISTS ix_je_party ON journal_entries(party);
+CREATE INDEX IF NOT EXISTS ix_je_ref ON journal_entries(ref);
 
 CREATE TABLE IF NOT EXISTS journal_lines (
     id INTEGER PRIMARY KEY,
@@ -123,6 +124,11 @@ CREATE TABLE IF NOT EXISTS journal_lines (
 );
 CREATE INDEX IF NOT EXISTS ix_jl_entry ON journal_lines(entry_id);
 CREATE INDEX IF NOT EXISTS ix_jl_account ON journal_lines(account);
+CREATE INDEX IF NOT EXISTS ix_jl_party ON journal_lines(party);
+-- each line with its party (the line's own, else the entry's) — a lookup by party uses an index on both sides
+CREATE VIEW IF NOT EXISTS party_lines AS
+    SELECT l.id AS id, l.party AS party FROM journal_lines l WHERE l.party<>''
+    UNION ALL SELECT l.id, e.party FROM journal_entries e JOIN journal_lines l ON l.entry_id=e.id WHERE COALESCE(l.party,'')='';
 
 CREATE TABLE IF NOT EXISTS partners (
     id INTEGER PRIMARY KEY,

@@ -3665,3 +3665,41 @@ class Forecasting(unittest.TestCase):
         self.assertEqual(tile2["values"][2], 150)
         self.assertEqual(tile2["edited"], [2])
         self.assertEqual(tile2["values"][0], tile["values"][0])
+
+
+class BigBookSpeed(unittest.TestCase):
+    """The speed-ups for large books return exactly what the plain queries did, and cached figures never go stale."""
+
+    def test_party_lines_and_cache(self):
+        from erp import demo
+        db = Database(":memory:")
+        demo.load(db)
+        # the indexed party lookup equals "the line's party, else the entry's" for every party
+        for (name,) in db.conn.execute("SELECT DISTINCT COALESCE(NULLIF(l.party,''), e.party) FROM journal_lines l "
+                                       "JOIN journal_entries e ON e.id=l.entry_id WHERE COALESCE(NULLIF(l.party,''), e.party)<>''"):
+            x = db.q(f"SELECT l.id FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id WHERE {a.PARTY}=? ORDER BY l.id", (name,))
+            b = db.q(f"SELECT l.id FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id WHERE {a.PARTY_IS} ORDER BY l.id", (name,))
+            self.assertEqual(x, b, name)
+        # cached statements follow every write
+        before = a.income_statement(db)["net_profit"]
+        self.assertEqual(a.income_statement(db)["net_profit"], before)
+        first = a.income_statement(db)
+        first["net_profit"] = 1          # a caller changing its copy does not change the cache
+        self.assertEqual(a.income_statement(db)["net_profit"], before)
+        a.record_journal(db, {"date": a.today(), "kind": "Journal Voucher", "memo": "t",
+                                "lines": [{"account": "6090", "debit": 100}, {"account": "1010", "credit": 100}]})
+        self.assertAlmostEqual(a.income_statement(db)["net_profit"], before - 100)
+
+    def test_ref_prefix(self):
+        self.assertEqual(a.ref_prefix("LN:a*b[1]?:"), "LN:a[*]b[[]1][?]:*")
+        db = Database(":memory:")
+        for ref in ("LN:A[1]:pay", "LN:A11:pay", "LN:A[1]"):
+            db.x("INSERT INTO journal_entries(date, kind, memo, ref, status) VALUES ('2026-01-01','Journal Voucher','',?,'posted')", (ref,))
+        got = [r["ref"] for r in db.q("SELECT ref FROM journal_entries WHERE ref GLOB ?", (a.ref_prefix("LN:A[1]:"),))]
+        self.assertEqual(got, ["LN:A[1]:pay"])
+
+    def test_bankrec_report_needs_a_statement(self):
+        from erp import reports
+        db = Database(":memory:")
+        with self.assertRaises(a.ValidationError):
+            reports.build(db, "bank_reconciliation", {})
