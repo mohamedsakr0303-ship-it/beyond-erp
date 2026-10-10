@@ -65,3 +65,5 @@ Name: "{userdesktop}\{#Name}"; Filename: "{app}\BeyondERP.exe"; Tasks: desktopic
 
 [Run]
 Filename: "{app}\BeyondERP.exe"; Description: "{cm:LaunchProgram,{#Name}}"; Flags: nowait postinstall skipifsilent
+; after an "Update now" from inside the app (a silent install): open the new version straight away
+Filename: "{app}\BeyondERP.exe"; Flags: nowait runasoriginaluser; Check: WizardSilent

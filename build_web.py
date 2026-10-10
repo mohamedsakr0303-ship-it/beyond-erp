@@ -15,6 +15,7 @@ import base64
 import hashlib
 import io
 import json
+import re
 import shutil
 import sys
 import tarfile
@@ -133,9 +134,19 @@ def build(make_zip=False):
     preset = {"url": os.environ.get("BEYOND_SUPABASE_URL", ""), "key": os.environ.get("BEYOND_SUPABASE_ANON_KEY", "")}
     (OUT / "config.js").write_text("window.BEYOND_CLOUD_CONFIG = " + (json.dumps(preset) if all(preset.values()) else "null")
                                    + ";\n", encoding="utf-8")
+    # build number: changes whenever any app file changes. The open app compares it with build.json on the site and
+    # offers "Update now" when they differ (app.js, "app updates")
+    h = hashlib.sha256()
+    for f in sorted([*(OUT.glob("*.js")), *(OUT.glob("*.css")), OUT / "index.html"]):
+        h.update(f.name.encode() + f.read_bytes())
+    build_id = h.hexdigest()[:12]
+    version = re.search(r'__version__ = "([^"]+)"', (ROOT / "erp" / "__init__.py").read_text()).group(1)
+    (OUT / "build.js").write_text(f"window.BEYOND_BUILD = {json.dumps(build_id)};\n", encoding="utf-8")
+    (OUT / "build.json").write_text(json.dumps({"build": build_id, "version": version}), encoding="utf-8")
     # headers file understood by Netlify / Cloudflare Pages / static.app-style hosts (ignored elsewhere)
     (OUT / "_headers").write_text("/*\n  X-Content-Type-Options: nosniff\n  Referrer-Policy: same-origin\n"
-                                  "/vendor/*\n  Cache-Control: public, max-age=31536000, immutable\n", encoding="utf-8")
+                                  "/vendor/*\n  Cache-Control: public, max-age=31536000, immutable\n"
+                                  "/build.json\n  Cache-Control: no-store\n", encoding="utf-8")
     size = sum(p.stat().st_size for p in OUT.rglob("*") if p.is_file())
     print(f"Built {OUT} ({size / 1048576:.1f} MB)")
     if make_zip:

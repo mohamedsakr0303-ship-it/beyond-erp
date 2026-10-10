@@ -125,14 +125,17 @@ def _quarter_actuals(db, accounts_type, last_n=4, today=None):
             q, y = 4, y - 1
         spans.append((f"{y}-{3 * q - 2:02d}-01", (_dt.date(y + (q == 4), 1 if q == 4 else 3 * q + 1, 1) - _dt.timedelta(days=1)).isoformat()))
     spans.reverse()
-    sign = "l.debit - l.credit" if accounts_type == "Expense" else "l.credit - l.debit"
-    rows = db.q(f"""SELECT a.code, a.name, a.name_ar, a.subtype, e.date, SUM({sign}) AS amt FROM journal_lines l
+    types = (accounts_type,) if isinstance(accounts_type, str) else tuple(accounts_type)
+    sign = "l.credit - l.debit" if types == ("Revenue",) else "l.debit - l.credit"
+    rows = db.q(f"""SELECT a.code, a.name, a.name_ar, a.subtype, a.role, e.date, SUM({sign}) AS amt FROM journal_lines l
                     JOIN journal_entries e ON e.id=l.entry_id JOIN accounts a ON a.code=l.account
-                    WHERE a.type=? AND e.status='posted' AND e.date BETWEEN ? AND ?
-                    GROUP BY a.code, e.date""", (accounts_type, spans[0][0], spans[-1][1]))
+                    WHERE a.type IN ({",".join("?" * len(types))}) AND e.status='posted' AND e.date BETWEEN ? AND ?
+                      AND COALESCE(a.role,'') NOT IN ('stock_adjust','cost_of_sales')
+                    GROUP BY a.code, e.date""", (*types, spans[0][0], spans[-1][1]))
     acct = {}
     for r in rows:
-        x = acct.setdefault(r["code"], {"code": r["code"], "name": r["name"], "name_ar": r["name_ar"], "subtype": r["subtype"], "q": [0] * last_n})
+        x = acct.setdefault(r["code"], {"code": r["code"], "name": r["name"], "name_ar": r["name_ar"], "subtype": r["subtype"],
+                                        "role": r["role"], "q": [0] * last_n})
         for i, (f, t) in enumerate(spans):
             if f <= r["date"] <= t:
                 x["q"][i] += r["amt"]
@@ -160,6 +163,49 @@ def _trend(hist, n):
     b = (m * sxy - sx * sy) / den if den else 0
     a0 = (sy - b * sx) / m
     return [max(0.0, round(a0 + b * (m + k), 2)) for k in range(n)]
+
+
+
+ROLE_CATS = {"materials": "local_materials", "subcontract_cost": "works", "direct_labour": "labour", "equipment_charge": "energy"}
+
+
+def account_cat(a, x):
+    """The category an account's prices move with: the one chosen on the Forecasting screen, else a starting point
+    from what the account is for (materials, subcontract work, labour, plant), else general prices."""
+    chosen = a["assign"].get(f"acct:{x['code']}")
+    if chosen:
+        return chosen
+    if x.get("role") in ROLE_CATS:
+        return ROLE_CATS[x["role"]]
+    if any(w in (x.get("subtype") or "") for w in ("payroll", "labour", "labor", "salar", "employee")):
+        return "labour"
+    return "general"
+
+
+def outlook(db, items=(), accounts=(), today=None):
+    """How the price of these items / what is booked on these accounts is expected to move: per quarter and over the
+    whole horizon, from the Forecasting assumptions. 'ready' is False until the drivers have been filled in."""
+    a = assumptions(db)
+    n = a["horizon"]
+    _dr, blocks = escalation(a, n)
+    ready = any(any(r for r in (d.get("rates") or [])) for d in a["drivers"].values())
+
+    def pack(cat):
+        r = cat_rates(a, blocks, cat, n)
+        total = 1.0
+        for x in r:
+            total *= 1 + x
+        return {"cat": cat, "rates": [round(x, 5) for x in r], "next": round(r[0], 5) if r else 0, "total": round(total - 1, 5)}
+    out = {"ready": ready, "horizon": n, "periods": [p["label"] for p in quarters(n, today)], "items": {}, "accounts": {}}
+    for iid in items:
+        it = db.one("SELECT id, name, category FROM stock_items WHERE id=?", (int(iid),))
+        if it:
+            out["items"][str(it["id"])] = {"name": it["name"], **pack(a["assign"].get(f"item:{it['id']}") or it.get("category") or "general")}
+    for code in accounts:
+        x = db.one("SELECT code, name, name_ar, type, subtype, role FROM accounts WHERE code=?", (str(code),))
+        if x and x["type"] in ("COGS", "Expense") and x["role"] not in ("stock_adjust", "cost_of_sales"):
+            out["accounts"][x["code"]] = {"name": x["name"], "name_ar": x["name_ar"], **pack(account_cat(a, x))}
+    return out
 
 
 def build(db, today=None):
@@ -197,14 +243,13 @@ def build(db, today=None):
         ir.append(row(f"item:{it['id']}", it["name"], base, _path(base, cat_rates(a, blocks, cat, n)), cat, it.get("category") or "", it["unit"]))
     sections.append({"key": "items", "rows": ir})
     # 3. spending per expense account: the last four quarters' average, moved by the account's category
-    exp, hist_labels = _quarter_actuals(db, "Expense", 4, today)
+    exp, hist_labels = _quarter_actuals(db, ("COGS", "Expense"), 4, today)   # direct costs (materials, subcontractors…) and overheads
     er = []
     for x in sorted(exp, key=lambda x: x["code"]):
         avg = to_major(sum(x["q"]) / 4)
         if not avg:
             continue
-        labourish = any(w in (x["subtype"] or "") for w in ("payroll", "labour", "labor", "salar"))
-        cat = a["assign"].get(f"acct:{x['code']}") or ("labour" if labourish else "general")
+        cat = account_cat(a, x)
         er.append(row(f"acct:{x['code']}", f"{x['code']} {x['name']}", avg, _path(avg, cat_rates(a, blocks, cat, n)), cat,
                       " · ".join(f"{to_major(v):,.0f}" for v in x["q"])))
     sections.append({"key": "expenses", "rows": er, "history": hist_labels})

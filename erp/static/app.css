@@ -1091,7 +1091,7 @@ body:has(.drawer-bg) #bulkbar{display:none}   /* a form is open: its own buttons
 @keyframes lpSpin{to{transform:rotate(360deg)}}
 @keyframes lpDot{0%{opacity:0;transform:translateY(0)}40%{opacity:1}100%{opacity:0;transform:translateY(12px)}}
 @keyframes lpPulse{50%{transform:scale(1.04);filter:drop-shadow(0 0 60px rgba(108,92,255,.95))}}
-@media (max-width:640px){.lp-ring{top:-22vmin;width:150vmin;height:150vmin}.lp-word{margin-top:46vmin;letter-spacing:.24em;padding-inline-start:.24em}.lp-mini{font-size:.62em;letter-spacing:.2em}
+@media (max-width:640px){.lp-ring{top:-31vmin;width:150vmin;height:150vmin}.lp-word{margin-top:46vmin;letter-spacing:.24em;padding-inline-start:.24em}.lp-mini{font-size:.62em;letter-spacing:.2em}
   .lp-nav{padding-inline-start:14px}.lp-card{padding:20px}}
 @media (prefers-reduced-motion:reduce){.lp *,.lp *::before,.lp *::after{animation:none!important;transition:none!important}.lp-word span,.lp-tag,.lp-sub,.lp-hero .lp-pill,.lp-note,.lp-rv{opacity:1;transform:none}
   .lp-ring{transform:translateX(-50%)}}
@@ -1133,3 +1133,30 @@ td .pick-w{min-width:180px}
 /* long report: the first rows, then "show more" under the table (always on screen, also on phones) */
 .rt-more{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:10px;font-size:.88em}
 .rt-more .muted{flex:1 1 220px}
+
+/* Arabic never takes letter-spacing (it breaks the joined letters) */
+[dir=rtl] .lp-tag,[dir=rtl] .lp-sub,[dir=rtl] .lp-note,[dir=rtl] .lp h2,[dir=rtl] .lp h3{letter-spacing:0;text-transform:none}
+
+/* smooth scrolling: no live blur behind panels that scroll (each one was re-blurred every frame). The glass look
+   comes from near-opaque layered colours instead; only the small sticky top bar keeps a light blur on large screens */
+:root[data-theme="dark"] .card,:root[data-theme="dark"] .hero,:root[data-theme="dark"] .side,:root[data-theme="dark"] .drawer,
+:root[data-theme="dark"] .dlg,:root[data-theme="dark"] .tour-card,:root[data-theme="dark"] .dd-menu,:root[data-theme="dark"] .pick-list,
+:root[data-theme="dark"] .tourbar,.drawer-bg,.dlg-bg,.pal-bg{-webkit-backdrop-filter:none;backdrop-filter:none}
+:root[data-theme="dark"] .card{background:linear-gradient(180deg,#121338,#0b0c2c)}
+:root[data-theme="dark"] .top{background:rgba(4,5,26,.9);-webkit-backdrop-filter:none;backdrop-filter:none}
+@media (min-width:1100px) and (hover:hover){:root[data-theme="dark"] .top{background:rgba(4,5,26,.72);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)}}
+.top{-webkit-backdrop-filter:none;backdrop-filter:none}
+@media (min-width:1100px) and (hover:hover){.top{-webkit-backdrop-filter:saturate(1.6) blur(10px);backdrop-filter:saturate(1.6) blur(10px)}}
+
+/* "a new version is ready" — above the tour bar, out of the way of the bottom bar on phones */
+.updbar{z-index:70;inset-inline-start:auto;inset-inline-end:18px;border-radius:20px 20px 6px 20px}
+[dir=rtl] .updbar{border-radius:20px 20px 20px 6px}
+@media (max-width:760px){.updbar{inset-inline:10px;bottom:calc(88px + env(safe-area-inset-bottom));max-width:none}}
+
+/* price outlook (Forecasting) */
+.ol-up{color:#c2410c;background:color-mix(in srgb,#f97316 16%,transparent)}
+.ol-down{color:#15803d;background:color-mix(in srgb,#22c55e 16%,transparent)}
+:root[data-theme="dark"] .ol-up{color:#fdba74}:root[data-theme="dark"] .ol-down{color:#86efac}
+.ol-box{margin:14px 0;padding:12px 14px;border:1px solid var(--line);border-radius:14px}
+.ol-box h4{margin:0 0 4px}.ol-row{display:flex;justify-content:space-between;gap:10px;align-items:center;padding:5px 0;border-top:1px solid var(--line)}
+.ol-box .btn{margin-top:8px}

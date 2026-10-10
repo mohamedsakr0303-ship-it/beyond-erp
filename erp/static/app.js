@@ -46,7 +46,13 @@ const cur = () => (S.boot.settings.currency || "EGP");
 
 // ------------------------------------------------------------------- api
 const STATIC = !!window.BEYOND_STATIC;   // browser-only build (static hosting): no server, see bridge.js
+let API_WRITES = 0;   // saves still on their way (an update waits for them)
 async function api(method, path, body, raw) {
+  if (method === "GET") return apiCall(method, path, body, raw);
+  API_WRITES++;
+  try { return await apiCall(method, path, body, raw); } finally { API_WRITES--; }
+}
+async function apiCall(method, path, body, raw) {
   if (STATIC) return staticApi(method, path, body, raw);
   const opt = { method, headers: { "X-Requested-With": "BeyondERP" }, credentials: "same-origin" };
   if (raw) { opt.body = raw; opt.headers["Content-Type"] = "application/octet-stream"; }
@@ -1347,6 +1353,28 @@ function voucherRows(rows) {
       <td>${esc(e.party)}</td><td>${esc(e.bu_code || "")}</td><td class="num">${money(e.amount)}</td>
       <td>${e.status === "void" ? `<span class="chip bad">${t("void")}</span>` : ""}${e.reversed_by ? `<span class="chip warn">${t("reverse")}</span>` : ""}${e.history && e.history.length ? `<span class="chip">${t("edited")}</span>` : ""}${e.files ? `<span class="chip" title="${esc(L2("Attached files", "المرفقات"))}">📎 ${e.files}</span>` : ""}</td></tr>`).join("")}</tbody></table></div>`;
 }
+// expected price movement (Forecasting): "↑ 12.4% by Q4 2027", coloured by direction
+const olPct = x => `${x > 0 ? "+" : ""}${(x * 100).toFixed(1)}%`;
+function olChip(o, ol) {
+  if (!ol.ready) return `<span class="chip">${esc(L2("Set up Forecasting", "اضبط التنبؤات"))}</span>`;
+  const dir = o.total > 0.0005 ? "up" : o.total < -0.0005 ? "down" : "flat";
+  return `<span class="chip ol-${dir}" title="${esc(L2("Next quarter", "الربع القادم"))} ${olPct(o.next)} · ${esc(fcCatName(o.cat))}">${dir === "up" ? "↑" : dir === "down" ? "↓" : "→"} ${olPct(o.total)} ${esc(L2("by", "حتى"))} ${esc(ol.periods[ol.periods.length - 1] || "")}</span>`;
+}
+const fcCatName = c => (typeof FC_PRESET === "function" && FC_PRESET()[c]) || c;
+async function voucherOutlook(f, e) {
+  if (!can("reports.forecast") || !["Direct Cost", "Operating Expense", "Goods Receipt", "Payment Voucher", "Journal Voucher"].includes(e.kind)) return;
+  const accts = [...new Set(e.lines.filter(l => l.debit).map(l => l.account))];
+  let ol; try { ol = await api("GET", "/api/forecast/outlook?" + qs({ entry: e.id, accounts: accts.join(",") })); } catch { return; }
+  const rows = [...Object.values(ol.items).map(o => [o.name, o]), ...Object.entries(ol.accounts).map(([c, o]) => [`${c} ${S.lang === "ar" && o.name_ar ? o.name_ar : o.name}`, o])];
+  if (!rows.length || !f.isConnected) return;
+  const box = document.createElement("div"); box.className = "ol-box";
+  box.innerHTML = `<h4>${esc(L2("Price outlook", "توقّع السعر"))}</h4><p class="muted" style="margin:0 0 6px;font-size:.85em">${esc(ol.ready
+    ? L2(`If you buy this again, the Forecasting screen expects its price to move like this over the next ${ol.horizon} quarters.`, `لو اشتريت هذا مرة أخرى، تتوقّع شاشة التنبؤات أن يتحرك سعره هكذا خلال الأرباع الـ${ol.horizon} القادمة.`)
+    : L2("Fill in the drivers on Financial Reports → Forecasting (one click fetches them) to see where this price is heading.", "املأ المؤشرات من التقارير المالية ← التنبؤات (بضغطة واحدة) لترى اتجاه هذا السعر."))}</p>
+    ${rows.map(([n, o]) => `<div class="ol-row"><span>${esc(n)} <span class="muted">· ${esc(fcCatName(o.cat))}</span></span>${olChip(o, ol)}</div>`).join("")}
+    <a class="btn sm" href="#/forecast" data-a="vgo">${esc(L2("Open Forecasting", "فتح التنبؤات"))} →</a>`;
+  const att = $(".attbox", f); (att || f).insertAdjacentElement(att ? "beforebegin" : "beforeend", box);
+}
 async function openVoucher(id) {
   const e = await api("GET", "/api/journal/" + id).catch(() => null) || (S.cache.v && S.cache.v[id]);
   if (!e) return;
@@ -1388,6 +1416,7 @@ async function openVoucher(id) {
   S.H.vdup = () => e.doc ? openDoc(e.doc, null, null, { ...e.form, date: today() }) : journalForm({ ...e, date: today() }, true);
   const f = drawer(`${tl(e.kind)} #${e.id}`, html, null, { readOnly: true, extraButtons: btns.join("") });
   mountAttach($(".attbox", f));
+  voucherOutlook(f, e);
 }
 S.GLOBAL_H.openv = el => openVoucher(el.dataset.id);
 // ------------------------------------------------------------ bulk selection (select rows → edit / void / delete together)
@@ -1881,14 +1910,15 @@ function widgetOpts(e, info) {
 function groupsDrawer(d) {
   const gname = g => (S.lang === "ar" && g.name_ar) || g.name;
   drawer(L2("Groups", "المجموعات"), `<p class="muted" style="margin-top:0">${esc(L2("Each person belongs to one group (Users → open a user → Group) and sees that group's dashboard.", "كل مستخدم ينتمي لمجموعة واحدة (المستخدمون ← فتح المستخدم ← المجموعة) ويرى لوحة مجموعته."))}</p>
-    <div class="tbl"><table><thead><tr><th>${esc(t("name"))}</th><th>${esc(L2("Arabic name", "الاسم بالعربية"))}</th><th class="num">${esc(L2("People", "الأفراد"))}</th><th></th></tr></thead><tbody>
-    ${(d.groups || []).map(g => `<tr><td><input class="in" data-gk="${esc(g.key)}" data-f="name" value="${esc(g.name)}"></td><td><input class="in" dir="rtl" data-gk="${esc(g.key)}" data-f="name_ar" value="${esc(g.name_ar || "")}"></td>
+    <div class="tbl"><table><thead><tr><th>${esc(t("name"))}</th><th class="num">${esc(L2("People", "الأفراد"))}</th><th></th></tr></thead><tbody>
+    ${(d.groups || []).map(g => `<tr><td><input class="in" data-gk="${esc(g.key)}" data-f="${S.lang === "ar" ? "name_ar" : "name"}" value="${esc(S.lang === "ar" ? g.name_ar || "" : g.name)}" ${S.lang === "ar" ? `dir="rtl" placeholder="${esc(g.name)}"` : ""}></td>
       <td class="num">${g.users}</td><td>${g.key === "general" ? "" : `<button type="button" class="btn sm danger" data-a="gdel" data-k="${esc(g.key)}" data-n="${esc(gname(g))}">${esc(t("delete"))}</button>`}</td></tr>`).join("")}</tbody></table></div>
     <h4 style="margin:14px 0 6px">${esc(L2("New group", "مجموعة جديدة"))}</h4>
     <div class="row" style="gap:8px;flex-wrap:wrap"><input class="in" id="gnew" placeholder="${esc(L2("e.g. Site engineers", "مثال: مهندسو المواقع"))}" style="flex:1;min-width:180px">
       <select id="gcopy"><option value="">${esc(L2("Start empty", "ابدأ فارغة"))}</option>${(d.groups || []).map(g => `<option value="${esc(g.key)}">${esc(L2("Copy of ", "نسخة من "))}${esc(gname(g))}</option>`).join("")}</select></div>`,
     async () => {
-      for (const g of d.groups || []) { const n = $(`[data-gk="${g.key}"][data-f=name]`).value.trim(), a = $(`[data-gk="${g.key}"][data-f=name_ar]`).value.trim();
+      for (const g of d.groups || []) { const inp = $(`[data-gk="${g.key}"]`), v = inp.value.trim();
+        const n = inp.dataset.f === "name" ? v : g.name, a = inp.dataset.f === "name_ar" ? v : (g.name_ar || "");
         if (n && (n !== g.name || a !== (g.name_ar || ""))) await api("PUT", "/api/dashboard/groups/" + g.key, { name: n, name_ar: a }); }
       const nn = $("#gnew").value.trim();
       if (nn) { const r = await api("POST", "/api/dashboard/groups", { name: nn, copy_from: $("#gcopy").value }); store.set("dashGroup", r.key); }
@@ -2374,10 +2404,13 @@ PAGES.stock = async (view, parts, q) => {
   if (cat.length) view.insertAdjacentHTML("beforeend", `<div class="card"><h2>${esc(L2("Items & prices", "الأصناف والأسعار"))} <span class="chip">${cat.length}</span></h2>
     <p class="muted" style="margin-top:0">${esc(L2("Every item, with or without stock: its standard cost, selling price and the last price you paid.", "كل الأصناف، بمخزون أو بدونه: التكلفة المعيارية وسعر البيع وآخر سعر شراء."))}</p>
     <div class="tbl stack"><table><thead><tr><th>${t("item")}</th><th>${esc(L2("Category", "التصنيف"))}</th><th>${t("unit")}</th><th class="num">${t("on_hand")}</th>
-      <th class="num">${esc(L2("Standard cost", "التكلفة المعيارية"))}</th><th class="num">${esc(L2("Last paid", "آخر سعر شراء"))}</th><th class="num">${esc(L2("Selling price", "سعر البيع"))}</th></tr></thead><tbody>
+      <th class="num">${esc(L2("Standard cost", "التكلفة المعيارية"))}</th><th class="num">${esc(L2("Last paid", "آخر سعر شراء"))}</th><th class="num">${esc(L2("Selling price", "سعر البيع"))}</th>${can("reports.forecast") ? `<th>${esc(L2("Price outlook", "توقّع السعر"))}</th>` : ""}</tr></thead><tbody>
     ${CT.rows.map(r => `<tr class="${can("stock.balances", "edit") ? "click" : ""}" data-a="${can("stock.balances", "edit") ? "itemedit" : ""}" data-id="${r.id}"><td><b>${esc(r.name)}</b>${r.sku ? ` <span class="muted">${esc(r.sku)}</span>` : ""}</td><td>${esc(r.category || "")}</td><td>${esc(r.unit)}</td>
       <td class="num">${r.on_hand ? numf(r.on_hand) : "—"}</td><td class="num">${r.std_cost ? money(r.std_cost) : "—"}</td>
-      <td class="num">${r.last_rate != null ? money(r.last_rate) + `<div class="lines">${fd(r.last_date)}</div>` : "—"}</td><td class="num">${r.price ? money(r.price) : "—"}</td></tr>`).join("")}</tbody></table></div>${CT.foot}</div>`);
+      <td class="num">${r.last_rate != null ? money(r.last_rate) + `<div class="lines">${fd(r.last_date)}</div>` : "—"}</td><td class="num">${r.price ? money(r.price) : "—"}</td>${can("reports.forecast") ? `<td data-ol="${r.id}"></td>` : ""}</tr>`).join("")}</tbody></table></div>${CT.foot}</div>`);
+  if (can("reports.forecast") && CT.rows.length) api("GET", "/api/forecast/outlook?" + qs({ items: CT.rows.map(r => r.id).join(",") })).then(ol => {
+    $$("[data-ol]", view).forEach(td => { const o = ol.items[td.dataset.ol]; if (o) td.innerHTML = olChip(o, ol); });
+  }).catch(() => {});
 };
 PAGES.moves = async (view, parts, q) => {
   const lq = { ...q, limit: q.limit || 100 };
@@ -3034,11 +3067,14 @@ PAGES.settings = async (view, parts, q) => {
   if (tab === "menus") {
     const menuKeys = window.MENU.flatMap(([g, items]) => [g, ...items.map(i => i[0])]);
     const labels = st.menu_labels || {}, ed = can("settings.menus", "edit");
-    view.innerHTML = head + entryOptionCards() + `<div class="card"><h2>${t("menu_names")}</h2><p class="muted">${t("menu_note")}</p><div class="tbl"><table><thead><tr><th>Key</th><th>English</th><th>العربية</th><th>Custom English</th><th>مخصص عربي</th></tr></thead><tbody>
-      ${menuKeys.map(k => `<tr><td class="muted">${k}</td><td>${esc(window.I18N[k][0])}</td><td>${esc(window.I18N[k][1])}</td><td><input data-ml="${k}" data-l="en" value="${esc((labels[k] || {}).en || "")}" ${ed ? "" : "disabled"}></td><td><input data-ml="${k}" data-l="ar" value="${esc((labels[k] || {}).ar || "")}" dir="rtl" ${ed ? "" : "disabled"}></td></tr>`).join("")}</tbody></table></div>
+    // only the user's language: the standard term and its custom name; the other language's custom names are kept
+    const ml = S.lang === "ar" ? "ar" : "en", li = ml === "ar" ? 1 : 0;
+    view.innerHTML = head + entryOptionCards() + `<div class="card"><h2>${t("menu_names")}</h2><p class="muted">${t("menu_note")}</p><div class="tbl"><table><thead><tr><th>${esc(L2("Standard name", "الاسم القياسي"))}</th><th>${esc(L2("Your name for it", "الاسم الذي تفضّله"))}</th></tr></thead><tbody>
+      ${menuKeys.map(k => `<tr><td${k.startsWith("g_") ? ` style="font-weight:600"` : ""}>${esc(window.I18N[k][li])}</td><td><input data-ml="${k}" value="${esc((labels[k] || {})[ml] || "")}" placeholder="${esc(window.I18N[k][li])}" ${ml === "ar" ? `dir="rtl"` : ""} ${ed ? "" : "disabled"}></td></tr>`).join("")}</tbody></table></div>
       ${ed ? `<div class="row" style="margin-top:10px"><button class="btn pri" data-a="mlsave">${t("save")}</button></div>` : ""}</div>`;
     entryOptionWire(view);
-    S.H.mlsave = async () => { const out = {}; $$("[data-ml]").forEach(i => { if (i.value.trim()) { out[i.dataset.ml] = out[i.dataset.ml] || {}; out[i.dataset.ml][i.dataset.l] = i.value.trim(); } });
+    S.H.mlsave = async () => { const out = JSON.parse(JSON.stringify(labels));
+      $$("[data-ml]").forEach(i => { const k = i.dataset.ml, v = i.value.trim(); out[k] = out[k] || {}; if (v) out[k][ml] = v; else delete out[k][ml]; if (!Object.keys(out[k]).length) delete out[k]; });
       try { await api("PUT", "/api/settings", { menu_labels: out }); await refreshBoot(); renderShell(); route(); toast(t("saved")); } catch (e) { fail(e); } };
     return;
   }
@@ -8327,12 +8363,12 @@ function renderLanding() {
   document.documentElement.setAttribute("data-theme", "dark");
   const word = "BEYONDERP".split("").map((c, i) => `<span style="--d:${(i * 0.07).toFixed(2)}s" class="${i >= 6 ? "erp" : ""}">${c}</span>`).join("");
   const feats = [
-    ["scale", L2("Books that balance themselves", "دفاتر تتوازن تلقائياً"), L2("Every voucher posts double entry. Trial balance, profit & loss and balance sheet update as you work.", "كل سند يُسجَّل بالقيد المزدوج. ميزان المراجعة والأرباح والخسائر والميزانية تتحدث أثناء العمل.")],
-    ["brief", L2("Profit per project", "ربح كل مشروع"), L2("Business units, progress billings, retentions, subcontractor certificates and live work in progress.", "وحدات أعمال، مستخلصات، محتجزات، مستخلصات مقاولي الباطن، وأعمال تحت التنفيذ لحظياً.")],
-    ["users", L2("Partners & funding", "الشركاء والتمويل"), L2("Shares, capital, a funding partner's account and profit sharing — worked out for you.", "الحصص ورأس المال وحساب الشريك الممول وتوزيع الأرباح — محسوبة لك.")],
-    ["file", L2("Offers your way", "عروض أسعار كما تريد"), L2("BOQ quotations or package offers (Essential · Signature · Prestige), branded PDF and Word in one click.", "مقايسات أو عروض باقات، بصيغة PDF وWord بهوية شركتك بضغطة واحدة.")],
-    ["receipt", L2("Ready for Egyptian tax", "جاهز للضرائب المصرية"), L2("ETA e-invoices and e-receipts, VAT and withholding, payroll with social insurance.", "الفاتورة والإيصال الإلكتروني، ضريبة القيمة المضافة والخصم، والرواتب مع التأمينات.")],
-    ["phone", L2("Anywhere, even offline", "في أي مكان، حتى بدون إنترنت"), L2("Phone, browser or desktop. Keeps working without internet and syncs when you are back.", "على الهاتف أو المتصفح أو الكمبيوتر. يعمل بدون إنترنت ويتزامن عند عودته.")],
+    ["scale", L2("Books that balance themselves", "قيود متوازنة دائماً"), L2("Every voucher posts double entry. Trial balance, profit & loss and balance sheet update as you work.", "كل سند يُرحَّل بقيد مزدوج، فتجد ميزان المراجعة وقائمة الدخل والميزانية محدَّثة أولاً بأول.")],
+    ["brief", L2("Profit per project", "اعرف ربح كل مشروع"), L2("Business units, progress billings, retentions, subcontractor certificates and live work in progress.", "مراكز تكلفة ومستخلصات ومحتجزات وحسابات مقاولي الباطن، وتكلفة الأعمال الجارية لحظة بلحظة.")],
+    ["users", L2("Partners & funding", "الشركاء والتمويل"), L2("Shares, capital, a funding partner's account and profit sharing — worked out for you.", "حصص الشركاء ورأس المال وحساب الشريك المموِّل وتوزيع الأرباح… يحسبها النظام عنك.")],
+    ["file", L2("Offers your way", "عروض أسعار احترافية"), L2("BOQ quotations or package offers (Essential · Signature · Prestige), branded PDF and Word in one click.", "مقايسات تفصيلية أو عروض باقات بهوية شركتك، تخرج PDF أو Word بضغطة واحدة.")],
+    ["receipt", L2("Ready for Egyptian tax", "متوافق مع منظومة الضرائب المصرية"), L2("ETA e-invoices and e-receipts, VAT and withholding, payroll with social insurance.", "الفاتورة والإيصال الإلكتروني، والقيمة المضافة والخصم تحت حساب الضريبة، ورواتب بحساب التأمينات.")],
+    ["phone", L2("Anywhere, even offline", "معك أينما كنت"), L2("Phone, browser or desktop. Keeps working without internet and syncs when you are back.", "على الموبايل أو المتصفح أو الكمبيوتر، ويستمر في العمل دون إنترنت ثم يُزامن بياناتك فور عودة الاتصال.")],
   ];
   const chips = [L2("General Accounting", "المحاسبة العامة"), L2("Accounts Receivable", "حسابات العملاء"), L2("Accounts Payable", "حسابات الموردين"),
     L2("Inventory Management", "إدارة المخزون"), L2("Procurement", "المشتريات"), L2("Project Costing", "تكاليف المشروعات"), L2("Contracts & Progress Billing", "العقود والمستخلصات"),
@@ -8345,15 +8381,15 @@ function renderLanding() {
       <button type="button" class="lp-lang" data-l="1">${ar ? "EN" : "ع"}</button><button type="button" class="lp-pill sm" data-go="1">${esc(go)}</button></header>
     <section class="lp-hero"><div class="lp-ring" aria-hidden="true"><i></i></div>
       <h1 class="lp-word wordmark" aria-label="BeyondERP">${word}</h1>
-      <p class="lp-tag">${esc(L2("THE ERP THAT SIMPLY WORKS", "نظام أعمال يعمل ببساطة"))}</p>
-      <p class="lp-sub">${esc(L2("Accounting, projects, partners and payroll in one place — online or offline.", "الحسابات والمشروعات والشركاء والرواتب في مكان واحد — أونلاين أو بدون إنترنت."))}</p>
+      <p class="lp-tag">${esc(L2("RUN THE BUSINESS, NOT THE PAPERWORK", "أدِر شركتك بثقة… والأرقام دائماً في مكانها"))}</p>
+      <p class="lp-sub">${esc(L2("Accounts, projects, partners and payroll in one app — online or offline.", "حساباتك ومشروعاتك وشركاؤك ورواتب فريقك في تطبيق واحد، يعمل بالإنترنت ومن دونه."))}</p>
       <button type="button" class="lp-pill" data-go="1">${esc(go)}</button>
       <small class="lp-note">${esc(L2("General ledger · Inventory · Projects · Payroll · Tax", "الأستاذ العام · المخزون · المشروعات · الرواتب · الضرائب"))}</small>
       <div class="lp-scroll" aria-hidden="true"></div></section>
     <section class="lp-feats">${feats.map(([ic, h, p], i) => `<article class="lp-card lp-rv" style="--i:${i}"><div class="lp-orb">${svg(ic)}</div><h3>${esc(h)}</h3><p>${esc(p)}</p></article>`).join("")}</section>
-    <section class="lp-band lp-rv"><div class="lp-eclipse" aria-hidden="true"></div><h2>${esc(L2("Every system a growing company runs on", "كل الأنظمة التي تحتاجها شركة تنمو"))}</h2>
+    <section class="lp-band lp-rv"><div class="lp-eclipse" aria-hidden="true"></div><h2>${esc(L2("Every system a growing company runs on", "كل ما تحتاجه شركتك وهي تكبر"))}</h2>
       <div class="lp-chips">${chips.map(c => `<span>${esc(c)}</span>`).join("")}</div></section>
-    <section class="lp-end lp-rv"><h2>${esc(L2("Ready when you are.", "جاهز متى كنت جاهزاً."))}</h2><button type="button" class="lp-pill" data-go="1">${esc(go)}</button></section>
+    <section class="lp-end lp-rv"><h2>${esc(L2("Ready when you are.", "ابدأ وقتما تشاء."))}</h2><button type="button" class="lp-pill" data-go="1">${esc(go)}</button></section>
     <footer class="lp-foot"><span class="wordmark">BEYOND<i>ERP</i></span></footer></div>`;
   const root = $(".lp");
   root.addEventListener("click", e => {
@@ -8457,8 +8493,19 @@ function enhancePickers(root) {
 }
 // new screens, drawers and rows are enhanced as they appear
 let pickTimer = 0;
-new MutationObserver(() => { if (pickTimer) return; pickTimer = requestAnimationFrame(() => { pickTimer = 0; enhancePickers(document); }); })
-  .observe(document.documentElement, { childList: true, subtree: true });
+const pickQueue = new Set();
+new MutationObserver(muts => {
+  for (const m of muts) for (const n of m.addedNodes) {
+    if (n.nodeType !== 1) continue;
+    if (n.tagName === "OPTION" || n.tagName === "OPTGROUP") { const sel = n.closest("select"); if (sel) pickQueue.add(sel); }   // a list filled in later
+    else if (n.tagName === "SELECT" || n.tagName === "INPUT" || n.firstElementChild) pickQueue.add(n);
+  }
+  if (!pickQueue.size || pickTimer) return;
+  pickTimer = requestAnimationFrame(() => {        // only what was just added, once per frame
+    pickTimer = 0; const nodes = [...pickQueue]; pickQueue.clear();
+    for (const n of nodes) { if (!n.isConnected) continue; if (n.tagName === "SELECT") enhanceSelect(n); else if (n.tagName === "INPUT") { if (n.hasAttribute("list")) enhanceList(n); } else enhancePickers(n); }
+  });
+}).observe(document.documentElement, { childList: true, subtree: true });
 
 // ================================================== forecasting
 // Drivers (per quarter, with their source) → categories (what each kind of cost is made of) → every price, item,
@@ -8535,4 +8582,73 @@ PAGES.forecast = async (view) => {
 const FC_PRESET = () => ({ general: L2("General (CPI)", "عام (التضخم)"), local_materials: L2("Local materials", "خامات محلية"), imported_materials: L2("Imported materials", "خامات مستوردة"),
   labour: L2("Labour", "عمالة"), works: L2("Works (mixed)", "أعمال (مختلطة)"), energy: L2("Energy & transport", "طاقة ونقل") });
 
+
+// ================================================== app updates
+// A newer version published while the app is open (website, installed phone / PC app, or the offline desktop app):
+// a small bar offers "Update now". Books, sign-in, drafts and settings stay where they are — this device's storage,
+// the workspace, or the desktop data folder — only the app's own files are replaced.
+const UPD = { build: window.BEYOND_BUILD || "", info: null, busy: false };
+async function checkUpdate() {
+  if (UPD.busy || UPD.info) return;
+  try {
+    if (STATIC) {
+      if (!UPD.build || !/^https?:/.test(location.protocol)) return;
+      const r = await fetch("build.json?t=" + Date.now(), { cache: "no-store" });
+      if (!r.ok) return;
+      const b = await r.json();
+      if (b.build && b.build !== UPD.build) showUpdate({ kind: "web", version: b.version, build: b.build });
+    } else if (S.boot && S.boot.desktop_app && S.boot.user) {
+      const d = await api("GET", "/api/app-update");
+      if (d.newer) showUpdate({ kind: "desktop", version: d.latest, build: d.latest, install: d.can_install && S.boot.user.is_admin, url: d.url });
+    }
+  } catch { /* offline: try again later */ }
+}
+function showUpdate(info) {
+  const later = store.get("updLater", null);
+  if (later && later.build === info.build && Date.now() < later.until) return;
+  UPD.info = info;
+  const old = $("#updbar"); if (old) old.remove();
+  const bar = document.createElement("div"); bar.id = "updbar"; bar.className = "tourbar updbar"; bar.setAttribute("role", "status");
+  const desk = info.kind === "desktop";
+  bar.innerHTML = `<div class="tb-msg"><b>${esc(L2("A new version of BeyondERP is ready", "إصدار جديد من BeyondERP جاهز"))}${info.version ? ` <span class="chip">${esc(info.version)}</span>` : ""}</b>
+    <small>${esc(desk ? L2("A backup is made first; your books and settings are kept.", "تُؤخذ نسخة احتياطية أولاً، وتبقى دفاترك وإعداداتك كما هي.")
+      : L2("Takes a few seconds. Your data, sign-in and unsaved drafts are kept.", "يستغرق ثوانيَ قليلة، وتبقى بياناتك وتسجيل دخولك ومسوداتك كما هي."))}</small>
+    <div class="tb-acts">${desk && !info.install ? `<a class="btn sm pri" href="${esc(info.url)}" target="_blank" rel="noopener">${esc(L2("Download update", "تنزيل التحديث"))}</a>`
+      : `<button class="btn sm pri" data-u="now">${esc(L2("Update now", "حدِّث الآن"))}</button>`}<button class="btn sm tb-never" data-u="later">${esc(L2("Later", "لاحقاً"))}</button></div></div>`;
+  bar.addEventListener("click", e => { const b = e.target.closest("[data-u]"); if (!b) return;
+    if (b.dataset.u === "later") { store.set("updLater", { build: info.build, until: Date.now() + 4 * 3600e3 }); bar.remove(); UPD.info = null; }
+    else doUpdate(bar, info); });
+  document.body.appendChild(bar);
+}
+async function doUpdate(bar, info) {
+  if (UPD.busy) return;
+  UPD.busy = true;
+  const msg = $(".tb-msg", bar);
+  const say = (en, ar) => { msg.innerHTML = `<b>${esc(L2(en, ar))}</b><small class="muted">${esc(L2("Please keep the app open.", "من فضلك اترك التطبيق مفتوحاً."))}</small>`; };
+  say("Saving your work…", "جارٍ حفظ عملك…");
+  for (let i = 0; i < 150 && API_WRITES > 0; i++) await new Promise(r => setTimeout(r, 100));   // let saves finish (max 15 s)
+  try {
+    if (info.kind === "desktop") {
+      say("Downloading the update…", "جارٍ تنزيل التحديث…");
+      await api("POST", "/api/app-update/install", {});
+      say("Installing — BeyondERP will reopen by itself in a moment.", "جارٍ التثبيت — سيُعاد فتح BeyondERP تلقائياً بعد لحظات.");
+      return;
+    }
+    say("Updating…", "جارٍ التحديث…");
+    // fetch the new app files past every cache, so the reload cannot pick up an old copy
+    await Promise.all(["./", "index.html", "app.js", "app.css", "i18n.js", "bridge.js", "packs.js", "build.js", "config.js"]
+      .map(u => fetch(u, { cache: "reload" }).catch(() => null)));
+    if (navigator.serviceWorker) { const reg = await navigator.serviceWorker.getRegistration().catch(() => null); if (reg) await reg.update().catch(() => {}); }
+    store.set("updLater", null);
+    location.reload();
+  } catch (e) {
+    UPD.busy = false;
+    msg.innerHTML = `<b>${esc(L2("The update did not finish", "لم يكتمل التحديث"))}</b><small>${esc(e.message || "")}</small><div class="tb-acts"><button class="btn sm pri" data-u="now">${esc(L2("Try again", "حاول مرة أخرى"))}</button><button class="btn sm tb-never" data-u="later">${esc(L2("Later", "لاحقاً"))}</button></div>`;
+  }
+}
+setTimeout(checkUpdate, 20000);                                   // after start-up has settled
+setInterval(checkUpdate, 10 * 60 * 1000);                         // then every 10 minutes
+document.addEventListener("visibilitychange", () => { if (!document.hidden) checkUpdate(); });   // and when the app comes back to the screen
+window.addEventListener("online", () => checkUpdate());
+if (STATIC && window.BeyondCloud) window.BeyondCloud.onStatus(st => { if (st.state === "update") checkUpdate(); });   // another device already runs a newer version
 })();

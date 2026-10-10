@@ -11,6 +11,8 @@ import mimetypes
 mimetypes.add_type("font/woff2", ".woff2")
 import os
 import re
+import sys
+import threading
 import tempfile
 import traceback
 from http import cookies
@@ -134,6 +136,7 @@ def bootstrap(ctx):
     elif (look["appearance"] or {}).get("logo") == "custom":
         app_logo = branding.asset(db, "app_logo")
     base = {"version": __version__, "needs_setup": auth.needs_setup(db), "user": user,
+            "desktop_app": bool(getattr(sys, "frozen", False)),   # the installed offline app: it checks for updates
             "workspace_preset": bool(workspace_preset() and getattr(ctx.app, "cloud", None) and not ctx.app.cloud.active),
             "app_logo": app_logo and {"mime": app_logo["mime"], "data": app_logo["data"]},
             "app_icon": (lambda a: a and {"mime": a["mime"], "data": a["data"]})(branding.asset(db, "app_icon"))
@@ -2174,6 +2177,29 @@ def rental_action(ctx, rid, what):
 
 
 # ============================================================ fixed assets
+@route("GET", "/api/app-update")
+def app_update_check(ctx):
+    """Is a newer desktop app on the website? (Only the installed offline app asks; the cloud apps check the site.)"""
+    from . import appupdate
+    return ok(appupdate.check())
+
+
+@route("POST", "/api/app-update/install")
+def app_update_install(ctx):
+    """Back up, download the new installer, run it silently and close; the installer reopens the app."""
+    from . import appupdate
+    if not ctx.user.get("is_admin"):
+        raise PermissionError("Ask an administrator to install the update")
+
+    def stop():
+        threading.Thread(target=ctx.server.shutdown, daemon=True).start()
+        threading.Timer(6, lambda: os._exit(0)).start()
+    try:
+        return ok(appupdate.install(ctx.server.backup, stop))
+    except (OSError, ValueError) as e:
+        raise acc.ValidationError(str(e)) from None
+
+
 @route("GET", "/api/alerts")
 def alerts(ctx):
     """What needs attention now, for the bell in the top bar — only what this user may see."""
@@ -3713,6 +3739,17 @@ def ai_params(ctx):
 def forecast_get(ctx):
     from . import forecast
     return ok(forecast.build(ctx.db))
+
+
+@route("GET", "/api/forecast/outlook", "reports.forecast")
+def forecast_outlook(ctx):
+    """Expected price movement for some items (?items=1,2) and cost accounts (?accounts=5010,6010)."""
+    from . import forecast
+    split = lambda k: [x for x in (ctx.q.get(k) or "").split(",") if x.strip()][:200]  # noqa: E731
+    items = [i for i in split("items") if i.isdigit()]
+    if str(ctx.q.get("entry") or "").isdigit():   # a voucher: the items it moved in, and the cost accounts it charged
+        items += [str(r["item_id"]) for r in ctx.db.q("SELECT DISTINCT item_id FROM stock_moves WHERE entry_id=? AND qty>0", (int(ctx.q["entry"]),))]
+    return ok(forecast.outlook(ctx.db, items, split("accounts")))
 
 
 @route("PUT", "/api/forecast", "reports.forecast", "edit")

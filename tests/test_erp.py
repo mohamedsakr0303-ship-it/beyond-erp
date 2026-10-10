@@ -3703,3 +3703,42 @@ class BigBookSpeed(unittest.TestCase):
         db = Database(":memory:")
         with self.assertRaises(a.ValidationError):
             reports.build(db, "bank_reconciliation", {})
+
+
+class AppUpdates(unittest.TestCase):
+    """The installed desktop app learns about a newer version from the website; running from source never does."""
+
+    def test_check(self):
+        from unittest import mock
+        from erp import appupdate
+        self.assertGreater(appupdate.vt("1.10.0"), appupdate.vt("1.9.3"))
+        self.assertFalse(appupdate.check()["newer"])                       # from source: updated with git
+        site = {"version": "99.0.0", "files": [{"file": "BeyondERP-Offline-Setup.exe"}, {"file": "BeyondERP-Offline-mac.zip"}]}
+        with mock.patch.object(appupdate.sys, "frozen", True, create=True), mock.patch.object(appupdate, "latest", return_value=site):
+            r = appupdate.check()
+            self.assertTrue(r["newer"])
+            self.assertEqual(r["latest"], "99.0.0")
+        with mock.patch.object(appupdate.sys, "frozen", True, create=True), \
+                mock.patch.object(appupdate, "latest", return_value={**site, "version": "0.0.1"}):
+            self.assertFalse(appupdate.check()["newer"])
+        with mock.patch.object(appupdate.sys, "frozen", True, create=True), mock.patch.object(appupdate, "latest", side_effect=OSError):
+            self.assertFalse(appupdate.check()["newer"])                   # offline: quietly no
+
+
+class PriceOutlook(unittest.TestCase):
+    def test_outlook(self):
+        from erp import demo, forecast
+        db = Database(":memory:")
+        demo.load(db)
+        self.assertFalse(forecast.outlook(db, accounts=["5010"])["ready"])   # nothing until the drivers are filled in
+        forecast.save(db, {"drivers": {"cpi": {"rates": [0.03]}, "wages": {"rates": [0.04]}, "fx": {"rates": [0.02]},
+                                       "global": {"rates": [0.01]}, "fuel": {"rates": [0.05]}}})
+        o = forecast.outlook(db, accounts=["5010", "5030", "1010"])
+        self.assertTrue(o["ready"])
+        self.assertEqual(o["accounts"]["5030"]["cat"], "labour")             # direct labour moves with wages
+        self.assertAlmostEqual(o["accounts"]["5030"]["total"], 1.04 ** 4 - 1, places=4)
+        self.assertEqual(o["accounts"]["5010"]["cat"], "local_materials")
+        self.assertNotIn("1010", o["accounts"])                             # cash is not a price
+        # direct costs are part of the spending forecast now
+        rows = next(s for s in forecast.build(db)["sections"] if s["key"] == "expenses")["rows"]
+        self.assertTrue(any(r["key"] == "acct:5010" for r in rows))
