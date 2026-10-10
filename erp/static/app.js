@@ -261,12 +261,16 @@ const inkOn = c => { const n = parseInt(c.slice(1), 16), r = n >> 16, g = (n >> 
   return 0.2126 * L(r) + 0.7152 * L(g) + 0.0722 * L(b) > 0.42 ? "#1e2430" : "#ffffff"; };
 const customThemes = () => [...((S.boot.settings.appearance || {}).custom_themes || []), ...store.get("customThemes", [])];
 // mine (this browser) → the company's default → the built-in default
-const isDark = () => { const m = store.get("theme", "auto"); return m === "dark" || (m !== "light" && matchMedia("(prefers-color-scheme: dark)").matches); };
-const themeTitle = () => { const m = store.get("theme", "auto");
+// the BeyondERP look is the night theme; anyone can switch to light or follow the device (Settings → My view)
+const DEFAULT_THEME = "dark";
+// the language of the device unless the person picked one (the language button / Settings → My view)
+const deviceLang = () => ((navigator.languages || [navigator.language || ""]).map(l => String(l).slice(0, 2).toLowerCase()).find(l => l === "ar" || l === "en") || "");
+const isDark = () => { const m = store.get("theme", DEFAULT_THEME); return m === "dark" || (m !== "light" && matchMedia("(prefers-color-scheme: dark)").matches); };
+const themeTitle = () => { const m = store.get("theme", DEFAULT_THEME);
   return m === "auto" ? L2("Light / dark — following this device (tap to choose)", "فاتح / داكن — حسب إعداد الجهاز (اضغط للاختيار)")
     : m === "dark" ? L2("Dark mode (tap for light)", "الوضع الداكن (اضغط للفاتح)") : L2("Light mode (tap for dark)", "الوضع الفاتح (اضغط للداكن)"); };
 // the device switches between light and dark (e.g. at sunset): follow it while the person has not chosen
-try { matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { if (store.get("theme", "auto") === "auto" && S.boot && S.boot.user) renderShell(), route(); }); } catch { /* old browsers */ }
+try { matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { if (store.get("theme", DEFAULT_THEME) === "auto" && S.boot) { applyLook(); if (S.boot.user) renderShell(), route(); } }); } catch { /* old browsers */ }
 function activeTheme() { return store.get("themeCfg", null) || (S.boot && S.boot.settings && (S.boot.settings.appearance || {}).theme) || null; }
 function applyTheme(th) {
   const de = document.documentElement, st = de.style;
@@ -313,7 +317,7 @@ async function themeTab(view, head) {
   Object.assign(S.H, {
     thpick: (el, e) => { if (e && e.target.closest("[data-a=thdel]")) return; const th = all().find(x => x.id === el.dataset.id); if (!th) return;
       useTheme(th.id === "default" ? null : { mode: th.mode, primary: th.primary, nav: th.nav, header: th.header, sidebar: th.sidebar, id: th.id }); },
-    threset: () => { store.set("themeCfg", null); store.set("theme", "auto"); applyLook(); renderShell(); route(); },
+    threset: () => { store.set("themeCfg", null); store.set("theme", DEFAULT_THEME); applyLook(); renderShell(); route(); },
     thset: el => { draft[el.dataset.k] = el.dataset.v; preview(); draw(); },
     thcol: el => { draft[el.dataset.k] = el.value; preview(); },
     thmode: el => { draft.mode = el.value; preview(); draw(); },
@@ -332,16 +336,17 @@ async function themeTab(view, head) {
 
 function applyLook() {
   const st = S.boot.settings || {};
-  S.lang = store.get("lang", st.language || "en");
+  S.lang = store.get("lang", "") || deviceLang() || st.language || "en";
   document.documentElement.lang = S.lang;
   document.documentElement.dir = S.lang === "ar" ? "rtl" : "ltr";
   const font = store.get("font", "") || st.font_family || "system";
   const size = store.get("fontSize", "") || st.font_size || "15";
-  const fam = font === "system" ? '"Nunito Sans","Cairo",system-ui,-apple-system,"Segoe UI",Roboto,Tahoma,Arial,sans-serif' : `"${font}","Cairo",Tahoma,Arial,sans-serif`;
+  const fam = font === "system" ? '"Inter","Cairo",system-ui,-apple-system,"Segoe UI",Roboto,Tahoma,Arial,sans-serif' : `"${font}","Cairo",Tahoma,Arial,sans-serif`;
   document.documentElement.style.setProperty("--font", fam);
   document.documentElement.style.setProperty("--fs", size + "px");
-  const theme = store.get("theme", "auto");
-  if (theme === "auto") document.documentElement.removeAttribute("data-theme"); else document.documentElement.setAttribute("data-theme", theme);
+  const theme = store.get("theme", DEFAULT_THEME);
+  // "follow the device" resolves to light or dark here, so every themed piece (glass, glow) follows it exactly
+  document.documentElement.setAttribute("data-theme", theme === "auto" ? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light") : theme);
   const ap = st.appearance || {}, de = document.documentElement;
   ["--brand", "--accent"].forEach(v => de.style.removeProperty(v));
   if (/^#[0-9a-fA-F]{6}$/.test(ap.accent || "")) { de.style.setProperty("--brand", ap.accent); de.style.setProperty("--accent", ap.accent); }
@@ -565,7 +570,7 @@ function renderShell() {
   S.alertsAt = 0; loadAlerts();
 }
 function userMenu() {
-  return `<button data-a="theme">${t("theme")}: ${esc(store.get("theme", "auto"))}</button>
+  return `<button data-a="theme">${t("theme")}: ${esc(store.get("theme", DEFAULT_THEME))}</button>
     ${cloudOn() ? `<button data-a="coswitch">⇄ ${S.lang === "ar" ? "الشركات" : "Companies"}</button>` : ""}
     ${cloudOn() && window.BeyondCloud && window.BeyondCloud.billing ? `<a href="#/subscription">◎ ${S.lang === "ar" ? "الاشتراك" : "Subscription"}</a>` : ""}${S.billing && S.billing.is_owner ? `<a href="#/platform">⚙ ${S.lang === "ar" ? "إدارة الاشتراكات (المالك)" : "Platform billing (owner)"}</a>` : ""}
     <a href="#/settings">${t("m_settings")}</a><button data-a="tour">➜ ${S.lang === "ar" ? "جولة في التطبيق" : "Take the tour"}</button><a href="#/support">? ${S.lang === "ar" ? "المساعدة والدعم" : "Help & support"}</a>${STATIC && /^https?:$/.test(location.protocol) ? `<a href="#/download">⬇ ${S.lang === "ar" ? "تحميل التطبيق" : "Get the app"}</a>` : ""}<button data-a="pw">${t("change_pw")}</button><button data-a="logout">${t("logout")}</button>`;
@@ -618,7 +623,7 @@ const brandLogoSrc = () => { const ap = (S.boot && S.boot.settings.appearance) |
 function iconPng(src, size, filled = false) {
   return new Promise((ok, bad) => { const img = new Image(); img.onload = () => {
     const c = document.createElement("canvas"); c.width = c.height = size; const g = c.getContext("2d");
-    if (filled) { const gr = g.createLinearGradient(0, 0, size, size); gr.addColorStop(0, "#064e3b"); gr.addColorStop(1, "#022c22"); g.fillStyle = gr; g.fillRect(0, 0, size, size); }
+    if (filled) { const gr = g.createLinearGradient(0, 0, size, size); gr.addColorStop(0, "#0b0c3a"); gr.addColorStop(1, "#02021a"); g.fillStyle = gr; g.fillRect(0, 0, size, size); }
     const pad = filled ? size * .2 : size * .04, box = size - 2 * pad, k = Math.min(box / (img.naturalWidth || box), box / (img.naturalHeight || box));
     const w = (img.naturalWidth || box) * k, h = (img.naturalHeight || box) * k; g.drawImage(img, (size - w) / 2, (size - h) / 2, w, h); ok(c.toDataURL("image/png")); };
     img.onerror = () => bad(new Error(L2("That file is not a picture", "هذا الملف ليس صورة"))); img.src = src; });
@@ -629,11 +634,13 @@ async function applyAppIcon() {
   const k = appIconKey(), src = appIconSrc(k); if (_iconApplied === src) return; _iconApplied = src;
   try {
     const fav = $("#appicon"); if (fav) fav.href = await iconPng(src, 64);
-    if (k === "beyond") return;   // the default icons ship with the app
-    let at = document.querySelector("link[rel=apple-touch-icon]"); if (at) at.href = await iconPng(src, 180, true);
+    let at = document.querySelector("link[rel=apple-touch-icon]"); if (at) at.href = k === "beyond" ? "apple-touch-icon.png" : await iconPng(src, 180, true);
     const man = document.querySelector("link[rel=manifest]");
+    // the built-in icons have real manifest files on the site, so Android installs a proper app with that icon
+    // (a manifest made in the page cannot be packaged: Android would show Chrome's badge on the home-screen icon)
+    if (man && APP_ICONS.some(x => x[0] === k)) { man.href = `manifest-${k}.webmanifest`; return; }
     if (man) { const base = new URL("./", location.href).href;
-      const m = { name: appName(), short_name: appName(), start_url: base, scope: base, display: "standalone", background_color: "#04221a", theme_color: "#047857",
+      const m = { name: appName(), short_name: appName(), start_url: base, scope: base, display: "standalone", background_color: "#05061a", theme_color: "#05061a",
         icons: [{ src: await iconPng(src, 192), sizes: "192x192", type: "image/png" }, { src: await iconPng(src, 512), sizes: "512x512", type: "image/png" },
           { src: await iconPng(src, 512, true), sizes: "512x512", type: "image/png", purpose: "maskable" }] };
       man.href = URL.createObjectURL(new Blob([JSON.stringify(m)], { type: "application/manifest+json" })); }
@@ -827,7 +834,7 @@ async function renderCloudAuth(msg, kind = "info", mode = "start") {
     <h1 class="center">${esc(title)}</h1><div id="lerr">${msg ? `<div class="banner ${kind}">${esc(msg)}</div>` : ""}</div>${body}
     ${mode !== "start" ? `<p class="center">${back}</p>` : ""}
     <div class="row" style="justify-content:space-between;margin-top:14px;font-size:.8em"><a href="#" data-a="lang2">${ar ? "English" : "العربية"}</a>
-      ${(S.billingPublic || {}).enabled ? "" : `<a href="#" data-a="clocal" class="muted">${ar ? "استخدام هذا الجهاز بدون مساحة العمل" : "Use this device without the workspace"}</a>`}</div></div>
+      ${(S.billingPublic || {}).enabled ? "" : `<a href="#" data-a="clocal" class="muted">${ar ? "استخدام هذا الجهاز بدون مساحة العمل" : "Use this device without the workspace"}</a>`}</div>${LP_LINK()}</div>
     ${(S.billingPublic || {}).enabled && mode === "signup" ? `<p class="center muted" style="font-size:.85em">${ar ? `جرّب كل المزايا مجاناً لمدة ${S.billingPublic.trial_days} يوماً — بدون بطاقة.` : `Try everything free for ${S.billingPublic.trial_days} days — no card needed.`}</p>` : ""}`;
   const show = (m, k = "err") => { $("#lerr").innerHTML = `<div class="banner ${k}">${esc(m)}</div>`; };
   const needEmail = () => { const e = $("[name=email]"); if (!e || !e.value || !e.checkValidity()) { if (e) e.reportValidity(); return null; } store.set("lastEmail", e.value.trim()); return e.value.trim(); };
@@ -1024,6 +1031,9 @@ async function renderAuth() {
     S.billingPublic = await window.BeyondCloud.billingPublic();
     if (S.billingPublic.enabled) store.set("cloudLocal", false);
   }
+  // a first visit on this device: the welcome screen first (never for someone still signed in)
+  const stillIn = STATIC && window.BeyondCloud && window.BeyondCloud.configured() && !store.get("cloudLocal", false) && window.BeyondCloud.signedIn();
+  if (!stillIn && !S.landingOk && !store.get("landingSeen", false)) return renderLanding();
   if (STATIC && window.BeyondCloud && window.BeyondCloud.configured() && !store.get("cloudLocal", false)) {
     // still signed in to the workspace (e.g. after switching company): carry on without asking again
     if (window.BeyondCloud.signedIn()) {
@@ -1043,7 +1053,7 @@ async function renderAuth() {
       ${setup ? pwFields(true).replace(/minlength="6"/g, 'minlength="8"') : `<label class="f">${t("password")}<input name="password" type="password" autocomplete="current-password" required minlength="1"></label>
       <label class="f chk"><input type="checkbox" data-change="pwshow">${S.lang === "ar" ? "إظهار كلمة المرور" : "Show password"}</label>`}
       <button class="btn pri" type="submit">${setup ? t("save") : t("sign_in")}</button>
-      <button class="btn" type="button" data-a="lang2">${t("switch_lang")}</button></form></div>`;
+      <button class="btn" type="button" data-a="lang2">${t("switch_lang")}</button></form>${LP_LINK()}</div>`;
   S.H = { lang2: () => { store.set("lang", S.lang === "ar" ? "en" : "ar"); renderAuth(); } };
   pwWire($("#lf"));
   $("#lf").addEventListener("submit", async e => {
@@ -2859,7 +2869,7 @@ const Img = {
     g.putImageData(px, 0, 0); return Img.out(cv);
   },
 };
-const FONTS = ["system", "Nunito Sans", "Cairo", "Arial", "Tahoma", "Segoe UI", "Calibri", "Verdana", "Helvetica", "Times New Roman", "Georgia", "Noto Sans Arabic", "Noto Naskh Arabic", "Cairo", "Traditional Arabic", "Courier New"];
+const FONTS = ["system", "Inter", "Nunito Sans", "Cairo", "Arial", "Tahoma", "Segoe UI", "Calibri", "Verdana", "Helvetica", "Times New Roman", "Georgia", "Noto Sans Arabic", "Noto Naskh Arabic", "Cairo", "Traditional Arabic", "Courier New"];
 const DOC_FONTS = ["Arial", "Calibri", "Tahoma", "Segoe UI", "Times New Roman", "Georgia", "Cairo", "Traditional Arabic", "Bodoni MT Black", "Bodoni MT", "Garamond", "Century Gothic"];
 
 PAGES.settings = async (view, parts, q) => {
@@ -2919,7 +2929,7 @@ PAGES.settings = async (view, parts, q) => {
         <label class="f">${t("lang_label")}<select id="my_lang" data-change="mysave"><option value="en">English</option><option value="ar" ${S.lang === "ar" ? "selected" : ""}>العربية</option></select></label>
         <label class="f">${t("font_family")}<select id="my_font" data-change="mysave"><option value="">${t("default")}</option>${FONTS.map(f => `<option ${store.get("font", "") === f ? "selected" : ""}>${f}</option>`).join("")}</select></label>
         <label class="f">${t("font_size")} <input id="my_size" data-change="mysave" type="range" min="11" max="22" value="${store.get("fontSize", "") || st.font_size || 15}"></label>
-        <label class="f">${t("theme")}<select id="my_theme" data-change="mysave">${["auto", "light", "dark"].map(x => `<option ${store.get("theme", "auto") === x ? "selected" : ""}>${x}</option>`).join("")}</select></label>
+        <label class="f">${t("theme")}<select id="my_theme" data-change="mysave">${["auto", "light", "dark"].map(x => `<option ${store.get("theme", DEFAULT_THEME) === x ? "selected" : ""}>${x}</option>`).join("")}</select></label>
         <label class="f">${L2("Menu groups open on", "فتح مجموعات القائمة عند")}<select id="my_navmode" data-change="mysave">${[["hover", L2("Hover — open while the mouse is over them", "المرور — تفتح أثناء مرور الماوس")], ["click", L2("Click — stay open until clicked again", "النقر — تبقى مفتوحة حتى النقر مرة أخرى")]].map(([v, l]) => `<option value="${v}" ${navMode() === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label></div>
         <div class="row" style="margin-top:10px"><button class="btn" data-a="mysave">${t("save")}</button><button class="btn" data-a="myreset">${t("clear")}</button></div></div>
       ${can("settings.branding") ? `<div class="card" id="apcard"><h2>${t("appearance")} — ${S.lang === "ar" ? "لكل المستخدمين" : "for everyone"}</h2>${form([
@@ -2949,7 +2959,7 @@ PAGES.settings = async (view, parts, q) => {
           ${isSuper() ? `<label class="btn" style="cursor:pointer">${svg("upload")} ${esc(L2("Upload your own (square PNG / SVG)", "رفع أيقونة خاصة (PNG / SVG مربعة)"))}<input type="file" id="icfile" accept="image/png,image/svg+xml,image/webp,image/jpeg" hidden></label>` : ""}
           <button class="btn" type="button" data-a="icdl" data-s="512">${svg("download")} PNG 512</button><button class="btn" type="button" data-a="icdl" data-s="192">${svg("download")} PNG 192</button>
           <button class="btn" type="button" data-a="icdl" data-s="1024">${svg("download")} PNG 1024</button><button class="btn" type="button" data-a="icdl" data-s="512" data-m="1">${svg("download")} ${esc(L2("Phone (filled) 512", "للهاتف (بخلفية) 512"))}</button></div>
-        <p class="muted" style="font-size:.85em">${esc(L2("Only super administrators can change it. A phone or computer that already installed the app keeps the old icon until the app is removed and installed again.", "يغيرها المدير العام فقط. الجهاز الذي ثبّت التطبيق سابقاً يحتفظ بالأيقونة القديمة حتى يُحذف التطبيق ويُثبّت من جديد."))}</p></div>`;
+        <p class="muted" style="font-size:.85em">${esc(L2("Only super administrators can change it. A phone or computer that already installed the app keeps the old icon until the app is removed and installed again. On Android, an uploaded icon may carry the browser's small badge; the built-in icons install as a clean app icon.", "يغيرها المدير العام فقط. الجهاز الذي ثبّت التطبيق سابقاً يحتفظ بالأيقونة القديمة حتى يُحذف التطبيق ويُثبّت من جديد. على أندرويد قد تظهر علامة المتصفح الصغيرة على الأيقونة المرفوعة؛ الأيقونات المدمجة تُثبّت كأيقونة تطبيق نظيفة."))}</p></div>`;
     S.H.icpick = async el => { try { await api("PUT", "/api/settings", { appearance: { ...ap, app_icon: el.dataset.k } }); await refreshBoot(); applyAppIcon(); route(); toast(t("saved")); } catch (e) { fail(e); } };
     S.H.icdl = async el => { try { const s = +el.dataset.s, url = await iconPng(appIconSrc(appIconKey()), s, !!el.dataset.m);
       const a = document.createElement("a"); a.href = url; a.download = `app-icon-${el.dataset.m ? "filled-" : ""}${s}.png`; document.body.appendChild(a); a.click(); a.remove(); } catch (e) { fail(e); } };
@@ -2957,7 +2967,7 @@ PAGES.settings = async (view, parts, q) => {
       try { const png = await iconPng(URL.createObjectURL(f), 512); await api("PUT", "/api/branding/image/app_icon", { mime: "image/png", data: png.split(",")[1] });
         await api("PUT", "/api/settings", { appearance: { ...ap, app_icon: "custom" } }); await refreshBoot(); applyAppIcon(); route(); toast(t("saved")); } catch (err) { fail(err); } });
     S.H.mysave = () => { store.set("lang", $("#my_lang").value); store.set("font", $("#my_font").value); store.set("fontSize", $("#my_size").value); store.set("theme", $("#my_theme").value); saveNavMode($("#my_navmode").value); applyLook(); renderShell(); route(); };
-    S.H.myreset = () => { ["font", "fontSize"].forEach(k => store.set(k, "")); store.set("theme", "auto"); saveNavMode("click"); applyLook(); renderShell(); route(); };
+    S.H.myreset = () => { ["font", "fontSize"].forEach(k => store.set(k, "")); store.set("theme", DEFAULT_THEME); saveNavMode("click"); applyLook(); renderShell(); route(); };
     let noAccent = !ap.accent;
     S.H.apnoacc = () => { noAccent = true; toast(t("default")); };
     const ac = $("[name=accent]"); if (ac) ac.addEventListener("input", () => { noAccent = false; });
@@ -3340,7 +3350,10 @@ async function boot() {
   route();
   fixCompanyName();
   setTimeout(runRecurringOnOpen, 1500);
-  if (store.get("welcome", "") === "1") setTimeout(showWelcome, 700);   // a company just set up: quick setup / tour
+  const fresh = !tourPref() && Date.now() - Date.parse((S.boot.user_since || "").replace(" ", "T") + "Z") < 14 * 864e5;
+  if (store.get("welcome", "") === "1" || (fresh && !store.get("welcomed:" + S.boot.user.username, false))) {
+    store.set("welcomed:" + S.boot.user.username, true); setTimeout(showWelcome, 700); }   // a new company or a new person
+  else setTimeout(tourBar, 900);
   if (STATIC && window.BeyondCloud) window.BeyondCloud.onStatus(syncDot);
   else if (S.boot.cloud && S.boot.cloud.joined) {
     const poll = () => api("GET", "/api/cloud-status").then(syncDot).catch(() => {});
@@ -6655,7 +6668,7 @@ PAGES.profile = async view => {
           <div class="row" style="margin-top:10px"><button class="btn pri" type="submit">${t("save")}</button></div></form></div>
       <div class="card"><h2>${esc(L2("Menu", "القائمة"))}</h2>
         <div class="grid g2"><label class="f">${esc(L2("Menu groups open on", "فتح مجموعات القائمة عند"))}<select data-change="pnav">${[["click", L2("Click — stay open until clicked again", "النقر — تبقى مفتوحة حتى النقر مرة أخرى")], ["hover", L2("Hover — open while the mouse is over them", "المرور — تفتح أثناء مرور الماوس")]].map(([v, l]) => `<option value="${v}" ${navMode() === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
-        <label class="f">${esc(L2("Light / dark", "فاتح / داكن"))}<select data-change="pmode">${[["auto", L2("Follow this device", "حسب إعداد الجهاز")], ["light", L2("Light", "فاتح")], ["dark", L2("Dark", "داكن")]].map(([v, l]) => `<option value="${v}" ${store.get("theme", "auto") === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label></div>
+        <label class="f">${esc(L2("Light / dark", "فاتح / داكن"))}<select data-change="pmode">${[["auto", L2("Follow this device", "حسب إعداد الجهاز")], ["light", L2("Light", "فاتح")], ["dark", L2("Dark", "داكن")]].map(([v, l]) => `<option value="${v}" ${store.get("theme", DEFAULT_THEME) === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label></div>
         <div class="muted" style="margin-top:6px">${esc(L2("Colours and saved themes: Settings → Theme.", "الألوان والسمات المحفوظة: الإعدادات ← السمات."))} <a href="#/settings?tab=theme">${esc(L2("Open", "فتح"))}</a></div></div>
       <div class="card" id="notifcard"><h2>${esc(L2("Notifications", "الإشعارات"))}</h2>
         <div class="grid g2">
@@ -7334,7 +7347,7 @@ async function aiSettingsTab(view, head) {
       { html: `<label class="f" id="aimodelsel">${esc(L2("Model", "النموذج"))}<select name="model_claude">${r.models.map(([v, l]) => `<option value="${esc(v)}" ${p.model === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
         <label class="f" id="aimodeltxt">${esc(L2("Model name (exactly as the provider writes it)", "اسم النموذج (كما يكتبه المزوّد تماماً)"))}<input name="model_other" value="${esc(p.provider === "anthropic" ? "" : p.model)}" autocomplete="off"></label>` },
       { html: `<label class="f" id="aibase">${esc(L2("Provider address (OpenAI-compatible)", "عنوان المزوّد (متوافق مع OpenAI)"))}<input name="base_url" value="${esc(p.base_url || "")}" placeholder="https://…/v1" autocomplete="off"></label>`, span: "span2" },
-      { k: "effort", l: L2("Thoroughness", "مستوى التفكير"), type: "select", opts: [["low", L2("Quick", "سريع")], ["medium", L2("Balanced (recommended)", "متوازن (مستحسن)")], ["high", L2("Thorough", "متعمّق")]], v: p.effort },
+      { k: "effort", l: L2("Thoroughness", "مستوى التفكير"), type: "select", opts: [["low", L2("Quick", "سريع")], ["medium", L2("Balanced", "متوازن")], ["high", L2("Thorough", "متعمّق")]], v: p.effort },
       { k: "write", l: L2("Changing data", "تعديل البيانات"), type: "select", opts: [["off", L2("Never — read and advise only", "أبداً — قراءة ونصح فقط")], ["confirm", L2("Check every change, then the person reviews and approves it", "فحص كل تعديل ثم يراجعه الشخص ويوافق عليه")]], v: p.write },
       { k: "daily_limit", l: L2("Requests per person per day (0 = no limit)", "عدد الطلبات لكل شخص يومياً (0 = بلا حد)"), type: "number", v: p.daily_limit },
       { k: "access", l: L2("Who can use it", "من يمكنه استخدامه"), type: "select", opts: [["all", L2("Everyone in the company", "كل من في الشركة")], ["list", L2("Only the people ticked below", "فقط الأشخاص المحددون أدناه")]], v: p.access, change: "aiacc" },
@@ -8003,61 +8016,130 @@ PAGES.ereceipts = async (view, parts, q) => {
 // ================================================== welcome: quick setup + guided tour (both optional)
 // Shown once to the person who just set up a new company; both stay in the user menu ("Take the tour") and
 // Settings → Company ("Quick setup") for later.
+// The tour: one catalogue of steps, each tagged with the kinds of business it matters to ("core" = everyone).
+// A general tour walks every step whose part of the app is on screen; a business tour (the type chosen at sign-up)
+// keeps the core steps and that business's own. Where a person stopped is kept in their profile, on every device.
+const TYPE_NAMES = () => ({ interior: L2("Interior design & finishing", "التصميم الداخلي والتشطيبات"), contracting: L2("Contracting & construction", "المقاولات والإنشاءات"),
+  development: L2("Real-estate development", "التطوير العقاري"), sales: L2("Trading & sales", "التجارة والمبيعات"), investment: L2("Investment & holding", "الاستثمار والقابضة"),
+  scaffolding: L2("Scaffolding & equipment rental", "السقالات وتأجير المعدات"), general: L2("General business", "نشاط عام") });
 const TOUR = () => [
-  [".side .brand, .side .brand-logo", L2("Welcome to BeyondERP", "مرحباً بك في BeyondERP"),
-    L2("A quick look around — about a minute. Use Next, or Skip any time.", "جولة سريعة — حوالي دقيقة. اضغط التالي، أو تخطَّ في أي وقت.")],
-  ["#nav", L2("The menu", "القائمة"), L2("Everything lives here, grouped by area. Click a group to open its screens.", "كل شيء هنا، مجمّع حسب المجال. اضغط على مجموعة لفتح شاشاتها.")],
-  [".newbtn", L2("+ New", "+ جديد"), L2("Record anything from anywhere: payments, receipts, invoices, entries…", "سجّل أي شيء من أي مكان: مدفوعات، مقبوضات، فواتير، قيود…")],
-  [".top .search", L2("Search", "البحث"), L2("Jump to any screen or action — or press Ctrl K.", "انتقل لأي شاشة أو إجراء — أو اضغط Ctrl K.")],
-  ['#nav a[href="#/dashboard"]', L2("Dashboard", "لوحة التحكم"), L2("Cash, receivables, payables and profit at a glance.", "النقدية والمستحقات والالتزامات والربح في لمحة.")],
-  ['[data-g="g_bu"]', L2("Business units", "وحدات الأعمال"), L2("Each project or branch keeps its own costs, billing and profit.", "كل مشروع أو فرع له تكاليفه وفواتيره وربحه.")],
-  ['[data-g="g_sales"]', L2("Sales & receivables", "المبيعات والمستحقات"), L2("Invoices, client payments and who owes you what.", "الفواتير ومقبوضات العملاء ومن يدين لك بماذا.")],
-  ['[data-g="g_buy"]', L2("Procurement & payables", "المشتريات والالتزامات"), L2("Suppliers, purchase orders and payments out.", "الموردون وأوامر الشراء والمدفوعات.")],
-  ['[data-g="g_equity"]', L2("Owners' equity", "حقوق الملكية"), L2("Partners, shares, the funding partner and profit sharing.", "الشركاء والحصص والشريك الممول وتوزيع الأرباح.")],
-  ['[data-g="g_acc"]', L2("General accounting", "المحاسبة العامة"), L2("Journal, chart of accounts and the books behind every screen.", "اليومية ودليل الحسابات والدفاتر خلف كل شاشة.")],
-  ['[data-g="g_rep"]', L2("Reports", "التقارير"), L2("Statements and lists — export to PDF, Excel or Word.", "القوائم والكشوف — تصدير PDF أو Excel أو Word.")],
-  [".dd.bell", L2("Alerts", "التنبيهات"), L2("What needs attention: bills to issue, dues, checks.", "ما يحتاج انتباهك: فواتير للإصدار، مستحقات، مراجعات.")],
-  [".ucard", L2("You & settings", "حسابك والإعدادات"), L2("Settings, this tour again — and Help & support to report a problem or ask us anything.", "الإعدادات، وهذه الجولة مجدداً — والمساعدة والدعم للإبلاغ عن مشكلة أو سؤالنا.")],
+  ["", L2("Welcome to BeyondERP", "مرحباً بك في BeyondERP"), L2("A quick look around. Next to move on, Hide to look at something closely, Skip any time.", "جولة سريعة. «التالي» للمتابعة، «إخفاء» لتتأمل شيئاً عن قرب، و«تخطي» في أي وقت."), "core"],
+  ["#nav", L2("The menu", "القائمة"), L2("Everything lives here, grouped by area. Click a group to open its screens.", "كل شيء هنا، مجمّع حسب المجال. اضغط مجموعة لفتح شاشاتها."), "core"],
+  [".newbtn", L2("+ New", "+ جديد"), L2("Record anything from anywhere: payments, receipts, invoices, entries…", "سجّل أي شيء من أي مكان: مدفوعات، مقبوضات، فواتير، قيود…"), "core"],
+  [".top .search", L2("Search", "البحث"), L2("Jump to any screen or action — or press Ctrl K.", "انتقل لأي شاشة أو إجراء — أو اضغط Ctrl K."), "core"],
+  ['#nav a[href="#/dashboard"]', L2("Dashboard", "لوحة التحكم"), L2("Cash, receivables, payables and profit at a glance. Admins can tailor it per team.", "النقدية والمستحقات والالتزامات والربح في لمحة. يمكن للمدير تخصيصها لكل فريق."), "core"],
+  ['[data-g="g_bu"]', L2("Business units", "وحدات الأعمال"), L2("Each project or branch keeps its own costs, billing and profit.", "كل مشروع أو فرع له تكاليفه وفواتيره وربحه."), "interior contracting development scaffolding general"],
+  ['[data-g="g_prj"]', L2("Projects & contracts", "المشروعات والعقود"), L2("Phases, tasks, client and subcontracts, variation orders and progress billings.", "المراحل والمهام وعقود العملاء ومقاولي الباطن وأوامر التغيير والمستخلصات."), "interior contracting development"],
+  ['[data-g="g_est"]', L2("Quotations", "عروض الأسعار"), L2("BOQ quotations or package offers (Essential · Signature · Prestige) as branded PDF or Word.", "مقايسات أو عروض باقات بصيغة PDF أو Word بهوية شركتك."), "interior contracting"],
+  ['[data-g="g_sales"]', L2("Sales & receivables", "المبيعات والمستحقات"), L2("Invoices, client payments and who owes you what.", "الفواتير ومقبوضات العملاء ومن يدين لك بماذا."), "core"],
+  ['[data-g="g_shop"]', L2("Showroom & unit sales", "المعرض وبيع الوحدات"), L2("Units and products with photos, sales on installments and cheques.", "الوحدات والمنتجات بالصور، والبيع بالتقسيط والشيكات."), "development sales"],
+  ['[data-g="g_buy"]', L2("Procurement & payables", "المشتريات والالتزامات"), L2("Purchase requests, supplier quotes, orders and payments out.", "طلبات الشراء وعروض الموردين وأوامر الشراء والمدفوعات."), "core"],
+  ['[data-g="g_stock"]', L2("Inventory", "المخزون"), L2("Items with their prices — even with no stock yet — warehouses, moves and counts.", "الأصناف بأسعارها — حتى دون رصيد — والمخازن والحركات والجرد."), "interior contracting sales scaffolding"],
+  ['[data-g="g_rent"]', L2("Equipment rental", "تأجير المعدات"), L2("Rental contracts, deliveries and returns, monthly billing and the rent calculator.", "عقود الإيجار والتسليم والاسترجاع والفوترة الشهرية وحاسبة الإيجار."), "scaffolding"],
+  ['[data-g="g_eq"]', L2("Plant & equipment", "المعدات والآلات"), L2("Equipment register, maintenance and operating hours charged to projects.", "سجل المعدات والصيانة وساعات التشغيل المحمّلة على المشروعات."), "scaffolding contracting"],
+  ['[data-g="g_hr"]', L2("People & payroll", "الموظفون والرواتب"), L2("Employees, attendance and monthly payroll with Egyptian tax and social insurance.", "الموظفون والحضور والرواتب الشهرية مع الضرائب والتأمينات المصرية."), "core"],
+  ['[data-g="g_assets"]', L2("Assets & treasury", "الأصول والخزينة"), L2("Fixed assets with monthly depreciation, banks and reconciliation.", "الأصول الثابتة والإهلاك الشهري والبنوك والتسويات."), "investment general development"],
+  ['[data-g="g_fin"]', L2("Financing & petty cash", "التمويل والعُهد"), L2("Loans in and out with schedules, and staff cash custody.", "القروض المأخوذة والممنوحة بجداولها، والعُهد النقدية."), "core"],
+  ['[data-g="g_equity"]', L2("Owners' equity", "حقوق الملكية"), L2("Partners, shares, the funding partner (account 3015) and profit sharing.", "الشركاء والحصص والشريك الممول (حساب 3015) وتوزيع الأرباح."), "core"],
+  ['[data-g="g_tax"]', L2("Tax & e-invoicing", "الضرائب والفاتورة الإلكترونية"), L2("VAT and withholding, ETA e-invoices and e-receipts.", "ضريبة القيمة المضافة والخصم، والفاتورة والإيصال الإلكتروني."), "core"],
+  ['[data-g="g_acc"]', L2("General accounting", "المحاسبة العامة"), L2("Journal and chart of accounts. Tick rows to edit, void or delete many at once; pick accounts by typing a code or a word.", "اليومية ودليل الحسابات. حدّد الصفوف لتعديل أو إلغاء أو حذف عدة قيود معاً؛ واختر الحساب بكتابة رقمه أو كلمة منه."), "core"],
+  ['[data-g="g_rep"]', L2("Reports", "التقارير"), L2("Statements and lists — export to PDF, Excel or Word.", "القوائم والكشوف — تصدير PDF أو Excel أو Word."), "core"],
+  ['[data-g="g_sys"]', L2("Administration", "الإدارة"), L2("Settings, users, and Excel import & export — 'New rows only' adds just what is new in your sheet.", "الإعدادات والمستخدمون واستيراد وتصدير Excel — «الجديد فقط» يضيف ما استجد في ملفك."), "core"],
+  ['#nav a[href="#/chat"]', L2("Team chat", "دردشة الفريق"), L2("Rooms and direct messages with your team, with files and mentions.", "غرف ورسائل خاصة مع فريقك، مع الملفات والإشارات."), "core"],
+  [".dd.bell", L2("Alerts", "التنبيهات"), L2("What needs attention: bills to issue, dues, checks.", "ما يحتاج انتباهك: فواتير للإصدار، مستحقات، مراجعات."), "core"],
+  [".ucard", L2("You, settings and help", "حسابك والإعدادات والمساعدة"), L2("Settings, Help & support to report a problem or ask us, and this tour again.", "الإعدادات، والمساعدة والدعم للإبلاغ عن مشكلة أو سؤالنا، وهذه الجولة مجدداً."), "core"],
 ];
-function startTour() {
+const tourPref = () => ((S.boot && S.boot.profile && S.boot.profile.prefs) || {}).tour || null;
+const saveTour = st => { const p = S.boot.profile || (S.boot.profile = { prefs: {} }); p.prefs = { ...(p.prefs || {}), tour: st };
+  api("PUT", "/api/me/profile", { prefs: { tour: st } }).then(r => { S.boot.profile = r; }).catch(() => {}); tourBar(); };
+const tourSteps = kind => TOUR().filter(([, , , tags]) => kind === "general" || tags.split(" ").includes("core") || tags.split(" ").includes(kind));
+// general or this company's kind of business (set at sign-up / Settings)
+function tourChoose() {
+  const ty = (S.boot.settings || {}).business_type;
+  if (!ty || ty === "general") return Promise.resolve("general");
+  return new Promise(res => {
+    const bg = document.createElement("div"); bg.className = "dlg-bg";
+    bg.innerHTML = `<div class="dlg welcome" role="dialog" aria-modal="true"><h3>${esc(L2("Which tour?", "أي جولة؟"))}</h3>
+      <div class="wl-opts"><button type="button" class="wl-opt" data-k="${esc(ty)}"><b>✦ ${esc(TYPE_NAMES()[ty] || ty)}</b><small>${esc(L2("The parts of the app your kind of business uses", "أجزاء التطبيق التي يستخدمها نشاطك"))}</small></button>
+        <button type="button" class="wl-opt" data-k="general"><b>◎ ${esc(L2("General tour", "جولة عامة"))}</b><small>${esc(L2("Everything the app can do", "كل ما يستطيع التطبيق فعله"))}</small></button></div>
+      <div class="dlg-foot"><button type="button" class="btn" data-k="">${esc(L2("Cancel", "إلغاء"))}</button></div></div>`;
+    document.body.appendChild(bg);
+    bg.addEventListener("click", e => { const b = e.target.closest("[data-k]"); if (!b && e.target !== bg) return; bg.remove(); res(b ? b.dataset.k || null : null); });
+  });
+}
+async function startTour(kind, from = 0) {
+  kind = kind || await tourChoose(); if (!kind) return;
+  $("#tourbar") && $("#tourbar").remove();
   const app = $(".app"), narrow = innerWidth <= 900, hadMenu = app && app.classList.contains("menu");
   if (narrow && app) app.classList.add("menu");          // phones: the menu slides in for the steps that point into it
-  const steps = TOUR().map(([sel, h, p]) => { const el = $$(sel).find(e => e.getBoundingClientRect().width > 0); return { el, h, p, side: !!(el && el.closest(".side")) }; })
-    .filter((s, i) => i === 0 || s.el);
+  const steps = tourSteps(kind).map(([sel, h, p]) => { const el = sel ? $$(sel).find(e => e.getBoundingClientRect().width > 0) : null; return { sel, el, h, p, side: !!(el && el.closest(".side")) }; })
+    .filter(s => !s.sel || s.el);
   if (!steps.length) return;
   const wrap = document.createElement("div"); wrap.className = "tour";
   wrap.innerHTML = `<div class="tour-ring"></div><div class="tour-card" role="dialog" aria-live="polite"></div>`;
   document.body.appendChild(wrap);
   const ring = $(".tour-ring", wrap), card = $(".tour-card", wrap);
-  let i = 0;
-  const end = () => { document.removeEventListener("keydown", key, true); removeEventListener("resize", place); wrap.remove(); store.set("tourSeen", "1");
+  let i = Math.min(from, steps.length - 1), pill = null;
+  const cleanup = () => { document.removeEventListener("keydown", key, true); removeEventListener("resize", place); wrap.remove(); if (pill) pill.remove();
     if (narrow && app && !hadMenu) app.classList.remove("menu"); };
+  const end = state => { cleanup(); saveTour({ state, step: state === "paused" ? i : 0, kind }); };
   const place = () => {
+    if (wrap.hidden) return;
     const s = steps[i], r = s.el && s.el.getBoundingClientRect();
     if (r && r.width) { s.el.scrollIntoView({ block: "nearest" }); const q = s.el.getBoundingClientRect(), pad = 6;
       Object.assign(ring.style, { display: "", left: q.left - pad + "px", top: q.top - pad + "px", width: q.width + pad * 2 + "px", height: q.height + pad * 2 + "px" });
-      const cw = Math.min(320, innerWidth - 24), ch = card.offsetHeight;
+      const cw = Math.min(330, innerWidth - 24), ch = card.offsetHeight;
       let x = q.right + 14, y = q.top;                                   // beside the target, else below / above it
       if (x + cw > innerWidth - 12) { x = Math.min(Math.max(12, q.left), innerWidth - cw - 12); y = q.bottom + 14; if (y + ch > innerHeight - 12) y = q.top - ch - 14; }
       Object.assign(card.style, { left: x + "px", top: Math.max(12, Math.min(y, innerHeight - ch - 12)) + "px", width: cw + "px" });
       card.dataset.side = x > q.right ? "right" : y > q.bottom ? "below" : "above";
-    } else { ring.style.display = "none"; Object.assign(card.style, { left: "50%", top: "50%", width: Math.min(340, innerWidth - 24) + "px" }); card.dataset.side = "center"; }
+    } else { ring.style.display = "none"; Object.assign(card.style, { left: "50%", top: "50%", width: Math.min(350, innerWidth - 24) + "px" }); card.dataset.side = "center"; }
   };
   const show = () => { const s = steps[i];
     if (narrow && app) app.classList.toggle("menu", s.side || i === 0);
-    card.innerHTML = `<div class="tour-step">${i + 1} / ${steps.length}</div><h3>${esc(s.h)}</h3><p>${esc(s.p)}</p>
+    const last = i === steps.length - 1, fwd = S.lang === "ar" ? "←" : "→", bwd = S.lang === "ar" ? "→" : "←";
+    card.innerHTML = `<div class="tour-step">${kind === "general" ? esc(L2("General tour", "جولة عامة")) : esc(TYPE_NAMES()[kind] || "")} · ${i + 1} / ${steps.length}</div><h3>${esc(s.h)}</h3><p>${esc(s.p)}</p>
       <div class="tour-dots">${steps.map((_, k) => `<i class="${k === i ? "on" : ""}"></i>`).join("")}</div>
-      <div class="tour-foot"><button type="button" class="btn sm" data-t="skip">${esc(L2("Skip", "تخطي"))}</button><span class="spacer"></span>
-        ${i ? `<button type="button" class="btn sm" data-t="back" aria-label="${esc(L2("Back", "السابق"))}">${S.lang === "ar" ? "→" : "←"}</button>` : ""}
-        <button type="button" class="btn sm pri" data-t="next">${esc(i === steps.length - 1 ? L2("Done", "تم") : L2("Next", "التالي"))} ${i === steps.length - 1 ? "" : S.lang === "ar" ? "←" : "→"}</button></div>`;
+      <div class="tour-foot"><button type="button" class="btn sm" data-t="skip">${esc(L2("Skip", "تخطي"))}</button>
+        <button type="button" class="btn sm" data-t="hide" title="${esc(L2("Hide the tour to look at this closely", "إخفاء الجولة لتتأمل هذا الجزء"))}">⤓ ${esc(L2("Hide", "إخفاء"))}</button><span class="spacer"></span>
+        ${i ? `<button type="button" class="btn sm" data-t="back" aria-label="${esc(L2("Back", "السابق"))}">${bwd}</button>` : ""}
+        <button type="button" class="btn sm pri" data-t="next">${esc(last ? L2("Done", "تم") : L2("Next", "التالي"))} ${last ? "" : fwd}</button></div>`;
     card.classList.remove("in"); place(); requestAnimationFrame(() => card.classList.add("in")); $("[data-t=next]", card).focus(); };
-  const go = d => { i += d; if (i < 0) i = 0; if (i >= steps.length) return end(); show(); };
-  const key = e => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); end(); }
+  const go = d => { i += d; if (i < 0) i = 0; if (i >= steps.length) return end("done"); show(); };
+  // hide: the spotlight and card step aside so the person can look, scroll and click; a small pill brings them back
+  const hide = () => { wrap.hidden = true; if (narrow && app && !hadMenu && !steps[i].side) app.classList.remove("menu");
+    pill = document.createElement("div"); pill.className = "tour-pill";
+    pill.innerHTML = `<button type="button" class="tp-go">▸ ${esc(L2("Resume the tour", "متابعة الجولة"))} <small>${i + 1}/${steps.length}</small></button><button type="button" class="tp-x" aria-label="${esc(L2("End the tour", "إنهاء الجولة"))}">✕</button>`;
+    document.body.appendChild(pill);
+    $(".tp-go", pill).onclick = () => { pill.remove(); pill = null; wrap.hidden = false; show(); };
+    $(".tp-x", pill).onclick = () => end("paused"); };
+  const key = e => { if (wrap.hidden) return; if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); end("paused"); }
     else if (e.key === "ArrowRight") { e.preventDefault(); go(S.lang === "ar" ? -1 : 1); } else if (e.key === "ArrowLeft") { e.preventDefault(); go(S.lang === "ar" ? 1 : -1); } };
   wrap.addEventListener("click", e => { e.stopPropagation(); const b = e.target.closest("[data-t]"); if (!b) return;
-    if (b.dataset.t === "skip") end(); else go(b.dataset.t === "back" ? -1 : 1); });
+    const t = b.dataset.t; if (t === "skip") end(i >= steps.length - 1 ? "done" : "paused"); else if (t === "hide") hide(); else go(t === "back" ? -1 : 1); });
   document.addEventListener("keydown", key, true); addEventListener("resize", place);
   show();
+}
+// the chat-style bar at the bottom: shown after a tour was skipped part-way (or to a new person who has not started it)
+function tourBar() {
+  const old = $("#tourbar"); if (old) old.remove();
+  if (!S.boot || !S.boot.user || $(".tour") || S.tourBarOff) return;
+  const st = tourPref(), fresh = !st && Date.now() - Date.parse((S.boot.user_since || "").replace(" ", "T") + "Z") < 14 * 864e5;
+  if (!(st && st.state === "paused") && !fresh) return;
+  const n = st ? tourSteps(st.kind || "general").length : 0, admin = S.boot.user.is_admin;
+  const bar = document.createElement("div"); bar.id = "tourbar"; bar.className = "tourbar";
+  bar.innerHTML = `<img src="icons/beyond.png" alt="" class="tb-av"><div class="tb-msg"><b>${esc(st ? L2("Pick up the tour where you left off", "تابع الجولة من حيث توقفت") : L2("New here? A one-minute tour shows you around.", "جديد هنا؟ جولة دقيقة واحدة تعرّفك على التطبيق."))}</b>
+      ${st ? `<small>${esc(L2(`Step ${Math.min(st.step + 1, n)} of ${n}`, `الخطوة ${Math.min(st.step + 1, n)} من ${n}`))}</small>` : ""}
+      <div class="tb-acts"><button type="button" class="btn sm pri" data-tb="go">${esc(st ? L2("Continue", "متابعة") : L2("Start the tour", "ابدأ الجولة"))}</button>
+        ${admin ? `<button type="button" class="btn sm" data-tb="setup">⚙ ${esc(L2("Quick setup", "الإعداد السريع"))}</button>` : ""}
+        <button type="button" class="btn sm" data-tb="later">${esc(L2("Not now", "ليس الآن"))}</button>
+        <button type="button" class="btn sm tb-never" data-tb="never">${esc(L2("Don't show again", "لا تُظهر مرة أخرى"))}</button></div></div>`;
+  document.body.appendChild(bar);
+  bar.addEventListener("click", e => { const b = e.target.closest("[data-tb]"); if (!b) return; const a = b.dataset.tb;
+    if (a === "go") { bar.remove(); location.hash = "#/dashboard"; setTimeout(() => startTour(st && st.kind, st ? st.step : 0), 350); }
+    else if (a === "setup") quickSetup();
+    else if (a === "later") { S.tourBarOff = true; bar.remove(); }
+    else if (a === "never") saveTour({ state: "never", step: 0, kind: (st && st.kind) || "" }); });
 }
 // the essentials of a new company in one short form: name, slogan, logo, currency, year, partners, funding partner
 async function quickSetup(then) {
@@ -8107,9 +8189,10 @@ async function showWelcome() {
   bg.addEventListener("click", e => { e.stopPropagation(); const b = e.target.closest("[data-w]"); if (!b && e.target !== bg) return; bg.remove();
     const w = b ? b.dataset.w : "skip";
     if (w === "setup") quickSetup(async () => { if (await uiConfirm(L2("Saved. Take the short tour now?", "تم الحفظ. هل تريد الجولة القصيرة الآن؟"), { ok: L2("Take the tour", "ابدأ الجولة"), cancel: L2("Not now", "ليس الآن"), danger: false })) startTour(); });
-    else if (w === "tour") startTour(); });
+    else if (w === "tour") startTour();
+    else saveTour({ state: "paused", step: 0, kind: "" }); });
 }
-Object.assign(S.GLOBAL_H, { tour: () => { $$(".dd.open").forEach(d => d.classList.remove("open")); location.hash = "#/dashboard"; setTimeout(startTour, 400); },
+Object.assign(S.GLOBAL_H, { tour: () => { $$(".dd.open").forEach(d => d.classList.remove("open")); location.hash = "#/dashboard"; setTimeout(() => startTour(), 400); },
   qsetup: () => quickSetup() });
 
 // ================================================== help & support
@@ -8177,5 +8260,56 @@ PAGES.support = async view => {
   S.H.supagain = el => { const tk = list.find(x => String(x.id) === el.dataset.id); if (tk) supSend(tk, "whatsapp", true); };
   S.H.supst = async el => { try { await api("PUT", "/api/support/tickets/" + el.dataset.id, { status: el.value }); toast(t("saved")); } catch (e) { fail(e); route(); } };
 };
+
+// ================================================== welcome screen (signed-out visitors)
+const LP_LINK = () => `<p class="center lp-link"><a href="#" data-lp="1">✦ ${esc(L2("Discover BeyondERP", "تعرّف على BeyondERP"))}</a></p>`;
+document.addEventListener("click", e => { const a = e.target.closest("[data-lp]"); if (!a) return; e.preventDefault(); S.landingOk = false; renderLanding(); });
+// The first thing a new visitor sees: the night sky, the wordmark rising out of a glowing eclipse, and what BeyondERP
+// does, section by section as they scroll. Pure CSS animation (transform / opacity only) so it stays smooth on phones and
+// light on slow connections; respects "reduce motion". People who have signed in on this device go straight to sign-in.
+function renderLanding() {
+  const ar = S.lang === "ar", setup = S.boot && S.boot.needs_setup;
+  document.documentElement.setAttribute("data-theme", "dark");
+  const word = "BEYONDERP".split("").map((c, i) => `<span style="--d:${(i * 0.07).toFixed(2)}s" class="${i >= 6 ? "erp" : ""}">${c}</span>`).join("");
+  const feats = [
+    ["scale", L2("Books that balance themselves", "دفاتر تتوازن تلقائياً"), L2("Every voucher posts double entry. Trial balance, profit & loss and balance sheet update as you work.", "كل سند يُسجَّل بالقيد المزدوج. ميزان المراجعة والأرباح والخسائر والميزانية تتحدث أثناء العمل.")],
+    ["brief", L2("Profit per project", "ربح كل مشروع"), L2("Business units, progress billings, retentions, subcontractor certificates and live work in progress.", "وحدات أعمال، مستخلصات، محتجزات، مستخلصات مقاولي الباطن، وأعمال تحت التنفيذ لحظياً.")],
+    ["users", L2("Partners & funding", "الشركاء والتمويل"), L2("Shares, capital, a funding partner's account and profit sharing — worked out for you.", "الحصص ورأس المال وحساب الشريك الممول وتوزيع الأرباح — محسوبة لك.")],
+    ["file", L2("Offers your way", "عروض أسعار كما تريد"), L2("BOQ quotations or package offers (Essential · Signature · Prestige), branded PDF and Word in one click.", "مقايسات أو عروض باقات، بصيغة PDF وWord بهوية شركتك بضغطة واحدة.")],
+    ["receipt", L2("Ready for Egyptian tax", "جاهز للضرائب المصرية"), L2("ETA e-invoices and e-receipts, VAT and withholding, payroll with social insurance.", "الفاتورة والإيصال الإلكتروني، ضريبة القيمة المضافة والخصم، والرواتب مع التأمينات.")],
+    ["phone", L2("Anywhere, even offline", "في أي مكان، حتى بدون إنترنت"), L2("Phone, browser or desktop. Keeps working without internet and syncs when you are back.", "على الهاتف أو المتصفح أو الكمبيوتر. يعمل بدون إنترنت ويتزامن عند عودته.")],
+  ];
+  const chips = [L2("General Accounting", "المحاسبة العامة"), L2("Accounts Receivable", "حسابات العملاء"), L2("Accounts Payable", "حسابات الموردين"),
+    L2("Inventory Management", "إدارة المخزون"), L2("Procurement", "المشتريات"), L2("Project Costing", "تكاليف المشروعات"), L2("Contracts & Progress Billing", "العقود والمستخلصات"),
+    L2("Payroll & HR", "الرواتب وشؤون الموظفين"), L2("Fixed Assets", "الأصول الثابتة"), L2("Treasury & Banking", "الخزينة والبنوك"), L2("Budgeting", "الموازنات"),
+    L2("Tax & E-Invoicing", "الضرائب والفاتورة الإلكترونية"), L2("Sales & Installments", "المبيعات والتقسيط"), L2("Equipment Rental", "تأجير المعدات"),
+    L2("Partners & Equity", "الشركاء وحقوق الملكية"), L2("Financial Reports", "التقارير المالية"), L2("Team Chat", "دردشة الفريق"), L2("AI Assistant", "المساعد الذكي")];
+  const go = L2(setup ? "Get started" : "Sign in", setup ? "ابدأ الآن" : "تسجيل الدخول");
+  $("#root").innerHTML = `<div class="lp" dir="${ar ? "rtl" : "ltr"}">
+    <header class="lp-nav"><span class="wordmark lp-mini">BEYOND<i>ERP</i></span><span class="spacer"></span>
+      <button type="button" class="lp-lang" data-l="1">${ar ? "EN" : "ع"}</button><button type="button" class="lp-pill sm" data-go="1">${esc(go)}</button></header>
+    <section class="lp-hero"><div class="lp-ring" aria-hidden="true"><i></i></div>
+      <h1 class="lp-word wordmark" aria-label="BeyondERP">${word}</h1>
+      <p class="lp-tag">${esc(L2("THE ERP THAT SIMPLY WORKS", "نظام أعمال يعمل ببساطة"))}</p>
+      <p class="lp-sub">${esc(L2("Accounting, projects, partners and payroll in one place — online or offline.", "الحسابات والمشروعات والشركاء والرواتب في مكان واحد — أونلاين أو بدون إنترنت."))}</p>
+      <button type="button" class="lp-pill" data-go="1">${esc(go)}</button>
+      <small class="lp-note">${esc(L2("General ledger · Inventory · Projects · Payroll · Tax", "الأستاذ العام · المخزون · المشروعات · الرواتب · الضرائب"))}</small>
+      <div class="lp-scroll" aria-hidden="true"></div></section>
+    <section class="lp-feats">${feats.map(([ic, h, p], i) => `<article class="lp-card lp-rv" style="--i:${i}"><div class="lp-orb">${svg(ic)}</div><h3>${esc(h)}</h3><p>${esc(p)}</p></article>`).join("")}</section>
+    <section class="lp-band lp-rv"><div class="lp-eclipse" aria-hidden="true"></div><h2>${esc(L2("Every system a growing company runs on", "كل الأنظمة التي تحتاجها شركة تنمو"))}</h2>
+      <div class="lp-chips">${chips.map(c => `<span>${esc(c)}</span>`).join("")}</div></section>
+    <section class="lp-end lp-rv"><h2>${esc(L2("Ready when you are.", "جاهز متى كنت جاهزاً."))}</h2><button type="button" class="lp-pill" data-go="1">${esc(go)}</button></section>
+    <footer class="lp-foot"><span class="wordmark">BEYOND<i>ERP</i></span></footer></div>`;
+  const root = $(".lp");
+  root.addEventListener("click", e => {
+    if (e.target.closest("[data-go]")) { store.set("landingSeen", true); S.landingOk = true; applyLook(); renderAuth(); }
+    else if (e.target.closest("[data-l]")) { store.set("lang", S.lang === "ar" ? "en" : "ar"); S.lang = store.get("lang"); renderLanding(); }
+  });
+  // reveal sections as they scroll into view (one observer, no scroll handlers)
+  if ("IntersectionObserver" in window) {
+    const io = new IntersectionObserver(es => es.forEach(x => { if (x.isIntersecting) { x.target.classList.add("in"); io.unobserve(x.target); } }), { threshold: 0.15 });
+    $$(".lp-rv", root).forEach(el => io.observe(el));
+  } else $$(".lp-rv", root).forEach(el => el.classList.add("in"));
+}
 
 })();

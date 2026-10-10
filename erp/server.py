@@ -141,6 +141,7 @@ def bootstrap(ctx):
             "settings": {k: v for k, v in look.items()
                          if k in ("company_name", "company_tagline", "font_family", "font_size", "language", "appearance",
                                   "regional")}}
+    base["settings"]["business_type"] = db.setting("business_type") or ""   # the tour offers a tour for this kind of business
     if not user:
         return ok(base)
     from . import demo as _demo
@@ -155,6 +156,7 @@ def bootstrap(ctx):
             base["licence"]["licensee"] = lst["licence"].get("company")
     from . import ai, chat
     base["profile"] = chat.profile(db, user["id"])
+    base["user_since"] = (db.one("SELECT created_at FROM users WHERE id=?", (user["id"],)) or {}).get("created_at") or ""
     pol = ai.policy(db)
     base["ai"] = {"allowed": ai.allowed(pol, user), "used_today": ai.used_today(db, user), "has_key": ai.has_key(db),
                   "models": ai.MODELS, "providers": ai.PROVIDERS, "policy": pol if user.get("is_super") else {k: pol[k] for k in ("enabled", "name", "avatar", "write", "model", "daily_limit")}}
@@ -182,6 +184,7 @@ def bootstrap(ctx):
                   "menu_items": [{"key": k, "en": en, "ar": ar, "module": m} for k, en, ar, m in entries.MENU_ITEMS],
                   "sheets": [{"name": s["name"], "ar": s["ar"], "module": s["module"]} for s in interchange.SHEETS]},
     })
+    base["settings"]["business_type"] = db.setting("business_type") or ""
     return ok(base)
 
 

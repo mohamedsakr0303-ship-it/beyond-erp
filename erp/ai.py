@@ -25,7 +25,7 @@ import re
 from . import accounting as acc
 from .db import now
 
-MODELS = [("claude-opus-5-5", "Claude Opus 5.5 — most capable (recommended)"),
+MODELS = [("claude-opus-5-5", "Claude Opus 5.5 — most capable"),
           ("claude-sonnet-5-5", "Claude Sonnet 5.5 — faster, lower cost"),
           ("claude-haiku-4-5", "Claude Haiku 4.5 — quickest, lowest cost")]
 EFFORTS = ("low", "medium", "high")

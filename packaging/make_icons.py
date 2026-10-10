@@ -5,7 +5,7 @@ Writes: packaging/icon.ico (Windows exe + installers), packaging/icon.png (Mac a
 web-src/ (Android / iPhone home screen), the in-app default icon / sidebar logo (erp/static/icons/beyond.png) and the
 small icon carried inside both index pages.
 The mark itself stays transparent (no white square); where a platform needs a solid square (iPhone, Android's
-full-bleed "maskable" icon) it sits on the app's dark green."""
+full-bleed "maskable" icon) it sits on the app's night navy."""
 from pathlib import Path
 
 from PIL import Image, ImageDraw
@@ -17,20 +17,20 @@ logo = logo.crop(logo.getbbox())            # trim empty edges
 
 
 def green(n):
-    """The app's dark green, lighter top-left to darker bottom-right (#064e3b → #022c22)."""
+    """The app's night navy, a touch of indigo top-left to near-black bottom-right (#0b0c3a → #02021a)."""
     im = Image.new("RGBA", (n, n))
     d = ImageDraw.Draw(im)
-    a, b = (6, 78, 59), (2, 44, 34)
+    a, b = (11, 12, 58), (2, 2, 26)
     for i in range(2 * n):
         t = i / (2 * n - 1)
         d.line([(i, 0), (0, i)], fill=tuple(round(a[k] + (b[k] - a[k]) * t) for k in range(3)) + (255,))
     return im
 
 
-def icon(n, pad, bg=None):
+def icon(n, pad, bg=None, src=None):
     im = green(n) if bg == "green" else Image.new("RGBA", (n, n), bg or (0, 0, 0, 0))
     box = int(n * (1 - 2 * pad))
-    lg = logo.copy()
+    lg = (src or logo).copy()
     scale = box / max(lg.size)
     lg = lg.resize((max(1, round(lg.width * scale)), max(1, round(lg.height * scale))), Image.LANCZOS)
     im.alpha_composite(lg, ((n - lg.width) // 2, (n - lg.height) // 2))
@@ -41,10 +41,28 @@ icon(256, 0.04).save(HERE / "icon.ico", sizes=[(16, 16), (24, 24), (32, 32), (48
 icon(1024, 0.08).save(HERE / "icon.png")
 for n in (192, 512):
     icon(n, 0.06).save(ROOT / "web-src" / f"icon-{n}.png", optimize=True)
-icon(512, 0.2, "green").convert("RGB").save(ROOT / "web-src" / "icon-maskable-512.png", optimize=True)
-icon(180, 0.14, "green").convert("RGB").save(ROOT / "web-src" / "apple-touch-icon.png", optimize=True)
+icon(512, 0.1, "green").convert("RGB").save(ROOT / "web-src" / "icon-maskable-512.png", optimize=True)
+icon(180, 0.07, "green").convert("RGB").save(ROOT / "web-src" / "apple-touch-icon.png", optimize=True)
 icon(64, 0.04).save(ROOT / "web-src" / "favicon.png")
 icon(512, 0.0).save(ROOT / "erp" / "static" / "icons" / "beyond.png", optimize=True)   # in-app default icon + sidebar logo
+# Every icon choice in Settings -> App icon gets real icon files and its own manifest on the site, so an installed
+# phone app is a proper app with that icon (a manifest made in the page would make Android show Chrome's badge on it)
+import json
+CHOICES = {"beyond": logo, "rising": Image.open(HERE / "icon-src-rising.png").convert("RGBA"),
+           "seal": Image.open(HERE / "icon-src-seal.png").convert("RGBA"),
+           "original": Image.open(ROOT / "erp" / "static" / "icons" / "original.png").convert("RGBA")}
+base = json.loads((ROOT / "web-src" / "manifest.webmanifest").read_text(encoding="utf-8"))
+(ROOT / "erp" / "static" / "icons" / "app").mkdir(exist_ok=True)
+for k, src in CHOICES.items():
+    src = src.crop(src.getbbox())
+    out = ROOT / "erp" / "static" / "icons" / "app"
+    icon(192, 0.06, src=src).save(out / f"{k}-192.png", optimize=True)
+    icon(512, 0.06, src=src).save(out / f"{k}-512.png", optimize=True)
+    icon(512, 0.12, "green", src=src).convert("RGB").save(out / f"{k}-maskable.png", optimize=True)
+    m = dict(base, icons=[{"src": f"icons/app/{k}-192.png", "sizes": "192x192", "type": "image/png"},
+                          {"src": f"icons/app/{k}-512.png", "sizes": "512x512", "type": "image/png"},
+                          {"src": f"icons/app/{k}-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}])
+    (ROOT / "web-src" / f"manifest-{k}.webmanifest").write_text(json.dumps(m, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 # the offline desktop app serves erp/static, and the page itself carries the small icon (works from a zip / file://
 # too): Edge / Chrome use it for the app window's title bar and taskbar
 import base64

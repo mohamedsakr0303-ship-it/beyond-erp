@@ -1,12 +1,13 @@
 {
+  "id": "./",
   "name": "BeyondERP",
   "short_name": "BeyondERP",
   "description": "Accounting, projects, partners and assets",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#04221a",
-  "theme_color": "#047857",
+  "background_color": "#05061a",
+  "theme_color": "#05061a",
   "icons": [
     {
       "src": "icon-192.png",

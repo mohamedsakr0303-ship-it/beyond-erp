@@ -66,6 +66,10 @@ def save_profile(db, uid, d):
         new = d["prefs"]
         if new.get("nav_mode") in ("hover", "click"):
             prefs["nav_mode"] = new["nav_mode"]
+        tr = new.get("tour")      # the guided tour: where this person stopped, or that they never want it
+        if isinstance(tr, dict) and tr.get("state") in ("new", "paused", "done", "never"):
+            prefs["tour"] = {"state": tr["state"], "step": max(0, min(99, int(tr.get("step") or 0))),
+                             "kind": acc.text(tr.get("kind"))[:30]}
         n = new.get("notify")
         if isinstance(n, dict):
             if n.get("level") in ("all", "mentions", "rooms", "none"):

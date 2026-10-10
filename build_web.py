@@ -84,7 +84,8 @@ def pack(wheel_names):
                                   f"window.BEYOND_PACK_FILES = {json.dumps(files)};\n", encoding="utf-8")
 
 
-PWA_FILES = ("manifest.webmanifest", "sw.js", "icon-192.png", "icon-512.png", "icon-maskable-512.png", "apple-touch-icon.png", "favicon.png")
+PWA_FILES = ("manifest.webmanifest", "manifest-beyond.webmanifest", "manifest-rising.webmanifest", "manifest-seal.webmanifest",
+             "manifest-original.webmanifest", "sw.js", "icon-192.png", "icon-512.png", "icon-maskable-512.png", "apple-touch-icon.png", "favicon.png")
 
 
 def build(make_zip=False):
