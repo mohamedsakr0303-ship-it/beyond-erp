@@ -1,0 +1,23 @@
+BeyondERP — Proprietary Software Licence
+
+Copyright (c) 2026 BEYOND DESIGN. All rights reserved.
+
+This software, including its source code, compiled code, user interface, designs, documentation, templates and data
+layouts ("the Software"), is the confidential and proprietary property of BEYOND DESIGN and is protected by copyright
+law and international treaties.
+
+No licence is granted except in a separate written agreement signed by BEYOND DESIGN. Without that written permission
+you may not, in whole or in part:
+  1. copy, reproduce, publish, distribute, sell, rent, lease, sublicense or otherwise make the Software available;
+  2. modify, translate, adapt or create derivative works of the Software;
+  3. decompile, disassemble, reverse-engineer or otherwise attempt to derive source code, structure or algorithms from
+     the Software, except to the extent such restriction is prohibited by applicable law;
+  4. remove, alter or obscure any copyright, trademark or proprietary notice.
+
+Customers who subscribe to the hosted service receive only a limited, non-exclusive, non-transferable right to use the
+service for their own internal business purposes during their subscription. Customer data belongs to the customer.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. To the maximum extent permitted by law, BEYOND DESIGN is
+not liable for any indirect, incidental or consequential damages arising from the use of the Software.
+
+"BeyondERP", "BEYOND" and the Beyond logos are trademarks of BEYOND DESIGN.

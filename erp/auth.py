@@ -176,10 +176,31 @@ def delete_user(db, uid, acting_user_id):
     return u
 
 
+# Password guessing: after MAX_FAILS wrong passwords for one username within LOCK_MINUTES, that username is refused
+# until the period passes (kept per running app; a restart clears it).
+MAX_FAILS, LOCK_MINUTES = 5, 15
+_fails = {}
+
+
+def _throttle(key):
+    import time
+    now = time.time()
+    recent = [t for t in _fails.get(key, []) if now - t < LOCK_MINUTES * 60]
+    _fails[key] = recent
+    if len(recent) >= MAX_FAILS:
+        wait = int((LOCK_MINUTES * 60 - (now - recent[0])) // 60) + 1
+        raise ValidationError(f"Too many wrong passwords — try again in {wait} minute{'s' if wait != 1 else ''}")
+
+
 def login(db, username, password):
+    import time
+    key = str(username or "").strip().lower()
+    _throttle(key)
     u = db.one("SELECT * FROM users WHERE username=? AND active=1", (text(username),))
     if not u or not check_password(password, u["pw_hash"]):
+        _fails.setdefault(key, []).append(time.time())     # (not written to the shared audit log: it syncs to every device)
         raise ValidationError("Wrong username or password")
+    _fails.pop(key, None)
     token = secrets.token_urlsafe(32)
     db.x("INSERT INTO sessions(token,user_id,expires) VALUES (?,?,datetime('now',?))",
          (token, u["id"], f"+{SESSION_DAYS} days"))

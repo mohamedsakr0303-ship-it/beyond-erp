@@ -1521,6 +1521,22 @@ class SuperAdmin(unittest.TestCase):
         boss = db.one("SELECT id FROM users WHERE username='boss'")["id"]
         self.assertEqual(call("PUT", f"/api/users/{boss}", {"active": False}).status, 403)       # admins cannot touch the owner
 
+class SignInLockout(unittest.TestCase):
+    def test_lockout_after_wrong_passwords(self):
+        from erp import auth
+        db = Database(":memory:")
+        auth.create_user(db, {"username": "lock", "password": "rightpass1"}, first=True)
+        auth._fails.clear()
+        for _ in range(auth.MAX_FAILS):
+            with self.assertRaises(a.ValidationError):
+                auth.login(db, "lock", "wrong")
+        with self.assertRaises(a.ValidationError) as e:
+            auth.login(db, "lock", "rightpass1")          # even the right password waits until the lock passes
+        self.assertIn("Too many", str(e.exception))
+        auth._fails.clear()
+        self.assertTrue(auth.login(db, "lock", "rightpass1")[0])
+
+
 class OfflineLicence(unittest.TestCase):
     """Signed licences for the desktop edition: trial, read-only without a licence, users / installation / updates."""
 

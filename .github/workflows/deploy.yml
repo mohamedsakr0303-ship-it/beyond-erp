@@ -160,7 +160,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release view desktop-latest >/dev/null 2>&1 || gh release create desktop-latest --prerelease \
-            --title "Desktop apps (latest build)" --notes "Built automatically from main; the website offers these downloads."
+            --title "Desktop apps (latest build)" --notes "Built automatically from main. Private: the offline editions are only here (never on the website); the connected app is also offered on the website."
           files=$(ls dist-installer/*.exe BeyondERP-mac.zip BeyondERP-Offline-mac.zip 2>/dev/null || true)
           if [ -n "$files" ]; then gh release upload desktop-latest $files --clobber; fi
 
@@ -184,14 +184,14 @@ jobs:
           path: .web-cache
           key: web-runtimes-${{ hashFiles('build_web.py') }}
       - name: Build the web app
-        run: python build_web.py --zip
+        run: python build_web.py
       - name: Fetch the desktop installers built in this run
         if: needs.desktop.result == 'success'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release download desktop-latest -R "${{ github.repository }}" -D dl --clobber
-      - name: Add the downloads (desktop installers, offline copy)
+      - name: Add the public downloads (the connected desktop app only)
         env:
           SITE: ${{ vars.SITE_URL || format('https://{0}.pages.dev/', vars.CLOUDFLARE_PAGES_PROJECT || 'beyond-erp') }}
         run: python packaging/collect_downloads.py dl "$SITE"

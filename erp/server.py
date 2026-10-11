@@ -3547,6 +3547,8 @@ def my_password(ctx):
     if not auth.check_password(ctx.body.get("current", ""), u["pw_hash"]):
         raise acc.ValidationError("Current password is wrong")
     ctx.db.x("UPDATE users SET pw_hash=? WHERE id=?", (auth.hash_password(ctx.body.get("new", "")), u["id"]))
+    # every other device signed in as this person is signed out
+    ctx.db.x("DELETE FROM sessions WHERE user_id=? AND token<>?", (u["id"], ctx.token or ""))
     return ok()
 
 
@@ -4424,7 +4426,8 @@ def handle(app, method, target, headers, raw=b"", as_user=None, dry=False):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "BeyondERP/" + __version__
+    server_version = "BeyondERP"      # no version numbers for whoever is probing
+    sys_version = ""
     protocol_version = "HTTP/1.1"
 
     def log_message(self, fmt, *args):  # quiet by default

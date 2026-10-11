@@ -29,14 +29,15 @@ another company.
 
 On the hosted site open the user menu → **Get the app**:
 * **BeyondERP** (Windows installer / Mac app) — opens the website in its own window: same sign-in, same books.
-* **BeyondERP Offline** (Windows installer / Mac app) — the whole app on the computer; the first launch signs in with the
-  workspace account and downloads the shared books.
+* **BeyondERP Offline** (Windows installer / Mac app) — the whole app on the computer. **Not public**: it carries the
+  whole app, so it is only on the private GitHub release `desktop-latest` (refreshed by every deploy); the platform
+  owner sees a link to it under Get the app.
 * The installers (`packaging/`) are rebuilt by GitHub Actions only when the app code changes (`erp/`, `run.py`,
   `packaging/`, `requirements.txt`) or when the workflow is run by hand (Actions → deploy → Run workflow); other
   pushes keep the ones already on the site. This keeps the free 2,000 build minutes a month far from running out.
 * **Phone / tablet** — the site is installable (Android: ⋮ → Install app; iPhone: Share → Add to Home Screen), opens
   full-screen and keeps an offline copy of the app.
-* **Offline browser copy** — the zip described below.
+* **Offline browser copy** — no longer published; `python build_web.py --zip` still makes one for your own use.
 
 ## Three ways to run it
 
@@ -213,3 +214,15 @@ the desktop app on your network or the self-hosted edition. Rebuild the folder a
 
 `docker compose up -d` runs the app behind Caddy with automatic HTTPS (edit `Caddyfile`). See
 [PRODUCT_PLAN.md](PRODUCT_PLAN.md) for the road to one-time licences, self-hosting and a hosted service.
+
+## Protection of the code
+
+* The repository is private. The website ships the ERP engine as Python **bytecode only** (no source, comments or
+  docstrings — `packaging/compile_web_py.py`, built with Python 3.12 to match Pyodide) and the app's scripts and styles
+  **minified** with a copyright banner (`build_web.py`, esbuild). Anything a browser runs can still be inspected with
+  enough effort; this removes the readable source and makes copying costly, and the licence makes it unlawful.
+* Public downloads are only the connected desktop app (a small launcher that opens the website). The offline editions
+  live on the private release.
+* Security headers on the site (no framing, HTTPS only, no sniffing, strict referrers), sign-in lockout after 5 wrong
+  passwords for 15 minutes, other devices signed out on a password change, no version numbers in server replies.
+* `LICENSE` (proprietary, all rights reserved) — also shown and accepted in the Windows installers (`packaging/EULA.txt`).

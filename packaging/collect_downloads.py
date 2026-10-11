@@ -1,4 +1,4 @@
-"""Put the desktop builds and the offline zip into web/downloads/ with a small index the app reads
+"""Put the public desktop builds (the connected app) into web/downloads/ with a small index the app reads
 (downloads/beyond-downloads.json). Files over Cloudflare Pages' 25 MB limit are left out with a warning.
 
   python packaging/collect_downloads.py <artifacts folder> [site url]
@@ -35,8 +35,9 @@ if site:
         print("::notice::No downloads on the live site yet")
 live_files = {f["file"]: f for f in live.get("files", [])}
 reused = False
-wanted = [("windows", "BeyondERP-Setup.exe"), ("mac", "BeyondERP-mac.zip"), ("windows_offline", "BeyondERP-Offline-Setup.exe"),
-          ("mac_offline", "BeyondERP-Offline-mac.zip"), ("web", "beyond-erp-web.zip")]
+# Only the connected desktop app (a small launcher that opens the website) is public. The offline editions carry the whole
+# app, so they stay on the private GitHub release ("desktop-latest") for the owner and are never put on the website.
+wanted = [("windows", "BeyondERP-Setup.exe"), ("mac", "BeyondERP-mac.zip")]
 files = []
 for kind, name in wanted:
     found = next(iter(sorted(src.rglob(name))), None) or (ROOT / name if (ROOT / name).exists() else None)

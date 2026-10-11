@@ -17,6 +17,7 @@ import io
 import json
 import re
 import shutil
+import subprocess
 import sys
 import tarfile
 import urllib.request
@@ -89,6 +90,25 @@ PWA_FILES = ("manifest.webmanifest", "manifest-beyond.webmanifest", "manifest-ri
              "manifest-original.webmanifest", "sw.js", "icon-192.png", "icon-512.png", "icon-maskable-512.png", "apple-touch-icon.png", "favicon.png")
 
 
+COPYRIGHT = "BeyondERP — © {year} BEYOND DESIGN. All rights reserved. Proprietary and confidential: copying, modifying, " \
+            "reverse-engineering or redistributing this software, in whole or in part, without written permission is prohibited."
+ESBUILD = "esbuild@0.24.0"
+
+
+def minify():
+    """The app's own scripts and styles go out minified (no comments, short local names) with the copyright notice."""
+    import datetime
+    banner = "/*! " + COPYRIGHT.format(year=datetime.date.today().year) + " */"
+    npx = shutil.which("npx")
+    if not npx:
+        raise SystemExit("npx (Node.js) is needed to minify the web app")
+    for f in ("app.js", "i18n.js", "bridge.js", "sw.js", "app.css"):
+        path = OUT / f
+        subprocess.run([npx, "--yes", ESBUILD, str(path), "--minify", "--legal-comments=none", f"--banner:{'css' if f.endswith('.css') else 'js'}={banner}",
+                        "--target=es2020" if f.endswith(".js") else "--target=chrome100", f"--outfile={path}", "--allow-overwrite", "--log-level=warning"],
+                       check=True)
+
+
 def build(make_zip=False):
     if OUT.exists():
         shutil.rmtree(OUT)
@@ -124,16 +144,20 @@ def build(make_zip=False):
     # installable app (manifest, offline service worker, icons) — used by hosted builds, left out of the zip
     for f in PWA_FILES:
         shutil.copy(ROOT / "web-src" / f, OUT / f)
-    with zipfile.ZipFile(OUT / "erp.zip", "w", zipfile.ZIP_DEFLATED) as z:
-        for p in sorted((ROOT / "erp").glob("*.py")):
-            z.write(p, f"erp/{p.name}")
+    # the ERP's Python goes out as bytecode only (no source, comments or docstrings) — see packaging/compile_web_py.py
+    py312 = [sys.executable] if sys.version_info[:2] == (3, 12) else [shutil.which("python3.12") or "python3.12"]
+    subprocess.run(py312 + [str(ROOT / "packaging" / "compile_web_py.py"), str(OUT / "erp.zip")], check=True)
+    minify()
     pack(names)
     # Workspace preset for hosted builds (GitHub Pages…): BEYOND_SUPABASE_URL / BEYOND_SUPABASE_ANON_KEY. The anon key
     # is public by design — access is enforced by Supabase sign-in + row level security.
     import os
     preset = {"url": os.environ.get("BEYOND_SUPABASE_URL", ""), "key": os.environ.get("BEYOND_SUPABASE_ANON_KEY", "")}
+    # where the platform owner downloads the offline editions (a private GitHub release; GITHUB_REPOSITORY is set in Actions)
+    repo = os.environ.get("GITHUB_REPOSITORY", "")
+    releases = f"https://github.com/{repo}/releases/tag/desktop-latest" if repo else ""
     (OUT / "config.js").write_text("window.BEYOND_CLOUD_CONFIG = " + (json.dumps(preset) if all(preset.values()) else "null")
-                                   + ";\n", encoding="utf-8")
+                                   + ";\nwindow.BEYOND_RELEASES = " + json.dumps(releases) + ";\n", encoding="utf-8")
     # build number: changes whenever any app file changes. The open app compares it with build.json on the site and
     # offers "Update now" when they differ (app.js, "app updates")
     h = hashlib.sha256()
@@ -143,8 +167,14 @@ def build(make_zip=False):
     version = re.search(r'__version__ = "([^"]+)"', (ROOT / "erp" / "__init__.py").read_text()).group(1)
     (OUT / "build.js").write_text(f"window.BEYOND_BUILD = {json.dumps(build_id)};\n", encoding="utf-8")
     (OUT / "build.json").write_text(json.dumps({"build": build_id, "version": version}), encoding="utf-8")
-    # headers file understood by Netlify / Cloudflare Pages / static.app-style hosts (ignored elsewhere)
+    # headers file understood by Netlify / Cloudflare Pages / static.app-style hosts (ignored elsewhere): no framing by
+    # other sites, HTTPS only, no sniffing, nothing leaked in referrers, no camera / microphone / location for others
     (OUT / "_headers").write_text("/*\n  X-Content-Type-Options: nosniff\n  Referrer-Policy: same-origin\n"
+                                  "  X-Frame-Options: DENY\n  Content-Security-Policy: frame-ancestors 'none'; base-uri 'self'; object-src 'none'\n"
+                                  "  Strict-Transport-Security: max-age=31536000; includeSubDomains\n"
+                                  "  Cross-Origin-Opener-Policy: same-origin-allow-popups\n"
+                                  "  Permissions-Policy: camera=(self), microphone=(self), geolocation=(self), payment=()\n"
+                                  "  X-Robots-Tag: noai, noimageai\n"
                                   "/vendor/*\n  Cache-Control: public, max-age=31536000, immutable\n"
                                   "/build.json\n  Cache-Control: no-store\n", encoding="utf-8")
     size = sum(p.stat().st_size for p in OUT.rglob("*") if p.is_file())
