@@ -8492,7 +8492,7 @@ function renderLanding(opt = {}) {
       <small class="lp-demo">${esc(L2("Demo company", "شركة تجريبية"))}</small></div>`;
   $("#root").innerHTML = `<div class="lp" dir="${ar ? "rtl" : "ltr"}">
     <header class="lp-nav"><span class="wordmark lp-mini">BEYOND<i>ERP</i></span><span class="spacer"></span>
-      <button type="button" class="lp-lang" data-l="1">${ar ? "EN" : "ع"}</button>${me ? `<span class="lp-me" title="${esc(L2("Signed in", "مسجّل الدخول"))}"><b>${esc(((me.full_name || me.username || "?").trim()[0] || "?").toUpperCase())}</b>${esc(me.full_name || me.username)}</span>` : ""}<button type="button" class="lp-pill sm" data-go="1">${esc(inApp ? L2("Back to the app", "العودة للتطبيق") : go)}</button></header>
+      <button type="button" class="lp-motion" data-motion="1" title="${esc(L2("Turn the welcome animations on or off", "تشغيل أو إيقاف حركة شاشة الترحيب"))}">${store.get("lpMotion", "on") === "off" ? L2("✦ Animations: off", "✦ الحركة: متوقفة") : L2("✦ Animations: on", "✦ الحركة: تعمل")}</button><button type="button" class="lp-lang" data-l="1">${ar ? "EN" : "ع"}</button>${me ? `<span class="lp-me" title="${esc(L2("Signed in", "مسجّل الدخول"))}"><b>${esc(((me.full_name || me.username || "?").trim()[0] || "?").toUpperCase())}</b>${esc(me.full_name || me.username)}</span>` : ""}<button type="button" class="lp-pill sm" data-go="1">${esc(inApp ? L2("Back to the app", "العودة للتطبيق") : go)}</button></header>
     <div class="lp-story"><nav class="lp-dots" aria-label="${esc(L2("Sections", "الأقسام"))}">${[0, 1, 2, 3, 4, 5].map(i => `<button type="button" data-sc="${i}" aria-label="${i + 1}"></button>`).join("")}</nav><div class="lp-stage">
       <section class="lp-sc lp-s0 lp-hero"><div class="lp-ring" aria-hidden="true"><i></i></div>
         <h1 class="lp-word wordmark" aria-label="BeyondERP">${word}</h1>
@@ -8532,6 +8532,7 @@ function renderLanding(opt = {}) {
       if (inApp) { scrollTo(0, 0); location.hash = S.lastPage && !/discover/.test(S.lastPage) ? S.lastPage : "#/dashboard"; return; }   // back into the app, still signed in
       store.set("landingSeen", true); S.landingOk = true; applyLook(); renderAuth(); }
     else if (e.target.closest("[data-l]")) { store.set("lang", S.lang === "ar" ? "en" : "ar"); S.lang = store.get("lang"); renderLanding(opt); }
+    else if (e.target.closest("[data-motion]")) { store.set("lpMotion", store.get("lpMotion", "on") === "off" ? "on" : "off"); scrollTo(0, 0); renderLanding(opt); }
   });
   lpStory(root);
   // the title sequence waits until the page has settled (fonts in, first paint done): started during that work its
@@ -8544,8 +8545,10 @@ function renderLanding(opt = {}) {
 // on phones. Reduced motion: the scenes simply stack.
 function lpStory(root) {
   const story = $(".lp-story", root), scs = $$(".lp-sc", story), nums = $$("[data-count]", story);
-  if (matchMedia("(prefers-reduced-motion: reduce)").matches) {
-    root.classList.add("lp-static"); nums.forEach(n => { n.textContent = money(+n.dataset.count); }); return;
+  // the story moves unless the person switched it off here (a computer's "reduce motion" setting is often on without
+  // anyone choosing it, which used to leave the welcome screen flat on PCs)
+  if (store.get("lpMotion", "on") === "off") {
+    root.classList.add("lp-static", "lp-still"); nums.forEach(n => { n.textContent = money(+n.dataset.count); }); return;
   }
   // the scenes glide after the scroll position instead of jumping with each wheel notch: every frame closes part of the
   // gap (time-based, so it is the same on 60 and 120 Hz screens) and the loop stops once they have caught up

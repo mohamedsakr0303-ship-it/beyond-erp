@@ -1093,8 +1093,9 @@ body:has(.drawer-bg) #bulkbar{display:none}   /* a form is open: its own buttons
 @keyframes lpPulse{50%{transform:scale(1.04);filter:drop-shadow(0 0 60px rgba(108,92,255,.95))}}
 @media (max-width:640px){.lp-ring{top:-31vmin;width:150vmin;height:150vmin}.lp-word{margin-top:46vmin;letter-spacing:.24em;padding-inline-start:.24em}.lp-mini{font-size:.62em;letter-spacing:.2em}
   .lp-nav{padding-inline-start:14px}.lp-card{padding:20px}}
-@media (prefers-reduced-motion:reduce){.lp *,.lp *::before,.lp *::after{animation:none!important;transition:none!important}.lp-word span,.lp-tag,.lp-sub,.lp-hero .lp-pill,.lp-note,.lp-rv{opacity:1;transform:none}
-  .lp-ring{transform:translateX(-50%)}}
+.lp-still *,.lp-still *::before,.lp-still *::after{animation:none!important;transition:none!important}
+.lp-still .lp-word span,.lp-still .lp-tag,.lp-still .lp-sub,.lp-still .lp-hero .lp-pill,.lp-still .lp-note,.lp-still .lp-rv{opacity:1;transform:none}
+.lp-still .lp-ring{transform:translateX(-50%)}
 
 /* tour: paused pill (while looking closely) and the chat-style bar to pick it up later */
 .tour-pill{position:fixed;z-index:96;bottom:20px;inset-inline-start:50%;transform:translateX(-50%);display:flex;gap:4px;padding:5px;border-radius:999px;
@@ -1292,7 +1293,7 @@ html:has(.lp),html:has(.lp) body{overflow-x:clip}
 @keyframes lpFly{0%{opacity:0;transform:translate(var(--x),var(--y)) scale(var(--s),.72);filter:blur(16px)}
   30%{opacity:1}70%{filter:blur(1.5px)}100%{opacity:1;transform:none;filter:none}}
 
-@media (prefers-reduced-motion:reduce){.lp-word span{animation:none;opacity:1;filter:none}}
+.lp-still .lp-word span{animation:none;opacity:1;filter:none}
 /* the ring starts as only its lower arc, like the film, then opens to the full ring */
 @keyframes lpArc{0%{opacity:0;transform:translateX(-50%) translateY(44vmin) scale(.32,.07);clip-path:inset(55% 0 0 0)}
   15%{opacity:1;transform:translateX(-50%) translateY(44vmin) scale(.36,.08);clip-path:inset(55% 0 0 0)}
@@ -1318,7 +1319,7 @@ html:has(.lp),html:has(.lp) body{overflow-x:clip}
 @keyframes lpSoft{to{opacity:0}}
 .lp-tag{animation-delay:2.45s}.lp-sub{animation-delay:2.6s}.lp-hero .lp-pill{animation-delay:2.75s}.lp-note{animation-delay:2.9s}
 .lp-tag,.lp-sub,.lp-hero .lp-pill,.lp-note{animation-duration:1.1s;animation-timing-function:cubic-bezier(.22,1,.36,1)}
-@media (prefers-reduced-motion:reduce){.lp-word span,.lp-word span b{animation:none;opacity:1}.lp-word span::before{display:none}}
+.lp-still .lp-word span,.lp-still .lp-word span b{animation:none;opacity:1}.lp-still .lp-word span::before{display:none}
 /* the sphere as in the film: a dark glass body with only its rim lit (brightest on the right), a short comet whose bright
    head sits upper-right with a soft violet trail spreading down-left, and the heading laid over the sphere's lower part */
 .lp-orb2{width:min(58vmin,440px);margin-bottom:calc(min(58vmin,440px) * -.3);overflow:hidden;
@@ -1428,3 +1429,6 @@ html.dnd-on,html.dnd-on *{cursor:grabbing!important;user-select:none!important;-
 #nav .dnd-into{outline:2px dashed var(--brand);outline-offset:-2px;border-radius:10px}
 #nav a[data-k],#nav .grp{-webkit-touch-callout:none}
 .lp-foot .lp-copy{display:block;margin-top:8px;font-size:.75em;color:#8f93c4;letter-spacing:.2px}
+.lp-motion{all:unset;cursor:pointer;font-size:.8em;color:#b9bce6;padding:6px 10px;border-radius:999px;border:1px solid rgba(160,150,255,.25);white-space:nowrap}
+.lp-motion:hover{color:#fff;border-color:rgba(160,150,255,.5)}
+@media (max-width:640px){.lp-motion{display:none}}
