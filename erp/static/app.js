@@ -9222,23 +9222,16 @@ new MutationObserver(() => {
   $(".fc-btn", head).addEventListener("click", () => formCustomise(d, !d.classList.contains("fc-edit")));
 }).observe(document.documentElement, { childList: true, subtree: true });
 
-// ---- a visible "⋯" on the row or menu item under the mouse: the same actions as right-click, for whoever does not know it
-{ const mb = document.createElement("button"); mb.type = "button"; mb.className = "more-btn"; mb.textContent = "⋯";
-  mb.title = "Actions"; let target = null;
-  const place = el => { const r = el.getBoundingClientRect(); mb.style.display = "flex";
-    mb.style.top = r.top + (Math.min(r.height, 40) - 24) / 2 + "px";
-    mb.style.left = (document.dir === "rtl" ? r.left + 6 : r.right - 34) + "px"; target = el; };
-  document.addEventListener("mousemove", e => {
-    if (!S.boot || !S.boot.user || e.target === mb) return;
-    if (ctxEl) { mb.style.display = "none"; return; }
-    const row = e.target.closest("#view .tbl tbody tr:not(.total)"), nav = canMenus() && e.target.closest("#nav a[data-k], #nav .grp[data-g]");
-    const el = nav || row;
-    if (el) { if (el !== target || mb.style.display === "none") place(el); } else if (!e.target.closest(".more-btn")) { mb.style.display = "none"; target = null; }
-  }, { passive: true });
-  document.addEventListener("scroll", () => { mb.style.display = "none"; target = null; }, { capture: true, passive: true });
-  mb.addEventListener("click", e => { e.stopPropagation(); if (!target) return; const r = ctxFor(target.querySelector("td, span") || target); const rc = mb.getBoundingClientRect();
-    mb.style.display = "none"; if (r) ctxOpen(rc.left - 200, rc.bottom + 4, r[0], r[1]); });
-  document.addEventListener("DOMContentLoaded", () => document.body.appendChild(mb)); if (document.body) document.body.appendChild(mb); }
+// ---- right-click is the way to more options: say so once, the first time someone rests the mouse on a row or a menu item
+{ let timer = 0;
+  document.addEventListener("mouseover", e => {
+    if (!S.boot || !S.boot.user || timer) return;
+    const key = "ctxTip:" + S.boot.user.id; if (store.get(key, 0)) return;
+    if (!e.target.closest("#view .tbl tbody tr, #nav a[data-k], #nav .grp[data-g]")) return;
+    timer = setTimeout(() => { timer = 0; if (store.get(key, 0)) return; store.set(key, 1);
+      toast(L2("Tip: right-click (or long-press on a phone) any row, menu item or column heading for more options.",
+        "تلميح: اضغط بالزر الأيمن (أو اضغط مطولاً على الهاتف) على أي سطر أو عنصر في القائمة أو عنوان عمود لمزيد من الخيارات.")); }, 1500);
+  }, { passive: true }); }
 // ================================================== full view & landscape (phones)
 // Every wide table gets "⤢ Full view" on phones: the real grid (not the stacked cards), pinch or −/+ to zoom, "Fit" to
 // see it whole, ⟳ to turn it sideways. Turning uses the phone's own rotation where the browser allows it (Android, from

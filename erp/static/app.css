@@ -1041,7 +1041,7 @@ body:has(.drawer-bg) #bulkbar{display:none}   /* a form is open: its own buttons
 .lp{--n0:#00010f;--n1:#04051a;--n2:#0a0b3d;--i1:#2f3cff;--i2:#6c5cff;--i3:#b9b2ff;min-height:100vh;min-height:100dvh;background:var(--n0);color:#eef0ff;
   font-family:"Inter","Cairo",system-ui,sans-serif;overflow-x:hidden;position:relative;isolation:isolate}
 .lp::before{content:"";position:fixed;inset:0;z-index:-1;background:radial-gradient(900px 600px at 50% -10%,rgba(47,60,255,.35),transparent 70%),radial-gradient(700px 500px at 90% 120%,rgba(108,92,255,.18),transparent 70%),var(--n0)}
-.lp .wordmark i{background:linear-gradient(90deg,#8f86ff,#d3ceff);-webkit-background-clip:text;background-clip:text;color:transparent}
+.lp .wordmark i{background:linear-gradient(90deg,#7d72ff,#c2b9ff);-webkit-background-clip:text;background-clip:text;color:transparent}
 .lp-nav{position:fixed;top:12px;inset-inline:12px;z-index:5;display:flex;align-items:center;gap:10px;padding:10px 14px 10px 20px;border-radius:999px;
   background:rgba(10,11,40,.55);border:1px solid rgba(140,140,255,.16);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);max-width:1080px;margin:0 auto}
 .lp-mini{font-size:.82em;letter-spacing:.28em}
@@ -1061,7 +1061,7 @@ body:has(.drawer-bg) #bulkbar{display:none}   /* a form is open: its own buttons
 .lp-word{position:relative;margin:30vmin 0 0;font-size:clamp(28px,7.4vw,92px);letter-spacing:.38em;line-height:1;white-space:nowrap;padding-inline-start:.38em;direction:ltr}
 .lp-word span{display:inline-block;opacity:0;transform:translateY(24px);animation:lpIn .9s cubic-bezier(.2,.8,.2,1) forwards;animation-delay:calc(.5s + var(--d));
   text-shadow:0 0 28px rgba(108,92,255,.65)}
-.lp-word span.erp{color:#b9b2ff}
+.lp-word span.erp{color:#a89dff;text-shadow:0 0 22px rgba(124,108,255,.55)}
 .lp-tag{margin:34px 0 8px;font-size:clamp(14px,2.2vw,20px);letter-spacing:.14em;font-weight:600;opacity:0;animation:lpIn .8s 1.4s forwards}
 .lp-sub{margin:0 0 26px;max-width:560px;color:#b7b9e6;line-height:1.6;opacity:0;animation:lpIn .8s 1.55s forwards}
 .lp-hero .lp-pill{opacity:0;animation:lpIn .8s 1.7s forwards}
@@ -1179,8 +1179,12 @@ td .pick-w{min-width:180px}
   opacity:calc(1 - var(--a,1) * 1.7);visibility:hidden;pointer-events:none;will-change:opacity,transform}
 .lp-sc.vis{visibility:visible}.lp-sc.on{pointer-events:auto}
 .lp-sc.lp-s0{--a:0;--t:0;visibility:visible;opacity:calc(1 - max(var(--t),0) * 1.5);min-height:0;padding-top:110px}
-.lp-s0 .lp-ring{translate:0 calc(var(--t) * -24vh);scale:calc(1 + var(--t) * .5)}
-.lp-s0 .lp-word{translate:0 calc(var(--t) * -10vh);scale:calc(1 - var(--t) * .12)}
+/* leaving the hero: the halo opens outward around its own centre, as if passing through it (no sideways drift), its
+   light thins and its sweep fades first; the name eases toward the viewer and dissolves */
+.lp-s0 .lp-ring{scale:calc(1 + max(var(--t),0) * max(var(--t),0) * 2.4 + max(var(--t),0) * .35);filter:opacity(calc(1 - max(var(--t),0) * 1.25))}
+.lp-s0 .lp-ring i{opacity:calc(1 - max(var(--t),0) * 3)}
+.lp-s0 .lp-word{scale:calc(1 + max(var(--t),0) * .1);opacity:calc(1 - max(var(--t),0) * 1.6)}
+.lp-s0 .lp-tag,.lp-s0 .lp-sub,.lp-s0 .lp-pill,.lp-s0 .lp-note{translate:0 calc(max(var(--t),0) * 6vh)}
 .lp-past .lp-scroll{opacity:0;transition:opacity .4s}
 .lp-sc h2{font-size:clamp(24px,3.6vw,42px);margin:0 0 10px;font-weight:600;letter-spacing:-.01em;position:relative;z-index:1}
 .lp-sc>p{color:#aeb0dc;max-width:560px;line-height:1.6;margin:0 0 22px;position:relative;z-index:1}
@@ -1448,9 +1452,4 @@ html.dnd-on,html.dnd-on *{cursor:grabbing!important;user-select:none!important;-
 .fc-tools button.on{color:var(--brand);font-weight:700}
 .fc-bar{margin:12px 0 4px;padding:12px;border-radius:12px;border:1px dashed color-mix(in srgb,var(--brand) 55%,transparent);display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .fc-bar .chip{cursor:pointer}
-/* the ⋯ that shows the same actions as right-click, on the row or menu item under the mouse */
-.more-btn{position:fixed;z-index:70;display:none;align-items:center;justify-content:center;width:28px;height:24px;border-radius:8px;border:1px solid var(--line);
-  background:var(--panel);color:var(--ink);cursor:pointer;font-size:16px;line-height:1;box-shadow:0 4px 12px rgba(0,0,0,.18);padding:0}
-.more-btn:hover{background:var(--hover)}
-@media (hover:none){.more-btn{display:none!important}}
 .lp-home{color:inherit;text-decoration:none}.lp-home:hover{opacity:.85}
