@@ -21,6 +21,7 @@ import re
 import zipfile
 
 from . import accounting as acc
+from . import looks
 
 GENERAL = 1
 MAX_MESSAGE_FILES_MB = 15          # all files of one message (the request limit is 25 MB of base64)
@@ -81,6 +82,14 @@ def save_profile(db, uid, d):
                 if keep:
                     views[str(route_)[:80]] = keep
             prefs["views"] = views
+        if "look" in new:         # this person's own colours, font, density and background pictures
+            lk = looks.clean_look(new["look"]) if isinstance(new["look"], dict) else {}
+            if lk:
+                prefs["look"] = lk
+            else:
+                prefs.pop("look", None)
+        if "themes" in new:       # themes this person saved for themselves
+            prefs["themes"] = looks.clean_themes(new["themes"])
         tr = new.get("tour")      # the guided tour: where this person stopped, or that they never want it
         if isinstance(tr, dict) and tr.get("state") in ("new", "paused", "done", "never"):
             prefs["tour"] = {"state": tr["state"], "step": max(0, min(99, int(tr.get("step") or 0))),

@@ -247,7 +247,10 @@ const GROUP_IC = { g_home: "home", g_crm: "users", g_bu: "brief", g_sales: "in",
 const svg = (name, cls = "") => `<svg class="i ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${IC[name] || IC.grid}</svg>`;
 
 // ---------------------------------------------------------- themes: ready-made sets + your own, per browser or company-wide
-const THEME_SWATCHES = ["#ffffff", "#6c1cf5", "#3b7d4f", "#4c0fb0", "#e03a4b", "#ff7f11", "#ffc107", "#20c997", "#17a2b8", "#956194", "#343a40", "#262626", "#4a85f0", "#52b52d"];
+const THEME_SWATCHES = ["#ffffff", "#f5f6f8", "#e9ecef", "#adb5bd", "#6c757d", "#343a40", "#262626", "#111827", "#000000",
+  "#fde2e4", "#e03a4b", "#9b1c31", "#ffe8cc", "#ff7f11", "#b45309", "#fff3bf", "#ffc107", "#c9a227",
+  "#d3f9d8", "#52b52d", "#3b7d4f", "#1f4d2e", "#c3fae8", "#20c997", "#0f766e", "#d0ebff", "#17a2b8", "#4a85f0", "#1e3a8a",
+  "#e5dbff", "#6c1cf5", "#4c0fb0", "#4b45f0", "#f3d9fa", "#956194", "#be4bdb", "#5c3d2e", "#a47148"];
 const THEME_PRESETS = [
   { id: "default", en: "Default", ar: "الافتراضي", mode: "auto", primary: "", nav: "", header: "", sidebar: "" },
   { id: "evergreen", en: "Evergreen", ar: "أخضر دائم", mode: "light", primary: "#3b7d4f", nav: "#3b7d4f", header: "", sidebar: "#3b7d4f" },
@@ -266,99 +269,208 @@ const hexOk = c => /^#[0-9a-fA-F]{6}$/.test(c || "");
 const inkOn = c => { const n = parseInt(c.slice(1), 16), r = n >> 16, g = (n >> 8) & 255, b = n & 255;
   const L = x => { x /= 255; return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4); };
   return 0.2126 * L(r) + 0.7152 * L(g) + 0.0722 * L(b) > 0.42 ? "#1e2430" : "#ffffff"; };
-const customThemes = () => [...((S.boot.settings.appearance || {}).custom_themes || []), ...store.get("customThemes", [])];
+const customThemes = () => [...((S.boot.settings.appearance || {}).custom_themes || []).map(x => ({ ...x, company: true })), ...((((S.boot.profile || {}).prefs || {}).themes) || [])];
+// ---- each person's own look (colours, light / dark, font, density, pictures) lives on their profile and follows them to
+// every device; a super administrator can set one for the whole company, used by anyone who has not chosen their own.
+// This browser keeps a copy so the sign-in screen already looks right.
+const myLook = () => (S.boot && S.boot.user && S.boot.profile && S.boot.profile.prefs ? S.boot.profile.prefs.look || null
+  : store.get("look", null) || { mode: store.get("theme", ""), theme: store.get("themeCfg", null), font: store.get("font", ""), fontSize: store.get("fontSize", "") });
+const coLook = () => { const ap = (S.boot && S.boot.settings && S.boot.settings.appearance) || {};
+  return { density: ap.density, corners: ap.corners, ...(ap.theme ? { theme: ap.theme, mode: ap.theme.mode } : {}), ...(ap.look || {}) }; };
+const lookVal = k => { const m = myLook() || {}; if (m[k] != null && m[k] !== "") return m[k]; const c = coLook()[k]; return c != null && c !== "" ? c : undefined; };
+const modeNow = () => lookVal("mode") || DEFAULT_THEME;
+let lookTimer = null;
+function setMyLook(patch, opt = {}) {
+  const cur = opt.replace ? {} : { ...(myLook() || {}) };
+  Object.entries(patch || {}).forEach(([k, v]) => { if (v == null || v === "" || (typeof v === "object" && !Array.isArray(v) && !Object.keys(v).length)) delete cur[k]; else cur[k] = v; });
+  store.set("look", cur);
+  if (cur.lang) store.set("lang", cur.lang);
+  if (S.boot && S.boot.user) {
+    const p = S.boot.profile || (S.boot.profile = { prefs: {} }); p.prefs = { ...(p.prefs || {}), look: cur };
+    clearTimeout(lookTimer);
+    lookTimer = setTimeout(() => api("PUT", "/api/me/profile", { prefs: { look: cur } }).then(r => { S.boot.profile = r; }).catch(fail), opt.now ? 0 : 500);
+  }
+  if (!opt.quiet) applyLook();
+}
+// the look someone chose on this browser before looks moved to their profile: carried over once
+function migrateLook() {
+  if (S._lookMoved || !S.boot || !S.boot.user || !S.boot.profile) return; S._lookMoved = true;
+  if ((S.boot.profile.prefs || {}).look) { store.set("look", S.boot.profile.prefs.look); return; }
+  const old = { theme: store.get("themeCfg", null), mode: store.get("theme", null), font: store.get("font", ""), fontSize: store.get("fontSize", "") };
+  if (Object.values(old).some(v => v)) setMyLook(old, { quiet: true });
+}
 // mine (this browser) → the company's default → the built-in default
 // the BeyondERP look is the night theme; anyone can switch to light or follow the device (Settings → My view)
 const DEFAULT_THEME = "dark";
 // the language of the device unless the person picked one (the language button / Settings → My view)
 const deviceLang = () => ((navigator.languages || [navigator.language || ""]).map(l => String(l).slice(0, 2).toLowerCase()).find(l => l === "ar" || l === "en") || "");
-const isDark = () => { const m = store.get("theme", DEFAULT_THEME); return m === "dark" || (m !== "light" && matchMedia("(prefers-color-scheme: dark)").matches); };
-const themeTitle = () => { const m = store.get("theme", DEFAULT_THEME);
+const isDark = () => { const m = modeNow(); return m === "dark" || (m !== "light" && matchMedia("(prefers-color-scheme: dark)").matches); };
+const themeTitle = () => { const m = modeNow();
   return m === "auto" ? L2("Light / dark — following this device (tap to choose)", "فاتح / داكن — حسب إعداد الجهاز (اضغط للاختيار)")
     : m === "dark" ? L2("Dark mode (tap for light)", "الوضع الداكن (اضغط للفاتح)") : L2("Light mode (tap for dark)", "الوضع الفاتح (اضغط للداكن)"); };
 // the device switches between light and dark (e.g. at sunset): follow it while the person has not chosen
-try { matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { if (store.get("theme", DEFAULT_THEME) === "auto" && S.boot) { applyLook(); if (S.boot.user) renderShell(), route(); } }); } catch { /* old browsers */ }
-function activeTheme() { return store.get("themeCfg", null) || (S.boot && S.boot.settings && (S.boot.settings.appearance || {}).theme) || null; }
+try { matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { if (modeNow() === "auto" && S.boot) { applyLook(); if (S.boot.user) renderShell(), route(); } }); } catch { /* old browsers */ }
+function activeTheme() { return lookVal("theme") || null; }
 function applyTheme(th) {
   const de = document.documentElement, st = de.style;
-  ["--sb-bg", "--sb-ink", "--nav-bg", "--nav-ink", "--top-bg", "--top-ink"].forEach(v => st.removeProperty(v));
-  ["nav", "top"].forEach(k => { delete de.dataset[k]; });
+  ["--sb-bg", "--sb-ink", "--nav-bg", "--nav-ink", "--top-bg", "--top-ink", "--menu-c", "--btn-bg", "--btn-ink", "--btn2-bg", "--btn2-ink", "--page-ink", "--card-bg", "--card-ink", "--bg", "--ink", "--muted"].forEach(v => st.removeProperty(v));
+  ["nav", "top", "menu", "btn", "btn2", "page", "card", "text"].forEach(k => { delete de.dataset[k]; });
   if (!th) return;
   if (hexOk(th.primary)) { st.setProperty("--brand", th.primary); st.setProperty("--accent", th.primary); }
   if (hexOk(th.sidebar)) { de.dataset.sidebar = "custom"; st.setProperty("--sb-bg", th.sidebar); st.setProperty("--sb-ink", inkOn(th.sidebar)); }
   if (hexOk(th.nav)) { de.dataset.nav = "custom"; st.setProperty("--nav-bg", th.nav); st.setProperty("--nav-ink", inkOn(th.nav)); }
   if (hexOk(th.header)) { de.dataset.top = "custom"; st.setProperty("--top-bg", th.header); st.setProperty("--top-ink", inkOn(th.header)); }
+  if (hexOk(th.menu)) { de.dataset.menu = "custom"; st.setProperty("--menu-c", th.menu); }
+  if (hexOk(th.button)) { de.dataset.btn = "custom"; st.setProperty("--btn-bg", th.button); st.setProperty("--btn-ink", inkOn(th.button)); }
+  if (hexOk(th.button2)) { de.dataset.btn2 = "custom"; st.setProperty("--btn2-bg", th.button2); st.setProperty("--btn2-ink", inkOn(th.button2)); }
+  if (hexOk(th.text)) { de.dataset.text = "custom"; st.setProperty("--ink", th.text); st.setProperty("--muted", `color-mix(in srgb, ${th.text} 65%, transparent)`); }
+  if (hexOk(th.page)) { de.dataset.page = "custom"; st.setProperty("--bg", th.page); st.setProperty("--page-ink", hexOk(th.text) ? th.text : inkOn(th.page)); }
+  if (hexOk(th.card)) { de.dataset.card = "custom"; st.setProperty("--card-bg", th.card); st.setProperty("--card-ink", hexOk(th.text) ? th.text : inkOn(th.card)); }
+}
+// background pictures behind the page, the top bar, the side menu and the logo area — faint by default so the screens stay easy to read
+const PIC_SLOTS = () => [["page", L2("Behind the whole app", "خلف التطبيق كله"), 0.12], ["header", L2("Top bar", "الشريط العلوي"), 0.25],
+  ["sidebar", L2("Side menu", "القائمة الجانبية"), 0.18], ["logo", L2("Logo area", "منطقة الشعار"), 0.35]];
+function applyPictures(imgs) {
+  const de = document.documentElement, st = de.style;
+  PIC_SLOTS().forEach(([k]) => { const im = (imgs || {})[k];
+    if (!im || !im.src) { delete de.dataset["pic" + k]; ["", "-op", "-k", "-size", "-rep"].forEach(x => st.removeProperty(`--pic-${k}${x}`)); return; }
+    de.dataset["pic" + k] = "1"; st.setProperty(`--pic-${k}`, `url("${im.src}")`); st.setProperty(`--pic-${k}-op`, String(im.op ?? 0.15));
+    st.setProperty(`--pic-${k}-k`, `${Math.round((1 - (im.op ?? 0.15)) * 100)}%`);
+    st.setProperty(`--pic-${k}-size`, im.fit === "contain" ? "contain" : im.fit === "tile" ? "auto" : "cover"); st.setProperty(`--pic-${k}-rep`, im.fit === "tile" ? "repeat" : "no-repeat"); });
+}
+// a picture shrunk in the browser before it is saved (pictures this size look the same on screen and load fast)
+async function picShrink(file, max) {
+  const url = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(r.error); r.readAsDataURL(file); });
+  const img = await Img.load(url), k = Math.min(1, max / Math.max(img.width, img.height));
+  const cv = document.createElement("canvas"); cv.width = Math.round(img.width * k); cv.height = Math.round(img.height * k);
+  cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height);
+  let out = cv.toDataURL("image/webp", 0.8); if (!out.startsWith("data:image/webp")) out = cv.toDataURL("image/jpeg", 0.8);
+  for (let q = 0.7; out.length > 850000 && q > 0.3; q -= 0.15) out = cv.toDataURL("image/jpeg", q);
+  if (out.length > 850000) throw new Error(L2("That picture is too large even after shrinking — choose a smaller one", "الصورة كبيرة جداً حتى بعد تصغيرها — اختر صورة أصغر"));
+  return out;
+}
+// a super administrator makes their own look the one everyone gets (people who chose their own keep theirs)
+async function companyLook() {
+  if (!S.boot.user.is_super) return;
+  if (!await uiConfirm(L2("Make your current colours, pictures, font and sizes the company look? Everyone who has not picked their own will see it.", "جعل ألوانك وصورك وخطك وأحجامك الحالية مظهر الشركة؟ سيظهر لكل من لم يختر مظهره الخاص."))) return;
+  const lk = { ...(myLook() || {}) }; delete lk.lang;
+  try { await api("PUT", "/api/settings", { appearance: { ...(S.boot.settings.appearance || {}), look: lk } }); await refreshBoot(); applyLook(); renderShell(); route(); toast(t("saved")); } catch (e) { fail(e); }
+}
+async function companyLookClear() {
+  if (!S.boot.user.is_super || !await uiConfirm(L2("Remove the company look? Everyone without their own goes back to the BeyondERP default.", "إزالة مظهر الشركة؟ يعود كل من ليس له مظهر خاص إلى مظهر BeyondERP الافتراضي."))) return;
+  const ap = { ...(S.boot.settings.appearance || {}) }; delete ap.look; delete ap.theme;
+  try { await api("PUT", "/api/settings", { appearance: ap }); await refreshBoot(); applyLook(); renderShell(); route(); toast(t("saved")); } catch (e) { fail(e); }
 }
 // a theme picked here sets the light / dark mode too (the top-bar button still switches it any time)
-function useTheme(th) { store.set("themeCfg", th); store.set("theme", th && th.mode && th.mode !== "auto" ? th.mode : "auto"); applyLook(); renderShell(); route(); }
+function useTheme(th) { setMyLook({ theme: th, mode: th && th.mode ? th.mode : "" }, { quiet: true }); applyLook(); renderShell(); route(); }
 function themeCard(th, on, del) {
-  const p = th.primary || "#2f8a57", nav = th.nav || (th.mode === "dark" ? "#1b1c1c" : "#ffffff"), sb = th.sidebar || (th.mode === "dark" ? "#1b1c1c" : "#ffffff"),
-    hd = th.header || (th.mode === "dark" ? "#161717" : "#f5f6f8"), bg = th.mode === "dark" ? "#161717" : "#f5f6f8", card = th.mode === "dark" ? "#212222" : "#ffffff";
+  const p = th.button || th.primary || "#2f8a57", nav = th.nav || (th.mode === "dark" ? "#1b1c1c" : "#ffffff"), sb = th.sidebar || (th.mode === "dark" ? "#1b1c1c" : "#ffffff"),
+    hd = th.header || (th.mode === "dark" ? "#161717" : "#f5f6f8"), bg = th.page || (th.mode === "dark" ? "#161717" : "#f5f6f8"), card = th.card || (th.mode === "dark" ? "#212222" : "#ffffff");
   return `<button type="button" class="thc ${on ? "on" : ""}" data-a="thpick" data-id="${esc(th.id)}">
     <span class="thp" style="--p:${p};--nav:${nav};--sb:${sb};--hd:${hd};--bg:${bg};--card:${card}"><i class="n"></i><i class="h"></i><i class="s"></i><i class="b"><b></b><b></b><b></b><u></u></i></span>
-    <span class="thn">${esc(S.lang === "ar" ? th.ar || th.en || th.name : th.en || th.name)}${on ? " ✓" : ""}</span>${del ? `<span class="thdel" data-a="thdel" data-id="${esc(th.id)}" title="${esc(t("delete"))}">✕</span>` : ""}</button>`;
+    <span class="thn">${esc(S.lang === "ar" ? th.ar || th.en || th.name : th.en || th.name)}${on ? " ✓" : ""}${th.company ? ` <small class="muted">· ${esc(L2("company", "الشركة"))}</small>` : ""}</span>${del ? `<span class="thdel" data-a="thdel" data-id="${esc(th.id)}" title="${esc(t("delete"))}">✕</span>` : ""}</button>`;
 }
+const THEME_KEYS = ["mode", "primary", "nav", "header", "sidebar", "menu", "button", "button2", "page", "card", "text"];
 async function themeTab(view, head) {
-  const ap = S.boot.settings.appearance || {}, admin = can("settings.branding", "edit");
+  const sup = !!S.boot.user.is_super;
   const cur = activeTheme() || THEME_PRESETS[0];
-  let draft = { mode: cur.mode || "auto", primary: cur.primary || "", nav: cur.nav || "", header: cur.header || "", sidebar: cur.sidebar || "" };
+  let draft = Object.fromEntries(THEME_KEYS.map(k => [k, cur[k] || ""])); draft.mode = cur.mode || modeNow() || "auto";
   const all = () => [...THEME_PRESETS, ...customThemes()];
-  const same = (a, b) => ["mode", "primary", "nav", "header", "sidebar"].every(k => (a[k] || "") === (b[k] || ""));
-  const sw = (key, label) => `<div class="thsw"><div class="thl">${esc(label)}</div><div class="thgrid">
+  const same = (a, b) => THEME_KEYS.every(k => (a[k] || "") === (b[k] || "") || (k === "mode" && (!a[k] || !b[k])));
+  const sw = (key, label, help) => `<div class="thsw"><div class="thl">${esc(label)}${help ? ` <span class="muted" style="font-weight:400">— ${esc(help)}</span>` : ""}</div><div class="thgrid">
       <button type="button" class="sw none ${!draft[key] ? "on" : ""}" data-a="thset" data-k="${key}" data-v="" title="${esc(t("default"))}"></button>
       ${THEME_SWATCHES.map(c => `<button type="button" class="sw ${draft[key] === c ? "on" : ""}" style="background:${c}" data-a="thset" data-k="${key}" data-v="${c}" title="${c}"></button>`).join("")}
-      <label class="sw pick" title="${esc(L2("Any colour", "أي لون"))}"><input type="color" data-input="thcol" data-k="${key}" value="${hexOk(draft[key]) ? draft[key] : "#3b7d4f"}"></label></div></div>`;
+      <label class="sw pick ${draft[key] && !THEME_SWATCHES.includes(draft[key]) ? "on" : ""}" title="${esc(L2("Any colour", "أي لون"))}"><input type="color" data-input="thcol" data-k="${key}" value="${hexOk(draft[key]) ? draft[key] : "#3b7d4f"}"></label></div></div>`;
+  const pics = () => { const im = lookVal("images") || {}, mine = (myLook() || {}).images;
+    return `<div class="card"><h2>${esc(L2("Background pictures", "صور الخلفية"))}</h2>
+      <p class="muted" style="margin-top:0">${esc(L2("Put a picture of your choice behind the app, the top bar, the side menu or the logo area. They start faint so the screens stay easy to read — slide to make one stronger or lighter.", "ضع صورة من اختيارك خلف التطبيق أو الشريط العلوي أو القائمة الجانبية أو منطقة الشعار. تبدأ باهتة حتى تبقى الشاشات سهلة القراءة — حرّك المؤشر لتقويتها أو تخفيفها."))}
+      ${!mine && Object.keys(im).length ? ` ${esc(L2("You are seeing the company's pictures.", "تظهر لك الآن صور الشركة."))}` : ""}</p>
+      <div class="grid g2">${PIC_SLOTS().map(([k, l, d]) => { const p = im[k];
+        return `<div class="picslot"><div class="picprev ${p ? "" : "empty"}" style="${p ? `background-image:url('${p.src}');opacity:${Math.max(0.35, p.op)}` : ""}"></div>
+          <div class="picbody"><b>${esc(l)}</b>
+            <div class="row" style="gap:6px;margin:6px 0"><label class="btn sm" style="cursor:pointer">${svg("upload")} ${esc(p ? L2("Change", "تغيير") : L2("Choose a picture", "اختر صورة"))}<input type="file" accept="image/*" hidden data-pic="${k}"></label>
+              ${p ? `<button type="button" class="btn sm danger" data-a="picdel" data-k="${k}">${esc(t("remove"))}</button>` : ""}</div>
+            ${p ? `<label class="f">${esc(L2("Strength", "الوضوح"))} <span class="muted" id="picv-${k}">${Math.round(p.op * 100)}%</span><input type="range" min="2" max="100" value="${Math.round(p.op * 100)}" data-input="picop" data-k="${k}"></label>
+              <label class="f">${esc(L2("Fit", "الملاءمة"))}<select data-change="picfit" data-k="${k}">${[["cover", L2("Fill the area", "ملء المساحة")], ["contain", L2("Whole picture", "الصورة كاملة")], ["tile", L2("Repeat (pattern)", "تكرار (نقش)")]].map(([v, x]) => `<option value="${v}" ${p.fit === v ? "selected" : ""}>${esc(x)}</option>`).join("")}</select></label>`
+              : `<span class="muted" style="font-size:.85em">${esc(L2(`Starts at ${Math.round(d * 100)}% strength`, `تبدأ بوضوح ${Math.round(d * 100)}%`))}</span>`}</div></div>`; }).join("")}</div></div>`; };
   const draw = () => {
-    view.innerHTML = head + `<div class="card"><h2>${esc(L2("Ready-made themes", "سمات جاهزة"))}<span class="spacer"></span>${store.get("themeCfg", null) ? `<button class="btn sm" data-a="threset">${esc(L2("Back to the company default", "الرجوع لسمة الشركة"))}</button>` : ""}</h2>
-        <p class="muted">${esc(L2("Click one to use it on this device. The ☀/☾ button in the top bar still switches light and dark any time.", "اضغط على سمة لاستخدامها على هذا الجهاز. زر ☀/☾ أعلى الشاشة يبدل بين الفاتح والداكن في أي وقت."))}</p>
-        <div class="thgal">${all().map(th => themeCard(th, same(th, cur), !!th.custom)).join("")}</div></div>
-      <div class="card"><h2>${esc(L2("Build your own", "صمم سمتك"))}</h2>
+    const mine = !!myLook() && Object.keys(myLook()).some(k => k !== "lang");
+    view.innerHTML = head + `<div class="banner info">${esc(L2("Everything on this tab is yours alone: it follows you to every device you sign in on and nobody else sees it.", "كل ما في هذا التبويب خاص بك وحدك: يتبعك على كل جهاز تدخل منه ولا يراه غيرك."))}
+        ${sup ? esc(L2(" As a super administrator you can also make your look the company look for everyone.", " وبصفتك مسؤولاً أعلى يمكنك أيضاً جعل مظهرك مظهر الشركة للجميع.")) : ""}</div>
+      <div class="card"><h2>${esc(L2("Ready-made themes", "سمات جاهزة"))}<span class="spacer"></span>${mine ? `<button class="btn sm" data-a="threset">${esc(L2("Back to the company look", "الرجوع لمظهر الشركة"))}</button>` : ""}</h2>
+        <p class="muted">${esc(L2("Click one to use it. The ☀/☾ button in the top bar still switches light and dark any time.", "اضغط على سمة لاستخدامها. زر ☀/☾ أعلى الشاشة يبدّل بين الفاتح والداكن في أي وقت."))}</p>
+        <div class="thgal">${all().map(th => themeCard(th, same(th, cur), !!th.custom && (!th.company || sup))).join("")}</div></div>
+      <div class="card"><h2>${esc(L2("Build your own", "صمّم سمتك"))}</h2>
         <div class="grid g2"><label class="f">${esc(L2("Background", "الخلفية"))}<select data-change="thmode">${[["auto", L2("Follow the device", "حسب الجهاز")], ["light", L2("Light", "فاتح")], ["dark", L2("Dark", "داكن")]].map(([v, l]) => `<option value="${v}" ${draft.mode === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label><div></div>
-          ${sw("primary", L2("Primary colour", "اللون الأساسي"))}${sw("nav", L2("Navigation header", "رأس القائمة"))}${sw("header", L2("Header", "الشريط العلوي"))}${sw("sidebar", L2("Sidebar", "القائمة الجانبية"))}</div>
-        <p class="muted">${esc(L2("Changes show at once. Text colours adjust by themselves so everything stays readable.", "التغييرات تظهر فوراً، وألوان النص تتعدل تلقائياً لتبقى واضحة."))}</p>
+          ${sw("primary", L2("Primary colour", "اللون الأساسي"), L2("links, highlights", "الروابط والتمييز"))}${sw("button", L2("Main buttons", "الأزرار الرئيسية"), L2("Save, + New…", "حفظ، + جديد…"))}
+          ${sw("button2", L2("Other buttons", "الأزرار الأخرى"))}${sw("menu", L2("Menu highlight", "تمييز القائمة"), L2("the open screen and hover", "الشاشة المفتوحة وعند المرور"))}
+          ${sw("sidebar", L2("Side menu", "القائمة الجانبية"))}${sw("nav", L2("Logo area", "منطقة الشعار"))}
+          ${sw("header", L2("Top bar", "الشريط العلوي"))}${sw("page", L2("Page background", "خلفية الصفحة"))}
+          ${sw("card", L2("Cards & panels", "البطاقات واللوحات"))}${sw("text", L2("Text", "النص"), L2("blank = automatic", "فارغ = تلقائي"))}</div>
+        <p class="muted">${esc(L2("Changes show at once. Text on coloured areas adjusts by itself so everything stays readable.", "التغييرات تظهر فوراً، والنص فوق المساحات الملونة يتعدل تلقائياً ليبقى واضحاً."))}</p>
         <div class="row" style="margin-top:8px"><input id="thname" class="in" style="max-width:240px" placeholder="${esc(L2("Name for your theme", "اسم السمة"))}">
-          <button class="btn pri" data-a="thsave">${esc(L2("Save as custom theme", "حفظ كسمة خاصة"))}</button>
-          ${admin ? `<button class="btn" data-a="thcompany">${esc(L2("Use for everyone (company default)", "استخدامها للجميع (سمة الشركة)"))}</button>` : ""}</div></div>`;
+          <button class="btn pri" data-a="thsave">${esc(L2("Save to my themes", "حفظ في سماتي"))}</button>
+          ${sup ? `<button class="btn" data-a="thshare">${esc(L2("Save & share with everyone", "حفظ ومشاركتها مع الجميع"))}</button>` : ""}</div></div>
+      ${pics()}
+      ${sup ? `<div class="card"><h2>${esc(L2("Company look — super administrators only", "مظهر الشركة — للمسؤول الأعلى فقط"))}</h2>
+        <p class="muted" style="margin-top:0">${esc(L2("Everyone who has not chosen their own look sees the company look. People who did keep theirs.", "يرى مظهرَ الشركة كلُّ من لم يختر مظهره الخاص، ومن اختار يبقى على اختياره."))}</p>
+        <div class="row"><button class="btn pri" data-a="thcompany">${esc(L2("Make my look the company look", "اجعل مظهري مظهر الشركة"))}</button>
+          ${(S.boot.settings.appearance || {}).look || (S.boot.settings.appearance || {}).theme ? `<button class="btn" data-a="thcoclear">${esc(L2("Remove the company look", "إزالة مظهر الشركة"))}</button>` : ""}</div></div>` : ""}`;
+    $$("input[data-pic]", view).forEach(inp => inp.addEventListener("change", async e => { const f = e.target.files[0]; if (!f) return; const k = inp.dataset.pic;
+      try { const src = await picShrink(f, k === "page" ? 1920 : 1000), d = PIC_SLOTS().find(x => x[0] === k)[2];
+        const im = { ...((myLook() || {}).images || lookVal("images") || {}) }; im[k] = { src, op: (im[k] && im[k].op) || d, fit: (im[k] && im[k].fit) || "cover" };
+        setMyLook({ images: im }); draw(); } catch (err) { fail(err); } }));
   };
-  const preview = () => { store.set("themeCfg", { ...draft }); store.set("theme", draft.mode === "auto" ? "auto" : draft.mode); applyLook(); };
+  const preview = () => { const th = Object.fromEntries(THEME_KEYS.filter(k => k !== "mode" && draft[k]).map(k => [k, draft[k]]));
+    setMyLook({ theme: Object.keys(th).length ? { ...th, mode: draft.mode } : null, mode: draft.mode }); };
+  const myImgs = () => ({ ...((myLook() || {}).images || lookVal("images") || {}) });
+  let pt = null;
   Object.assign(S.H, {
     thpick: (el, e) => { if (e && e.target.closest("[data-a=thdel]")) return; const th = all().find(x => x.id === el.dataset.id); if (!th) return;
-      useTheme(th.id === "default" ? null : { mode: th.mode, primary: th.primary, nav: th.nav, header: th.header, sidebar: th.sidebar, id: th.id }); },
-    threset: () => { store.set("themeCfg", null); store.set("theme", DEFAULT_THEME); applyLook(); renderShell(); route(); },
+      useTheme(th.id === "default" ? null : { ...Object.fromEntries(THEME_KEYS.filter(k => th[k]).map(k => [k, th[k]])), id: th.id }); },
+    threset: async () => { if (!await uiConfirm(L2("Clear your own colours, font, pictures and sizes and use the company look?", "مسح ألوانك وخطك وصورك وأحجامك واستخدام مظهر الشركة؟"))) return;
+      setMyLook({ lang: S.lang }, { replace: true, quiet: true, now: true }); applyLook(); renderShell(); route(); },
     thset: el => { draft[el.dataset.k] = el.dataset.v; preview(); draw(); },
-    thcol: el => { draft[el.dataset.k] = el.value; preview(); },
+    thcol: el => { draft[el.dataset.k] = el.value; clearTimeout(pt); pt = setTimeout(preview, 120); },
     thmode: el => { draft.mode = el.value; preview(); draw(); },
-    thdel: async el => { const id = el.dataset.id; store.set("customThemes", store.get("customThemes", []).filter(x => x.id !== id));
-      if ((ap.custom_themes || []).some(x => x.id === id) && admin) await api("PUT", "/api/settings", { appearance: { ...ap, custom_themes: ap.custom_themes.filter(x => x.id !== id) } }).catch(fail);
-      await refreshBoot(); route(); },
-    thsave: async () => { const name = ($("#thname").value || "").trim() || L2("My theme", "سمتي"); const th = { ...draft, id: "c" + Date.now().toString(36), name, en: name, ar: name, custom: true };
-      try { if (admin) await api("PUT", "/api/settings", { appearance: { ...(S.boot.settings.appearance || {}), custom_themes: [...(ap.custom_themes || []), th] } });
-        else store.set("customThemes", [...store.get("customThemes", []), th]);
-        await refreshBoot(); useTheme(th); toast(t("saved")); } catch (e) { fail(e); } },
-    thcompany: async () => { try { await api("PUT", "/api/settings", { appearance: { ...(S.boot.settings.appearance || {}), theme: { ...draft } } });
-      store.set("themeCfg", null); await refreshBoot(); applyLook(); renderShell(); route(); toast(t("saved")); } catch (e) { fail(e); } },
+    thdel: async el => { const id = el.dataset.id, ap = S.boot.settings.appearance || {};
+      try { if ((ap.custom_themes || []).some(x => x.id === id)) { if (!sup) return; await api("PUT", "/api/settings", { appearance: { ...ap, custom_themes: ap.custom_themes.filter(x => x.id !== id) } }); }
+        else S.boot.profile = await api("PUT", "/api/me/profile", { prefs: { themes: ((S.boot.profile.prefs || {}).themes || []).filter(x => x.id !== id) } });
+        await refreshBoot(); route(); } catch (e) { fail(e); } },
+    thsave: async (el, e, share) => { const name = ($("#thname").value || "").trim() || L2("My theme", "سمتي");
+      const th = { ...Object.fromEntries(THEME_KEYS.filter(k => draft[k]).map(k => [k, draft[k]])), id: "c" + Date.now().toString(36), name, en: name, ar: name, custom: true };
+      try { if (share) { const ap = S.boot.settings.appearance || {}; await api("PUT", "/api/settings", { appearance: { ...ap, custom_themes: [...(ap.custom_themes || []), th] } }); }
+        else S.boot.profile = await api("PUT", "/api/me/profile", { prefs: { themes: [...((S.boot.profile.prefs || {}).themes || []), th] } });
+        await refreshBoot(); useTheme(th); toast(t("saved")); } catch (err) { fail(err); } },
+    thshare: (el, e) => S.H.thsave(el, e, true),
+    thcompany: () => companyLook(), thcoclear: () => companyLookClear(),
+    picdel: el => { const im = myImgs(); delete im[el.dataset.k]; setMyLook({ images: Object.keys(im).length ? im : null }); draw(); },
+    picop: el => { const im = myImgs(), k = el.dataset.k; if (!im[k]) return; im[k] = { ...im[k], op: +el.value / 100 }; const v = $("#picv-" + k); if (v) v.textContent = el.value + "%";
+      setMyLook({ images: im }); },
+    picfit: el => { const im = myImgs(), k = el.dataset.k; if (!im[k]) return; im[k] = { ...im[k], fit: el.value }; setMyLook({ images: im }); },
   });
   draw();
 }
 
 function applyLook() {
   const st = S.boot.settings || {};
-  S.lang = store.get("lang", "") || deviceLang() || st.language || "en";
+  migrateLook();
+  S.lang = (myLook() || {}).lang || store.get("lang", "") || deviceLang() || st.language || "en";
   document.documentElement.lang = S.lang;
   document.documentElement.dir = S.lang === "ar" ? "rtl" : "ltr";
-  const font = store.get("font", "") || st.font_family || "system";
-  const size = store.get("fontSize", "") || st.font_size || "15";
+  const font = lookVal("font") || st.font_family || "system";
+  const size = lookVal("fontSize") || st.font_size || "15";
   const fam = font === "system" ? '"Inter","Cairo",system-ui,-apple-system,"Segoe UI",Roboto,Tahoma,Arial,sans-serif' : `"${font}","Cairo",Tahoma,Arial,sans-serif`;
   document.documentElement.style.setProperty("--font", fam);
   document.documentElement.style.setProperty("--fs", size + "px");
-  const theme = store.get("theme", DEFAULT_THEME);
+  const theme = modeNow();
   // "follow the device" resolves to light or dark here, so every themed piece (glass, glow) follows it exactly
   document.documentElement.setAttribute("data-theme", theme === "auto" ? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light") : theme);
   const ap = st.appearance || {}, de = document.documentElement;
   ["--brand", "--accent"].forEach(v => de.style.removeProperty(v));
   if (/^#[0-9a-fA-F]{6}$/.test(ap.accent || "")) { de.style.setProperty("--brand", ap.accent); de.style.setProperty("--accent", ap.accent); }
-  de.dataset.sidebar = ap.sidebar || "light"; de.dataset.density = ap.density || "comfortable"; de.dataset.corners = ap.corners || "rounded";
-  applyTheme(activeTheme());
+  de.dataset.sidebar = ap.sidebar || "light"; de.dataset.density = lookVal("density") || "comfortable"; de.dataset.corners = lookVal("corners") || "rounded";
+  applyTheme(activeTheme()); applyPictures(lookVal("images"));
   document.title = appName();
 }
 // Settings → Menus presets: the sections a kind of business usually does not use (ticks only; nothing is saved until Save)
@@ -584,7 +696,7 @@ function renderShell() {
   S.alertsAt = 0; loadAlerts();
 }
 function userMenu() {
-  return `<button data-a="theme">${t("theme")}: ${esc(store.get("theme", DEFAULT_THEME))}</button>
+  return `<button data-a="theme">${t("theme")}: ${esc(modeNow())}</button>
     ${cloudOn() ? `<button data-a="coswitch">⇄ ${S.lang === "ar" ? "الشركات" : "Companies"}</button>` : ""}
     ${cloudOn() && window.BeyondCloud && window.BeyondCloud.billing ? `<a href="#/subscription">◎ ${S.lang === "ar" ? "الاشتراك" : "Subscription"}</a>` : ""}${S.billing && S.billing.is_owner ? `<a href="#/platform">⚙ ${S.lang === "ar" ? "إدارة الاشتراكات (المالك)" : "Platform billing (owner)"}</a>` : ""}
     <a href="#/settings">${t("m_settings")}</a><button data-a="tour">➜ ${S.lang === "ar" ? "جولة في التطبيق" : "Take the tour"}</button><a href="#/discover">✦ ${S.lang === "ar" ? "اكتشف BeyondERP" : "Discover BeyondERP"}</a>${isPhone() ? `<button data-a="landscape">⟳ ${S.lang === "ar" ? "عرض أفقي" : "Landscape"}</button>` : ""}<a href="#/support">? ${S.lang === "ar" ? "المساعدة والدعم" : "Help & support"}</a>${STATIC && /^https?:$/.test(location.protocol) ? `<a href="#/download">⬇ ${S.lang === "ar" ? "تحميل التطبيق" : "Get the app"}</a>` : ""}<button data-a="pw">${t("change_pw")}</button><button data-a="logout">${t("logout")}</button>`;
@@ -726,9 +838,9 @@ S.GLOBAL_H = {
     if (hoverNav()) return;                                    // hover mode: groups open while the pointer is on them
     const open = new Set(store.get("navOpen", "").split(",").filter(Boolean)); w.classList.toggle("open");
     if (w.classList.contains("open")) open.add(el.dataset.g); else open.delete(el.dataset.g); store.set("navOpen", [...open].join(",")); },
-  lang: () => { store.set("lang", S.lang === "ar" ? "en" : "ar"); applyLook(); renderShell(); route(); },
+  lang: () => { setMyLook({ lang: S.lang === "ar" ? "en" : "ar" }, { quiet: true }); applyLook(); renderShell(); route(); },
   // one tap switches between light and dark from what is showing now (device setting by default); the choice is kept
-  theme: () => { store.set("theme", isDark() ? "light" : "dark"); applyLook(); renderShell(); route(); },
+  theme: () => { setMyLook({ mode: isDark() ? "light" : "dark" }, { quiet: true }); applyLook(); renderShell(); route(); },
   logout: async () => { await api("POST", "/api/logout").catch(() => {}); store.set("token", "");
     if (STATIC && window.BeyondCloud) window.BeyondCloud.signout(); location.hash = ""; S.boot.user = null; renderAuth(); },
   pw: () => drawer(t("change_pw"), form([{ k: "current", l: t("current_pw"), type: "password" }, { k: "new", l: t("new_pw"), type: "password" }]),
@@ -3674,14 +3786,19 @@ PAGES.settings = async (view, parts, q) => {
   if (tab === "docs") return brandingTab(view, head);
   if (tab === "look") {
     const ap = st.appearance || {}, ed = can("settings.branding", "edit");
-    view.innerHTML = head + `<div class="card"><h2>${t("my_view")}</h2><div class="grid g4">
+    const isSup = !!S.boot.user.is_super, mine = myLook() || {};
+    view.innerHTML = head + `<div class="card"><h2>${esc(L2("My view — only you see it, on every device you sign in on", "طريقة عرضي — تظهر لك وحدك على كل أجهزتك"))}</h2><div class="grid g4">
         <label class="f">${t("lang_label")}<select id="my_lang" data-change="mysave"><option value="en">English</option><option value="ar" ${S.lang === "ar" ? "selected" : ""}>العربية</option></select></label>
-        <label class="f">${t("font_family")}<select id="my_font" data-change="mysave"><option value="">${t("default")}</option>${FONTS.map(f => `<option ${store.get("font", "") === f ? "selected" : ""}>${f}</option>`).join("")}</select></label>
-        <label class="f">${t("font_size")} <input id="my_size" data-change="mysave" type="range" min="11" max="22" value="${store.get("fontSize", "") || st.font_size || 15}"></label>
-        <label class="f">${t("theme")}<select id="my_theme" data-change="mysave">${["auto", "light", "dark"].map(x => `<option ${store.get("theme", DEFAULT_THEME) === x ? "selected" : ""}>${x}</option>`).join("")}</select></label>
+        <label class="f">${t("font_family")}<select id="my_font" data-change="mysave"><option value="">${t("default")}</option>${FONTS.map(f => `<option ${mine.font === f ? "selected" : ""}>${f}</option>`).join("")}</select></label>
+        <label class="f">${t("font_size")} <input id="my_size" data-change="mysave" type="range" min="11" max="22" value="${lookVal("fontSize") || st.font_size || 15}"></label>
+        <label class="f">${esc(L2("Light / dark", "فاتح / داكن"))}<select id="my_theme" data-change="mysave">${[["auto", L2("Follow this device", "حسب إعداد الجهاز")], ["light", L2("Light", "فاتح")], ["dark", L2("Dark", "داكن")]].map(([v, l]) => `<option value="${v}" ${modeNow() === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
+        <label class="f">${t("density")}<select id="my_density" data-change="mysave">${[["", t("default")], ["comfortable", t("d_comfortable")], ["compact", t("d_compact")]].map(([v, l]) => `<option value="${v}" ${(mine.density || "") === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
+        <label class="f">${t("corners")}<select id="my_corners" data-change="mysave">${[["", t("default")], ["rounded", t("cr_rounded")], ["square", t("cr_square")]].map(([v, l]) => `<option value="${v}" ${(mine.corners || "") === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
         <label class="f">${L2("Menu groups open on", "فتح مجموعات القائمة عند")}<select id="my_navmode" data-change="mysave">${[["hover", L2("Hover — open while the mouse is over them", "المرور — تفتح أثناء مرور الماوس")], ["click", L2("Click — stay open until clicked again", "النقر — تبقى مفتوحة حتى النقر مرة أخرى")]].map(([v, l]) => `<option value="${v}" ${navMode() === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
         ${phoneMenuSelect('id="my_phonemenu" data-change="mysave"')}</div>
-        <div class="row" style="margin-top:10px"><button class="btn" data-a="mysave">${t("save")}</button><button class="btn" data-a="myreset">${t("clear")}</button></div></div>
+        <div class="row" style="margin-top:10px"><button class="btn" data-a="myreset">${esc(L2("Back to the company look", "الرجوع لمظهر الشركة"))}</button>
+          <a class="btn" href="#/settings?tab=theme">🎨 ${esc(L2("Colours & background pictures", "الألوان وصور الخلفية"))}</a>
+          ${isSup ? `<button class="btn" data-a="mycompany">${esc(L2("Make my look the company look (everyone)", "اجعل مظهري مظهر الشركة (للجميع)"))}</button>` : ""}</div></div>
       ${can("settings.branding") ? `<div class="card" id="apcard"><h2>${t("appearance")} — ${S.lang === "ar" ? "لكل المستخدمين" : "for everyone"}</h2>
         ${platformOwner() ? "" : `<div class="banner info">${esc(L2("The app always shows the BeyondERP name, logo and icon (sidebar, browser tab, desktop and phone app). Your company's own name and logo go on your documents: Settings → Branding.",
           "يعرض التطبيق دائماً اسم وشعار وأيقونة BeyondERP (القائمة الجانبية وتبويب المتصفح وتطبيق الكمبيوتر والهاتف). اسم شركتك وشعارها يظهران على مستنداتك: الإعدادات ← الهوية."))} <a href="#/settings?tab=branding">${esc(L2("Open Branding", "فتح الهوية"))}</a></div>`}
@@ -3700,8 +3817,8 @@ PAGES.settings = async (view, parts, q) => {
         { k: "tagline", l: S.lang === "ar" ? "الوصف تحت الاسم" : "Tagline under the name", v: ap.tagline != null ? ap.tagline : (st.company_tagline || ""), ph: GEN_TAG() },
         { k: "tagline_show", l: S.lang === "ar" ? "إظهار الوصف" : "Show the tagline", type: "checkbox", v: ap.tagline_show !== false }] : []),
         { html: `<label class="f">${esc(L2("Colours", "الألوان"))}<a class="btn" href="#/settings?tab=theme">🎨 ${esc(L2("Open the Theme tab", "افتح تبويب السمات"))}</a></label>` },
-        { k: "density", l: t("density"), type: "select", opts: [["comfortable", t("d_comfortable")], ["compact", t("d_compact")]], v: ap.density || "comfortable" },
-        { k: "corners", l: t("corners"), type: "select", opts: [["rounded", t("cr_rounded")], ["square", t("cr_square")]], v: ap.corners || "rounded" },
+        ...(isSup ? [{ k: "density", l: t("density"), type: "select", opts: [["comfortable", t("d_comfortable")], ["compact", t("d_compact")]], v: ap.density || "comfortable" },
+          { k: "corners", l: t("corners"), type: "select", opts: [["rounded", t("cr_rounded")], ["square", t("cr_square")]], v: ap.corners || "rounded" }] : []),
         ...(platformOwner() ? [{ html: `<div class="f">${t("app_logo")} — ${t("al_custom")}<input type="file" id="aplogo" accept="image/*"></div>` }] : [])], 3)}
         ${ed ? `<div class="row" style="margin-top:10px"><button class="btn pri" data-a="apsave">${t("save")}</button></div>` : ""}</div>` : ""}
       <div class="card" id="iconcard"><h2>${esc(L2("App icon", "أيقونة التطبيق"))}</h2>
@@ -3719,8 +3836,10 @@ PAGES.settings = async (view, parts, q) => {
     const icf = $("#icfile"); if (icf) icf.addEventListener("change", async e => { const f = e.target.files[0]; if (!f) return;
       try { const png = await iconPng(URL.createObjectURL(f), 512); await api("PUT", "/api/branding/image/app_icon", { mime: "image/png", data: png.split(",")[1] });
         await api("PUT", "/api/settings", { appearance: { ...ap, app_icon: "custom" } }); await refreshBoot(); applyAppIcon(); route(); toast(t("saved")); } catch (err) { fail(err); } });
-    S.H.mysave = () => { store.set("lang", $("#my_lang").value); store.set("font", $("#my_font").value); store.set("fontSize", $("#my_size").value); store.set("theme", $("#my_theme").value); saveNavMode($("#my_navmode").value); savePhoneMenu($("#my_phonemenu").value); applyLook(); renderShell(); route(); };
-    S.H.myreset = () => { ["font", "fontSize"].forEach(k => store.set(k, "")); store.set("theme", DEFAULT_THEME); saveNavMode("click"); applyLook(); renderShell(); route(); };
+    S.H.mysave = () => { setMyLook({ lang: $("#my_lang").value, font: $("#my_font").value, fontSize: $("#my_size").value, mode: $("#my_theme").value, density: $("#my_density").value, corners: $("#my_corners").value }, { quiet: true }); saveNavMode($("#my_navmode").value); savePhoneMenu($("#my_phonemenu").value); applyLook(); renderShell(); route(); };
+    S.H.myreset = async () => { if (!await uiConfirm(L2("Clear your own colours, font, pictures and sizes and use the company look?", "مسح ألوانك وخطك وصورك وأحجامك واستخدام مظهر الشركة؟"))) return;
+      setMyLook({ lang: S.lang }, { replace: true, quiet: true, now: true }); applyLook(); renderShell(); route(); };
+    S.H.mycompany = () => companyLook();
     let noAccent = !ap.accent;
     S.H.apnoacc = () => { noAccent = true; toast(t("default")); };
     const ac = $("[name=accent]"); if (ac) ac.addEventListener("input", () => { noAccent = false; });
@@ -7528,7 +7647,7 @@ PAGES.profile = async view => {
       <div class="card"><h2>${esc(L2("Menu", "القائمة"))}</h2>
         <div class="grid g2"><label class="f">${esc(L2("Menu groups open on", "فتح مجموعات القائمة عند"))}<select data-change="pnav">${[["click", L2("Click — stay open until clicked again", "النقر — تبقى مفتوحة حتى النقر مرة أخرى")], ["hover", L2("Hover — open while the mouse is over them", "المرور — تفتح أثناء مرور الماوس")]].map(([v, l]) => `<option value="${v}" ${navMode() === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
         ${phoneMenuSelect('data-change="ppm"')}
-        <label class="f">${esc(L2("Light / dark", "فاتح / داكن"))}<select data-change="pmode">${[["auto", L2("Follow this device", "حسب إعداد الجهاز")], ["light", L2("Light", "فاتح")], ["dark", L2("Dark", "داكن")]].map(([v, l]) => `<option value="${v}" ${store.get("theme", DEFAULT_THEME) === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label></div>
+        <label class="f">${esc(L2("Light / dark", "فاتح / داكن"))}<select data-change="pmode">${[["auto", L2("Follow this device", "حسب إعداد الجهاز")], ["light", L2("Light", "فاتح")], ["dark", L2("Dark", "داكن")]].map(([v, l]) => `<option value="${v}" ${modeNow() === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label></div>
         <div class="muted" style="margin-top:6px">${esc(L2("Colours and saved themes: Settings → Theme.", "الألوان والسمات المحفوظة: الإعدادات ← السمات."))} <a href="#/settings?tab=theme">${esc(L2("Open", "فتح"))}</a></div></div>
       <div class="card" id="notifcard"><h2>${esc(L2("Notifications", "الإشعارات"))}</h2>
         <div class="grid g2">
@@ -7555,7 +7674,7 @@ PAGES.profile = async view => {
   S.H.pavdel = async () => { S.boot.profile = await api("PUT", "/api/me/profile", { avatar: "" }); C2.people = null; renderShell(); route(); };
   S.H.pnav = el => { saveNavMode(el.value); setTimeout(() => { renderShell(); route(); }, 150); };
   S.H.ppm = el => { savePhoneMenu(el.value); setTimeout(() => { renderShell(); route(); }, 150); };
-  S.H.pmode = el => { store.set("theme", el.value); applyLook(); renderShell(); route(); };
+  S.H.pmode = el => { setMyLook({ mode: el.value }, { quiet: true }); applyLook(); renderShell(); route(); };
   S.H.nsave = async () => {
     const level = $("#nlevel").value; $("#nrooms").hidden = level !== "rooms";
     const notify = { level, mode: $("#nmode").value, desktop: $("#ndesk").checked, rooms: $$(".nroom:checked").map(x => +x.value) };

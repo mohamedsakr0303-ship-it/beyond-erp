@@ -22,7 +22,7 @@ from urllib.parse import parse_qs, urlparse
 
 from . import assets, bankrec, custody, entries, industries, payroll, equity, loans, recurring, rental_docs, rentals, sales, sales_docs, __version__
 from . import accounting as acc
-from . import auth, branding, cloud, documents, einvoice, interchange, reports
+from . import auth, branding, cloud, documents, einvoice, interchange, looks, reports
 from .db import Database, MODULES, SUBMODULES, SUBTYPES, to_major, to_minor
 
 STATIC = Path(__file__).resolve().parent / "static"
@@ -258,6 +258,7 @@ def logout(ctx):
 
 
 # ================================================================= settings
+COMPANY_LOOK = ("look", "theme", "custom_themes", "density", "corners", "accent", "sidebar")
 LOCKED_LOOK = ("app_name", "logo", "brand_show", "app_icon", "brand_align", "brand_logo_size", "brand_name_align", "brand_name_size",
                "brand_tag_align", "brand_tag_size", "tagline", "tagline_show")
 
@@ -280,6 +281,19 @@ def put_settings(ctx):
         ctx.require("settings.company", "edit")
     if "appearance" in keys:
         ctx.require("settings.branding", "edit")
+        if isinstance(ctx.body.get("appearance"), dict):
+            ap_new, ap_cur = ctx.body["appearance"], (settings_dict(ctx.db).get("appearance") or {})
+            if "look" in ap_new:
+                ap_new["look"] = looks.clean_look(ap_new["look"])
+            if "custom_themes" in ap_new:
+                ap_new["custom_themes"] = looks.clean_themes(ap_new["custom_themes"])
+            # the look everyone gets (colours, pictures, density…) is the super administrators' call
+            if not ctx.user.get("is_super"):
+                for k in COMPANY_LOOK:
+                    if k not in ap_new and k in ap_cur:
+                        ap_new[k] = ap_cur[k]
+                if any(json.dumps(ap_new.get(k), sort_keys=True) != json.dumps(ap_cur.get(k), sort_keys=True) for k in COMPANY_LOOK):
+                    raise PermissionError("Only a super administrator can set the look for the whole company")
         if not ctx.user.get("platform_owner") and isinstance(ctx.body.get("appearance"), dict):
             # the BeyondERP name, logo and icon in the app are fixed: only the platform owner changes them
             cur = (settings_dict(ctx.db).get("appearance") or {})
@@ -325,7 +339,7 @@ def put_settings(ctx):
             if not isinstance(v, type(JSON_SETTINGS[k])):
                 raise acc.ValidationError(f"{k} has the wrong shape")
             v = json.dumps(v, ensure_ascii=False)
-            if len(v) > 200_000:
+            if len(v) > (200_000 + looks.MAX_IMAGES if k == "appearance" else 200_000):   # the company look may carry background pictures
                 raise acc.ValidationError(f"{k} is too large")
         if k == "lock_date" and v:
             v = acc.clean_date(v, "lock date")
@@ -333,7 +347,8 @@ def put_settings(ctx):
             v = str(max(11, min(22, int(float(v or 15)))))
         if k in ("reserve_pct", "legal_reserve_pct", "legal_reserve_cap"):
             v = str(max(0.0, min(1.0, acc.num(v, "reserve %"))))
-        ctx.db.set_setting(k, acc.text(v, maxlen=20000))
+        # JSON settings were size-checked above; cutting them short would leave broken JSON behind
+        ctx.db.set_setting(k, v if k in JSON_SETTINGS else acc.text(v, maxlen=20000))
     ctx.log("settings", ", ".join(ctx.body.keys()))
     return ok(settings_dict(ctx.db))
 

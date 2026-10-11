@@ -1545,3 +1545,35 @@ label.f .req{color:var(--bad,#e5484d);font-weight:800;margin-inline-start:3px;fo
 @media (max-width:640px){.tabbtn{display:none}.etabs{padding:4px 8px 0}.etab{min-width:90px}}
 .tagchip{background:color-mix(in srgb,var(--brand) 14%,transparent);font-weight:600}.tagchip a{color:inherit;text-decoration:none;margin-inline-start:2px}
 .fviews{display:inline-flex;gap:6px;align-items:center;margin-inline-start:auto;flex-wrap:wrap}
+
+/* ===================================================================== a person's own colours and background pictures
+   (Settings → Theme). Pictures sit behind everything at the strength the person picked. */
+:root[data-menu="custom"] .nav a:hover,:root[data-menu="custom"] .grp-items a:hover{background:color-mix(in srgb,var(--menu-c) 14%,transparent)}
+:root[data-menu="custom"] .nav a.on,:root[data-theme="dark"][data-menu="custom"] .nav a.on{background:color-mix(in srgb,var(--menu-c) 26%,transparent);color:inherit}
+:root[data-menu="custom"] .nav a.on::before,:root[data-menu="custom"] .grp-items a.on .dash,:root[data-menu="custom"] .grp-items a:hover .dash{background:var(--menu-c);box-shadow:none}
+:root[data-btn="custom"] .btn.pri,:root[data-theme="dark"][data-btn="custom"] .btn.pri,:root[data-btn="custom"] .newbtn{background:var(--btn-bg);color:var(--btn-ink);border-color:var(--btn-bg);
+  box-shadow:0 4px 14px color-mix(in srgb,var(--btn-bg) 35%,transparent)}
+:root[data-btn2="custom"] .btn:not(.pri):not(.danger),:root[data-theme="dark"][data-btn2="custom"] .btn:not(.pri):not(.danger){background:var(--btn2-bg);color:var(--btn2-ink);border-color:transparent}
+:root[data-page="custom"] body{background:var(--bg)}
+:root[data-page="custom"] body::before{display:none}
+:root[data-page="custom"] .content{color:var(--page-ink)}
+:root[data-page="custom"] .content .card,:root[data-page="custom"] .content .drawer{color:var(--ink)}
+:root[data-card="custom"] .card,:root[data-theme="dark"][data-card="custom"] .card{background:var(--card-bg);--ink:var(--card-ink);--muted:color-mix(in srgb,var(--card-ink) 62%,transparent);color:var(--card-ink)}
+:root[data-text="custom"] body{color:var(--ink)}
+:root[data-picpage] body::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
+  background:var(--pic-page) center/var(--pic-page-size) var(--pic-page-rep);opacity:var(--pic-page-op)}
+:root[data-picheader] .top{isolation:isolate}
+:root[data-picheader] .top::before{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;
+  background:var(--pic-header) center/var(--pic-header-size) var(--pic-header-rep);opacity:var(--pic-header-op)}
+:root[data-piclogo] .brand{position:relative;isolation:isolate;overflow:hidden;margin:-14px -14px 8px;padding:20px 22px 16px}
+:root[data-piclogo] .app.mini .brand{margin-inline:-12px}
+:root[data-piclogo] .brand::before{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;
+  background:var(--pic-logo) center/var(--pic-logo-size) var(--pic-logo-rep);opacity:var(--pic-logo-op)}
+/* the side menu scrolls, so its picture is a layer under a veil of the menu's own colour (the veil sets the strength) */
+:root[data-picsidebar] .side{background-image:linear-gradient(color-mix(in srgb,var(--side) var(--pic-sidebar-k),transparent),color-mix(in srgb,var(--side) var(--pic-sidebar-k),transparent)),var(--pic-sidebar);
+  background-size:auto,var(--pic-sidebar-size);background-position:center;background-repeat:no-repeat,var(--pic-sidebar-rep);background-color:var(--side)}
+.picslot{display:flex;gap:12px;align-items:flex-start;border:1px solid var(--line);border-radius:12px;padding:10px}
+.picprev{width:110px;height:74px;flex:none;border-radius:8px;background:center/cover no-repeat;border:1px solid var(--line)}
+.picprev.empty{background:repeating-linear-gradient(45deg,var(--chip),var(--chip) 6px,transparent 6px,transparent 12px)}
+.picbody{flex:1;min-width:0}
+.picbody input[type=range]{width:100%}

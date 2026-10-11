@@ -3912,6 +3912,49 @@ class CalculatorBuilder(unittest.TestCase):
         self.assertEqual((st, r["results"][0]["value"]), (200, 12))
 
 
+class PersonalLook(unittest.TestCase):
+    """Colours, font, sizes and background pictures belong to each person (on their profile); only a super
+    administrator sets the company look, and a large look is stored whole, never cut short."""
+
+    def setUp(self):
+        from erp.server import handle
+        self.handle = handle
+        self.app = type("App", (), {"static": False})()
+        self.app.db = self.db = Database(":memory:")
+        auth.create_user(self.db, {"username": "boss", "password": "secret123"}, first=True)
+        auth.create_user(self.db, {"username": "ada", "password": "secret123", "is_admin": True})
+        self.tok = {u: auth.login(self.db, u, "secret123")[0] for u in ("boss", "ada")}
+
+    def call(self, who, method, url, body=None):
+        h = {"x-requested-with": "BeyondERP", "x-session": self.tok[who], "content-type": "application/json"}
+        r = self.handle(self.app, method, url, h, json.dumps(body).encode() if body is not None else b"")
+        return r.status, json.loads(r.body)
+
+    def test_look(self):
+        import base64
+        pic = "data:image/jpeg;base64," + base64.b64encode(b"x" * 300_000).decode()
+        look = {"mode": "dark", "theme": {"button": "#e03a4b", "menu": "#FF7F11", "page": "javascript:alert(1)"}, "fontSize": "40",
+                "density": "compact", "images": {"page": {"src": pic, "op": 3, "fit": "tile"}, "nowhere": {"src": pic}}}
+        st, prof = self.call("ada", "PUT", "/api/me/profile", {"prefs": {"look": look}})
+        self.assertEqual(st, 200)
+        lk = prof["prefs"]["look"]
+        self.assertEqual(lk["theme"], {"button": "#e03a4b", "menu": "#FF7F11"})     # a bad colour is dropped
+        self.assertEqual((lk["fontSize"], lk["density"], lk["mode"]), ("22", "compact", "dark"))
+        self.assertEqual(list(lk["images"]), ["page"])
+        self.assertEqual((lk["images"]["page"]["op"], lk["images"]["page"]["fit"]), (1.0, "tile"))
+        # only ada has it
+        self.assertNotIn("look", self.call("boss", "GET", "/api/me/profile")[1]["prefs"])
+        # not a picture → refused; clearing works
+        self.assertEqual(self.call("ada", "PUT", "/api/me/profile", {"prefs": {"look": {"images": {"page": {"src": "data:text/html;base64,AAAA"}}}}})[0], 400)
+        self.assertNotIn("look", self.call("ada", "PUT", "/api/me/profile", {"prefs": {"look": {}}})[1]["prefs"])
+        # the company look: super administrators only — an administrator may still save the rest of the appearance
+        self.assertEqual(self.call("ada", "PUT", "/api/settings", {"appearance": {"look": {"mode": "light"}}})[0], 403)
+        st, sett = self.call("boss", "PUT", "/api/settings", {"appearance": {"look": {**look, "images": {"page": {"src": pic, "op": 0.2}}}}})
+        self.assertEqual(st, 200)
+        self.assertEqual(sett["appearance"]["look"]["images"]["page"]["src"], pic)        # stored whole (bigger than 20,000 characters)
+        self.assertEqual(self.call("ada", "PUT", "/api/settings", {"appearance": {"look": sett["appearance"]["look"]}})[0], 200)
+
+
 class Support(unittest.TestCase):
     """Help & support tickets: a reference built from the date and record number; people see their own, admins all."""
 
