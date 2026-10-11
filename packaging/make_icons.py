@@ -48,9 +48,7 @@ icon(512, 0.0).save(ROOT / "erp" / "static" / "icons" / "beyond.png", optimize=T
 # Every icon choice in Settings -> App icon gets real icon files and its own manifest on the site, so an installed
 # phone app is a proper app with that icon (a manifest made in the page would make Android show Chrome's badge on it)
 import json
-CHOICES = {"beyond": logo, "rising": Image.open(HERE / "icon-src-rising.png").convert("RGBA"),
-           "seal": Image.open(HERE / "icon-src-seal.png").convert("RGBA"),
-           "original": Image.open(ROOT / "erp" / "static" / "icons" / "original.png").convert("RGBA")}
+CHOICES = {"beyond": logo}       # the one BeyondERP icon (the earlier alternatives were retired)
 base = json.loads((ROOT / "web-src" / "manifest.webmanifest").read_text(encoding="utf-8"))
 (ROOT / "erp" / "static" / "icons" / "app").mkdir(exist_ok=True)
 for k, src in CHOICES.items():

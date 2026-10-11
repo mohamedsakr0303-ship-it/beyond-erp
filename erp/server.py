@@ -169,7 +169,7 @@ def bootstrap(ctx):
         "cloud": {"joined": bool(sync and sync.active)},
         "settings": settings_dict(db),
         "accounts": db.q("SELECT * FROM accounts ORDER BY code"),
-        "bus": db.q("SELECT id, code, name, status, basis, negotiation FROM business_units ORDER BY code"),
+        "bus": db.q("SELECT id, code, name, status, basis, negotiation, grp FROM business_units ORDER BY code"),
         "warehouses": db.q("SELECT * FROM warehouses ORDER BY id"),
         "partners": db.q("SELECT * FROM partners ORDER BY id"),
         "items": db.q("SELECT * FROM stock_items ORDER BY name"),
@@ -258,18 +258,36 @@ def logout(ctx):
 
 
 # ================================================================= settings
+LOCKED_LOOK = ("app_name", "logo", "brand_show", "app_icon", "brand_align", "brand_logo_size", "brand_name_align", "brand_name_size",
+               "brand_tag_align", "brand_tag_size", "tagline", "tagline_show")
+
+
 @route("PUT", "/api/settings")
 def put_settings(ctx):
     keys = set(ctx.body)
     # arranging the menu and the forms (right-click, drag and drop) is its own permission; menu names also from Settings → Menus
-    if keys & {"menu_layout", "form_custom"}:
+    if keys & {"menu_layout", "form_custom"} and not auth.granted(ctx.user, "arrange_forms"):
         ctx.require("settings.layout", "edit")
+    if "form_custom" in keys and not auth.granted(ctx.user, "required_fields"):
+        # making a field mandatory (or optional again) is a special right
+        req = lambda fc: {(r, k) for r, fs in (fc or {}).items() if isinstance(fs, dict) for k, o in fs.items() if isinstance(o, dict) and o.get("req")}  # noqa: E731
+        old = json.loads(ctx.db.setting("form_custom") or "{}") if ctx.db.setting("form_custom") else {}
+        if req(old) != req(ctx.body.get("form_custom") if isinstance(ctx.body.get("form_custom"), dict) else {}):
+            raise PermissionError("Only a super administrator (or someone they allow) can make fields required")
     if "menu_labels" in keys and not ctx.can("settings.layout", "edit"):
         ctx.require("settings.menus", "edit")
     if keys & set(COMPANY_KEYS):
         ctx.require("settings.company", "edit")
     if "appearance" in keys:
         ctx.require("settings.branding", "edit")
+        if not ctx.user.get("platform_owner") and isinstance(ctx.body.get("appearance"), dict):
+            # the BeyondERP name, logo and icon in the app are fixed: only the platform owner changes them
+            cur = (settings_dict(ctx.db).get("appearance") or {})
+            for k in LOCKED_LOOK:
+                if k in cur:
+                    ctx.body["appearance"][k] = cur[k]
+                else:
+                    ctx.body["appearance"].pop(k, None)
     if keys & {"reserve_pct", "legal_reserve_pct", "legal_reserve_cap", "funding_partner", "funding_limit"} and not ctx.can("partners.equity", "edit"):
         ctx.require("settings.company", "edit")
     if keys & {"backup_keep", "lock_date", "po_self_approve_limit"}:
@@ -389,6 +407,12 @@ def _bu_values(b):
             min(acc.num(b.get("overhead_pct"), "overhead %"), 1), acc.text(b.get("notes"), maxlen=4000))
 
 
+def _bu_group(ctx, bid):
+    """The project's group (several projects under one name), when the form sends one."""
+    if "grp" in ctx.body:
+        ctx.db.x("UPDATE business_units SET grp=? WHERE id=?", (acc.text(ctx.body.get("grp"), maxlen=80), int(bid)))
+
+
 def _bu_negotiation(ctx, bid):
     """keep = negotiated discounts are company earnings (client billed on the full price); pass = lower cost."""
     if "negotiation" in ctx.body:
@@ -419,6 +443,7 @@ def add_bu(ctx):
     bid = ctx.db.x(f"INSERT INTO business_units({','.join(BU_FIELDS)}) VALUES ({','.join('?' * len(BU_FIELDS))})",
                    v).lastrowid
     _bu_negotiation(ctx, bid)
+    _bu_group(ctx, bid)
     ctx.log("bu.add", v[0])
     return ok({"id": bid})
 
@@ -430,6 +455,7 @@ def edit_bu(ctx, bid):
         raise acc.ValidationError("Code already exists")
     ctx.db.x(f"UPDATE business_units SET {','.join(f + '=?' for f in BU_FIELDS)} WHERE id=?", v + (int(bid),))
     _bu_negotiation(ctx, bid)
+    _bu_group(ctx, bid)
     ctx.log("bu.edit", v[0])
     return ok()
 
@@ -472,6 +498,18 @@ def journal_filters(q):
     if q.get("approved_by"):
         w.append("json_extract(e.meta,'$.approved_by')=?")
         p.append(q["approved_by"])
+    if q.get("created_from"):             # when it was keyed in (not the entry's own date)
+        w.append("substr(e.created_at,1,10)>=?")
+        p.append(acc.clean_date(q["created_from"]))
+    if q.get("created_to"):
+        w.append("substr(e.created_at,1,10)<=?")
+        p.append(acc.clean_date(q["created_to"]))
+    if q.get("tag"):
+        w.append("EXISTS (SELECT 1 FROM entry_tags t WHERE t.entry_id=e.id AND t.tag=?)")
+        p.append(q["tag"])
+    if q.get("bu_group"):                 # every project in a group
+        w.append("e.bu_id IN (SELECT id FROM business_units WHERE grp=?)")
+        p.append(q["bu_group"])
     if q.get("has_attachment") in ("1", "yes"):
         w.append("EXISTS (SELECT 1 FROM attachments t WHERE t.owner='entry' AND t.owner_id=e.id)")
     if q.get("kind"):
@@ -539,7 +577,20 @@ def journal(ctx):
     from . import approvals
     drafts = len(approvals.listing(ctx.db, ctx.user, ctx.can, {"status": "pending"}))    # the ones this person may see
     return ok({"rows": [acc.get_entry(ctx.db, i) for i in ids], "total": count, "posted_amount": to_major(total["amt"]),
-               "limit": limit, "offset": offset, "people": people, "drafts": drafts})
+               "limit": limit, "offset": offset, "people": people, "drafts": drafts,
+               "tags": [r["tag"] for r in ctx.db.q("SELECT tag, COUNT(*) n FROM entry_tags GROUP BY tag ORDER BY n DESC, tag LIMIT 200")],
+               "bu_groups": [r["grp"] for r in ctx.db.q("SELECT DISTINCT grp FROM business_units WHERE grp<>'' ORDER BY grp")]})
+
+
+@route("PUT", "/api/journal/<eid>/tags")
+def journal_tags(ctx, eid):
+    """Tags on an entry: whoever may add that kind of entry (or edit the journal) may label it."""
+    e = ctx.db.one("SELECT kind FROM journal_entries WHERE id=?", (int(eid),))
+    if not e:
+        raise acc.ValidationError("Entry not found")
+    if not (ctx.can("accounting.journal", "edit") or ctx.can(KIND_MODULE.get(e["kind"], "accounting.journal"), "add")):
+        raise PermissionError()
+    return ok({"tags": acc.set_tags(ctx.db, int(eid), ctx.body.get("tags") or [])})
 
 
 @route("GET", "/api/bu-journal", "business_units.units")
@@ -795,6 +846,137 @@ def approval_withdraw(ctx, aid):
         raise PermissionError()
     approvals.decide(ctx.db, aid, ctx.user, "withdrawn")
     return ok()
+
+
+# ---------------------------------------------------------------- customers & deals (erp/crm.py)
+@route("GET", "/api/crm/board", "crm.deals")
+def crm_board(ctx):
+    from . import crm
+    return ok(crm.board(ctx.db, ctx.q))
+
+
+@route("POST", "/api/crm/deals", "crm.deals", "add")
+def crm_deal_add(ctx):
+    from . import crm
+    return ok({"id": crm.save_deal(ctx.db, ctx.body, ctx.user["username"])})
+
+
+@route("PUT", "/api/crm/deals/<did>", "crm.deals", "add")
+def crm_deal_edit(ctx, did):
+    from . import crm
+    d = ctx.db.one("SELECT owner FROM crm_deals WHERE id=?", (int(did),))
+    if d and d["owner"] != ctx.user["username"]:
+        ctx.require("crm.deals", "edit")             # someone else's deal: full rights on deals
+    if set(ctx.body) <= {"stage", "lost_reason"}:
+        crm.move_deal(ctx.db, int(did), ctx.body.get("stage"), ctx.user["username"], ctx.body.get("lost_reason"))
+    else:
+        crm.save_deal(ctx.db, ctx.body, ctx.user["username"], int(did))
+    return ok()
+
+
+@route("DELETE", "/api/crm/deals/<did>", "crm.deals", "edit")
+def crm_deal_del(ctx, did):
+    from . import crm
+    crm.delete_deal(ctx.db, int(did))
+    return ok()
+
+
+@route("GET", "/api/crm/contacts", "crm.contacts")
+def crm_contacts(ctx):
+    from . import crm
+    return ok({"rows": crm.contacts(ctx.db, ctx.q)})
+
+
+@route("GET", "/api/crm/timeline", "crm.contacts")
+def crm_timeline(ctx):
+    from . import crm
+    return ok(crm.timeline(ctx.db, ctx.q.get("party"), ctx.can))
+
+
+@route("POST", "/api/crm/activities", "crm.contacts", "add")
+def crm_activity_add(ctx):
+    from . import crm
+    return ok({"id": crm.add_activity(ctx.db, ctx.body, ctx.user["username"])})
+
+
+@route("DELETE", "/api/crm/activities/<aid>", "crm.contacts", "add")
+def crm_activity_del(ctx, aid):
+    from . import crm
+    crm.delete_activity(ctx.db, aid, ctx.user["username"], bool(ctx.user.get("is_admin")))
+    return ok()
+
+
+@route("GET", "/api/crm/followups", "crm.followups")
+def crm_followups(ctx):
+    from . import crm
+    q = dict(ctx.q)
+    if q.get("who") not in (None, "", "me") and not ctx.can("crm.followups", "edit"):
+        q["who"] = "me"                                # other people's follow-ups: full rights only
+    return ok({"rows": crm.followups(ctx.db, ctx.user["username"], q),
+               "people": [r["username"] for r in ctx.db.q("SELECT username FROM users WHERE active=1 ORDER BY username")]})
+
+
+@route("POST", "/api/crm/followups", "crm.followups", "add")
+def crm_followup_add(ctx):
+    from . import crm
+    return ok({"id": crm.save_followup(ctx.db, ctx.body, ctx.user["username"])})
+
+
+def _own_followup(ctx, fid):
+    f = ctx.db.one("SELECT assigned_to, created_by FROM crm_followups WHERE id=?", (int(fid),))
+    if not f:
+        raise acc.ValidationError("Not found")
+    if ctx.user["username"] not in (f["assigned_to"], f["created_by"]):
+        ctx.require("crm.followups", "edit")
+
+
+@route("PUT", "/api/crm/followups/<fid>", "crm.followups", "add")
+def crm_followup_edit(ctx, fid):
+    from . import crm
+    _own_followup(ctx, fid)
+    if "done" in ctx.body and len(ctx.body) <= 2:
+        crm.done_followup(ctx.db, fid, ctx.user["username"], bool(ctx.body["done"]), ctx.body.get("outcome") or "")
+    else:
+        crm.save_followup(ctx.db, ctx.body, ctx.user["username"], int(fid))
+    return ok()
+
+
+@route("DELETE", "/api/crm/followups/<fid>", "crm.followups", "add")
+def crm_followup_del(ctx, fid):
+    _own_followup(ctx, fid)
+    ctx.db.x("DELETE FROM crm_followups WHERE id=?", (int(fid),))
+    return ok()
+
+
+def _offer_bu(ctx, o):
+    """A business unit (project) for an offer — made from the offer's client, project and value."""
+    year = acc.today()[:4]
+    n = ctx.db.one("SELECT COUNT(*) AS n FROM business_units WHERE code LIKE ?", (f"PRJ-{year}-%",))["n"] + 1
+    code = f"PRJ-{year}-{n:03d}"
+    while ctx.db.one("SELECT 1 FROM business_units WHERE code=?", (code,)):
+        n += 1
+        code = f"PRJ-{year}-{n:03d}"
+    bid = ctx.db.x("INSERT INTO business_units(code,name,location,status,basis,contract_value,start_date,customer) "
+                   "VALUES (?,?,?,?,?,?,?,?)", (code, o.get("client") or o.get("project") or code, o.get("project") or "",
+                                               "In Progress", "Fixed Price", to_minor(o["net"]), acc.today(),
+                                               o.get("client") or "")).lastrowid
+    ctx.db.x("UPDATE offers SET bu_id=? WHERE id=?", (bid, int(o["id"])))
+    return bid
+
+
+@route("POST", "/api/offers/<oid>/convert", "sales.offers", "edit")
+def offer_convert(ctx, oid):
+    """Offer → project (business unit, made if missing) → BOQ with the offer's prices, in one step; the screen then
+    opens a new invoice on that BOQ."""
+    from . import crm
+    ctx.require("estimating.boqs", "add")
+    o = documents.get_offer(ctx.db, int(oid))
+    if not o.get("bu_id"):
+        ctx.require("business_units.units", "add")
+    with ctx.db.tx():
+        r = crm.convert_offer(ctx.db, int(oid), ctx.user["username"], lambda off: _offer_bu(ctx, off))
+    ctx.log("offer.convert", f"{oid} -> boq {r['boq_id']}")
+    return ok(r)
 
 
 @route("GET", "/api/negotiations")
@@ -2393,7 +2575,16 @@ def alerts(ctx):
         out.insert(0, {"level": "bad", "en": f"Your entries sent back for changes: {sent_back}",
                        "ar": f"قيود أُعيدت إليك للتعديل: {sent_back}", "href": "#/approvals?status=rejected", "count": sent_back,
                        "kind": "approvals_back"})
-    return ok({"rows": out, "count": len(out), "approvals": [w["id"] for w in waiting]})
+    follow = []
+    if ctx.can("crm.followups"):
+        from . import crm
+        follow = crm.due_for(ctx.db, ctx.user["username"])
+        if follow:
+            late = sum(1 for f in follow if f["due"] < acc.today())
+            out.insert(0, {"level": "bad" if late else "warn", "en": f"Follow-ups due: {len(follow)}" + (f" ({late} overdue)" if late else ""),
+                           "ar": f"متابعات مستحقة: {len(follow)}" + (f" ({late} متأخرة)" if late else ""), "href": "#/followups?status=due",
+                           "count": len(follow), "kind": "followups"})
+    return ok({"rows": out, "count": len(out), "approvals": [w["id"] for w in waiting], "followups": [f["id"] for f in follow]})
 
 
 @route("GET", "/api/assets-overview", "assets.overview")
@@ -3680,6 +3871,8 @@ def _need_super(ctx, what):
 
 @route("POST", "/api/users", "users.users", "add")
 def user_add(ctx):
+    if not ctx.user.get("is_super"):
+        ctx.body.pop("grants", None)          # special rights: given by a super administrator only
     if ctx.body.get("is_admin") or ctx.body.get("is_super"):
         _need_super(ctx, "create administrators")
     _licence_seat(ctx)
@@ -3698,6 +3891,8 @@ def user_edit(ctx, uid):
         _need_super(ctx, "edit other people's accounts (administrators may add users)")
     elif not ctx.user.get("is_super"):
         b.pop("needs_approval", None)     # nobody lifts their own approval requirement
+    if not ctx.user.get("is_super"):
+        b.pop("grants", None)             # special rights: given by a super administrator only
     raises = bool(b.get("is_admin")) and not target["is_admin"] or bool(b.get("is_super")) and not target["is_super"]
     lowers = ("is_admin" in b and not b["is_admin"] and target["is_admin"]) or ("is_super" in b and not b["is_super"] and target["is_super"])
     if raises or ((target["is_admin"] or target["is_super"]) and int(uid) != ctx.user["id"]) or (lowers and int(uid) != ctx.user["id"]):
@@ -4058,6 +4253,8 @@ def branding_default_logo(ctx):
 
 @route("PUT", "/api/branding/image/<key>", "settings.branding", "edit")
 def branding_image(ctx, key):
+    if key in ("app_logo", "app_icon") and not ctx.user.get("platform_owner"):
+        raise PermissionError("The BeyondERP logo and icon are fixed — put your company's logo on its documents (Settings → Branding)")
     branding.set_asset(ctx.db, key, ctx.body if ctx.body.get("data") else None)
     ctx.log("branding.image", key + ("" if ctx.body.get("data") else " removed"))
     return ok()
@@ -4193,7 +4390,7 @@ def offer_type_del(ctx, tid):
 
 
 # ============================================================ erase all data
-ERASE_TRANSACTIONS = ("sub_cert_lines", "sub_certificates", "pr_quote_lines", "pr_quotes", "pr_lines", "purchase_requests", "stock_count_lines",
+ERASE_TRANSACTIONS = ("entry_tags", "crm_followups", "crm_activities", "crm_deals", "approvals", "sub_cert_lines", "sub_certificates", "pr_quote_lines", "pr_quotes", "pr_lines", "purchase_requests", "stock_count_lines",
                       "stock_counts", "equipment_usage", "maintenance_logs", "attendance", "ereceipts", "sub_recognitions", "sub_visits", "sub_invoices", "subscriptions", "po_receipts", "po_lines", "purchase_orders", "bank_lines", "bank_statements", "recurring_runs", "sale_cheques", "sale_installments", "sale_lines", "sales_orders", "stock_moves", "stock_levels", "extract_lines", "extracts", "ownership_changes", "journal_lines",
                       "journal_entries", "offers", "loans", "custodies", "rent_moves", "rental_invoices", "rental_charges",
                       "rental_handovers", "rental_lines", "rentals", "rent_lots")

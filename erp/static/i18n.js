@@ -3,7 +3,9 @@
 "use strict";
 window.I18N = {
   // ---- groups
-  g_home: ["Home", "الرئيسية"], g_bu: ["Business Units", "وحدات الأعمال"], g_sales: ["Sales & Receivables", "المبيعات والمدينون"],
+  g_home: ["Home", "الرئيسية"], g_crm: ["Customers & Deals (CRM)", "العملاء والصفقات (CRM)"],
+  m_deals: ["Deals Pipeline", "مسار الصفقات"], m_crm_contacts: ["Contacts & Timeline", "جهات الاتصال والسجل"], m_followups: ["Follow-ups", "المتابعات"],
+  mod_crm: ["Customers & deals (CRM)", "العملاء والصفقات (CRM)"], g_bu: ["Business Units", "وحدات الأعمال"], g_sales: ["Sales & Receivables", "المبيعات والمدينون"],
   g_est: ["Estimating & Tendering", "التسعير والعطاءات"], g_buy: ["Procurement & Payables", "المشتريات والدائنون"],
   g_stock: ["Inventory", "المخزون"], g_hr: ["Human Resources & Payroll", "الموارد البشرية والرواتب"], g_equity: ["Owners' Equity", "حقوق الملكية"],
   g_prj: ["Projects & Contracts", "المشروعات والعقود"], g_eq: ["Plant & Equipment", "المعدات والآلات"],
@@ -207,6 +209,7 @@ window.SUBTYPE_LABELS = {
 window.MENU = [
   ["g_home", [["m_dashboard", "dashboard", "dashboard", "◧"], ["m_chat", "chat", "chat", "💬"], ["m_assistant", "assistant", "chat.ai", "✦"]]],
   ["g_bu", [["m_bus", "bus", "business_units.units", "▦"]]],
+  ["g_crm", [["m_deals", "deals", "crm.deals", "◎"], ["m_crm_contacts", "crm-contacts", "crm.contacts", "☎"], ["m_followups", "followups", "crm.followups", "⏰"]]],
   ["g_prj", [["m_projects", "projects", "projects.overview", "◔"], ["m_tasks", "tasks", "projects.tasks", "☑"], ["m_materials", "materials", "projects.overview", "▤"], ["m_contracts", "contracts", "contracts.contracts", "✍"],
              ["m_variations", "variations", "contracts.variations", "±"], ["m_certs", "certificates", "contracts.certificates", "▤"]]],
   ["g_sales", [["m_offers", "offers", "sales.offers", "✉"], ["m_receipts", "receipts", "sales.receipts", "↘"], ["m_invoices", "invoices", "sales.invoices", "▤"], ["m_extracts", "extracts", "sales.extracts", "▦"], ["m_receivables", "receivables", "sales.receivables", "⇲"]]],
@@ -235,7 +238,7 @@ window.SUBPERM = {
   "estimating.boqs": "m_boqs", "estimating.prices": "m_prices",
   "purchasing.orders": "m_pos", "purchasing.costs": "m_costs", "purchasing.expenses": "m_expenses", "purchasing.payments": "m_payments", "purchasing.payables": "m_payables", "purchasing.contacts": "m_contacts", "purchasing.negotiations": "m_nego", "rentals.contracts": "m_rentals", "rentals.fleet": "m_rentfleet", "rentals.calculator": "m_rentcalc", "purchasing.custody": "m_custody", "accounting.loans": "m_loans", "accounting.bankrec": "m_bankrec", "accounting.recurring": "m_recurring", "accounting.budgets": "m_budgets",
   "stock.balances": "m_stock", "stock.moves": "m_moves", "stock.warehouses": "m_warehouses",
-  "accounting.journal": "m_journal", "accounting.approvals": "p_approvals", "accounting.ledger": "m_ledger", "accounting.coa": "m_coa",
+  "crm.deals": "m_deals", "crm.contacts": "m_crm_contacts", "crm.followups": "m_followups", "accounting.journal": "m_journal", "accounting.approvals": "p_approvals", "accounting.ledger": "m_ledger", "accounting.coa": "m_coa",
   "partners.equity": "p_equity", "partners.transactions": "p_ptx", "partners.ownership": "p_ownership",
   "assets.overview": "m_assetsum", "assets.cash": "m_cash", "assets.register": "m_assets", "assets.depreciation": "m_depr",
   "reports.partner_pack": "m_ppack", "reports.budget": "m_budget_rep", "reports.aging": "m_aging", "reports.statement": "m_statement", "reports.income_statement": "m_is", "reports.balance_sheet": "m_bs", "reports.cash_flow": "m_cf", "reports.trial_balance": "m_tb",

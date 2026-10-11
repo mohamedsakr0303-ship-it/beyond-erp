@@ -3783,6 +3783,78 @@ class FilesInBackups(unittest.TestCase):
         self.assertEqual(db2.one("SELECT COUNT(*) n FROM attachments")["n"], 3)
 
 
+class Crm(unittest.TestCase):
+    """Deals on a board, a contact's timeline (notes + what the books hold), follow-ups in the bell, and an offer turned
+    into a project and its BOQ in one step."""
+
+    def test_crm(self):
+        from erp import crm, demo, documents
+        db = Database(":memory:")
+        demo.load(db)
+        did = crm.save_deal(db, {"title": "Villa", "party": "Brand New Client", "value": 500000, "stage": "proposal"}, "boss")
+        self.assertTrue(db.one("SELECT 1 FROM parties WHERE name='Brand New Client'"))        # a new contact is made
+        b = crm.board(db, {})
+        col = {c["key"]: c for c in b["columns"]}
+        self.assertEqual((col["proposal"]["count"], col["proposal"]["value"], b["weighted"]), (1, 500000, 250000))
+        crm.move_deal(db, did, "lost", "boss", "price")
+        self.assertEqual(db.one("SELECT lost_reason FROM crm_deals WHERE id=?", (did,))["lost_reason"], "price")
+        crm.add_activity(db, {"party": "Brand New Client", "kind": "call", "subject": "Asked for a discount"}, "boss")
+        fid = crm.save_followup(db, {"title": "Send revised offer", "due": "2020-01-01", "party": "Brand New Client"}, "sara")
+        self.assertEqual([f["id"] for f in crm.due_for(db, "sara")], [fid])
+        self.assertEqual(crm.due_for(db, "boss"), [])
+        tl = crm.timeline(db, "Brand New Client", lambda *a: True)
+        kinds = [e["kind"] for e in tl["events"]]
+        self.assertIn("call", kinds)
+        self.assertIn("followup", kinds)
+        crm.done_followup(db, fid, "sara", True, "sent")
+        self.assertEqual(crm.due_for(db, "sara"), [])
+        # a customer with invoices: they show on the timeline
+        cust = db.one("SELECT customer FROM extracts WHERE customer<>'' LIMIT 1")
+        if cust:
+            self.assertIn("invoice", [e["kind"] for e in crm.timeline(db, cust["customer"], lambda *a: True)["events"]])
+        # offer -> project + BOQ (once), linked deal won
+        oid = documents.save_offer(db, {"number": "Q-77", "client": "Brand New Client", "project": "Villa", "lang": "en",
+                                        "sections": [{"kind": "pricing", "items": [{"desc": "Design", "amount": 100000}, {"desc": "Supervision", "amount": 50000}],
+                                                      "discount": 10000, "vat": 0}]})
+        d2 = crm.save_deal(db, {"title": "Villa 2", "party": "Brand New Client", "value": 140000, "offer_id": oid}, "boss")
+        made = []
+        r = crm.convert_offer(db, oid, "boss", lambda o: made.append(o) or db.x("INSERT INTO business_units(code,name) VALUES ('PRJ-T','Villa')").lastrowid)
+        boq = a.get_boq(db, r["boq_id"])
+        self.assertEqual(round(boq["total"], 2), 140000)
+        self.assertEqual(db.one("SELECT stage FROM crm_deals WHERE id=?", (d2,))["stage"], "won")
+        self.assertEqual(crm.convert_offer(db, oid, "boss", lambda o: 1 / 0)["boq_id"], r["boq_id"])   # a second time: the same BOQ
+        self.assertEqual(len(made), 1)
+
+
+class SpecialRights(unittest.TestCase):
+    """Super administrators hold every special right and give them to others (administrators included); the in-app
+    BeyondERP name, logo and icon are fixed for everyone but the platform owner."""
+
+    def test_grants_and_locked_brand(self):
+        from erp import auth, dashboards
+        db = Database(":memory:")
+        auth.create_user(db, {"username": "boss", "password": "Passw0rd!long1"}, first=True)
+        auth.create_user(db, {"username": "adm", "password": "Passw0rd!long2", "is_admin": True})
+        u = lambda n: auth.public_user(db.one("SELECT * FROM users WHERE username=?", (n,)))  # noqa: E731
+        self.assertEqual(set(u("boss")["grants"]), set(auth.GRANTS))
+        self.assertEqual(u("adm")["grants"], [])
+        self.assertFalse(dashboards.designer(u("adm"), lambda *a: True))
+        auth.update_user(db, u("adm")["id"], {"grants": ["design_dashboards", "nonsense"]}, u("boss")["id"])
+        self.assertEqual(u("adm")["grants"], ["design_dashboards"])
+        self.assertTrue(dashboards.designer(u("adm"), lambda *a: False))
+        self.assertTrue(auth.granted(u("boss"), "build_calculators"))
+        self.assertFalse(auth.granted(u("adm"), "build_calculators"))
+        self.assertTrue(auth.platform_owner({"username": "MohamedSakr0303@gmail.com "}))
+        self.assertFalse(auth.platform_owner({"username": "boss", "email": "someone@example.com"}))
+        # earlier custom app names / logos are cleared once
+        db2 = Database(":memory:")
+        db2.x("UPDATE settings SET value=? WHERE key='appearance'", (json.dumps({"app_name": "My Co", "logo": "custom", "accent": "#123456"}),))
+        db2.x("DELETE FROM settings WHERE key='brand_v3'")
+        db2._brand_v3()
+        ap = json.loads(db2.one("SELECT value FROM settings WHERE key='appearance'")["value"])
+        self.assertEqual(ap, {"accent": "#123456"})
+
+
 class Support(unittest.TestCase):
     """Help & support tickets: a reference built from the date and record number; people see their own, admins all."""
 

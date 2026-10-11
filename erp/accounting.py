@@ -246,7 +246,21 @@ def get_entry(db, eid):
                   for r in db.q("SELECT l.*, a.name, a.name_ar FROM journal_lines l JOIN accounts a ON a.code=l.account "
                                 "WHERE entry_id=? ORDER BY l.id", (eid,))]
     e["amount"] = round(sum(ln["debit"] for ln in e["lines"]), 2)
+    e["tags"] = [r["tag"] for r in db.q("SELECT tag FROM entry_tags WHERE entry_id=? ORDER BY tag", (eid,))]
     return e
+
+
+def set_tags(db, eid, tags):
+    """An entry's tags: short labels, at most 12, each up to 40 characters."""
+    clean = []
+    for t in tags or []:
+        t = re.sub(r"\s+", " ", str(t or "")).strip()[:40]
+        if t and t.lower() not in [c.lower() for c in clean]:
+            clean.append(t)
+    with db.tx():
+        db.conn.execute("DELETE FROM entry_tags WHERE entry_id=?", (int(eid),))
+        db.conn.executemany("INSERT INTO entry_tags(entry_id, tag) VALUES (?,?)", [(int(eid), t) for t in clean[:12]])
+    return clean[:12]
 
 
 def _split(db, total_minor, paid_minor, payable_code, method=None, paid_from=None):

@@ -124,7 +124,7 @@ def designer(user, can):
     """Who may design dashboards and their groups: super administrators, and whoever they allow
     (Settings → "Design dashboards & groups")."""
     u = user or {}
-    if u.get("is_super"):
+    if u.get("is_super") or "design_dashboards" in (u.get("grants") or []):
         return True
     # administrators hold every permission implicitly — designing stays the super administrator's unless given on
     # purpose, so it counts only when set for a (non-administrator) person in the permission matrix

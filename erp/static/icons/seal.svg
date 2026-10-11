@@ -1,5 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#34d399"/><stop offset="1" stop-color="#047857"/></linearGradient></defs>
-  <path d="M256 28 L452 141 V371 L256 484 L60 371 V141 Z" fill="none" stroke="url(#g)" stroke-width="26" stroke-linejoin="round"/>
-  <path fill-rule="evenodd" fill="url(#g)" d="M190.4 140.8 H261.2 A52.8 52.8 0 0 1 261.2 246.4 H267.2 A62.4 62.4 0 0 1 267.2 371.2 H190.4 Z M227.6 167.2 H254.3 A33.3 33.3 0 0 1 254.3 233.8 H227.6 Z M227.6 259.0 H260.3 A42.9 42.9 0 0 1 260.3 344.8 H227.6 Z"/>
-</svg>

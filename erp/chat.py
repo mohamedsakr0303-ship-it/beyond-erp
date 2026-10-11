@@ -68,6 +68,19 @@ def save_profile(db, uid, d):
             prefs["nav_mode"] = new["nav_mode"]
         if new.get("phone_menu") in ("overlay", "rail"):     # on a phone: the menu over the screen, or a slim strip of icons
             prefs["phone_menu"] = new["phone_menu"]
+        if isinstance(new.get("views"), dict):    # saved filter views: {screen: [{name, q}]}
+            views = {}
+            for route_, lst in list(new["views"].items())[:80]:
+                if not isinstance(lst, list):
+                    continue
+                keep = []
+                for v in lst[:30]:
+                    if isinstance(v, dict) and acc.text(v.get("name")) and isinstance(v.get("q"), dict):
+                        keep.append({"name": acc.text(v["name"])[:60],
+                                     "q": {str(k)[:40]: str(x)[:200] for k, x in list(v["q"].items())[:30] if x not in (None, "")}})
+                if keep:
+                    views[str(route_)[:80]] = keep
+            prefs["views"] = views
         tr = new.get("tour")      # the guided tour: where this person stopped, or that they never want it
         if isinstance(tr, dict) and tr.get("state") in ("new", "paused", "done", "never"):
             prefs["tour"] = {"state": tr["state"], "step": max(0, min(99, int(tr.get("step") or 0))),

@@ -231,7 +231,7 @@ const IC = {
   alert: '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0zM12 9v4M12 17h.01"/>',
   check: '<path d="M20 6 9 17l-5-5"/>', x: '<path d="M18 6 6 18M6 6l12 12"/>',
 };
-const ROUTE_IC = { dashboard: "grid", chat: "chat", assistant: "spark", profile: "user", bus: "brief", offers: "mail", receipts: "in", invoices: "file", receivables: "inbox", parties: "users",
+const ROUTE_IC = { deals: "target", "crm-contacts": "phone", followups: "clock", dashboard: "grid", chat: "chat", assistant: "spark", profile: "user", bus: "brief", offers: "mail", receipts: "in", invoices: "file", receivables: "inbox", parties: "users",
   products: "box", sales: "cart", installments: "clock", subs: "repeat", boqs: "list", prices: "tag", pos: "clip", costs: "hammer", expenses: "receipt",
   payments: "out", payables: "wallet", contacts: "phone", negotiations: "scale", stock: "boxes", moves: "swap", warehouses: "store", rentals: "building",
   rentfleet: "layers", rentcalc: "calc", payruns: "cash", employees: "user", crew: "ruler", payroll: "pen", payset: "gear", "assets-overview": "pie",
@@ -242,7 +242,7 @@ const ROUTE_IC = { dashboard: "grid", chat: "chat", assistant: "spark", profile:
   settings: "gear", industry: "store", users: "users", audit: "history",
   projects: "target", tasks: "check", contracts: "pen", variations: "swap", certificates: "clip", "purchase-requests": "list", "stock-counts": "check",
   equipment: "truck", "equipment-usage": "hour", maintenance: "gear", attendance: "users", ereceipts: "receipt" };
-const GROUP_IC = { g_home: "home", g_bu: "brief", g_sales: "in", g_shop: "cart", g_est: "list", g_buy: "out", g_stock: "boxes", g_rent: "building",
+const GROUP_IC = { g_home: "home", g_crm: "users", g_bu: "brief", g_sales: "in", g_shop: "cart", g_est: "list", g_buy: "out", g_stock: "boxes", g_rent: "building",
   g_prj: "target", g_eq: "truck", g_hr: "users", g_assets: "pie", g_fin: "bank", g_equity: "hands", g_tax: "pct", g_acc: "book", g_rep: "chart", g_sys: "gear" };
 const svg = (name, cls = "") => `<svg class="i ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${IC[name] || IC.grid}</svg>`;
 
@@ -439,6 +439,7 @@ async function route() {
   if (parts.length === 1) addImportMenu(view, parts[0]).catch(() => {});
   stackify(view);
   if (view.isConnected) window.scrollTo(0, 0);
+  if (view.isConnected) tabsAfterRoute();
 }
 
 // Phones show list tables (".tbl.stack") as one card per row: each cell carries its column heading.
@@ -563,11 +564,12 @@ function renderShell() {
       <span class="spacer"></span>
       <span id="syncdot" class="chip" style="display:none"></span>
       <div class="dd bell"><button class="btn icbtn" aria-label="${esc(L2("Alerts", "التنبيهات"))}">${svg("bell")}<b class="badge" id="bellc" hidden></b></button><div class="dd-menu" id="bellmenu"><div class="muted" style="padding:10px">${t("loading")}</div></div></div>
+      <button class="icbtn tabbtn" data-a="newtab" title="${esc(L2("Keep this screen and open another in a new tab (inside BeyondERP)", "إبقاء هذه الشاشة وفتح أخرى في تبويب جديد (داخل BeyondERP)"))}" aria-label="${esc(L2("New tab", "تبويب جديد"))}">⧉</button>
       <button class="icbtn themebtn" data-a="theme" title="${esc(themeTitle())}" aria-label="${esc(themeTitle())}">${svg(dark ? "sun" : "moon")}</button>
       <button class="icbtn draftsbtn" id="draftsbtn" data-a="drafts" hidden title="${esc(L2("Unsaved drafts", "مسودات غير محفوظة"))}">${svg("file")}<span class="dcount">0</span></button>
       <button class="icbtn langbtn" data-a="lang" title="${esc(L2("Language — switch to العربية", "اللغة — التبديل إلى English"))}">${svg("globe")}${ar ? "<span>EN</span>" : `<span lang="ar">عربي</span>`}</button>
       <div class="dd newdd"><button class="btn pri newbtn" aria-label="${esc(t("new"))}">${svg("plus")}<span class="lbl">${t("new")}</span></button><div class="dd-menu" id="newmenu"></div></div>
-    </header><div id="billbar"></div><main class="content" id="view"></main></div>
+    </header><div class="etabs" id="etabs" hidden></div><div id="billbar"></div><main class="content" id="view"></main></div>
     <nav class="bottombar">
       <a href="#/dashboard" class="bb-home">${svg("home")}<span>${esc(t("m_dashboard"))}</span></a>
       <button data-a="palette">${svg("search")}<span>${esc(t("search").replace("…", ""))}</span></button>
@@ -608,6 +610,10 @@ function approvalNotices(d) {
   store.set(key, d.approvals || []); store.set(backKey, back);
   if (fresh.length && !first) alertPerson({ title: L2("Entries waiting for your approval", "قيود في انتظار اعتمادك"),
     body: L2(`${fresh.length} new — review and post them`, `${fresh.length} جديد — راجعها ورحّلها`), href: "#/approvals", tag: "berp-approvals", force: true });
+  const fkey = "fuSeen:" + uid, ffirst = store.get(fkey, null) === null, fseen = new Set(store.get(fkey, [])), fnew = (d.followups || []).filter(id => !fseen.has(id));
+  store.set(fkey, d.followups || []);
+  if (fnew.length && !ffirst) alertPerson({ title: L2("Follow-ups due", "متابعات مستحقة"), body: L2(`${fnew.length} to do today — open Follow-ups`, `${fnew.length} مطلوبة اليوم — افتح المتابعات`),
+    href: "#/followups?status=due", tag: "berp-followups", force: true });
   if (back > wasBack) alertPerson({ title: L2("An entry was sent back to you", "أُعيد إليك قيد للتعديل"),
     body: L2("See the reason, fix it and send it again", "اطّلع على السبب وعدّله وأرسله مرة أخرى"), href: "#/approvals?status=rejected", tag: "berp-approvals-back", force: true });
 }
@@ -634,15 +640,19 @@ function openPalette() {
 }
 document.addEventListener("keydown", e => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k" && S.boot && S.boot.user) { e.preventDefault(); if (!$(".pal-bg")) openPalette(); } });
 // ---- the app icon (Settings → Look): built-in marks or the company's own, applied to the tab and the installable app
-const APP_ICONS = [["beyond", "BeyondERP", "BeyondERP"], ["rising", "Rising B", "B الصاعد"], ["seal", "Seal", "الختم"], ["original", "Original", "الأصلية"]];
-const appIconKey = () => ((S.boot && S.boot.settings.appearance) || {}).app_icon || "beyond";
-const appIconSrc = k => k === "custom" && S.boot.app_icon ? `data:${S.boot.app_icon.mime};base64,${S.boot.app_icon.data}` : `icons/${k === "original" ? "original.png" : !APP_ICONS.some(x => x[0] === k) || k === "beyond" ? "beyond.png" : k + ".svg"}`;
+// the BeyondERP name, logo and icon (sidebar, browser tab, installed desktop / phone app) are fixed; only the platform
+// owner may change them — a company's own name and logo go on its documents (Settings → Branding)
+const platformOwner = () => !!(S.boot && S.boot.user && (S.boot.user.platform_owner || (S.billing && S.billing.is_owner)));
+const APP_ICONS = [["beyond", "BeyondERP", "BeyondERP"]];
+const appIconKey = () => (platformOwner() && ((S.boot && S.boot.settings.appearance) || {}).app_icon) || "beyond";
+const appIconSrc = k => k === "custom" && S.boot.app_icon ? `data:${S.boot.app_icon.mime};base64,${S.boot.app_icon.data}` : "icons/beyond.png";
 // Universal stand-ins where a company has not given its own details yet
 const GEN_NAME = () => L2("Company Name", "اسم الشركة"), GEN_TAG = () => L2("Company Slogan", "شعار الشركة النصي");
 // The app's name (Settings → Appearance); BeyondERP unless the company gave it another
-const appName = () => (((S.boot && S.boot.settings.appearance) || {}).app_name || "").trim() || "BeyondERP";
+const appName = () => (platformOwner() && (((S.boot && S.boot.settings.appearance) || {}).app_name || "").trim()) || "BeyondERP";
 // The sidebar / sign-in logo: the company's own (document or uploaded), none, or the built-in BeyondERP mark
 const brandLogoSrc = () => { const ap = (S.boot && S.boot.settings.appearance) || {};
+  if (!platformOwner()) return "icons/beyond.png";
   return S.boot && S.boot.app_logo ? `data:${S.boot.app_logo.mime};base64,${S.boot.app_logo.data}` : ap.logo === "none" ? "" : "icons/beyond.png"; };
 // a square PNG of the icon; "filled" puts it on the dark green backdrop phones need for full-bleed icons
 function iconPng(src, size, filled = false) {
@@ -673,7 +683,7 @@ async function applyAppIcon() {
 }
 // Sidebar header: logo and/or name (Settings → Appearance → Sidebar shows), and an optional tagline
 function brandBlock(st) {
-  const ap = st.appearance || {}, show = ap.brand_show || "logo", src = brandLogoSrc();
+  const ap = platformOwner() ? (st.appearance || {}) : {}, show = ap.brand_show || "logo", src = brandLogoSrc();
   const logo = src && show !== "name" ? `<img class="brand-logo ${show === "logo" ? "only" : ""}" src="${esc(src)}" alt="${esc(appName())}">` : "";
   const name = show !== "logo" || !logo ? `<b>${esc(appName())}</b>` : "";
   const tag = ap.tagline_show === false || show === "logo" ? "" : (ap.tagline != null ? ap.tagline : st.company_tagline || "");
@@ -1291,6 +1301,10 @@ function filterBar(q, fields, extra = "") {
     else if (Array.isArray(f) && f[0] === "choice") parts.push(`<label class="f">${esc(f[2])}<select name="${f[1]}">${f[3].map(([v, l]) => `<option value="${esc(v)}" ${String(q[f[1]] || f[4] || "") === String(v) ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`);
     else if (f === "amount") parts.push(`<label class="f">${esc(L2("Amount from", "المبلغ من"))}<input type="number" step="any" name="min_amount" value="${esc(q.min_amount || "")}" style="width:110px"></label>`,
       `<label class="f">${esc(L2("Amount to", "المبلغ إلى"))}<input type="number" step="any" name="max_amount" value="${esc(q.max_amount || "")}" style="width:110px"></label>`);
+    else if (f === "created") parts.push(`<label class="f" title="${esc(L2("When the entry was keyed in — not its own date", "تاريخ إدخال القيد — وليس تاريخه"))}">${esc(L2("Entered from", "أُدخل من"))}<input type="date" name="created_from" value="${esc(q.created_from || "")}"></label>`,
+      `<label class="f">${esc(L2("Entered to", "أُدخل إلى"))}<input type="date" name="created_to" value="${esc(q.created_to || "")}"></label>`);
+    else if (Array.isArray(f) && f[0] === "tag") parts.push(`<label class="f">${esc(L2("Tag", "وسم"))}<select name="tag"><option value="">${t("all")}</option>${f[1].map(x => `<option ${q.tag === x ? "selected" : ""}>${esc(x)}</option>`).join("")}</select></label>`);
+    else if (Array.isArray(f) && f[0] === "bugroup") { if (f[1].length) parts.push(`<label class="f">${esc(L2("Project group", "مجموعة المشروعات"))}<select name="bu_group"><option value="">${t("all")}</option>${f[1].map(x => `<option ${q.bu_group === x ? "selected" : ""}>${esc(x)}</option>`).join("")}</select></label>`); }
     else if (f === "attach") parts.push(`<label class="f">${esc(L2("Attachments", "المرفقات"))}<select name="has_attachment"><option value="">${t("all")}</option><option value="1" ${q.has_attachment === "1" ? "selected" : ""}>${esc(L2("Has a file attached", "عليه ملف مرفق"))}</option></select></label>`);
     else if (Array.isArray(f) && f[0] === "kind") parts.push(`<label class="f">${t("kind")}<select name="kind"><option value="">${t("all")}</option>${f[1].map(k => `<option value="${esc(k)}" ${q.kind === k ? "selected" : ""}>${esc(tl(k))}</option>`).join("")}</select></label>`);
     else if (Array.isArray(f) && f[0] === "select") parts.push(`<label class="f">${esc(f[2])}<select name="${f[1]}"><option value="">${t("all")}</option>${f[3].map(([v, l]) => `<option value="${esc(v)}" ${String(q[f[1]]) === String(v) ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`);
@@ -1309,9 +1323,24 @@ function filterBar(q, fields, extra = "") {
   };
   S.H.fclear = () => setQ({});
   S.H.ftoggle = () => $("#fbar").classList.toggle("open");
+  // saved views: this person's named sets of filters for this screen
+  const vkey = parseHash().parts.join("/"), myViews = () => ((((S.boot.profile || {}).prefs || {}).views || {})[vkey]) || [];
+  const saveViews = async list => { const all = { ...(((S.boot.profile || {}).prefs || {}).views || {}) }; if (list.length) all[vkey] = list; else delete all[vkey];
+    S.boot.profile = await api("PUT", "/api/me/profile", { prefs: { views: all } }); };
+  S.H.fview = el => { const v = myViews().find(x => x.name === el.value); if (v) setQ(v.q); };
+  S.H.fviewsave = async () => { const cur = Object.fromEntries(Object.entries(q).filter(([k, v]) => v && !["limit", "offset"].includes(k)));
+    if (!Object.keys(cur).length) { toast(L2("Set some filters first, then save them as a view", "اختر بعض الفلاتر أولاً ثم احفظها"), true); return; }
+    const name = await uiPrompt(L2("Name of this view (only you see it)", "اسم هذا العرض (تراه أنت فقط)"), ""); if (!name || !name.trim()) return;
+    try { await saveViews([...myViews().filter(v => v.name !== name.trim()), { name: name.trim(), q: cur }]); toast(t("saved")); route(); } catch (e) { fail(e); } };
+  S.H.fviewdel = async () => { const sel = $("#fbar [data-change=fview]"); const name = sel && sel.value; if (!name) { toast(L2("Choose a saved view first", "اختر عرضاً محفوظاً أولاً"), true); return; }
+    if (!await uiConfirm(L2(`Delete the view “${name}”?`, `حذف العرض «${name}»؟`))) return; try { await saveViews(myViews().filter(v => v.name !== name)); route(); } catch (e) { fail(e); } };
   const active = Object.entries(q).filter(([k, v]) => v && !["limit", "offset", "tab", "lang"].includes(k)).length;
+  const views = myViews(), curView = views.find(v => JSON.stringify(v.q) === JSON.stringify(Object.fromEntries(Object.entries(q).filter(([k, x]) => x && !["limit", "offset"].includes(k)))));
   return `<div class="card ${active ? "" : ""}" id="fbar"><button type="button" class="btn sm ftoggle" data-a="ftoggle">⚲ ${t("filters")}${active ? ` <span class="chip">${active}</span>` : ""}</button><div class="filters">${parts.join("")}
-    <div class="row"><button class="btn pri" data-a="fapply">${t("apply")}</button><button class="btn" data-a="fclear">${t("clear")}</button></div></div>${extra}</div>`;
+    <div class="row"><button class="btn pri" data-a="fapply">${t("apply")}</button><button class="btn" data-a="fclear">${t("clear")}</button>
+      <span class="fviews">${views.length ? `<select data-change="fview" aria-label="${esc(L2("Saved views", "العروض المحفوظة"))}"><option value="">${esc(L2("★ My views…", "★ عروضي…"))}</option>${views.map(v => `<option ${curView && curView.name === v.name ? "selected" : ""}>${esc(v.name)}</option>`).join("")}</select>
+        <button type="button" class="btn sm" data-a="fviewdel" title="${esc(L2("Delete the chosen view", "حذف العرض المختار"))}">✕</button>` : ""}
+      <button type="button" class="btn sm" data-a="fviewsave" title="${esc(L2("Save these filters under a name (only for you)", "حفظ هذه الفلاتر باسم (لك وحدك)"))}">☆ ${esc(L2("Save view", "حفظ العرض"))}</button></span></div></div>${extra}</div>`;
 }
 function exportMenu(name, params) {
   const base = `/api/reports/${name}?` + qs({ ...params, lang: params.lang || S.lang });
@@ -1392,7 +1421,7 @@ function voucherRows(rows) {
     ${rows.map(e => `<tr class="click ${e.status === "void" || e.reversed_by ? "void" : ""}" data-a="openv" data-id="${e.id}"><td>${fd(e.date)}</td><td>${e.id}</td><td><span class="chip">${esc(tl(e.kind))}</span></td>
       <td>${esc(e.memo)}<div class="lines">${e.lines.map(l => `${l.debit ? t("debit") : "&nbsp;&nbsp;" + t("credit")} ${esc(l.account)} ${esc(aname(l))} ${money(l.debit || l.credit)}`).join("<br>")}</div></td>
       <td>${esc(e.party)}</td><td>${esc(e.bu_code || "")}</td><td class="num">${money(e.amount)}</td>
-      <td>${e.status === "void" ? `<span class="chip bad">${t("void")}</span>` : ""}${e.reversed_by ? `<span class="chip warn">${t("reverse")}</span>` : ""}${e.history && e.history.length ? `<span class="chip">${t("edited")}</span>` : ""}${e.files ? `<span class="chip" title="${esc(L2("Attached files", "المرفقات"))}">📎 ${e.files}</span>` : ""}</td></tr>`).join("")}</tbody></table></div>`;
+      <td>${e.status === "void" ? `<span class="chip bad">${t("void")}</span>` : ""}${e.reversed_by ? `<span class="chip warn">${t("reverse")}</span>` : ""}${e.history && e.history.length ? `<span class="chip">${t("edited")}</span>` : ""}${e.files ? `<span class="chip" title="${esc(L2("Attached files", "المرفقات"))}">📎 ${e.files}</span>` : ""}${(e.tags || []).map(x => `<span class="chip tagchip">#${esc(x)}</span>`).join("")}</td></tr>`).join("")}</tbody></table></div>`;
 }
 // expected price movement (Forecasting): "↑ 12.4% by Q4 2027", coloured by direction
 const olPct = x => `${x > 0 ? "+" : ""}${(x * 100).toFixed(1)}%`;
@@ -1433,6 +1462,8 @@ async function openVoucher(id) {
     <tr class="total"><td>${t("total")}</td><td class="num">${money(e.amount)}</td><td class="num">${money(e.amount)}</td></tr></tbody></table></div>
     ${e.meta && e.meta.void_reason ? `<div class="banner err" style="margin-top:10px">${t("void")}: ${esc(e.meta.void_reason)}</div>` : ""}
     ${e.history && e.history.length ? `<h4>${t("history")}</h4>${e.history.map(h => `<div class="lines">${esc(h.edited_at)} ${esc(h.edited_by || "")}: ${esc(h.memo)} — ${h.lines.map(l => `${l.account} ${l.debit || ""}/${l.credit || ""}`).join(", ")}</div>`).join("")}` : ""}
+    <div class="vtags"><h4 class="fsec">🏷 ${esc(L2("Tags", "الوسوم"))}</h4><div class="row" style="gap:6px;flex-wrap:wrap">${(e.tags || []).map(x => `<span class="chip tagchip">#${esc(x)}${edit || can(DOC_MOD[e.doc] || "accounting.journal", "add") ? ` <a href="#" data-a="vtagrm" data-t="${esc(x)}" aria-label="${esc(t("remove"))}">×</a>` : ""}</span>`).join("")}
+      ${edit || can(DOC_MOD[e.doc] || "accounting.journal", "add") ? `<input class="in" id="vtagin" list="vtaglist" placeholder="${esc(L2("+ add a tag, Enter", "+ أضف وسماً ثم Enter"))}" style="max-width:200px"><datalist id="vtaglist">${(S.cache.tags || []).map(x => `<option value="${esc(x)}">`).join("")}</datalist>` : ""}</div></div>
     ${attBox("entry", e.id, edit || can(DOC_MOD[e.doc] || "accounting.journal", "add"))}
     <p class="muted" style="font-size:.8em;margin-top:12px">${S.lang === "ar" ? "الإلغاء يستبعد القيد من كل الأرصدة مع إبقاء أثره؛ القيد العكسي هو التصحيح المحاسبي الرسمي." : "Void removes the entry from every total but keeps a visible trace. Reverse posts the formal correcting entry — both stay on record."}</p>`;
   const btns = [];
@@ -1459,9 +1490,14 @@ async function openVoucher(id) {
   S.H.vdup = () => e.doc ? openDoc(e.doc, null, null, { ...e.form, date: today() }) : journalForm({ ...e, date: today() }, true);
   const f = drawer(`${tl(e.kind)} #${e.id}`, html, null, { readOnly: true, extraButtons: btns.join("") });
   mountAttach($(".attbox", f));
+  const setTags = async tags => { try { const r = await api("PUT", `/api/journal/${e.id}/tags`, { tags }); e.tags = r.tags; S.cache.tags = [...new Set([...(S.cache.tags || []), ...r.tags])]; openVoucher(e.id); } catch (x) { fail(x); } };
+  S.H.vtagrm = el => setTags((e.tags || []).filter(x => x !== el.dataset.t));
+  const tin = $("#vtagin", f); if (tin) tin.addEventListener("keydown", ev => { if (ev.key === "Enter") { ev.preventDefault(); const v = tin.value.trim(); if (v) setTags([...(e.tags || []), v]); } });
   voucherOutlook(f, e);
 }
 S.GLOBAL_H.openv = el => openVoucher(el.dataset.id);
+// ⧉: this screen stays in its tab; a new tab opens (a copy of it) and the screen finder pops up to go anywhere from there
+S.GLOBAL_H.newtab = () => { tabOpen(location.hash || "#/dashboard"); setTimeout(openPalette, 250); };
 // ------------------------------------------------------------ bulk selection (select rows → edit / void / delete together)
 // Every selected record is done on the server with the same permission and rules as by hand; anything that cannot be
 // done is listed with the reason. The selection belongs to the page on screen (choose up to 100 rows per page).
@@ -1841,7 +1877,9 @@ function countUp(root) {
 // widgets — and figures — the person may see.
 const DASH = { edit: null };
 // who may design the dashboards (and their groups): super administrators, and whoever they allow
-const canDesign = () => !!(S.boot.user.is_super || (!S.boot.user.is_admin && can("settings.dashboards", "edit")));
+// special rights: every super administrator has them; anyone else when a super administrator gave them (Users screen)
+const granted = k => !!(S.boot && S.boot.user && (S.boot.user.is_super || (S.boot.user.grants || []).includes(k)));
+const canDesign = () => !!(granted("design_dashboards") || (!S.boot.user.is_admin && can("settings.dashboards", "edit")));
 PAGES.dashboard = async (view, parts, q) => {
   const sup = canDesign();
   const group = sup ? (q.group || store.get("dashGroup", "")) : "";
@@ -2170,6 +2208,7 @@ function buForm(b) {
   drawer((b.id ? t("edit") : t("new")) + " — " + t("m_bus"), form([
     { k: "code", l: t("bu_code"), v: b.code || `PRJ-${today().slice(0, 4)}-${String(S.boot.bus.length + 1).padStart(3, "0")}`, req: 1 }, { k: "name", l: t("bu_name"), v: b.name, req: 1 },
     { k: "type", l: t("bu_type"), v: b.type }, { k: "location", l: t("location"), v: b.location },
+    { k: "grp", l: L2("Project group", "مجموعة المشروعات"), v: b.grp || "", list: "bugroups", help: L2("Optional — e.g. “New Cairo villas”; filter the journal by the whole group.", "اختياري — مثل «فيلات القاهرة الجديدة»؛ لفلترة القيود بالمجموعة كلها.") },
     { k: "area", l: t("area"), type: "number", v: b.area }, { k: "start_date", l: t("start_date"), type: "date", v: b.start_date },
     { k: "status", l: t("status"), type: "select", opts: ["Tendering", "In Progress", "On Hold", "Completed", "Closed"], v: b.status },
     { k: "basis", l: t("basis"), type: "select", opts: S.boot.enums.billing_bases, v: b.basis },
@@ -2183,7 +2222,8 @@ function buForm(b) {
       opts: [["", L2("Not automatic", "غير تلقائي")], ["cost_plus", L2("Cost-plus: direct costs × (1 + fee %)", "تكلفة+: التكاليف المباشرة × (1 + نسبة الأتعاب)")], ["drafts", L2("Executed work on draft invoices (measured / BOQ rates)", "الأعمال المنفذة في الفواتير المسودة (بالقياس / أسعار المقايسة)")]],
       help: L2("Kept up to date automatically as costs, draft invoices and invoices change.", "تُحدّث تلقائياً مع تغيّر التكاليف والفواتير المسودة والفواتير.") },
     { k: "customer", l: t("customer"), v: b.customer, list: "custs" },
-    { k: "notes", l: t("notes"), type: "textarea", v: b.notes, span: "spanall" }]) + datalist("custs", (S.boot.parties || []).map(p => p.name)),
+    { k: "notes", l: t("notes"), type: "textarea", v: b.notes, span: "spanall" }]) + datalist("custs", (S.boot.parties || []).map(p => p.name))
+    + datalist("bugroups", [...new Set((S.boot.bus || []).map(x => x.grp).filter(Boolean))]),
   async v => { v.fee_pct = (+v.fee_pct || 0) / 100; v.overhead_pct = (+v.overhead_pct || 0) / 100;
     if (b.id) await api("PUT", "/api/bus/" + b.id, v); else await api("POST", "/api/bus", v); await refreshBoot(); toast(t("saved")); });
 }
@@ -2833,6 +2873,7 @@ PAGES.journal = async (view, parts, q) => {
   const drafts = ["pending", "rejected", "withdrawn"].includes(q.status);   // drafts are not in the books yet: listed from approvals
   const d = await api("GET", "/api/journal?" + qs(drafts ? { ...lq, status: "", limit: 1 } : lq));
   const ad = drafts ? await api("GET", "/api/approvals?" + qs(q)) : null;
+  S.cache.tags = d.tags || [];
   S.H.newjv = () => journalForm();
   // every kind of entry starts here too: a plain journal entry, or any voucher this person may add (direct project cost,
   // expense, receipt, payment, payroll…) — the same list as "+ New"
@@ -2844,9 +2885,139 @@ PAGES.journal = async (view, parts, q) => {
     ${d.drafts && !drafts ? `<a class="chip warn" href="#/journal?status=pending" title="${esc(L2("Entered, not posted yet — waiting for someone to approve them", "مُدخلة ولم تُرحّل — في انتظار اعتمادها"))}">${esc(L2(`Drafts waiting: ${d.drafts}`, `مسودات في الانتظار: ${d.drafts}`))}</a>` : ""}
     ${drafts ? `<span class="chip">${ad.rows.length}</span>` : `<span class="chip">${d.total}</span><span class="chip">${money(d.posted_amount)} ${cur()}</span>${exportMenu("vouchers", { ...q, title: t("m_journal") })}`}</div>` +
     filterBar(q, ["dates", "bu", ["kind", S.boot.enums.entry_kinds], "account", "qv", "party", "jstatus", ["select", "created_by", L2("Entered by", "أدخله"), (d.people || []).map(u => [u, u])],
-      ["select", "approved_by", L2("Approved by", "اعتمده"), (d.people || []).map(u => [u, u])], "amount", "attach"]) +
+      ["select", "approved_by", L2("Approved by", "اعتمده"), (d.people || []).map(u => [u, u])], "amount", "attach", "created", ["tag", d.tags || []], ["bugroup", d.bu_groups || []]]) +
     `<div class="card">${drafts ? approvalRows(ad.rows) : voucherRows(d.rows) + pager(d.total, lq)}</div>`;
   if (!drafts) bulkify($("table.vtbl", view), BULKS.entries("accounting.journal"));
+};
+// ============================================================== customers & deals (CRM)
+const CRM_KIND = () => ({ call: ["📞", L2("Call", "مكالمة")], meeting: ["🤝", L2("Meeting", "اجتماع")], email: ["✉", L2("Email", "بريد")], whatsapp: ["💬", "WhatsApp"],
+  visit: ["📍", L2("Site visit", "زيارة")], note: ["📝", L2("Note", "ملاحظة")], followup: ["⏰", L2("Follow-up", "متابعة")], offer: ["📄", L2("Offer", "عرض سعر")],
+  invoice: ["🧾", L2("Invoice", "فاتورة")], payment: ["💰", L2("Payment", "دفعة")], entry: ["📒", L2("Entry", "قيد")], sale: ["🛒", L2("Sale", "بيع")] });
+const crmParties = () => partyList("crmparties", (S.boot.parties || []).map(p => p.name));
+function dealForm(dl, after) {
+  dl = dl || { stage: "lead" };
+  const stages = (S.cache.crmStages || []).map(c => [c.key, L2(c.en, c.ar)]);
+  drawer(dl.id ? L2("Deal", "صفقة") + " — " + dl.title : L2("New deal", "صفقة جديدة"), form([
+    { k: "title", l: L2("Deal", "الصفقة"), v: dl.title || "", req: 1, ph: L2("e.g. Villa finishing — Sheikh Zayed", "مثال: تشطيب فيلا — الشيخ زايد") },
+    { k: "party", l: L2("Customer", "العميل"), v: dl.party || "", req: 1, list: "crmparties" },
+    { k: "stage", l: L2("Stage", "المرحلة"), type: "select", opts: stages, v: dl.stage },
+    { k: "value", l: L2("Expected value", "القيمة المتوقعة"), type: "number", v: dl.value ?? "" },
+    { k: "probability", l: L2("Chance of winning %", "نسبة الفوز %"), type: "number", v: dl.probability ?? "", help: L2("Empty = the stage's usual chance", "فارغ = النسبة المعتادة للمرحلة") },
+    { k: "expected_close", l: L2("Expected to close", "الإغلاق المتوقع"), type: "date", v: dl.expected_close || "" },
+    { k: "owner", l: L2("Owner", "المسؤول"), v: dl.owner || S.boot.user.username, list: "crmusers" },
+    { k: "source", l: L2("Source", "المصدر"), v: dl.source || "", list: "crmsrc" },
+    { k: "notes", l: t("notes"), type: "textarea", v: dl.notes || "", span: "spanall" }]) + crmParties() +
+    datalist("crmsrc", ["Referral", "Website", "Facebook", "Instagram", "WhatsApp", "Walk-in", "Exhibition", "Repeat customer"]) + datalist("crmusers", S.cache.crmPeople || []),
+  async v => { if (dl.id) await api("PUT", "/api/crm/deals/" + dl.id, v); else await api("POST", "/api/crm/deals", v); await refreshBoot(); toast(t("saved")); if (after) after(); },
+  { extraButtons: dl.id ? `${can("crm.deals", "edit") ? `<button type="button" class="btn danger" data-a="dldel">${t("delete")}</button>` : ""}<a class="btn" href="#/contact/${encodeURIComponent(dl.party)}">${esc(L2("Customer timeline", "سجل العميل"))}</a>
+      <button type="button" class="btn" data-a="dlfu">⏰ ${esc(L2("Follow-up", "متابعة"))}</button>` : "" });
+  S.H.dldel = async () => { if (!await uiConfirm(L2("Delete this deal?", "حذف هذه الصفقة؟"))) return; try { await api("DELETE", "/api/crm/deals/" + dl.id); closeDrawer(); route(); } catch (e) { fail(e); } };
+  S.H.dlfu = () => followupForm({ party: dl.party, deal_id: dl.id, title: L2("Follow up: ", "متابعة: ") + dl.title });
+}
+function followupForm(f, after) {
+  f = f || {};
+  drawer(f.id ? L2("Follow-up", "متابعة") : L2("New follow-up", "متابعة جديدة"), form([
+    { k: "title", l: L2("What to do", "المطلوب"), v: f.title || "", req: 1, span: "spanall", ph: L2("e.g. Call about the revised BOQ", "مثال: الاتصال بخصوص المقايسة المعدلة") },
+    { k: "due", l: L2("When", "الموعد"), type: "date", v: f.due || today(), req: 1 },
+    { k: "assigned_to", l: L2("Who", "المسؤول"), v: f.assigned_to || S.boot.user.username, list: "crmusers" },
+    { k: "party", l: L2("Customer / contact", "العميل / جهة الاتصال"), v: f.party || "", list: "crmparties" },
+    { k: "deal_id", v: f.deal_id || "", hidden: 1 },
+    { k: "notes", l: t("notes"), type: "textarea", v: f.notes || "", span: "spanall" }]) + crmParties() + datalist("crmusers", S.cache.crmPeople || []),
+  async v => { if (f.id) await api("PUT", "/api/crm/followups/" + f.id, v); else await api("POST", "/api/crm/followups", v); toast(t("saved")); loadAlerts(true); if (after) after(); });
+}
+function activityForm(party, dealId) {
+  const kinds = CRM_KIND();
+  drawer(L2("Log a call, meeting or note", "تسجيل مكالمة أو اجتماع أو ملاحظة") + " — " + party, form([
+    { k: "kind", l: L2("Type", "النوع"), type: "select", v: "call", opts: ["call", "meeting", "email", "whatsapp", "visit", "note"].map(k => [k, `${kinds[k][0]} ${kinds[k][1]}`]) },
+    { k: "at", l: L2("When", "التوقيت"), type: "datetime-local", v: new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16) },
+    { k: "subject", l: L2("Subject", "الموضوع"), req: 1, span: "spanall" },
+    { k: "body", l: L2("Details", "التفاصيل"), type: "textarea", span: "spanall" },
+    { k: "next", l: L2("Next step (adds a follow-up)", "الخطوة التالية (تضيف متابعة)"), span: "spanall", ph: L2("optional", "اختياري") },
+    { k: "next_due", l: L2("Next step on", "موعد الخطوة التالية"), type: "date", v: new Date(Date.now() + 3 * 864e5).toISOString().slice(0, 10) }]),
+  async v => { await api("POST", "/api/crm/activities", { ...v, at: v.at ? v.at.replace("T", " ") : "", party, deal_id: dealId || "" });
+    if (v.next && v.next.trim()) await api("POST", "/api/crm/followups", { title: v.next, due: v.next_due, party, deal_id: dealId || "" });
+    toast(t("saved")); loadAlerts(true); });
+}
+PAGES.deals = async (view, parts, q) => {
+  const d = await api("GET", "/api/crm/board?" + qs(q)); S.cache.crmStages = d.columns; S.cache.crmPeople = d.owners;
+  const add = can("crm.deals", "add");
+  S.H.dlnew = () => dealForm({ stage: "lead" });
+  S.H.dlopen = el => { for (const c of d.columns) { const x = c.deals.find(z => String(z.id) === el.dataset.id); if (x) return dealForm(x); } };
+  view.innerHTML = `<div class="toolbar">${add ? `<button class="btn pri" data-a="dlnew">+ ${esc(L2("New deal", "صفقة جديدة"))}</button>` : ""}<span class="spacer"></span>
+      <span class="chip">${esc(L2("Open", "مفتوحة"))}: ${money(d.open_value)}</span><span class="chip ok" title="${esc(L2("Each deal's value × its chance of winning", "قيمة كل صفقة × نسبة الفوز"))}">${esc(L2("Weighted", "المرجّحة"))}: ${money(d.weighted)}</span></div>` +
+    filterBar(q, ["q", ["select", "owner", L2("Owner", "المسؤول"), d.owners.map(o => [o, o])], ["select", "closed", L2("Won / lost", "فوز / خسارة"), [["all", L2("All, any age", "الكل، أي تاريخ")]]]]) +
+    `<div class="kanban">${d.columns.map(c => `<section class="kcol k-${c.key}" data-stage="${c.key}"><header><b>${esc(L2(c.en, c.ar))}</b><span class="chip">${c.count}</span>
+        <small>${money(c.value)}</small></header><div class="kcards">${c.deals.map(x => `<article class="kcard" draggable="${add ? "true" : "false"}" data-a="dlopen" data-id="${x.id}">
+          <b>${esc(x.title)}</b><span class="muted">${esc(x.party)}</span><div class="row"><b>${money(x.value)}</b><span class="spacer"></span><span class="chip">${x.probability}%</span></div>
+          ${x.expected_close ? `<small class="${x.expected_close < today() && !["won", "lost"].includes(x.stage) ? "neg" : "muted"}">${esc(L2("Closes", "الإغلاق"))} ${fd(x.expected_close)}</small>` : ""}
+          ${x.next ? `<small class="${x.next.due < today() ? "neg" : "muted"}">⏰ ${fd(x.next.due)} · ${esc(x.next.title)}</small>` : ""}${x.owner ? `<small class="muted">👤 ${esc(x.owner)}</small>` : ""}</article>`).join("") ||
+          `<div class="muted kempty">${esc(L2("Drop deals here", "اسحب الصفقات هنا"))}</div>`}</div></section>`).join("")}</div>`;
+  if (!add) return;
+  let drag = null;     // drag a card to another stage
+  $$(".kcard", view).forEach(c => { c.addEventListener("dragstart", e => { drag = c.dataset.id; c.classList.add("dragging"); e.dataTransfer.effectAllowed = "move"; });
+    c.addEventListener("dragend", () => c.classList.remove("dragging")); });
+  $$(".kcol", view).forEach(col => { col.addEventListener("dragover", e => { e.preventDefault(); col.classList.add("over"); });
+    col.addEventListener("dragleave", () => col.classList.remove("over"));
+    col.addEventListener("drop", async e => { e.preventDefault(); col.classList.remove("over"); if (!drag) return; const stage = col.dataset.stage; let reason = "";
+      if (stage === "lost") { reason = await uiPrompt(L2("Why was it lost? (price, timing, competitor…)", "سبب الخسارة؟ (السعر، التوقيت، منافس…)"), ""); if (reason === null) return; }
+      try { await api("PUT", "/api/crm/deals/" + drag, { stage, lost_reason: reason }); route(); } catch (x) { fail(x); } drag = null; }); });
+};
+PAGES["crm-contacts"] = async (view, parts, q) => {
+  const d = await api("GET", "/api/crm/contacts?" + qs(q));
+  view.innerHTML = filterBar(q, ["q", ["select", "type", t("type"), [["customer", L2("Customers", "العملاء")], ["supplier", L2("Suppliers", "الموردون")]]]]) +
+    `<div class="card"><div class="tbl"><table><thead><tr><th>${t("name")}</th><th>${esc(L2("Phone / email", "الهاتف / البريد"))}</th><th>${esc(L2("Last contact", "آخر تواصل"))}</th>
+      <th>${esc(L2("Next follow-up", "المتابعة القادمة"))}</th><th class="num">${esc(L2("Open deals", "صفقات مفتوحة"))}</th></tr></thead><tbody>
+      ${d.rows.map(r => `<tr class="click" data-href="#/contact/${encodeURIComponent(r.name)}"><td><b>${esc(r.name)}</b><div class="lines">${esc(tl(r.type))}</div></td>
+        <td>${esc(r.phone || "")}<div class="lines">${esc(r.email || "")}</div></td><td>${r.last_contact ? fd(r.last_contact.slice(0, 10)) : "—"}</td>
+        <td class="${r.next_followup && r.next_followup < today() ? "neg" : ""}">${r.next_followup ? fd(r.next_followup) : "—"}</td>
+        <td class="num">${r.open_deals ? `${r.open_deals} · ${money(r.open_value)}` : ""}</td></tr>`).join("")}</tbody></table></div></div>`;
+};
+PAGES.contact = async (view, parts) => {
+  const party = decodeURIComponent(parts.slice(1).join("/"));
+  const d = await api("GET", "/api/crm/timeline?" + qs({ party })), c = d.contact, kinds = CRM_KIND();
+  $("#ttl").textContent = c.name;
+  const ed = can("crm.contacts", "add");
+  S.H.ctlog = () => activityForm(c.name);
+  S.H.ctfu = () => followupForm({ party: c.name });
+  S.H.ctdeal = () => dealForm({ party: c.name, stage: "lead" });
+  S.H.ctopen = el => openVoucher(+el.dataset.id);
+  S.H.ctdone = async el => { try { await api("PUT", "/api/crm/followups/" + el.dataset.id, { done: true }); loadAlerts(true); route(); } catch (e) { fail(e); } };
+  S.H.ctdel = async el => { if (!await uiConfirm(L2("Remove this note?", "حذف هذه الملاحظة؟"))) return; try { await api("DELETE", "/api/crm/activities/" + el.dataset.id); route(); } catch (e) { fail(e); } };
+  S.H.ctdealopen = el => { S.cache.crmStages = S.cache.crmStages || []; dealForm(d.deals.find(x => String(x.id) === el.dataset.id)); };
+  const month = s => (s || "").slice(0, 7);
+  let last = "";
+  view.innerHTML = `<div class="toolbar">${ed ? `<button class="btn pri" data-a="ctlog">📞 ${esc(L2("Log a call / meeting / note", "تسجيل مكالمة / اجتماع / ملاحظة"))}</button>` : ""}
+      ${can("crm.followups", "add") ? `<button class="btn" data-a="ctfu">⏰ ${esc(L2("Follow-up", "متابعة"))}</button>` : ""}${can("crm.deals", "add") ? `<button class="btn" data-a="ctdeal">◎ ${esc(L2("New deal", "صفقة جديدة"))}</button>` : ""}
+      ${can("sales.offers", "add") ? `<a class="btn" href="#/offers">✉ ${esc(t("m_offers"))}</a>` : ""}${can("reports.statement") ? `<a class="btn" href="#/statement?party=${encodeURIComponent(c.name)}">${esc(t("m_statement"))}</a>` : ""}<span class="spacer"></span>
+      ${c.phone ? `<a class="btn" href="tel:${esc(c.phone)}">📞 ${esc(c.phone)}</a><a class="btn" href="https://wa.me/${esc(String(c.phone).replace(/[^\\d]/g, "").replace(/^0/, "20"))}" target="_blank" rel="noopener">💬 WhatsApp</a>` : ""}
+      ${c.email ? `<a class="btn" href="mailto:${esc(c.email)}">✉ ${esc(c.email)}</a>` : ""}</div>
+    <div class="grid g2 ct-grid"><div class="card"><h2>${esc(L2("Timeline", "السجل الزمني"))}</h2><div class="tline">${d.events.map(e => { const k = kinds[e.kind] || ["•", e.kind];
+        const head = month(e.at) !== last ? `<div class="tl-month">${esc((last = month(e.at)) || "—")}</div>` : "";
+        return head + `<div class="tl-it tl-${e.kind}"><span class="tl-ic" title="${esc(k[1])}">${k[0]}</span><div class="tl-body"><div class="row"><b>${e.href ? `<a href="${esc(e.href)}">${esc(e.title)}</a>` : e.voucher ? `<a href="#" data-a="ctopen" data-id="${e.voucher}">${esc(e.title)}</a>` : esc(e.title)}</b><span class="spacer"></span>
+          ${e.amount != null ? `<b>${money(e.amount)}</b>` : ""}</div>${e.body ? `<div class="muted tl-txt">${esc(e.body)}</div>` : ""}
+          <small class="muted">${esc(String(e.at || "").replace("T", " ").slice(0, 16))}${e.by ? " · " + esc(e.by) : ""}${e.kind === "followup" ? (e.done ? " · ✓" : ` · <a href="#" data-a="ctdone" data-id="${e.id}">${esc(L2("Mark done", "تم"))}</a>`) : ""}
+          ${!e.auto && e.kind !== "followup" && e.id && ["call", "meeting", "email", "whatsapp", "visit", "note"].includes(e.kind) && (e.by === S.boot.user.username || S.boot.user.is_admin) ? ` · <a href="#" data-a="ctdel" data-id="${e.id}">${esc(t("delete"))}</a>` : ""}</small></div></div>`; }).join("") ||
+        `<div class="empty">${esc(L2("Nothing yet — log the first call or meeting.", "لا شيء بعد — سجّل أول مكالمة أو اجتماع."))}</div>`}</div></div>
+      <div><div class="card"><h2>${esc(L2("Deals", "الصفقات"))}</h2>${d.deals.map(x => `<div class="row kline" data-a="ctdealopen" data-id="${x.id}"><b>${esc(x.title)}</b><span class="spacer"></span><span class="chip k-${x.stage}">${esc(x.stage)}</span><b>${money(x.value)}</b></div>`).join("") || `<div class="muted">—</div>`}</div>
+        <div class="card"><h2>${esc(L2("Open follow-ups", "متابعات مفتوحة"))}</h2>${d.open_followups.map(f => `<div class="row"><span class="${f.state === "overdue" ? "neg" : ""}">${fd(f.due)}</span><span>${esc(f.title)}</span><span class="spacer"></span><small class="muted">${esc(f.assigned_to)}</small>
+          <button class="btn sm" data-a="ctdone" data-id="${f.id}">✓</button></div>`).join("") || `<div class="muted">—</div>`}</div>
+        <div class="card"><h2>${esc(L2("Details", "البيانات"))}</h2><div class="muted">${esc([tl(c.type), c.tax_id, c.governate, c.street].filter(Boolean).join(" · "))}</div></div></div></div>`;
+};
+PAGES.followups = async (view, parts, q) => {
+  const d = await api("GET", "/api/crm/followups?" + qs(q)); S.cache.crmPeople = d.people;
+  const st = { overdue: L2("Overdue", "متأخرة"), today: L2("Today", "اليوم"), upcoming: L2("Upcoming", "قادمة"), done: L2("Done", "تمت") };
+  S.H.funew = () => followupForm({});
+  S.H.fuopen = el => followupForm(d.rows.find(r => String(r.id) === el.dataset.id));
+  S.H.fudone = async el => { const done = el.checked; try { await api("PUT", "/api/crm/followups/" + el.dataset.id, { done }); loadAlerts(true); route(); } catch (e) { fail(e); } };
+  view.innerHTML = `<div class="toolbar">${can("crm.followups", "add") ? `<button class="btn pri" data-a="funew">+ ${esc(L2("New follow-up", "متابعة جديدة"))}</button>` : ""}</div>` +
+    filterBar(q, [["choice", "status", t("status"), [["open", L2("Open", "مفتوحة")], ["due", L2("Due now", "مستحقة الآن")], ["done", L2("Done", "تمت")], ["all", t("all")]], "open"],
+      ...(can("crm.followups", "edit") ? [["choice", "who", L2("Whose", "لمن"), [["me", L2("Mine", "متابعاتي")], ["all", L2("Everyone's", "الجميع")], ...d.people.map(p => [p, p])], "me"]] : []), "q"]) +
+    `<div class="card">${d.rows.length ? `<div class="tbl"><table><thead><tr><th></th><th>${esc(L2("When", "الموعد"))}</th><th>${esc(L2("What", "المطلوب"))}</th><th>${esc(L2("Customer", "العميل"))}</th><th>${esc(L2("Who", "المسؤول"))}</th><th>${t("status")}</th></tr></thead><tbody>
+      ${d.rows.map(r => `<tr class="click" data-a="fuopen" data-id="${r.id}"><td onclick="event.stopPropagation()"><input type="checkbox" data-change="fudone" data-id="${r.id}" ${r.done ? "checked" : ""} title="${esc(L2("Done", "تمت"))}"></td>
+        <td class="${r.state === "overdue" ? "neg" : ""}">${fd(r.due)}</td><td><b>${esc(r.title)}</b>${r.deal_title ? `<div class="lines">◎ ${esc(r.deal_title)}</div>` : ""}</td>
+        <td>${r.party ? `<a href="#/contact/${encodeURIComponent(r.party)}" onclick="event.stopPropagation()">${esc(r.party)}</a>` : ""}</td><td>${esc(r.assigned_to)}</td>
+        <td><span class="chip ${r.state === "overdue" ? "bad" : r.state === "today" ? "warn" : r.state === "done" ? "ok" : ""}">${esc(st[r.state])}</span></td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="empty">${svg("check")}<div>${esc(L2("Nothing to follow up.", "لا توجد متابعات."))}</div></div>`}</div>`;
 };
 // ---------------------------------------------------------- drafts waiting for approval (maker–checker)
 const APPR_ST = () => ({ pending: L2("Waiting for approval", "في انتظار الاعتماد"), rejected: L2("Sent back for changes", "أُعيد للتعديل"),
@@ -3111,12 +3282,19 @@ PAGES.offer = async (view, parts, q) => {
   S.H.odel = async () => { if (!await uiConfirm(t("confirm_delete"))) return; try { await api("DELETE", "/api/offers/" + o.id); location.hash = "#/offers"; } catch (e) { fail(e); } };
   S.H.odup = async () => { try { const r = await api("POST", "/api/offers", { ...o, number: "", status: "Draft", date: today(), bu_id: "" }); location.hash = `#/offer/${r.id}/edit`; } catch (e) { fail(e); } };
   S.H.obu = async () => { try { const r = await api("POST", `/api/offers/${o.id}/bu`, {}); await refreshBoot(); toast(`${t("saved")} ${r.code}`); route(); } catch (e) { fail(e); } };
+  // one step: project (if missing) + BOQ from the offer's prices, then a new invoice on that BOQ
+  S.H.oconvert = async () => { if (!await uiConfirm(L2("Turn this offer into a project and its BOQ (with the offer's prices), then start an invoice on it? The offer is marked Accepted and a linked deal Won.",
+    "تحويل هذا العرض إلى مشروع ومقايسة (بأسعار العرض) ثم بدء فاتورة عليها؟ يُعلَّم العرض «مقبول» والصفقة المرتبطة «فوز»."), { ok: L2("Convert", "تحويل"), danger: false })) return;
+    try { const r = await api("POST", `/api/offers/${o.id}/convert`, {}); await refreshBoot();
+      toast(r.existing ? L2("Already converted — opening its invoice", "تم تحويله من قبل — فتح فاتورته") : L2("Project and BOQ made", "تم إنشاء المشروع والمقايسة"));
+      location.hash = can("sales.invoices", "add") ? `#/invoice/new?boq_id=${r.boq_id}` : `#/boq/${r.boq_id}`; } catch (e) { fail(e); } };
   const r = await api("POST", "/api/offers-preview", o);
   view.innerHTML = `<div class="toolbar"><a class="btn" href="#/offers">← ${t("m_offers")}</a>${statusChip(o.status)}<span class="chip">${esc(o.type_name || "")}</span>${o.bu_code ? `<span class="chip">${esc(o.bu_code)}</span>` : ""}
       <span class="chip">${t("net_payable")} ${money(o.net)}</span><span class="spacer"></span>
       <a class="btn pri" href="/api/offers/${o.id}/file?format=docx">⬇ ${t("word_doc")}</a><a class="btn" href="/api/offers/${o.id}/file?format=pdf" target="_blank" rel="noopener">${t("pdf_print")}</a>
       ${ed ? `<a class="btn" href="#/offer/${o.id}/edit">${t("edit")}</a>` : ""}${can("sales.offers", "add") ? `<button class="btn" data-a="odup">${t("duplicate")}</button>` : ""}
-      ${ed && !o.bu_id && can("business_units.units", "add") ? `<button class="btn" data-a="obu">${t("create_bu")}</button>` : ""}${ed ? `<button class="btn danger" data-a="odel">${t("delete")}</button>` : ""}</div>
+      ${ed && !o.bu_id && can("business_units.units", "add") ? `<button class="btn" data-a="obu">${t("create_bu")}</button>` : ""}
+      ${ed && can("estimating.boqs", "add") ? `<button class="btn pri" data-a="oconvert" title="${esc(L2("Project + BOQ with the offer's prices + a new invoice, in one step", "مشروع + مقايسة بأسعار العرض + فاتورة جديدة، في خطوة واحدة"))}">⇢ ${esc(L2("BOQ & invoice", "مقايسة وفاتورة"))}</button>` : ""}${ed ? `<button class="btn danger" data-a="odel">${t("delete")}</button>` : ""}</div>
     <div class="card" style="padding:0"><iframe id="oview" title="offer" style="width:100%;height:calc(100vh - 170px);border:0;border-radius:var(--radius)"></iframe></div>`;
   $("#oview").srcdoc = r.html;
 };
@@ -3346,7 +3524,7 @@ async function contactView(id) {
     ${d.recent.length ? `<div class="tbl"><table><tbody>${d.recent.map(e => `<tr class="click" data-a="openv" data-id="${e.id}"><td>${fd(e.date)}</td><td>${esc(tl(e.kind))}</td><td>${esc(e.memo)}</td><td class="num">${money(e.amount)}</td></tr>`).join("")}</tbody></table></div>`
       : `<div class="empty">${esc(L2("Nothing recorded with this name yet.", "لا توجد قيود بهذا الاسم بعد."))}</div>`}
     ${attBox("party", p.id, can("purchasing.contacts", "add") || can("sales.parties", "add"))}`,
-  null, { readOnly: true, wide: true, extraButtons: btns, onOpen: f => mountAttach($(".attbox", f)) });
+  null, { readOnly: true, wide: true, extraButtons: (can("crm.contacts") ? `<a class="btn" href="#/contact/${encodeURIComponent(p.name)}">☎ ${esc(L2("Timeline & deals", "السجل والصفقات"))}</a>` : "") + btns, onOpen: f => mountAttach($(".attbox", f)) });
   Object.assign(S.H, { cvstmt: () => { closeDrawer(); location.hash = "#/statement?" + qs({ party: p.name }); }, cvedit: () => contactForm(p, cid => contactView(cid)), cvexp: () => openDoc("expense", null, null, { vendor: p.name }), cvcost: () => openDoc("direct_cost", null, null, { vendor: p.name }),
     cvpay: () => openDoc("payment", { party: p.name, amount: ap ? ap.we_owe : "", against: ap ? ap.account : "" }),
     cvbank: async () => { try { await navigator.clipboard.writeText(`${p.name}\n${p.bank_details}`); toast(L2("Copied", "تم النسخ")); } catch { toast(p.bank_details); } } });
@@ -3504,7 +3682,10 @@ PAGES.settings = async (view, parts, q) => {
         <label class="f">${L2("Menu groups open on", "فتح مجموعات القائمة عند")}<select id="my_navmode" data-change="mysave">${[["hover", L2("Hover — open while the mouse is over them", "المرور — تفتح أثناء مرور الماوس")], ["click", L2("Click — stay open until clicked again", "النقر — تبقى مفتوحة حتى النقر مرة أخرى")]].map(([v, l]) => `<option value="${v}" ${navMode() === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
         ${phoneMenuSelect('id="my_phonemenu" data-change="mysave"')}</div>
         <div class="row" style="margin-top:10px"><button class="btn" data-a="mysave">${t("save")}</button><button class="btn" data-a="myreset">${t("clear")}</button></div></div>
-      ${can("settings.branding") ? `<div class="card" id="apcard"><h2>${t("appearance")} — ${S.lang === "ar" ? "لكل المستخدمين" : "for everyone"}</h2>${form([
+      ${can("settings.branding") ? `<div class="card" id="apcard"><h2>${t("appearance")} — ${S.lang === "ar" ? "لكل المستخدمين" : "for everyone"}</h2>
+        ${platformOwner() ? "" : `<div class="banner info">${esc(L2("The app always shows the BeyondERP name, logo and icon (sidebar, browser tab, desktop and phone app). Your company's own name and logo go on your documents: Settings → Branding.",
+          "يعرض التطبيق دائماً اسم وشعار وأيقونة BeyondERP (القائمة الجانبية وتبويب المتصفح وتطبيق الكمبيوتر والهاتف). اسم شركتك وشعارها يظهران على مستنداتك: الإعدادات ← الهوية."))} <a href="#/settings?tab=branding">${esc(L2("Open Branding", "فتح الهوية"))}</a></div>`}
+        ${form([...(platformOwner() ? [
         { k: "app_name", l: t("app_name"), v: ap.app_name || "", ph: "BeyondERP" },
         { k: "logo", l: t("app_logo"), type: "select", opts: [["", "BeyondERP"], ["none", t("al_none")], ["document", t("al_doc")], ["custom", t("al_custom")]], v: ap.logo || "" },
         { k: "brand_show", l: S.lang === "ar" ? "أعلى القائمة الجانبية يعرض" : "Sidebar top shows", type: "select", v: ap.brand_show || "logo",
@@ -3517,21 +3698,21 @@ PAGES.settings = async (view, parts, q) => {
         { k: "brand_tag_align", l: L2("Slogan position", "موضع الوصف"), type: "select", v: ap.brand_tag_align || "", opts: [["", L2("Same as the logo", "مثل الشعار")], ["left", L2("Left", "يسار")], ["center", L2("Centre", "وسط")], ["right", L2("Right", "يمين")]] },
         { k: "brand_tag_size", l: L2("Slogan size (px, blank = automatic)", "حجم الوصف (بكسل، فارغ = تلقائي)"), type: "number", v: ap.brand_tag_size || "", ph: "12" },
         { k: "tagline", l: S.lang === "ar" ? "الوصف تحت الاسم" : "Tagline under the name", v: ap.tagline != null ? ap.tagline : (st.company_tagline || ""), ph: GEN_TAG() },
-        { k: "tagline_show", l: S.lang === "ar" ? "إظهار الوصف" : "Show the tagline", type: "checkbox", v: ap.tagline_show !== false },
+        { k: "tagline_show", l: S.lang === "ar" ? "إظهار الوصف" : "Show the tagline", type: "checkbox", v: ap.tagline_show !== false }] : []),
         { html: `<label class="f">${esc(L2("Colours", "الألوان"))}<a class="btn" href="#/settings?tab=theme">🎨 ${esc(L2("Open the Theme tab", "افتح تبويب السمات"))}</a></label>` },
         { k: "density", l: t("density"), type: "select", opts: [["comfortable", t("d_comfortable")], ["compact", t("d_compact")]], v: ap.density || "comfortable" },
         { k: "corners", l: t("corners"), type: "select", opts: [["rounded", t("cr_rounded")], ["square", t("cr_square")]], v: ap.corners || "rounded" },
-        { html: `<div class="f">${t("app_logo")} — ${t("al_custom")}<input type="file" id="aplogo" accept="image/*"></div>` }], 3)}
+        ...(platformOwner() ? [{ html: `<div class="f">${t("app_logo")} — ${t("al_custom")}<input type="file" id="aplogo" accept="image/*"></div>` }] : [])], 3)}
         ${ed ? `<div class="row" style="margin-top:10px"><button class="btn pri" data-a="apsave">${t("save")}</button></div>` : ""}</div>` : ""}
       <div class="card" id="iconcard"><h2>${esc(L2("App icon", "أيقونة التطبيق"))}</h2>
         <p class="muted" style="margin-top:0">${esc(L2("The icon on phones and computers when the app is installed, and on the browser tab. Transparent — no white square.", "الأيقونة على الهاتف والكمبيوتر عند تثبيت التطبيق وفي تبويب المتصفح. بخلفية شفافة — بدون مربع أبيض."))}</p>
-        <div class="icon-tiles">${APP_ICONS.map(([k, en, ar]) => `<button type="button" class="icon-tile ${appIconKey() === k ? "on" : ""}" data-a="${isSuper() ? "icpick" : ""}" data-k="${k}" ${isSuper() ? "" : "disabled"}><img src="${esc(appIconSrc(k))}" alt=""><span>${esc(L2(en, ar))}</span></button>`).join("")}
-          ${S.boot.app_icon ? `<button type="button" class="icon-tile ${appIconKey() === "custom" ? "on" : ""}" data-a="${isSuper() ? "icpick" : ""}" data-k="custom"><img src="${esc(appIconSrc("custom"))}" alt=""><span>${esc(L2("Your own", "أيقونتك"))}</span></button>` : ""}</div>
+        <div class="icon-tiles">${APP_ICONS.map(([k, en, ar]) => `<button type="button" class="icon-tile ${appIconKey() === k ? "on" : ""}" data-a="${platformOwner() ? "icpick" : ""}" data-k="${k}" ${platformOwner() ? "" : "disabled"}><img src="${esc(appIconSrc(k))}" alt=""><span>${esc(L2(en, ar))}</span></button>`).join("")}
+          ${S.boot.app_icon && platformOwner() ? `<button type="button" class="icon-tile ${appIconKey() === "custom" ? "on" : ""}" data-a="${platformOwner() ? "icpick" : ""}" data-k="custom"><img src="${esc(appIconSrc("custom"))}" alt=""><span>${esc(L2("Your own", "أيقونتك"))}</span></button>` : ""}</div>
         <div class="row" style="gap:6px;flex-wrap:wrap;margin-top:10px">
-          ${isSuper() ? `<label class="btn" style="cursor:pointer">${svg("upload")} ${esc(L2("Upload your own (square PNG / SVG)", "رفع أيقونة خاصة (PNG / SVG مربعة)"))}<input type="file" id="icfile" accept="image/png,image/svg+xml,image/webp,image/jpeg" hidden></label>` : ""}
+          ${platformOwner() ? `<label class="btn" style="cursor:pointer">${svg("upload")} ${esc(L2("Upload your own (square PNG / SVG)", "رفع أيقونة خاصة (PNG / SVG مربعة)"))}<input type="file" id="icfile" accept="image/png,image/svg+xml,image/webp,image/jpeg" hidden></label>` : ""}
           <button class="btn" type="button" data-a="icdl" data-s="512">${svg("download")} PNG 512</button><button class="btn" type="button" data-a="icdl" data-s="192">${svg("download")} PNG 192</button>
           <button class="btn" type="button" data-a="icdl" data-s="1024">${svg("download")} PNG 1024</button><button class="btn" type="button" data-a="icdl" data-s="512" data-m="1">${svg("download")} ${esc(L2("Phone (filled) 512", "للهاتف (بخلفية) 512"))}</button></div>
-        <p class="muted" style="font-size:.85em">${esc(L2("Only super administrators can change it. A phone or computer that already installed the app keeps the old icon until the app is removed and installed again. On Android, an uploaded icon may carry the browser's small badge; the built-in icons install as a clean app icon.", "يغيرها المدير العام فقط. الجهاز الذي ثبّت التطبيق سابقاً يحتفظ بالأيقونة القديمة حتى يُحذف التطبيق ويُثبّت من جديد. على أندرويد قد تظهر علامة المتصفح الصغيرة على الأيقونة المرفوعة؛ الأيقونات المدمجة تُثبّت كأيقونة تطبيق نظيفة."))}</p></div>`;
+        <p class="muted" style="font-size:.85em">${esc(L2("The BeyondERP icon is the same everywhere — browser tab, desktop and phone app. A phone or computer that installed the app earlier keeps the icon it had until the app is removed and installed again.", "أيقونة BeyondERP واحدة في كل مكان — تبويب المتصفح وتطبيق الكمبيوتر والهاتف. الجهاز الذي ثبّت التطبيق سابقاً يحتفظ بأيقونته حتى يُحذف التطبيق ويُثبّت من جديد."))}</p></div>`;
     S.H.icpick = async el => { try { await api("PUT", "/api/settings", { appearance: { ...ap, app_icon: el.dataset.k } }); await refreshBoot(); applyAppIcon(); route(); toast(t("saved")); } catch (e) { fail(e); } };
     S.H.icdl = async el => { try { const s = +el.dataset.s, url = await iconPng(appIconSrc(appIconKey()), s, !!el.dataset.m);
       const a = document.createElement("a"); a.href = url; a.download = `app-icon-${el.dataset.m ? "filled-" : ""}${s}.png`; document.body.appendChild(a); a.click(); a.remove(); } catch (e) { fail(e); } };
@@ -3544,7 +3725,7 @@ PAGES.settings = async (view, parts, q) => {
     S.H.apnoacc = () => { noAccent = true; toast(t("default")); };
     const ac = $("[name=accent]"); if (ac) ac.addEventListener("input", () => { noAccent = false; });
     S.H.apsave = async () => { const v = readForm($("#apcard")); if (noAccent) v.accent = "";
-      try { const f = $("#aplogo").files[0]; if (f) await api("PUT", "/api/branding/image/app_logo", await Img.fit(f, 300));
+      try { const f = $("#aplogo") && $("#aplogo").files[0]; if (f) await api("PUT", "/api/branding/image/app_logo", await Img.fit(f, 300));
         await api("PUT", "/api/settings", { appearance: { ...ap, ...v } }); await refreshBoot(); applyLook(); renderShell(); route(); toast(t("saved")); } catch (e) { fail(e); } };
     return;
   }
@@ -3737,12 +3918,17 @@ PAGES.users = async (view) => {
         cloudOn() ? (ar ? "يسجل بها الدخول فوراً — بدون رسائل تأكيد." : "They can sign in with it right away — no confirmation email.") : ""), span: "spanall" },
     ...(S.boot.user.is_super ? [{ k: "is_admin", l: t("admin") + (S.lang === "ar" ? " (كل الصلاحيات)" : " (everything, ignores the matrix)"), type: "checkbox", v: u.is_admin },
       { k: "is_super", l: L2("Super administrator (manages administrators, can erase / restore the books)", "مسؤول أعلى (يدير المسؤولين ويمكنه مسح / استبدال الدفاتر)"), type: "checkbox", v: u.is_super }] : []),
+    ...(S.boot.user.is_super && !u.is_super ? [{ html: `<div class="f spanall"><b>${esc(L2("Special rights (super administrators have them all — give them to others here)", "صلاحيات خاصة (للمسؤولين الأعلى كلها — امنحها لغيرهم من هنا)"))}</b>
+      <div class="row" style="gap:14px;flex-wrap:wrap;margin-top:6px">${[["design_dashboards", L2("Design dashboards & groups", "تصميم لوحات التحكم والمجموعات")], ["required_fields", L2("Make fields required", "جعل الحقول إلزامية")],
+        ["arrange_forms", L2("Arrange menus & forms", "ترتيب القوائم والنماذج")], ["build_calculators", L2("Build calculators", "إنشاء الحاسبات")]].map(([k, l]) =>
+        `<label class="f chk"><input type="checkbox" data-grant="${k}" data-skip="1" ${(u.grants || []).includes(k) ? "checked" : ""}>${esc(l)}</label>`).join("")}</div></div>`, span: "spanall" }] : []),
     { k: "needs_approval", type: "checkbox", v: !!u.needs_approval, dis: !!(u.is_admin || u.is_super) || (u.id && u.id === S.boot.user.id && !S.boot.user.is_super),
       l: L2("Their entries wait for approval (saved as drafts; someone with “Approve & post entries” in their group posts them)", "قيوده تنتظر الاعتماد (تُحفظ كمسودات ويرحّلها من له صلاحية «اعتماد وترحيل القيود» في مجموعته)") },
     ...(u.id ? [{ k: "active", l: t("active") + (cloudOn() ? (ar ? " (إلغاء التحديد يمنع تسجيل الدخول)" : " (untick to block sign-in)") : ""), type: "checkbox", v: u.active !== false }] : []),
     { html: `<h4 style="margin:8px 0 0">${t("perm_matrix")}</h4>${permMatrix(u.perms || {})}`, span: "spanall" }]),
   async (v, f) => { const perms = readPerms(f);
     const body = { username: v.username || u.username, full_name: v.full_name, email: v.email, password: v.password, is_admin: v.is_admin || v.is_super, active: v.active, perms, _no_password: !v.password, needs_approval: !!v.needs_approval };
+    if (S.boot.user.is_super && $("[data-grant]", f)) body.grants = $$("[data-grant]", f).filter(x => x.checked).map(x => x.dataset.grant);
     if (v.group_key !== undefined) body.group_key = v.group_key === "general" ? "" : v.group_key;
     if (S.boot.user.is_super) body.is_super = !!v.is_super; else { body.is_admin = !!u.is_admin; }
     if (u.id) await api("PUT", "/api/users/" + u.id, body); else await api("POST", "/api/users", body);
@@ -9130,7 +9316,7 @@ new MutationObserver(muts => {
 // Shift + right-click keeps the browser's own menu.
 const ML = () => (S.boot && S.boot.settings && S.boot.settings.menu_layout) || {};
 const FC = () => (S.boot && S.boot.settings && S.boot.settings.form_custom) || {};
-const canMenus = () => can("settings.layout", "edit");
+const canMenus = () => can("settings.layout", "edit") || granted("arrange_forms");
 const clone = o => JSON.parse(JSON.stringify(o || {}));
 const lbl2 = o => (o && (o[S.lang] || o.en || o.ar)) || "";
 // the menu as this company arranged it: items moved between sections, copies, order, hidden items, new sections
@@ -9205,7 +9391,8 @@ function navItemMenu(a) {
   const items = (em.find(([gg]) => gg === g) || [, []])[1], idx = items.findIndex(i => i[0] === k), it = items[idx] || [];
   const copy = it[4], here = parseHash(), hereRoute = here.parts.join("/"), withFilters = location.hash.replace(/^#\//, "");
   const out = [{ ic: "↗", label: L2("Open", "فتح"), act: () => { location.hash = "#/" + route; } },
-    { ic: "⧉", label: L2("Open in a new tab", "فتح في تبويب جديد"), act: () => open(location.pathname + "#/" + route, "_blank") },
+    { ic: "⧉", label: L2("Open in a tab inside BeyondERP", "فتح في تبويب داخل BeyondERP"), act: () => tabOpen("#/" + route) },
+    { ic: "↗", label: L2("Open in a new browser tab", "فتح في تبويب متصفح جديد"), act: () => open(location.pathname + "#/" + route, "_blank") },
     { ic: "🔗", label: L2("Copy link", "نسخ الرابط"), act: () => copyText(location.origin + location.pathname + "#/" + route) }];
   if (!canMenus()) return out.concat({ note: L2("Renaming and arranging the menu needs the “Arrange menus & forms” permission (given by an administrator).", "إعادة التسمية وترتيب القائمة تحتاج صلاحية «ترتيب القوائم والنماذج» (يمنحها المسؤول).") });
   const moveTo = gg => saveLayout(L => { if (copy) { const c = (L.copies || []).find(x => x.k === k); if (c) c.g = gg; } else { L.move = L.move || {}; L.move[k] = gg; } });
@@ -9276,7 +9463,7 @@ function fieldMenu(lab) {
   out.push({ ic: "✎", label: L2("Rename this field…", "إعادة تسمية الحقل…"), act: async () => { const v = await uiPrompt(L2("New label (empty = the original)", "الاسم الجديد (فارغ = الأصلي)"), text); if (v === null) return;
       save(F => { F[k] = { ...(F[k] || {}) }; if (v.trim()) F[k].label = { ...(F[k].label || {}), [S.lang]: v.trim() }; else delete F[k].label; if (!Object.keys(F[k]).length) delete F[k]; }); } });
   if (!ctl.required) out.push({ ic: "◌", label: L2("Hide this field", "إخفاء هذا الحقل"), act: () => save(F => { F[k] = { ...(F[k] || {}), hide: 1, name: text }; }) });
-  if (S.boot.user.is_super && (!ctl.required || cur.req) && ctl.type !== "checkbox") out.push({ ic: "✱", label: cur.req ? L2("Make it optional again", "جعله اختيارياً") : L2("Make it required", "جعله إلزامياً"),
+  if (granted("required_fields") && (!ctl.required || cur.req) && ctl.type !== "checkbox") out.push({ ic: "✱", label: cur.req ? L2("Make it optional again", "جعله اختيارياً") : L2("Make it required", "جعله إلزامياً"),
     act: () => save(F => { F[k] = { ...(F[k] || {}) }; if (cur.req) delete F[k].req; else { F[k].req = 1; delete F[k].hide; F[k].name = text; } if (!Object.keys(F[k]).length) delete F[k]; }) });
   if (ctl.type !== "file" && ctl.type !== "hidden") out.push({ ic: "★", label: L2("Use the current value as the default", "استخدم القيمة الحالية كقيمة افتراضية"),
     hint: ctl.type === "checkbox" ? (ctl.checked ? "✓" : "✗") : String(ctl.value || "").slice(0, 18),
@@ -9482,7 +9669,7 @@ function formCustomise(drawerEl, on) {
     const tools = document.createElement("span"); tools.className = "fc-tools";
     tools.innerHTML = `<button type="button" data-fc="ren" title="${esc(L2("Rename", "إعادة تسمية"))}">✎</button>` +
       (ctl.required && !o.req ? "" : `<button type="button" data-fc="hide" title="${esc(L2("Hide this field", "إخفاء الحقل"))}">${L2("hide", "إخفاء")}</button>`) +
-      (S.boot.user.is_super && (!ctl.required || o.req) && ctl.type !== "checkbox" ? `<button type="button" data-fc="req" class="${o.req ? "on" : ""}" title="${esc(L2("Mandatory: it must be filled in before saving (super administrator)", "إلزامي: يجب ملؤه قبل الحفظ (المسؤول الأعلى)"))}">✱ ${L2("required", "إلزامي")}</button>` : "") +
+      (granted("required_fields") && (!ctl.required || o.req) && ctl.type !== "checkbox" ? `<button type="button" data-fc="req" class="${o.req ? "on" : ""}" title="${esc(L2("Mandatory: it must be filled in before saving (super administrator)", "إلزامي: يجب ملؤه قبل الحفظ (المسؤول الأعلى)"))}">✱ ${L2("required", "إلزامي")}</button>` : "") +
       (ctl.type === "file" ? "" : `<button type="button" data-fc="def" class="${o.def !== undefined ? "on" : ""}" title="${esc(L2("Use the value in it now as the default for new entries (press again to remove)", "استخدم قيمته الحالية كقيمة افتراضية (اضغط مرة أخرى للإزالة)"))}">★ ${L2("default", "افتراضي")}</button>`) +
       (extra ? `<button type="button" data-fc="del" title="${esc(L2("Remove this field", "حذف الحقل"))}">✕</button>` : "");
     const first = lab.childNodes[0];
@@ -9545,6 +9732,64 @@ new MutationObserver(() => {
   $(".fc-btn", head).addEventListener("click", () => formCustomise(d, !d.classList.contains("fc-edit")));
 }).observe(document.documentElement, { childList: true, subtree: true });
 
+// ---- tabs inside the app: several screens open at once (kept per person, on this device); each keeps its address
+// and where it was scrolled to. ⧉ in the top bar (or right-click a menu item) opens one; the strip shows from two tabs.
+const TABS = { list: [], on: 0, uid: null };
+const tabKey = () => "erpTabs:" + ((S.boot && S.boot.user && S.boot.user.id) || 0);
+function tabsLoad() {
+  TABS.uid = S.boot && S.boot.user && S.boot.user.id;
+  const saved = store.get(tabKey(), null);
+  if (saved && Array.isArray(saved.list) && saved.list.length) { TABS.list = saved.list.slice(0, 12); TABS.on = Math.min(+saved.on || 0, TABS.list.length - 1); }
+  else { TABS.list = [{ hash: location.hash || "#/dashboard", title: "" }]; TABS.on = 0; }
+}
+const tabsSave = () => store.set(tabKey(), { list: TABS.list, on: TABS.on });
+function tabsDraw() {
+  const el = $("#etabs"); if (!el) return;
+  el.hidden = TABS.list.length < 2;
+  const top = $(".top"); if (top) document.documentElement.style.setProperty("--top-real", top.offsetHeight + "px");   // sticks just under the top bar
+  el.innerHTML = TABS.list.map((tb, i) => `<div class="etab ${i === TABS.on ? "on" : ""}" data-i="${i}" title="${esc(tb.title || "")}"><button type="button" class="etab-go" data-i="${i}">${esc(tb.title || "…")}</button>
+    <button type="button" class="etab-x" data-i="${i}" aria-label="${esc(L2("Close tab", "إغلاق التبويب"))}">×</button></div>`).join("") +
+    `<button type="button" class="etab-add" title="${esc(L2("New tab", "تبويب جديد"))}">+</button>`;
+}
+function tabOpen(hash) {
+  if (TABS.uid !== (S.boot && S.boot.user && S.boot.user.id)) tabsLoad();
+  if (TABS.list.length >= 12) { toast(L2("Up to 12 tabs — close one first", "حتى 12 تبويباً — أغلق أحدها أولاً"), true); return; }
+  TABS.list[TABS.on].scroll = scrollY;
+  TABS.list.push({ hash: hash || "#/dashboard", title: "" }); TABS.on = TABS.list.length - 1; tabsSave(); tabsDraw();
+  if (location.hash === hash) route(); else location.hash = hash || "#/dashboard";
+}
+function tabGo(i) {
+  if (i === TABS.on || !TABS.list[i]) return;
+  TABS.list[TABS.on].scroll = scrollY; TABS.on = i; tabsSave(); tabsDraw();
+  S.tabScroll = TABS.list[i].scroll || 0;
+  if (location.hash === TABS.list[i].hash) route(); else location.hash = TABS.list[i].hash;
+}
+function tabClose(i) {
+  if (TABS.list.length < 2) return;
+  const wasOn = i === TABS.on; TABS.list.splice(i, 1);
+  if (TABS.on > i || TABS.on >= TABS.list.length) TABS.on = Math.max(0, TABS.on - 1);
+  tabsSave(); tabsDraw();
+  if (wasOn) { S.tabScroll = TABS.list[TABS.on].scroll || 0; location.hash = TABS.list[TABS.on].hash; }
+}
+function tabsAfterRoute() {
+  if (TABS.uid !== (S.boot && S.boot.user && S.boot.user.id) || !TABS.list.length) tabsLoad();
+  const tb = TABS.list[TABS.on]; tb.hash = location.hash || "#/dashboard"; tb.title = (($("#ttl") || {}).textContent || "").trim().slice(0, 40);
+  tabsSave(); tabsDraw();
+  if (S.tabScroll) { const y = S.tabScroll; S.tabScroll = 0; requestAnimationFrame(() => scrollTo(0, y)); }
+}
+document.addEventListener("click", e => {
+  const x = e.target.closest(".etab-x"); if (x) { e.preventDefault(); tabClose(+x.dataset.i); return; }
+  const g = e.target.closest(".etab-go"); if (g) { e.preventDefault(); tabGo(+g.dataset.i); return; }
+  if (e.target.closest(".etab-add")) { e.preventDefault(); tabOpen("#/dashboard"); }
+});
+document.addEventListener("auxclick", e => { const t0 = e.target.closest(".etab"); if (t0 && e.button === 1) { e.preventDefault(); tabClose(+t0.dataset.i); } });   // middle-click closes
+// Ctrl+Alt+T: a new tab · Ctrl+Alt+W: close it · Ctrl+Alt+← / →: the tab before / after
+document.addEventListener("keydown", e => {
+  if (!(e.ctrlKey && e.altKey) || !S.boot || !S.boot.user) return;
+  if (e.key === "t" || e.key === "T") { e.preventDefault(); tabOpen(location.hash); }
+  else if (e.key === "w" || e.key === "W") { e.preventDefault(); tabClose(TABS.on); }
+  else if (e.key === "ArrowRight" || e.key === "ArrowLeft") { e.preventDefault(); const n = TABS.list.length; if (n > 1) tabGo((TABS.on + (e.key === "ArrowRight" ? 1 : n - 1)) % n); }
+});
 // ---- right-click is the way to more options: say so once, the first time someone rests the mouse on a row or a menu item
 { let timer = 0;
   document.addEventListener("mouseover", e => {

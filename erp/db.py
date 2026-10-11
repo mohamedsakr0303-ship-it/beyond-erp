@@ -936,6 +936,31 @@ CREATE TABLE IF NOT EXISTS approvals (     -- entries waiting for approval (make
     decided_by TEXT, decided_at TEXT, note TEXT, entry_id INTEGER
 );
 CREATE INDEX IF NOT EXISTS approvals_status ON approvals(status, id);
+-- Customers & deals (erp/crm.py): a pipeline of deals, a timeline of what was said and done with each contact, follow-ups
+CREATE TABLE IF NOT EXISTS crm_deals (
+    id INTEGER PRIMARY KEY,
+    title TEXT NOT NULL, party TEXT NOT NULL DEFAULT '',
+    stage TEXT NOT NULL DEFAULT 'lead',          -- lead, qualified, proposal, negotiation, won, lost
+    value INTEGER NOT NULL DEFAULT 0, probability INTEGER NOT NULL DEFAULT 10, expected_close TEXT DEFAULT '',
+    owner TEXT DEFAULT '', source TEXT DEFAULT '', notes TEXT DEFAULT '', offer_id INTEGER,
+    created_by TEXT DEFAULT '', created_at TEXT DEFAULT '', closed_at TEXT, lost_reason TEXT DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS crm_activities (
+    id INTEGER PRIMARY KEY, party TEXT NOT NULL DEFAULT '', deal_id INTEGER,
+    kind TEXT NOT NULL DEFAULT 'note',           -- call, meeting, email, whatsapp, visit, note
+    subject TEXT DEFAULT '', body TEXT DEFAULT '', at TEXT DEFAULT '',
+    created_by TEXT DEFAULT '', created_at TEXT DEFAULT '', auto INTEGER NOT NULL DEFAULT 0   -- auto: written by the app
+);
+CREATE INDEX IF NOT EXISTS crm_activities_party ON crm_activities(party, at);
+CREATE TABLE IF NOT EXISTS crm_followups (
+    id INTEGER PRIMARY KEY, title TEXT NOT NULL, due TEXT NOT NULL, party TEXT DEFAULT '', deal_id INTEGER,
+    assigned_to TEXT DEFAULT '', notes TEXT DEFAULT '', done INTEGER NOT NULL DEFAULT 0, done_at TEXT, done_by TEXT,
+    created_by TEXT DEFAULT '', created_at TEXT DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS crm_followups_due ON crm_followups(assigned_to, done, due);
+-- tags on entries (find them again: "VAT 2026 Q1", "to check", "site 4"…)
+CREATE TABLE IF NOT EXISTS entry_tags (entry_id INTEGER NOT NULL, tag TEXT NOT NULL, PRIMARY KEY (entry_id, tag));
+CREATE INDEX IF NOT EXISTS entry_tags_tag ON entry_tags(tag);
 CREATE TABLE IF NOT EXISTS audit_log (
     id INTEGER PRIMARY KEY,
     ts TEXT DEFAULT (datetime('now')),
@@ -1575,13 +1600,14 @@ def normal_for(acc_type: str, subtype: str) -> str:
     return "Debit" if debit else "Credit"
 
 
-MODULES = ["dashboard", "business_units", "projects", "contracts", "sales", "shop", "estimating", "purchasing", "stock", "equipment",
+MODULES = ["dashboard", "crm", "business_units", "projects", "contracts", "sales", "shop", "estimating", "purchasing", "stock", "equipment",
            "rentals", "payroll", "assets",
            "accounting", "partners", "reports", "tax", "import_export", "settings", "users"]
 
 # Second-level permissions: each screen can have its own level, or inherit its section's.
 SUBMODULES = {
     "dashboard": [],
+    "crm": ["deals", "contacts", "followups"],
     "business_units": ["units", "allocation", "profitability"],
     "sales": ["offers", "receipts", "invoices", "extracts", "receivables", "parties"],
     "estimating": ["boqs", "prices"],
@@ -1712,7 +1738,9 @@ class Database:
         self._add_cols("users", [("is_super", "INTEGER NOT NULL DEFAULT 0")])
         self._add_cols("users", [("group_key", "TEXT NOT NULL DEFAULT ''")])
         self._add_cols("users", [("needs_approval", "INTEGER NOT NULL DEFAULT 0")])
-        self._add_cols("user_groups", [("look", "TEXT DEFAULT ''")])   # the dashboard page's own design (heading, accent…)
+        self._add_cols("user_groups", [("look", "TEXT DEFAULT ''")])
+        self._add_cols("business_units", [("grp", "TEXT DEFAULT ''")])
+        self._add_cols("users", [("grants", "TEXT DEFAULT '[]'")])        # special rights given by a super administrator      # a group of projects (e.g. "New Cairo villas")   # the dashboard page's own design (heading, accent…)
         for t in ("boq_lines", "extract_lines"):      # a line's look: bold, italic, colours, alignment (as in Excel)
             self._add_cols(t, [("style", "TEXT DEFAULT ''")])   # their entries wait for approval
         if not self.conn.execute("SELECT 1 FROM users WHERE is_super=1 AND active=1").fetchone():   # books from before the level
@@ -1768,6 +1796,7 @@ class Database:
             self._add_new_accounts()
         self.conn.execute("INSERT OR IGNORE INTO settings(key,value) VALUES ('coa_v2','1')")
         self._brand_v2()
+        self._brand_v3()
         self._default_logo_v3()
         self._add_role_account("3015", "funding_partner")
         self._add_role_account("5052", "equipment_charge")
@@ -1886,6 +1915,27 @@ class Database:
                 ap["app_name"] = ""
             self.conn.execute("UPDATE settings SET value=? WHERE key='appearance'", (json.dumps(ap),))
         self.conn.execute("INSERT OR IGNORE INTO settings(key,value) VALUES ('brand_v2','1')")
+
+    def _brand_v3(self):
+        """Once per book: the app shows the BeyondERP name, logo and icon — earlier custom app logos / icons and app names are
+        removed (a company's own name and logo belong on its documents: Settings → Branding, which stays as it is)."""
+        if self.conn.execute("SELECT 1 FROM settings WHERE key='brand_v3'").fetchone():
+            return
+        row = self.conn.execute("SELECT value FROM settings WHERE key='appearance'").fetchone()
+        try:
+            ap = json.loads(row[0]) if row and row[0] else {}
+        except ValueError:
+            ap = {}
+        if isinstance(ap, dict) and ap:
+            for k in ("app_name", "logo", "brand_show", "app_icon", "brand_align", "brand_logo_size", "brand_name_align", "brand_name_size",
+                      "brand_tag_align", "brand_tag_size", "tagline", "tagline_show"):
+                ap.pop(k, None)
+            self.conn.execute("UPDATE settings SET value=? WHERE key='appearance'", (json.dumps(ap),))
+        try:
+            self.conn.execute("DELETE FROM assets WHERE key IN ('app_logo', 'app_icon')")
+        except sqlite3.OperationalError:
+            pass
+        self.conn.execute("INSERT OR IGNORE INTO settings(key,value) VALUES ('brand_v3','1')")
 
     def _add_role_account(self, code, role):
         """An account added in a later version, for books that do not have its role yet (a used code moves on)."""

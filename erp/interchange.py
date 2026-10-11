@@ -938,7 +938,24 @@ def export_extras(db, files=True):
             "entry_meta": _entry_meta_export(db), "attachments": _attachments_export(db) if files else [],
             "purchase_orders": _po_export(db), "services": _svc_export(db), "chat": _chat_export(db),
             "dashboard_groups": db.q("SELECT key, name, name_ar, layout, sort, look FROM user_groups ORDER BY sort, id"),
-            "line_styles": _line_styles_export(db), "site": site_extras(db)}
+            "line_styles": _line_styles_export(db), "crm": _crm_export(db), "entry_tags": _tags_export(db),
+            "bu_groups": {r["code"]: r["grp"] for r in db.q("SELECT code, grp FROM business_units WHERE grp<>''")}, "site": site_extras(db)}
+
+
+def _tags_export(db):
+    """Tags by the entry's fingerprint (restored entries get new numbers)."""
+    from . import attachments
+    out = {}
+    for r in db.q("SELECT entry_id, tag FROM entry_tags ORDER BY entry_id"):
+        fp = attachments._fp(db, r["entry_id"])
+        if fp:
+            out.setdefault(json.dumps(fp), []).append(r["tag"])
+    return [{"key": json.loads(k), "tags": v} for k, v in out.items()]
+
+
+def _crm_export(db):
+    from . import crm
+    return crm.export_rows(db)
 
 
 def _line_styles_export(db):
@@ -1240,6 +1257,29 @@ def _imp_extras(db, ex, mode, counts):
                                  json.dumps(dashboards._clean_layout(g.get("layout"))), int(g.get("sort") or 0),
                                  json.dumps(dashboards.clean_page(look))))
         counts["Dashboard groups"] = len(ex["dashboard_groups"])
+    if isinstance(ex.get("crm"), dict) and any(ex["crm"].values()) and (mode == "replace" or not db.one("SELECT 1 FROM crm_deals")
+                                                                        and not db.one("SELECT 1 FROM crm_activities")):
+        from . import crm
+        counts["Customers & deals"] = crm.import_rows(db, ex["crm"], replace=mode == "replace")
+    if isinstance(ex.get("bu_groups"), dict):
+        for code, grp in ex["bu_groups"].items():
+            db.conn.execute("UPDATE business_units SET grp=? WHERE code=?", (acc.text(grp, maxlen=80), acc.text(code)))
+    if isinstance(ex.get("entry_tags"), list) and ex["entry_tags"]:
+        from . import attachments
+        pool = {}
+        for e in db.q("SELECT id FROM journal_entries WHERE status='posted' ORDER BY id"):
+            fp = attachments._fp(db, e["id"])
+            if fp:
+                pool.setdefault(tuple(fp), []).append(e["id"])
+        n = 0
+        for r in ex["entry_tags"]:
+            ids = pool.get(tuple(r.get("key") or ()))
+            if ids and isinstance(r.get("tags"), list):
+                for t in r["tags"][:12]:
+                    db.conn.execute("INSERT OR IGNORE INTO entry_tags(entry_id, tag) VALUES (?,?)", (ids[0], acc.text(t, maxlen=40)))
+                n += 1
+        if n:
+            counts["Tagged entries"] = n
     if isinstance(ex.get("line_styles"), dict):            # the look of BOQ / invoice lines
         n = _line_styles_import(db, ex["line_styles"])
         if n:
@@ -1285,7 +1325,7 @@ def to_csv(db, sheet_name, template=False):
     return ("﻿" + buf.getvalue()).encode("utf-8")
 
 
-WIPE_ORDER = ("sub_cert_lines", "sub_certificates", "variation_orders", "contract_lines", "contracts", "pr_quote_lines", "pr_quotes",
+WIPE_ORDER = ("entry_tags", "crm_followups", "crm_activities", "crm_deals", "sub_cert_lines", "sub_certificates", "variation_orders", "contract_lines", "contracts", "pr_quote_lines", "pr_quotes",
               "pr_lines", "purchase_requests", "stock_count_lines", "stock_counts", "equipment_usage", "maintenance_logs", "maintenance_plans",
               "equipment", "attendance", "ereceipts", "project_tasks", "project_phases", "payroll_lines", "payroll_runs", "crew_sheets", "employees", "sub_recognitions", "sub_visits", "sub_invoices", "subscriptions", "service_plans", "attachments", "po_receipts", "po_lines", "purchase_orders", "budgets", "bank_lines", "bank_statements", "bank_rules", "recurring_runs", "recurring", "sale_cheques", "sale_installments", "sale_lines", "sales_orders", "product_media", "products", "rent_moves", "rental_invoices", "rental_charges", "rental_handovers", "rental_lines", "rentals", "rent_lots",
               "rent_kit_lines", "rent_kits", "rent_models", "rent_items", "loans", "custodies", "parties", "ownership_changes", "fixed_assets", "stock_moves", "stock_levels", "stock_items", "extract_lines", "extracts", "boq_lines", "boqs",

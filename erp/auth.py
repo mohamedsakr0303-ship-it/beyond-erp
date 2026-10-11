@@ -39,6 +39,32 @@ def _pbkdf2(pw: bytes, salt: bytes, iterations: int) -> bytes:
 SESSION_DAYS = 14
 # none < view < add (view + create new records) < edit (full: create, change, void, delete)
 LEVELS = ("none", "view", "add", "edit")
+# Special rights: every super administrator has them all; a super administrator gives them to other people one by one
+# (administrators included — holding every permission does not include these)
+GRANTS = ("design_dashboards", "required_fields", "arrange_forms", "build_calculators")
+
+
+# The platform owner (BeyondERP itself): the only one who may change the in-app BeyondERP name, logo and icon.
+# Known by a fingerprint (SHA-256) of their sign-in email, so the address is not written here.
+OWNER_HASHES = {"925c7911981b1b6071e005d720ab441693cd63931a8378257b9d8835a8de5965"}
+
+
+def platform_owner(u):
+    if not u:
+        return False
+    for v in (u.get("email"), u.get("username")):
+        if v and hashlib.sha256(str(v).strip().lower().encode()).hexdigest() in OWNER_HASHES:
+            return True
+    return False
+
+
+def clean_grants(v):
+    return sorted({g for g in (v or []) if g in GRANTS}) if isinstance(v, (list, tuple)) else []
+
+
+def granted(user, right):
+    """Super administrators: always; anyone else when a super administrator gave them this right."""
+    return bool(user) and (bool(user.get("is_super")) or right in (user.get("grants") or []))
 
 
 def hash_password(pw: str) -> str:
@@ -76,7 +102,9 @@ def public_user(u):
     perms = {m: "edit" for m in MODULES} if u["is_admin"] else clean_perms(json.loads(u["perms"] or "{}"))
     return {"id": u["id"], "username": u["username"], "full_name": u["full_name"], "email": u.get("email") or "",
             "is_admin": bool(u["is_admin"]), "is_super": bool(u.get("is_super")), "active": bool(u["active"]), "perms": perms,
-            "group_key": u.get("group_key") or "", "needs_approval": bool(u.get("needs_approval"))}
+            "group_key": u.get("group_key") or "", "needs_approval": bool(u.get("needs_approval")),
+            "grants": list(GRANTS) if u.get("is_super") else clean_grants(json.loads(u.get("grants") or "[]")),
+            "platform_owner": platform_owner(u)}
 
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -116,6 +144,8 @@ def create_user(db, d, first=False):
                 _group(db, d.get("group_key")))).lastrowid
     if d.get("needs_approval") and not d.get("is_admin") and not d.get("is_super"):
         db.x("UPDATE users SET needs_approval=1 WHERE id=?", (uid,))
+    if d.get("grants"):                  # (the server lets only a super administrator send them)
+        db.x("UPDATE users SET grants=? WHERE id=?", (json.dumps(clean_grants(d["grants"])), uid))
     return uid
 
 
@@ -152,6 +182,8 @@ def update_user(db, uid, d, acting_user_id):
           json.dumps(clean_perms(d.get("perms") or json.loads(u["perms"] or "{}"))), email, uid))
     if "group_key" in d:
         db.x("UPDATE users SET group_key=? WHERE id=?", (_group(db, d.get("group_key")), uid))
+    if "grants" in d:              # special rights (the server lets only a super administrator change them)
+        db.x("UPDATE users SET grants=? WHERE id=?", (json.dumps(clean_grants(d["grants"])), uid))
     if "needs_approval" in d:      # their entries wait for someone to approve and post them
         db.x("UPDATE users SET needs_approval=? WHERE id=?", (1 if d["needs_approval"] and not is_admin else 0, uid))
     if d.get("password"):
