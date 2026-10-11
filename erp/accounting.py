@@ -517,15 +517,69 @@ def record_partner_tx(db, d, user=""):
 
 
 # ----------------------------------------------------------------- journal
+def _journal_items(db, raw, bu_default):
+    """Item lines of a journal voucher → (debit lines, rows to keep). Each: item (an existing one or a new name), unit,
+    qty × unit price, and where it goes — a warehouse (its inventory account; the stock goes up on this same entry, so
+    the asset is counted once) or straight onto a project (a cost account, materials unless another is chosen)."""
+    out, debits = [], []
+    for i, ln in enumerate(raw or []):
+        name = text(ln.get("item") or ln.get("name"), maxlen=200)
+        if not name and not ln.get("item_id"):
+            continue
+        qty = num(ln.get("qty"), f"quantity (item {i + 1})", allow_zero=False)
+        if qty < 0:
+            raise ValidationError(f"Item {i + 1}: the quantity must be positive")
+        rate = to_minor(num(ln.get("rate") if ln.get("rate") not in (None, "") else ln.get("price"), f"unit price (item {i + 1})",
+                            allow_zero=False))
+        amount = int(round(qty * rate))
+        wh = ln.get("warehouse_id") or ln.get("warehouse")
+        if wh not in (None, "", "project"):
+            w = _warehouse(db, wh)
+            it = _item(db, {"item": name, "item_id": ln.get("item_id"), "unit": ln.get("unit")}, create=True)
+            account, bu = _wh_account(db, w), None
+        else:
+            w = None
+            it = db.one("SELECT * FROM stock_items WHERE id=? OR name=?", (ln.get("item_id"), name))
+            account = account_code(db, ln.get("account") or db.acct("materials"), types=("COGS", "Expense"), field="cost account")
+            bu = bu_id_or_none(db, ln.get("bu_id") or ln.get("bu_code")) or bu_default
+            if not bu:
+                raise ValidationError(f"Item {i + 1}: choose the project it was used on")
+        if it and ln.get("unit") and not it.get("unit"):
+            db.conn.execute("UPDATE stock_items SET unit=? WHERE id=?", (text(ln.get("unit")), it["id"]))
+        out.append({"item": it, "description": (it or {}).get("name") or name, "unit": text(ln.get("unit")) or (it or {}).get("unit") or "",
+                    "qty": qty, "rate": rate, "amount": amount, "warehouse": w, "account": account, "bu_id": bu})
+        debits.append({"account": account, "debit": to_major(amount)})
+    return debits, out
+
+
 def record_journal(db, d, user=""):
-    """Manual journal: opening balances, depreciation, tax, loans, accruals..."""
-    return post_entry(db, date=d.get("date"), kind=text(d.get("kind")) or "Journal Voucher", memo=text(d.get("memo")),
-                      bu_id=bu_id_or_none(db, d.get("bu_id") or d.get("bu_code")), party=text(d.get("party")),
-                      ref=text(d.get("ref")), lines=d.get("lines") or [], user=user,
-                      meta={**{k: text(d[k]) for k in ("deal_ref", "deal_status") if d.get(k)},
-                            # a negotiated deal: what was quoted, the saving and how it is treated (keep / pass)
-                            **{k: num(d[k], k) for k in ("quoted", "savings") if d.get(k) not in (None, "")},
-                            **({"negotiation": d["negotiation"]} if d.get("negotiation") in ("keep", "pass") else {})} or None)
+    """Manual journal: opening balances, depreciation, tax, loans, accruals... With item lines (qty × unit price) the
+    voucher also receives stock into a warehouse or charges materials to a project; give only the other side."""
+    with db.tx():
+        bu_default = bu_id_or_none(db, d.get("bu_id") or d.get("bu_code"))
+        debits, items = _journal_items(db, d.get("items"), bu_default)
+        meta = {**{k: text(d[k]) for k in ("deal_ref", "deal_status") if d.get(k)},
+                # a negotiated deal: what was quoted, the saving and how it is treated (keep / pass)
+                **{k: num(d[k], k) for k in ("quoted", "savings") if d.get(k) not in (None, "")},
+                **({"negotiation": d["negotiation"]} if d.get("negotiation") in ("keep", "pass") else {})}
+        if items:
+            meta["items"] = [{"item": x["description"], "unit": x["unit"], "qty": x["qty"], "rate": to_major(x["rate"]),
+                              "warehouse": x["warehouse"]["name"] if x["warehouse"] else "", "account": x["account"]} for x in items]
+        date = clean_date(d.get("date"))
+        eid = _insert_entry(db, date=date, kind=text(d.get("kind")) or "Journal Voucher", memo=text(d.get("memo")),
+                            bu_id=bu_default, party=text(d.get("party")), ref=text(d.get("ref")),
+                            lines=debits + list(d.get("lines") or []), user=user, meta=meta or None)
+        for x in items:
+            if x["warehouse"]:
+                db.conn.execute("INSERT INTO stock_moves(item_id,warehouse_id,date,qty,rate,bu_id,entry_id,kind,note) "
+                                "VALUES (?,?,?,?,?,?,?,?,?)", (x["item"]["id"], x["warehouse"]["id"], date, x["qty"], x["rate"],
+                                                               None, eid, "Receipt", "journal voucher"))
+                _recompute_level(db, x["item"]["id"], x["warehouse"]["id"])
+            db.conn.execute("INSERT INTO material_lines(entry_id,date,bu_id,item_id,description,unit,qty,rate,amount,warehouse_id,account) "
+                            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                            (eid, date, x["bu_id"], (x["item"] or {}).get("id"), x["description"], x["unit"], x["qty"], x["rate"],
+                             x["amount"], (x["warehouse"] or {}).get("id"), x["account"]))
+        return eid
 
 
 # ------------------------------------------------------------- corrections
@@ -535,6 +589,7 @@ def _unlink_documents(db, eid):
     db.conn.execute("UPDATE extracts SET status='draft', entry_id=NULL WHERE entry_id=?", (eid,))
     pairs = db.q("SELECT DISTINCT item_id, warehouse_id FROM stock_moves WHERE entry_id=?", (eid,))
     db.conn.execute("DELETE FROM stock_moves WHERE entry_id=?", (eid,))
+    db.conn.execute("DELETE FROM material_lines WHERE entry_id=?", (eid,))
     for p in pairs:
         _recompute_level(db, p["item_id"], p["warehouse_id"])
 
@@ -584,7 +639,7 @@ def edit_entry(db, eid, d, user=""):
             raise ValidationError("Only live entries can be edited")
         check_open(db, e["date"])
         check_open(db, clean_date(d.get("date") or e["date"]))
-        if db.one("SELECT 1 FROM stock_moves WHERE entry_id=?", (eid,)) or \
+        if db.one("SELECT 1 FROM stock_moves WHERE entry_id=?", (eid,)) or db.one("SELECT 1 FROM material_lines WHERE entry_id=?", (eid,)) or \
                 db.one("SELECT 1 FROM extracts WHERE entry_id=?", (eid,)):
             raise ValidationError("This entry belongs to a stock move or invoice — reverse it and re-enter instead")
         vlines = _validate_lines(db, d.get("lines") or e["lines"])
@@ -784,6 +839,61 @@ def stock_move(db, d, user=""):
                                                            text(d.get("note"))))
             _recompute_level(db, item["id"], wid)
         return eid
+
+
+def materials_used(db, bu_id=None, q=None, date_from=None, date_to=None, limit=5000, item=None, source=None):
+    """Every material that went into a project, wherever it was recorded: issued from a store (Material Issue), bought
+    straight for the project on a journal voucher's item lines, or a direct cost on a materials account. Newest first."""
+    live = f"{LIVE} AND e.reversed_by IS NULL AND e.reversal_of IS NULL"
+    rows = []
+    for r in db.q(f"""SELECT m.entry_id, m.date, m.bu_id, m.description, m.unit, m.qty, m.rate, m.amount, e.party, e.kind
+                      FROM material_lines m JOIN journal_entries e ON e.id=m.entry_id
+                      WHERE {live} AND m.warehouse_id IS NULL"""):
+        rows.append({**r, "source": "bought", "from": r["party"] or ""})
+    for r in db.q(f"""SELECT s.entry_id, s.date, s.bu_id, i.name AS description, i.unit, -s.qty AS qty, s.rate, w.name AS wh,
+                             e.party, e.kind FROM stock_moves s JOIN stock_items i ON i.id=s.item_id JOIN warehouses w ON w.id=s.warehouse_id
+                      JOIN journal_entries e ON e.id=s.entry_id WHERE {live} AND s.kind='Issue' AND s.qty<0 AND s.bu_id IS NOT NULL"""):
+        rows.append({**r, "amount": int(round(r["qty"] * r["rate"])), "source": "issued", "from": r.pop("wh")})
+    mats = [a["code"] for a in db.q("SELECT code FROM accounts WHERE role='materials' OR subtype='materials'")]
+    if mats:
+        marks = ",".join("?" * len(mats))
+        for r in db.q(f"""SELECT e.id AS entry_id, e.date, e.bu_id, e.memo AS description, e.meta, e.party, e.kind,
+                                 SUM(l.debit) AS amount FROM journal_entries e JOIN journal_lines l ON l.entry_id=e.id
+                          WHERE {live} AND e.kind='Direct Cost' AND l.account IN ({marks}) GROUP BY e.id""", mats):
+            m = json.loads(r.pop("meta") or "{}")
+            qty = float(m.get("qty") or 1)
+            rows.append({**r, "unit": m.get("unit") or "", "qty": qty, "rate": int(round(r["amount"] / qty)) if qty else r["amount"],
+                         "source": "direct", "from": r["party"] or ""})
+    bus = {b["id"]: b for b in db.q("SELECT id, code, name FROM business_units")}
+    want_bu = int(bu_id) if str(bu_id or "").isdigit() else None
+    needle = (q or "").strip().lower()
+    want_item = (item or "").strip().lower()
+    names = sorted({r["description"] for r in rows if r.get("description")}, key=str.lower)
+    out = []
+    for r in rows:
+        if want_item and (r.get("description") or "").strip().lower() != want_item:
+            continue
+        if source and r["source"] != source:
+            continue
+        if want_bu and r["bu_id"] != want_bu:
+            continue
+        if date_from and r["date"] < clean_date(date_from):
+            continue
+        if date_to and r["date"] > clean_date(date_to):
+            continue
+        b = bus.get(r["bu_id"]) or {}
+        r["bu_code"], r["bu_name"] = b.get("code", ""), b.get("name", "")
+        if needle and needle not in " ".join(str(r.get(k) or "") for k in ("description", "from", "bu_code", "bu_name", "unit")).lower():
+            continue
+        r["rate"], r["amount"] = to_major(r["rate"]), to_major(r["amount"])
+        out.append(r)
+    out.sort(key=lambda r: (r["date"], r["entry_id"]), reverse=True)
+    units = {(r.get("unit") or "").strip().lower() for r in out}
+    # a quantity total only makes sense for one material in one unit (a whole project mixes m², drums, bags…)
+    one = {"qty": round(sum(r["qty"] or 0 for r in out), 4), "unit": (out[0].get("unit") or "") if out else ""} \
+        if want_item and out and len(units) == 1 else None
+    return {"rows": out[:limit], "count": len(out), "total": round(sum(r["amount"] for r in out), 2), "one_material": one,
+            "materials": names}
 
 
 def stock_report(db, warehouse_id=None, q=None):

@@ -1160,3 +1160,12 @@ td .pick-w{min-width:180px}
 .ol-box{margin:14px 0;padding:12px 14px;border:1px solid var(--line);border-radius:14px}
 .ol-box h4{margin:0 0 4px}.ol-row{display:flex;justify-content:space-between;gap:10px;align-items:center;padding:5px 0;border-top:1px solid var(--line)}
 .ol-box .btn{margin-top:8px}
+
+/* journal voucher item lines */
+.ji-box{margin-top:12px;border:1px solid var(--line);border-radius:14px;padding:10px 12px}
+.ji-box summary{cursor:pointer;line-height:1.5}.ji-box summary .muted{font-size:.85em}
+.ji-box table input{min-width:0}
+
+/* the filled red confirm button in dialogs keeps white text in the dark look too */
+:root[data-theme="dark"] .dlg-foot .btn.danger{color:#fff;background:var(--bad);border-color:var(--bad)}
+.ji-box .ji-w{min-width:140px}.ji-box .ji-n{min-width:140px}.ji-box td{padding-inline:4px}

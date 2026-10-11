@@ -497,6 +497,25 @@ def negotiations_table(db, date_from=None, date_to=None, bu_id=None, lang="en"):
             "columns": cols, "rows": rows, "lang": lang}
 
 
+def materials_table(db, p, lang="en"):
+    ar = lang == "ar"
+    d = acc.materials_used(db, p.get("bu_id"), p.get("q"), p.get("date_from"), p.get("date_to"), item=p.get("item"), source=p.get("source"))
+    src = {"issued": ("Issued from store", "صرف من المخزن"), "bought": ("Bought for the project", "شراء للمشروع"),
+           "direct": ("Direct cost", "تكلفة مباشرة")}
+    heads = [("Date", "التاريخ", "left"), ("No.", "رقم", "left"), ("Project", "المشروع", "left"), ("Material", "الخامة", "left"),
+             ("Qty", "الكمية", "right", "num"), ("Unit", "الوحدة", "left"), ("Unit cost", "سعر الوحدة", "right"),
+             ("Amount", "القيمة", "right"), ("How", "الطريقة", "left"), ("From", "من", "left")]
+    rows = [{"cells": [r["date"], f"#{r['entry_id']}", r["bu_code"], r["description"], r["qty"], r["unit"], r["rate"], r["amount"],
+                       src[r["source"]][1 if ar else 0], r["from"]], "style": "item", "entry": r["entry_id"]} for r in d["rows"]]
+    one = d.get("one_material")
+    rows.append({"cells": [L("total", lang), "", "", "", one["qty"] if one else "", one["unit"] if one else "",
+                           round(d["total"] / one["qty"], 2) if one and one["qty"] else "", d["total"], "", ""], "style": "grand"})
+    return {"title": "الخامات المستخدمة في المشروعات" if ar else "Materials used on projects",
+            "subtitle": _subtitle(db, lang, [("", p.get("date_from") or "…", acc.clean_date(p.get("date_to")))], p.get("bu_id")),
+            "columns": _mkcols(heads, lang), "rows": rows, "lang": lang,
+            "summary": {k: d[k] for k in ("count", "total", "materials", "one_material")}}
+
+
 def _mkcols(heads, lang):
     return [{"label": h[1] if lang == "ar" else h[0], "align": h[2], "fmt": h[3] if len(h) > 3 else ("money" if h[2] == "right" else None)}
             for h in heads]
@@ -968,6 +987,8 @@ def build(db, name, p):
         return custody_table(db, p.get("state"), lang)
     if name == "custody_statement":
         return custody_statement_table(db, p.get("code") or p.get("id"), lang)
+    if name == "materials_used":
+        return materials_table(db, p, lang)
     if name == "negotiations":
         return negotiations_table(db, p.get("date_from"), p.get("date_to"), bu, lang)
     if name == "party_statement":
@@ -992,7 +1013,7 @@ REPORT_PERMS = {"payroll_register": "payroll.runs", "partner_pack": ("reports.pa
                 "general_ledger": "accounting.ledger", "bu_pnl": "business_units.profitability",
                 "payables": "purchasing.payables", "stock": "stock.balances", "receivables": "sales.receivables",
                 "tax": "tax.report", "fixed_assets": "assets.register",
-                "negotiations": "purchasing.negotiations", "loans": "accounting.loans", "loan_schedule": "accounting.loans",
+                "negotiations": "purchasing.negotiations", "materials_used": ("projects.overview", "stock.moves", "purchasing.costs"), "loans": "accounting.loans", "loan_schedule": "accounting.loans",
                 "custody": "purchasing.custody", "custody_statement": "purchasing.custody", "rent_fleet": "rentals.fleet",
                 "rentals": "rentals.contracts", "sales": "shop.orders", "installments": "shop.installments",
                 "products": "shop.products", "bank_reconciliation": "accounting.bankrec",

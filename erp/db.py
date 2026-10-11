@@ -261,6 +261,25 @@ CREATE TABLE IF NOT EXISTS stock_moves (
 );
 CREATE INDEX IF NOT EXISTS ix_sm_item ON stock_moves(item_id, warehouse_id);
 
+-- Item lines of a journal voucher (quantity × unit price): into a warehouse (also a stock move on the same entry) or
+-- used straight on a project. With material issues and direct costs they make the "materials used" history.
+CREATE TABLE IF NOT EXISTS material_lines (
+    id INTEGER PRIMARY KEY,
+    entry_id INTEGER NOT NULL REFERENCES journal_entries(id) ON DELETE CASCADE,
+    date TEXT NOT NULL,
+    bu_id INTEGER REFERENCES business_units(id),
+    item_id INTEGER REFERENCES stock_items(id) ON DELETE SET NULL,
+    description TEXT NOT NULL,
+    unit TEXT DEFAULT '',
+    qty REAL NOT NULL,
+    rate INTEGER NOT NULL,                 -- minor units per unit
+    amount INTEGER NOT NULL,
+    warehouse_id INTEGER REFERENCES warehouses(id),   -- set: received into stock; empty: used on the project
+    account TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_ml_entry ON material_lines(entry_id);
+CREATE INDEX IF NOT EXISTS ix_ml_bu ON material_lines(bu_id);
+
 -- Fixed asset register. Cost, depreciation and disposal are journal entries tagged ref 'FA:<code>...';
 -- the register holds only the description and the depreciation policy, so it survives export / import.
 CREATE TABLE IF NOT EXISTS fixed_assets (
@@ -1728,6 +1747,7 @@ class Database:
             self._add_new_accounts()
         self.conn.execute("INSERT OR IGNORE INTO settings(key,value) VALUES ('coa_v2','1')")
         self._brand_v2()
+        self._default_logo_v3()
         self._add_role_account("3015", "funding_partner")
         self._add_role_account("5052", "equipment_charge")
         self._add_role_account("6094", "equipment_pool")
@@ -1805,6 +1825,24 @@ class Database:
         if not self.conn.execute("SELECT 1 FROM settings WHERE key='docs_seeded'").fetchone():
             self.seed_documents()
             self.conn.execute("INSERT OR REPLACE INTO settings(key,value) VALUES ('docs_seeded','1')")
+
+    # the placeholder letterhead logo and watermark of earlier versions (the green "iB" mark): books still showing it
+    # get the current BeyondERP mark. Anything a company uploaded is never touched.
+    OLD_DEFAULT_ASSETS = {"d57418990259d1da16082500769117a2dc317adad2b9455e35dc39f899334fef": "LOGO",
+                          "bf6902ee243b7d5fe141eec86e52a5b3010a6d3618f88ddc94d8f35c253b92f4": "WATERMARK"}
+
+    def _default_logo_v3(self):
+        import hashlib
+        from . import brand_assets
+        for key, data in self.conn.execute("SELECT key, data FROM assets WHERE key IN ('logo','logo_raw','watermark')").fetchall():
+            which = self.OLD_DEFAULT_ASSETS.get(hashlib.sha256(str(data).encode()).hexdigest())
+            if not which:
+                continue
+            if key == "logo_raw":          # the untouched upload behind the logo: the default needs none
+                self.conn.execute("DELETE FROM assets WHERE key='logo_raw'")
+                continue
+            img = getattr(brand_assets, "LOGO" if key == "logo" else "WATERMARK")
+            self.conn.execute("UPDATE assets SET mime=?, w=?, h=?, data=? WHERE key=?", (img["mime"], img["w"], img["h"], img["data"], key))
 
     def _brand_v2(self):
         """Once per book: the app is called BeyondERP and the sidebar shows only the BeyondERP logo — unless the company

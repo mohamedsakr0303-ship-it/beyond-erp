@@ -160,7 +160,8 @@ const levelOf = key => {
   Object.entries(p).forEach(([k, v]) => { if (k.startsWith(key + ".") && LV.indexOf(v) > LV.indexOf(best)) best = v; });
   return best;
 };
-const can = (mod, lvl = "view") => LV.indexOf(levelOf(mod)) >= LV.indexOf(lvl);
+// "a|b": either permission is enough (one screen that two sections share, e.g. the contacts directory)
+const can = (mod, lvl = "view") => String(mod).split("|").some(m => LV.indexOf(levelOf(m)) >= LV.indexOf(lvl));
 
 // ---------------------------------------------------------- appearance
 // ---------------------------------------------------------- line icons (24×24, stroke) — bundled, so they work offline
@@ -371,7 +372,7 @@ const HIDE_PRESETS = {
 };
 const hiddenMods = () => (S.boot && S.boot.settings && S.boot.settings.hidden_modules) || [];
 // hidden for everyone in Settings → Menus: a whole section ("sales") or one screen ("sales.offers")
-const shown = key => !hiddenMods().includes(String(key).split(".")[0]) && !hiddenMods().includes(String(key));
+const shown = key => String(key).split("|").some(k => !hiddenMods().includes(k.split(".")[0]) && !hiddenMods().includes(k));
 
 // ---------------------------------------------------------------- events
 document.addEventListener("click", e => {
@@ -1312,7 +1313,7 @@ function reportTable(tb) {
     }
     return esc(v);
   };
-  const row = r => `<tr class="${r.style}">${r.cells.map((v, i) => `<td class="${tb.columns[i].align === "right" ? "num" : ""} ${typeof v === "number" && v < 0 ? "neg" : ""}" ${i === 0 && r.indent ? `style="padding-inline-start:${10 + 16 * r.indent}px"` : ""}>${fmtCell(v, tb.columns[i], r)}</td>`).join("")}</tr>`;
+  const row = r => `<tr class="${r.style}${r.entry ? " click" : ""}"${r.entry ? ` data-a="openv" data-id="${r.entry}"` : ""}>${r.cells.map((v, i) => `<td class="${tb.columns[i].align === "right" ? "num" : ""} ${typeof v === "number" && v < 0 ? "neg" : ""}" ${i === 0 && r.indent ? `style="padding-inline-start:${10 + 16 * r.indent}px"` : ""}>${fmtCell(v, tb.columns[i], r)}</td>`).join("")}</tr>`;
   // a long report (a whole year's ledger) shows in pages so the screen stays quick; totals at the end stay visible and exports hold every row
   let rows = tb.rows, more = "";
   if (rows.length > (tb.shown || RT_PAGE)) {
@@ -1396,7 +1397,7 @@ async function openVoucher(id) {
   if (edit && live) {
     btns.push(`<button class="btn danger" type="button" data-a="vvoid" data-id="${e.id}">${t("void")}</button>`, `<button class="btn" type="button" data-a="vrev" data-id="${e.id}">${t("reverse")}</button>`);
     if (e.doc) btns.push(`<button class="btn pri" type="button" data-a="vform">${t("edit")}</button>`);
-    if (!["Goods Receipt", "Material Issue", "Stock Transfer", "Stock Adjustment", "Sales Invoice"].includes(e.kind) && can("accounting.journal", "edit"))
+    if (!["Goods Receipt", "Material Issue", "Stock Transfer", "Stock Adjustment", "Sales Invoice"].includes(e.kind) && !(e.meta && e.meta.items) && can("accounting.journal", "edit"))
       btns.push(`<button class="btn" type="button" data-a="vedit" data-id="${e.id}">${e.doc ? L2("Edit lines", "تعديل البنود") : t("edit")}</button>`);
   }
   const DUP_MOD = e.doc ? DOC_MOD[e.doc] : "accounting.journal";
@@ -1671,8 +1672,42 @@ function journalLinesEditor(lines) {
     ${partyList("jparties", (S.boot.partners || []).map(p => p.name))}
     <div class="row" style="margin-top:8px"><button type="button" class="btn sm" data-a="jadd">${t("add_line")}</button><span class="spacer"></span><span id="jbal"></span></div>`;
 }
+// item lines on a journal voucher: item (pick or type a new one), unit, qty × unit price = total, and where it goes —
+// a warehouse (stock goes up on this same voucher) or straight onto the business unit chosen above
+function jItemsEditor(pre) {
+  const dest = `<option value="">${esc(L2("Project (above)", "المشروع (أعلاه)"))}</option>` +
+    S.boot.warehouses.filter(w => w.active !== 0 && w.active !== false).map(w => `<option value="${w.id}">${esc(L2("Store: ", "مخزن: ") + w.name)}</option>`).join("");
+  const row = (x = {}) => `<tr><td><input class="ji-n" list="jitemlist" value="${esc(x.item || "")}" placeholder="${esc(L2("Item or material", "الصنف أو الخامة"))}"></td>
+    <td><input class="ji-u" list="units" value="${esc(x.unit || "")}" style="width:62px"></td><td><input class="ji-q" type="number" step="any" value="${esc(x.qty ?? "")}" style="width:70px"></td>
+    <td><input class="ji-p" type="number" step="any" value="${esc(x.rate ?? "")}" style="width:90px"></td><td class="num ji-t">—</td>
+    <td><select class="ji-w no-pick">${x.warehouse ? dest.replace(`>${esc(L2("Store: ", "مخزن: ") + x.warehouse)}<`, ` selected>${esc(L2("Store: ", "مخزن: ") + x.warehouse)}<`) : dest}</select></td><td><button type="button" class="btn sm" data-a="jirm" aria-label="${esc(t("remove"))}">✕</button></td></tr>`;
+  return `<details class="ji-box" ${pre && pre.length ? "open" : ""}><summary><b>${esc(L2("Items & materials", "الأصناف والخامات"))}</b> <span class="muted">${esc(L2("— quantity × unit price; into stock or used on a project. Then enter only who was paid or owed below.", "— الكمية × سعر الوحدة؛ إلى المخزن أو استُخدمت في مشروع. ثم أدخل فقط الطرف الدائن (من دُفع له أو يُستحق له) بالأسفل."))}</span></summary>
+    <div class="tbl"><table id="ji"><thead><tr><th>${esc(t("item"))}</th><th>${esc(t("unit"))}</th><th class="num">${esc(L2("Qty", "الكمية"))}</th><th class="num">${esc(L2("Unit price", "سعر الوحدة"))}</th><th class="num">${esc(t("total"))}</th><th>${esc(L2("Goes to", "الوجهة"))}</th><th></th></tr></thead>
+    <tbody>${(pre && pre.length ? pre : [{}]).map(row).join("")}</tbody></table></div>
+    <div class="row" style="margin-top:6px;gap:8px"><button type="button" class="btn sm" data-a="jiadd">+ ${esc(L2("Item", "صنف"))}</button><span class="muted" id="jitot"></span></div>
+    <datalist id="jitemlist"></datalist>${unitsList()}<template id="jirow">${row()}</template></details>`;
+}
+const jItemsTotal = f => $$("#ji tbody tr", f).reduce((s, tr) => s + (+$(".ji-q", tr).value || 0) * (+$(".ji-p", tr).value || 0), 0);
+function jItemsWire(f, bal) {
+  let names = [];
+  api("GET", "/api/items/names").then(d => { names = d.rows; $("#jitemlist", f).innerHTML = names.map(n => `<option value="${esc(n.name)}">`).join(""); }).catch(() => {});
+  const upd = () => { $$("#ji tbody tr", f).forEach(tr => { const v = (+$(".ji-q", tr).value || 0) * (+$(".ji-p", tr).value || 0); $(".ji-t", tr).textContent = v ? money(v) : "—"; });
+    const tot = jItemsTotal(f); $("#jitot", f).textContent = tot ? `${L2("Items total", "إجمالي الأصناف")}: ${money(tot)}` : ""; bal(); };
+  $("#ji", f).addEventListener("input", e => {
+    const tr = e.target.closest("tr");
+    if (e.target.classList.contains("ji-n")) { const n = names.find(x => x.name === e.target.value);
+      if (n) { if (!$(".ji-u", tr).value) $(".ji-u", tr).value = n.unit; if (!$(".ji-p", tr).value && n.price) $(".ji-p", tr).value = n.price; } }
+    upd(); });
+  S.H.jiadd = () => { $("#ji tbody", f).insertAdjacentHTML("beforeend", $("#jirow", f).innerHTML); };
+  S.H.jirm = el => { const tb = $("#ji tbody", f); if (tb.children.length > 1) el.closest("tr").remove(); else $$("input", el.closest("tr")).forEach(i => { i.value = ""; }); upd(); };
+  upd();
+}
 function journalForm(e, copy) {
-  const lines = e ? e.lines : [{ account: "", debit: "", credit: "" }, { account: "", debit: "", credit: "" }];
+  let lines = e ? e.lines : [{ account: "", debit: "", credit: "" }, { account: "", debit: "", credit: "" }];
+  if (copy && e && e.meta && e.meta.items) {   // the item lines make their own debits again
+    lines = e.lines.filter(l => !(l.debit && e.meta.items.some(x => x.account === l.account)));
+    while (lines.length < 2) lines.push({ account: "", debit: "", credit: "" });
+  }
   const tpl = Object.fromEntries((S.boot.enums.entry_types || []).filter(x => x.active !== false).map(x => [x.id, x]));
   const html = form([
     { k: "date", l: t("date"), type: "date", v: e ? e.date : today(), req: 1 },
@@ -1681,16 +1716,19 @@ function journalForm(e, copy) {
     { k: "ref", l: t("ref"), v: e ? e.ref : "" },
     ...(e && (e.kind === "Direct Cost" || e.kind === "Supplier Discount" || (e.meta && e.meta.deal_ref)) ? [{ k: "deal_ref", l: t("deal_ref"), v: e.meta.deal_ref || "" },
       { k: "deal_status", l: t("deal_status"), type: "select", opts: [["", "—"], "Open", "Settled"], v: e.meta.deal_status || "" }] : []),
-    { k: "memo", l: t("memo"), v: e ? e.memo : "", span: "spanall" }]) + `<div style="margin-top:12px">${journalLinesEditor(lines)}</div>`;
+    { k: "memo", l: t("memo"), v: e ? e.memo : "", span: "spanall" }]) + (e && !copy ? "" : jItemsEditor(copy && e && e.meta && e.meta.items)) + `<div style="margin-top:12px">${journalLinesEditor(lines)}</div>`;
   const collect = f => $$("#jl tbody tr", f).map(tr => ({ account: $(".ja", tr).value, debit: $(".jd", tr).value, credit: $(".jc", tr).value, party: $(".jp", tr).value }));
+  const items = f => $$("#ji tbody tr", f).map(tr => ({ item: $(".ji-n", tr).value.trim(), unit: $(".ji-u", tr).value.trim(), qty: $(".ji-q", tr).value, rate: $(".ji-p", tr).value, warehouse_id: $(".ji-w", tr).value }))
+    .filter(x => x.item && +x.qty && +x.rate);
   drawer((e && !copy ? t("edit") : t("new")) + " — " + t("m_journal"), html, async (v, f) => {
-    const body = { ...v, lines: collect(f) };
+    const body = { ...v, lines: collect(f).filter(l => l.account && (+l.debit || +l.credit)), ...(items(f).length ? { items: items(f) } : {}) };
     if (e && !copy) await api("PUT", "/api/journal/" + e.id, body); else await api("POST", "/api/journal", { ...body, kind: copy ? (Object.values(tpl).some(x => x.kind === e.kind) ? e.kind : "Journal Voucher") : v.template && tpl[v.template] ? tpl[v.template].kind : "Journal Voucher" });
     toast(t("saved"));
   }, { onOpen: f => {
-    const bal = () => { const L = collect(f); const d = L.reduce((s, l) => s + (+l.debit || 0), 0), c = L.reduce((s, l) => s + (+l.credit || 0), 0);
+    const bal = () => { const L = collect(f); const it = $("#ji", f) ? jItemsTotal(f) : 0; const d = it + L.reduce((s, l) => s + (+l.debit || 0), 0), c = L.reduce((s, l) => s + (+l.credit || 0), 0);
       $("#jbal", f).innerHTML = `${t("debit")} ${money(d)} · ${t("credit")} ${money(c)} — <span class="${Math.abs(d - c) < 0.005 && d > 0 ? "bal-ok" : "bal-bad"}">${Math.abs(d - c) < 0.005 && d > 0 ? t("balanced") : t("unbalanced")}</span>`; };
     S.H.jbal = bal; bal();
+    if ($("#ji", f)) jItemsWire(f, bal);
     S.H.jadd = () => { const tb = $("#jl tbody", f); tb.insertAdjacentHTML("beforeend", tb.lastElementChild.outerHTML); $$("input", tb.lastElementChild).forEach(i => { i.value = ""; }); $(".ja", tb.lastElementChild).value = ""; bal(); };
     S.H.jrm = el => { if ($$("#jl tbody tr", f).length > 2) el.closest("tr").remove(); bal(); };
     S.H.jtpl = el => { const x = tpl[el.value]; if (!x) return; const rows = $$("#jl tbody tr", f);
@@ -2677,6 +2715,25 @@ async function reportPage(view, name, q, fields) {
     filterBar(params, fields) + `<div class="card"><h2>${esc(tb.title)}</h2><div class="muted" style="margin:-4px 0 10px;font-size:.85em">${esc(tb.subtitle || "")}</div>${reportTable(tb)}</div>`;
   S.H.doprint = () => openApi(`/api/reports/${name}?` + qs({ ...params, format: "pdf" }), true);
 }
+// every material that went into a project — issued from a store, bought for it, or a direct cost — filtered by date,
+// project, material and any text, with what it all cost and how much of it (per unit) on top
+PAGES.materials = async (view, parts, q) => {
+  const params = { ...q, lang: q.lang || S.lang };
+  const tb = await api("GET", "/api/reports/materials_used?" + qs(params));
+  const sm = tb.summary || { count: 0, total: 0, materials: [] };
+  const src = [["bought", L2("Bought for the project", "شراء للمشروع")], ["direct", L2("Direct cost", "تكلفة مباشرة")], ["issued", L2("Issued from store", "صرف من المخزن")]];
+  const kpi = (l, v, sub = "") => `<div class="kpi"><div class="l">${esc(l)}</div><div class="v">${v}</div>${sub ? `<div class="muted" style="font-size:.8em">${sub}</div>` : ""}</div>`;
+  view.innerHTML = `<div class="toolbar"><span class="muted" style="flex:1">${esc(L2("Material Issues from a store, Direct Costs and journal vouchers' item lines — click a row to open its voucher.", "أذون الصرف من المخزن والتكاليف المباشرة وبنود الأصناف في قيود اليومية — اضغط على أي سطر لفتح قيده."))}</span>
+      <button class="btn" data-a="doprint">${t("print")}</button>${exportMenu("materials_used", params)}</div>` +
+    filterBar(params, ["dates", "bu", ["select", "item", L2("Material", "الخامة"), sm.materials.map(n => [n, n])], "q", ["select", "source", L2("How", "الطريقة"), src], "lang"]) +
+    `<div class="kpis" style="margin-bottom:14px">${kpi(L2("Total cost", "إجمالي التكلفة"), `${money(sm.total)} <small>${esc(cur())}</small>`)}
+      ${kpi(L2("Purchases / issues", "عمليات الشراء / الصرف"), numf(sm.count))}
+      ${sm.one_material ? kpi(L2("Total quantity", "إجمالي الكمية"), `${numf(sm.one_material.qty)} <small>${esc(sm.one_material.unit)}</small>`) +
+        (sm.one_material.qty ? kpi(L2("Average unit cost", "متوسط سعر الوحدة"), money(sm.total / sm.one_material.qty), esc(sm.one_material.unit)) : "")
+        : `<div class="kpi"><div class="l">${esc(L2("Total quantity", "إجمالي الكمية"))}</div><div class="muted" style="font-size:.85em;margin-top:6px">${esc(L2("Pick one material above to add up its quantity.", "اختر خامة واحدة من الأعلى لجمع كميتها."))}</div></div>`}</div>` +
+    `<div class="card"><h2>${esc(tb.title)}</h2><div class="muted" style="margin:-4px 0 10px;font-size:.85em">${esc(tb.subtitle || "")}</div>${reportTable(tb)}</div>`;
+  S.H.doprint = () => openApi("/api/reports/materials_used?" + qs({ ...params, format: "pdf" }), true);
+};
 PAGES.report = async (view, parts, q) => {
   const name = parts[1];
   const f = { income_statement: ["dates", "compare", "bu", "detail", "allocate", "lang"], balance_sheet: ["asof", "compare", "bu", "lang"],
@@ -2801,23 +2858,10 @@ function contactForm(p = {}, after) {
     onOpen: f => { const c = $("[name=category]", f); if (c.value) c.value = catLabel(c.value); } });
   S.H.pmdel = () => confirmDelete(p.name, "/api/parties-master/" + p.id, refreshBoot);
 }
-PAGES.parties = async (view, parts, q) => {
-  const lq = { ...q, limit: q.limit || 100 };
-  const d = await api("GET", "/api/parties-master?" + qs(lq));
-  const ed = can("sales.parties", "edit") || can("sales.invoices", "edit") || can("purchasing", "edit");
-  const add = ed || can("sales.parties", "add") || can("sales.invoices", "add") || can("purchasing", "add");
-  S.cache.ccats = d.categories;
-  S.H.pnew = () => contactForm({ category: "customer", type: "customer" });
-  S.H.pedit = el => contactForm(d.rows.find(x => String(x.id) === el.dataset.id));
-  view.innerHTML = `<div class="toolbar">${add ? `<button class="btn pri" data-a="pnew">+ ${t("new")}</button>` : ""}<span class="spacer"></span>${can("purchasing.contacts") ? `<a class="btn" href="#/contacts">☏ ${L2("Contacts directory", "دليل جهات الاتصال")}</a>` : ""}</div>` +
-    filterBar(q, ["q", ["select", "type", t("type"), [["customer", t("customer")], ["supplier", t("supplier")]]]]) +
-    `<div class="card">${d.rows.length ? `<div class="tbl"><table><thead><tr><th>${t("name")}</th><th>${t("type")}</th><th>${L2("Category", "التصنيف")}</th><th>${t("tax_id")}</th><th>${t("governate")}</th><th>${t("phone")}</th><th>${t("default_vat")}</th><th>${t("default_wht")}</th></tr></thead><tbody>
-      ${d.rows.map(p => `<tr class="click" data-a="${ed ? "pedit" : ""}" data-id="${p.id}"><td><b>${esc(p.name)}</b></td><td>${esc(p.type)}</td><td>${esc(catLabel(p.category))}</td><td>${esc(p.tax_id || p.national_id)}</td><td>${esc(p.governate)}</td><td>${esc(p.phone)}</td><td>${esc(p.default_vat)}</td><td>${esc(p.default_wht)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${t("nothing")}</div>`}${pager(d.total, lq)}</div>`;
-  bulkify(bulkTable(view, 'tr[data-id]'), BULKS.parties("sales.parties"));
-};
 // ------------------------------------------------------ contacts directory
 const contactLinks = p => { const wa = waNumber(p.whatsapp || p.phone);
   return `${p.phone ? `<a class="btn sm" href="tel:${esc(p.phone.replace(/\s/g, ""))}" title="${esc(p.phone)}">📞 ${esc(p.phone)}</a>` : ""}${wa ? `<a class="btn sm" href="https://wa.me/${wa}" target="_blank" rel="noopener">WhatsApp</a>` : ""}${p.email ? `<a class="btn sm" href="mailto:${esc(p.email)}">✉ ${esc(L2("Email", "بريد"))}</a>` : ""}`; };
+PAGES.parties = (view, parts, q) => PAGES.contacts(view, parts, q);   // one directory for customers, suppliers and contacts
 PAGES.contacts = async (view, parts, q) => {
   const lq = { ...q, limit: q.limit || 200 };
   const d = await api("GET", "/api/parties-master?" + qs(lq));
@@ -3132,7 +3176,7 @@ async function brandingTab(view, head) {
       <div class="grid g3" style="margin-top:10px"><div class="f">${t("upload")}<input type="file" id="logofile" accept="image/*"></div>
         <label class="f chk"><input type="checkbox" name="clean_bg" ${b.clean_bg ? "checked" : ""}>${t("clean_bg")}</label>
         <label class="f">${t("logo_height")}<input type="number" name="logo_height" min="40" max="170" value="${esc(b.logo_height)}"></label></div>
-      ${ed && imgs.logo ? `<button class="btn sm danger" data-a="logorm" style="margin-top:8px">${t("remove")}</button>` : ""}</div>
+      ${ed ? `<div class="row" style="margin-top:8px;gap:6px"><button class="btn sm" data-a="logodef">${esc(L2("Use the BeyondERP logo", "استخدم شعار BeyondERP"))}</button>${imgs.logo ? `<button class="btn sm danger" data-a="logorm">${t("remove")}</button>` : ""}</div>` : ""}</div>
     <div class="card"><h2>${t("watermark")}</h2><div class="grid g3">
       <label class="f">${t("watermark")}<select name="wm.mode">${["none", "logo", "image", "text"].map(m => `<option value="${m}" ${b.wm.mode === m ? "selected" : ""}>${t("wm_" + m)}</option>`).join("")}</select></label>
       <label class="f">${t("wm_strength")} <input type="range" name="wm.opacity" min="4" max="40" value="${Math.round(b.wm.opacity * 100)}"></label>
@@ -3176,6 +3220,8 @@ async function brandingTab(view, head) {
     try { logoRaw = await Img.fit(f, 900); logo = $("[name=clean_bg]").checked ? await Img.clean(logoRaw) : logoRaw; dirtyImgs = true; $("#logobox").innerHTML = imgTag(logo); } catch (x) { fail(x); } });
   $("[name=clean_bg]").addEventListener("change", async e => { if (!logoRaw) return; logo = e.target.checked ? await Img.clean(logoRaw) : logoRaw; dirtyImgs = true; $("#logobox").innerHTML = imgTag(logo); });
   $("#wmfile").addEventListener("change", async e => { const f = e.target.files[0]; if (!f) return; try { wmImage = await Img.fit(f, 900); dirtyImgs = true; } catch (x) { fail(x); } });
+  S.H.logodef = async () => { if (!await uiConfirm(L2("Replace the letterhead logo and watermark with the BeyondERP logo?", "استبدال شعار المطبوعات والعلامة المائية بشعار BeyondERP؟"))) return;
+    try { await api("POST", "/api/branding/default-logo", {}); toast(t("saved")); route(); } catch (e) { fail(e); } };
   S.H.logorm = async () => { if (!await uiConfirm(t("confirm_delete"))) return; try { await api("PUT", "/api/branding/image/logo", {}); await api("PUT", "/api/branding/image/logo_raw", {}); route(); } catch (e) { fail(e); } };
   S.H.brsave = async () => {
     const v = collect();

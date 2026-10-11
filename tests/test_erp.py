@@ -3742,3 +3742,61 @@ class PriceOutlook(unittest.TestCase):
         # direct costs are part of the spending forecast now
         rows = next(s for s in forecast.build(db)["sections"] if s["key"] == "expenses")["rows"]
         self.assertTrue(any(r["key"] == "acct:5010" for r in rows))
+
+
+class DefaultLogoAndMaterials(unittest.TestCase):
+    def test_old_default_logo_is_replaced_uploaded_kept(self):
+        import hashlib
+        from erp import brand_assets
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "b.sqlite3"
+            db = Database(path)
+            fake_old = "T0xEREVGQVVMVA=="   # stands in for the old built-in mark
+            db.x("INSERT OR REPLACE INTO assets(key,mime,w,h,data) VALUES ('logo','image/png',10,10,?)", (fake_old,))
+            db.x("INSERT OR REPLACE INTO assets(key,mime,w,h,data) VALUES ('watermark','image/png',10,10,'VVBMT0FERUQ=')")
+            db.close()
+            Database.OLD_DEFAULT_ASSETS = {**Database.OLD_DEFAULT_ASSETS, hashlib.sha256(fake_old.encode()).hexdigest(): "LOGO"}
+            db = Database(path)
+            self.assertEqual(db.one("SELECT data FROM assets WHERE key='logo'")["data"], brand_assets.LOGO["data"])
+            self.assertEqual(db.one("SELECT data FROM assets WHERE key='watermark'")["data"], "VVBMT0FERUQ=")   # an upload stays
+            db.close()
+
+    def test_journal_item_lines(self):
+        from erp import demo
+        db = Database(":memory:")
+        demo.load(db)
+        wh = db.one("SELECT id, name FROM warehouses LIMIT 1")
+        bu = db.one("SELECT id, code FROM business_units LIMIT 1")
+        eid = a.record_journal(db, {"date": "2026-10-05", "memo": "Tiles and paint", "party": "El-Nour", "bu_id": bu["id"],
+                                    "items": [{"item": "Porcelain 60x120", "unit": "m2", "qty": 50, "rate": 420, "warehouse_id": wh["id"]},
+                                              {"item": "Wall paint 18L", "unit": "drum", "qty": 4, "rate": 1500}],
+                                    "lines": [{"account": "1010", "credit": 27000}]})
+        e = a.get_entry(db, eid)
+        self.assertEqual(e["amount"], 27000)
+        self.assertEqual(db.one("SELECT l.qty FROM stock_levels l JOIN stock_items i ON i.id=l.item_id WHERE i.name='Porcelain 60x120'")["qty"], 50)
+        self.assertTrue(all(c["ok"] for c in a.audit(db)))          # stock register = inventory accounts: counted once
+        used = a.materials_used(db, q="paint")
+        self.assertEqual(used["count"], 2)                           # the new line and the demo's wall paint issue/cost
+        self.assertTrue(any(r["source"] == "bought" and r["bu_code"] == bu["code"] and r["amount"] == 6000 for r in used["rows"]))
+        with self.assertRaises(a.ValidationError):                   # item lines are corrected by reversing, not edited
+            a.edit_entry(db, eid, {"memo": "x"})
+        # the books export and import back with the item lines intact
+        data = interchange.export_data(db)
+        db2 = Database(":memory:")
+        interchange.import_data(db2, data)
+        self.assertEqual(a.materials_used(db2)["total"], a.materials_used(db)["total"])
+        self.assertEqual(db2.one("SELECT COUNT(*) n FROM material_lines")["n"], 2)
+        # void: the stock and the history go with it
+        a.void_entry(db, eid, "test")
+        self.assertEqual(db.one("SELECT l.qty FROM stock_levels l JOIN stock_items i ON i.id=l.item_id WHERE i.name='Porcelain 60x120'")["qty"], 0)
+        self.assertEqual(a.materials_used(db, q="Wall paint 18L")["count"], 1)
+        with self.assertRaises(a.ValidationError):                   # a project line needs a project
+            a.record_journal(db, {"date": "2026-10-05", "items": [{"item": "Sand", "qty": 1, "rate": 10}], "lines": [{"account": "1010", "credit": 10}]})
+
+    def test_quantity_total_only_for_one_material(self):
+        from erp import demo
+        db = Database(":memory:")
+        demo.load(db)
+        self.assertIsNone(a.materials_used(db)["one_material"])                   # a project mixes units: no total
+        one = a.materials_used(db, item="wall paint 18l")["one_material"]           # one material: its total, in its unit
+        self.assertEqual((one["qty"], one["unit"]), (6, "drum"))

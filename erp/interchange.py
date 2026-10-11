@@ -452,7 +452,13 @@ SHEETS = [
               C("memo", "Description", "البيان", width=30), C("account", "Account", "الحساب", kind="acct", required=True),
               C("debit", "Debit", "مدين", kind="money"), C("credit", "Credit", "دائن", kind="money"),
               C("line_party", "Line Party", "طرف السطر", width=14,
-                note="Only when a line belongs to someone other than the voucher's party (e.g. each partner in a share transfer)")],
+                note="Only when a line belongs to someone other than the voucher's party (e.g. each partner in a share transfer)"),
+              C("item", "Item", "الصنف", width=18,
+                note="Item line: the item or material (debit = qty × unit price, made by the app). Leave empty on normal lines"),
+              C("item_unit", "Item Unit", "وحدة الصنف", width=8), C("item_qty", "Item Qty", "كمية الصنف", kind="num"),
+              C("item_rate", "Item Unit Price", "سعر وحدة الصنف", kind="money"),
+              C("item_to", "Item Goes To", "وجهة الصنف", width=16,
+                note="A warehouse name (received into stock) — or empty: used on the voucher's business unit")],
      "legs": [("debit", "account", "D"), ("credit", "account", "C")]},
 ]
 from . import setup_sheets as _setup  # noqa: E402
@@ -582,8 +588,9 @@ def export_data(db):
     moves = db.q("SELECT m.*, i.name AS item, i.unit, w.name AS warehouse FROM stock_moves m "
                  "JOIN stock_items i ON i.id=m.item_id JOIN warehouses w ON w.id=m.warehouse_id ORDER BY m.id")
     skip = set()
+    jitems = {r["entry_id"] for r in db.q("SELECT DISTINCT entry_id FROM material_lines")}   # exported with their voucher
     for idx, m in enumerate(moves):
-        if m["id"] in skip:
+        if m["id"] in skip or m["entry_id"] in jitems:
             continue
         e = acc.get_entry(db, m["entry_id"]) if m["entry_id"] else None
         if e and (e["status"] != "posted" or e["reversed_by"]):
@@ -632,13 +639,21 @@ def export_data(db):
               db.q("SELECT id FROM journal_entries WHERE status='posted' ORDER BY date, id")):
         if e["id"] in invoice_entries or e["id"] in stock_entries:
             continue
-        row = _entry_to_row(e, accounts)
+        row = None if e["id"] in jitems else _entry_to_row(e, accounts)   # item lines only fit the Journal Vouchers sheet
         if row:
             sheet, data = row
             out[sheet].append(data)
         else:
-            for ln in e["lines"]:
-                vno = e["ref"] if e["ref"] and refs.get(e["ref"]) == 1 and len(e["ref"]) <= 30 else f"JV-{e['id']}"
+            vno = e["ref"] if e["ref"] and refs.get(e["ref"]) == 1 and len(e["ref"]) <= 30 else f"JV-{e['id']}"
+            mls = db.q("SELECT m.*, w.name AS wh FROM material_lines m LEFT JOIN warehouses w ON w.id=m.warehouse_id "
+                       "WHERE m.entry_id=? ORDER BY m.id", (e["id"],))
+            for ml in mls:   # item lines: the app makes their debit again from qty × unit price
+                out["Journal Vouchers"].append({"voucher": vno, "date": e["date"], "kind": e["kind"], "bu_code": e["bu_code"] or "",
+                                                "party": e["party"], "ref": e["ref"], "memo": e["memo"], "account": ml["account"],
+                                                "debit": to_major(ml["amount"]), "credit": "", "line_party": "", "item": ml["description"],
+                                                "item_unit": ml["unit"], "item_qty": _num(ml["qty"]), "item_rate": to_major(ml["rate"]),
+                                                "item_to": ml["wh"] or ""})
+            for ln in e["lines"][len(mls):]:
                 out["Journal Vouchers"].append({"voucher": vno, "date": e["date"], "kind": e["kind"],
                                                 "bu_code": e["bu_code"] or "", "party": e["party"], "ref": e["ref"],
                                                 "memo": e["memo"], "account": ln["account"],
@@ -1531,9 +1546,13 @@ def _imp_journal(db, rows, errors, counts, user):
                                     "ref": first.get("ref") or ("" if re.fullmatch(r"JV-\d+", v) else v), "memo": first.get("memo"),
                                     "deal_ref": first.get("deal_ref"), "quoted": first.get("quoted"), "savings": first.get("savings"),
                                     "negotiation": first.get("negotiation"),
+                                    "items": [{"item": r.get("item"), "unit": r.get("item_unit"), "qty": r.get("item_qty"),
+                                               "rate": r.get("item_rate"), "warehouse": r.get("item_to") or None,
+                                               "account": r.get("account") if not r.get("item_to") else None}
+                                              for _, r in items if acc.text(r.get("item"))],
                                     "lines": [{"account": r.get("account"), "debit": r.get("debit"),
                                                "credit": r.get("credit"), "party": r.get("line_party")}
-                                              for _, r in items]}, user)
+                                              for _, r in items if not acc.text(r.get("item"))]}, user)
             n += 1
         except acc.ValidationError as e:
             errors.append({"sheet": "Journal Vouchers", "row": items[0][0], "error": f"voucher {v}: {e}"})

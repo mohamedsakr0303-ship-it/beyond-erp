@@ -951,6 +951,18 @@ def _item_vals(b):
             acc.text(b.get("notes"), maxlen=1000))
 
 
+@route("GET", "/api/items/names")
+def item_names(ctx):
+    """Item names for pickers (journal item lines): name, unit and the price to start from."""
+    if not (ctx.can("accounting.journal", "add") or ctx.can("stock.moves") or ctx.can("stock.balances")):
+        raise PermissionError()
+    rows = ctx.db.q("""SELECT i.id, i.name, i.unit, i.std_cost,
+                              (SELECT rate FROM stock_moves WHERE item_id=i.id AND qty>0 ORDER BY date DESC, id DESC LIMIT 1) AS last_rate
+                       FROM stock_items i ORDER BY i.name""")
+    return ok({"rows": [{"id": r["id"], "name": r["name"], "unit": r["unit"] or "",
+                         "price": to_major(r["std_cost"] or r["last_rate"] or 0)} for r in rows]})
+
+
 @route("POST", "/api/items", "stock.balances", "add")
 def item_add(ctx):
     """An item can exist with nothing in stock — just its prices, for quotations and forecasting."""
@@ -3838,6 +3850,17 @@ def branding_put(ctx):
     b = branding.save(ctx.db, ctx.body)
     ctx.log("branding", ", ".join(ctx.body.keys()))
     return ok(b)
+
+
+@route("POST", "/api/branding/default-logo", "settings.branding", "edit")
+def branding_default_logo(ctx):
+    """Back to the BeyondERP mark for the letterhead logo and its faded watermark."""
+    from . import brand_assets
+    for key, img in (("logo", brand_assets.LOGO), ("watermark", brand_assets.WATERMARK)):
+        ctx.db.x("INSERT OR REPLACE INTO assets(key,mime,w,h,data) VALUES (?,?,?,?,?)", (key, img["mime"], img["w"], img["h"], img["data"]))
+    ctx.db.x("DELETE FROM assets WHERE key='logo_raw'")
+    ctx.log("branding.image", "default logo")
+    return ok()
 
 
 @route("PUT", "/api/branding/image/<key>", "settings.branding", "edit")
