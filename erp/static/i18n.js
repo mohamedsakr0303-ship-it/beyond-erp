@@ -29,7 +29,7 @@ window.I18N = {
   search_v: ["Account, code, party, amount, deal…", "حساب، كود، طرف، مبلغ، اتفاق…"],
   m_stock: ["Stock Balances", "أرصدة المخزون"], m_moves: ["Stock Movements", "حركات المخزون"], m_warehouses: ["Warehouses", "المخازن"],
   m_payroll: ["Wage Accruals", "استحقاقات الأجور"], m_payruns: ["Payroll Runs", "مسيرات الرواتب"], m_employees: ["Employee Master", "بيانات الموظفين"], m_crew: ["Piece-Rate Crew Pay", "أجور الأطقم بالإنتاج"], m_payset: ["Payroll Configuration", "إعدادات الرواتب"], m_industry: ["Industry Templates", "قوالب الأنشطة"], m_partners: ["Partners' Capital & Distributions", "رؤوس أموال الشركاء والتوزيعات"], m_pexit: ["Partners' Equity Statement", "قائمة حقوق الشركاء"],
-  m_journal: ["Journal Entries", "قيود اليومية"], m_approvals: ["Drafts & Approvals", "المسودات والاعتمادات"], p_approvals: ["Approve & post entries", "اعتماد وترحيل القيود"], m_coa: ["Chart of Accounts", "دليل الحسابات"], m_ledger: ["General Ledger", "دفتر الأستاذ العام"],
+  m_journal: ["Journal Entries", "قيود اليومية"], m_approvals: ["Drafts & Approvals", "المسودات والاعتمادات"], p_dashboards: ["Design dashboards & groups", "تصميم لوحات التحكم والمجموعات"], p_approvals: ["Approve & post entries", "اعتماد وترحيل القيود"], m_coa: ["Chart of Accounts", "دليل الحسابات"], m_ledger: ["General Ledger", "دفتر الأستاذ العام"],
   m_ppack: ["Partners' Report Pack", "حزمة تقارير الشركاء"], m_extracts: ["Progress Billings", "المستخلصات الجارية"], m_assetsum: ["Assets Overview", "ملخص الأصول"], m_cash: ["Cash & Bank Accounts", "النقدية والبنوك"], m_depr: ["Depreciation Run", "احتساب الإهلاك"], m_is: ["Income Statement", "قائمة الدخل"], m_bs: ["Balance Sheet", "الميزانية العمومية"], m_cf: ["Cash Flow Statement", "قائمة التدفقات النقدية"],
   m_tb: ["Trial Balance", "ميزان المراجعة"], m_bup: ["Segment Profitability (Business Units)", "ربحية القطاعات (وحدات الأعمال)"],
   m_data: ["Data Import & Export", "استيراد وتصدير البيانات"], m_settings: ["System Settings", "إعدادات النظام"], m_forecast: ["Forecasting", "التنبؤات والتوقعات"], m_users: ["Users & Permissions", "المستخدمون والصلاحيات"],
@@ -244,7 +244,7 @@ window.SUBPERM = {
   "contracts.certificates": "m_certs", "purchasing.requests": "m_prq", "stock.counts": "m_counts", "equipment.register": "m_equipment",
   "equipment.usage": "m_equsage", "equipment.maintenance": "m_maint", "payroll.attendance": "m_attendance",
   "import_export.export": "p_export", "import_export.import": "p_import",
-  "settings.company": "p_company", "settings.branding": "p_branding", "settings.menus": "menu_names", "settings.layout": "p_layout", "settings.system": "p_system",
+  "settings.company": "p_company", "settings.branding": "p_branding", "settings.menus": "menu_names", "settings.layout": "p_layout", "settings.system": "p_system", "settings.dashboards": "p_dashboards",
   "users.users": "m_users", "users.audit": "m_audit",
 };
 

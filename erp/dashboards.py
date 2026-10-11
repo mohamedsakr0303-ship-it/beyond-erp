@@ -1,12 +1,15 @@
 """Dashboards per group of users.
 
 Every user belongs to a group (Management, Sales, Accounts & finance, …). Each group has its own dashboard: a list of
-widgets, their order and size, and options such as a sales target. Only super administrators change them. A widget
+widgets, their order and size, options such as a sales target, and each card's design (title, style, colour, chart
+style, height) plus the page's own (heading, accent, spacing). Only super administrators change them — and people
+they allow ("Design dashboards & groups"). A widget
 shows only to people allowed to see that part of the ERP — unless a super administrator ticked "show even without
 access" for that widget in that group (checked here, on the server, for every request).
 """
 import datetime as _dt
 import json
+import re
 
 from . import accounting as acc
 from .accounting import ValidationError, text
@@ -59,6 +62,70 @@ def group_of(db, user):
     return key
 
 
+_HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
+CARD_STYLES = ("card", "glass", "solid", "outline", "gradient", "plain")
+
+
+def _hex(v):
+    return v.lower() if isinstance(v, str) and _HEX.match(v) else ""
+
+
+def _link(h):
+    """A button's target: a screen of the app (#/…) or a web address (https://…); anything else is dropped."""
+    h = str(h or "").strip()[:400]
+    return h if h.startswith("#/") or re.match(r"^https?://[^\s\"'<>]+$", h) else ""
+
+
+def clean_look(lk):
+    """A card's design, as the dashboard designer sets it. Unknown keys and values are dropped."""
+    lk = lk if isinstance(lk, dict) else {}
+    out = {}
+    for k, n in (("title", 120), ("title_ar", 120), ("body", 4000), ("body_ar", 4000)):
+        v = text(lk.get(k), maxlen=n) if lk.get(k) not in (None, "") else ""
+        if v:
+            out[k] = v
+    for k in ("hide_title", "no_trend"):
+        if lk.get(k):
+            out[k] = True
+    for k, allowed_ in (("style", CARD_STYLES), ("height", ("auto", "short", "tall")), ("chart", ("bars", "lines", "area")),
+                        ("align", ("start", "center", "end")), ("font", ("normal", "large", "huge"))):
+        if lk.get(k) in allowed_ and lk.get(k) not in ("card", "auto", "bars", "start", "normal"):
+            out[k] = lk[k]
+    if _hex(lk.get("color")):
+        out["color"] = _hex(lk["color"])
+    links = []
+    for x in (lk.get("links") or [])[:12] if isinstance(lk.get("links"), list) else []:
+        if isinstance(x, dict) and _link(x.get("href")) and text(x.get("label"), maxlen=60):
+            links.append({"label": text(x.get("label"), maxlen=60), "href": _link(x.get("href"))})
+    if links:
+        out["links"] = links
+    return out
+
+
+def clean_page(lk):
+    """The dashboard page's own design for a group: heading, subtitle, accent, spacing, corners, backdrop."""
+    lk = lk if isinstance(lk, dict) else {}
+    out = {}
+    for k in ("heading", "heading_ar", "subtitle", "subtitle_ar"):
+        v = text(lk.get(k), maxlen=200) if lk.get(k) not in (None, "") else ""
+        if v:
+            out[k] = v
+    if _hex(lk.get("accent")):
+        out["accent"] = _hex(lk["accent"])
+    for k, allowed_ in (("gap", ("compact", "airy")), ("corners", ("soft", "square")), ("backdrop", ("glow", "gradient"))):
+        if lk.get(k) in allowed_:
+            out[k] = lk[k]
+    if lk.get("hide_filters"):
+        out["hide_filters"] = True
+    return out
+
+
+def designer(user, can):
+    """Who may design dashboards and their groups: super administrators, and whoever they allow
+    (Settings → "Design dashboards & groups")."""
+    return bool((user or {}).get("is_super")) or bool(can and can("settings.dashboards", "edit"))
+
+
 def _clean_layout(raw):
     try:
         items = json.loads(raw) if isinstance(raw, str) else (raw or [])
@@ -78,6 +145,9 @@ def _clean_layout(raw):
         opts = it.get("opts") if isinstance(it.get("opts"), dict) else {}
         allowed = WIDGETS[it["w"]].get("opts", {})
         e["opts"] = {k: v for k, v in opts.items() if k in allowed}
+        lk = clean_look(it.get("look"))
+        if lk:
+            e["look"] = lk
         out.append(e)
     return out
 
@@ -87,6 +157,8 @@ def save_group(db, key, d):
     name = text(d.get("name"), "name", required=not db.one("SELECT 1 FROM user_groups WHERE key=?", (key,)))
     layout = _clean_layout(d.get("layout") if "layout" in d else None) if "layout" in d else None
     if db.one("SELECT 1 FROM user_groups WHERE key=?", (key,)):
+        if "look" in d:
+            db.conn.execute("UPDATE user_groups SET look=? WHERE key=?", (json.dumps(clean_page(d.get("look"))), key))
         if name:
             db.conn.execute("UPDATE user_groups SET name=?, name_ar=? WHERE key=?", (name, text(d.get("name_ar")), key))
         if layout is not None:
@@ -97,8 +169,12 @@ def save_group(db, key, d):
             g = db.one("SELECT layout FROM user_groups WHERE key=?", (base,))
             layout = _clean_layout(g["layout"]) if g else []
         n = db.one("SELECT COALESCE(MAX(sort),0)+1 AS n FROM user_groups")["n"]
-        db.conn.execute("INSERT INTO user_groups(key,name,name_ar,layout,sort) VALUES (?,?,?,?,?)",
-                        (key, name, text(d.get("name_ar")), json.dumps(layout or []), n))
+        look = d.get("look")
+        if look is None and base:
+            g = db.one("SELECT look FROM user_groups WHERE key=?", (base,))
+            look = json.loads(g["look"] or "{}") if g else {}
+        db.conn.execute("INSERT INTO user_groups(key,name,name_ar,layout,sort,look) VALUES (?,?,?,?,?,?)",
+                        (key, name, text(d.get("name_ar")), json.dumps(layout or []), n, json.dumps(clean_page(look))))
     return key
 
 
@@ -121,7 +197,7 @@ def delete_group(db, key):
 # ------------------------------------------------------------------ widgets
 CATS = {"overview": ("Money & overview", "المال ونظرة عامة"), "sales": ("Sales & collections", "المبيعات والتحصيل"),
         "projects": ("Projects", "المشروعات"), "purchasing": ("Purchasing & stores", "المشتريات والمخازن"),
-        "hr": ("HR", "الموارد البشرية"), "general": ("General", "عام")}
+        "hr": ("HR", "الموارد البشرية"), "general": ("General", "عام"), "design": ("Text, headings & buttons", "نصوص وعناوين وأزرار")}
 
 
 def _period(q):
@@ -401,6 +477,27 @@ def w_quick_links(c, o):
     return {}   # drawn in the page from the screens this person may open
 
 
+def w_design(c, o):
+    return {}   # text, headings and buttons: all in the card's design
+
+
+def w_account_balance(c, o):
+    """The balance of one account (or a range by its first digits) as at the dashboard's end date, on its normal side."""
+    code = text(o.get("account"))
+    if not code:
+        return {"value": 0, "sub": ["Choose an account in the card's options", "اختر حساباً من خيارات البطاقة"], "count": False}
+    exact = c.db.one("SELECT code, name, name_ar, normal FROM accounts WHERE code=?", (code,))
+    like = (code,) if exact else (code + "%",)
+    where = "l.account=?" if exact else "l.account LIKE ?"
+    to = c.q.get("date_to") or acc.today()
+    n = c.db.one(f"SELECT COALESCE(SUM(l.debit-l.credit),0) AS n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id "
+                 f"WHERE e.status='posted' AND {where} AND e.date<=?", like + (to,))["n"]
+    normal = exact["normal"] if exact else (c.db.one("SELECT normal FROM accounts WHERE code LIKE ? LIMIT 1", (code + "%",)) or {}).get("normal", "Debit")
+    value = acc.to_major(n if normal == "Debit" else -n)
+    name = [f"{code} {exact['name']}", f"{code} {exact['name_ar'] or exact['name']}"] if exact else [f"Accounts {code}…", f"الحسابات {code}…"]
+    return {"value": value, "sub": name, "href": f"#/ledger?account={code}", "money": True}
+
+
 # id: (en, ar, category, permission (any of), size, function, {option: (en, ar, kind)})
 _W = [
     ("revenue", "Revenue", "الإيرادات", "overview", ("reports", "dashboard"), 1, w_kpi("revenue", "Revenue", "الإيرادات"), {}),
@@ -444,12 +541,20 @@ _W = [
     ("equipment_due", "Equipment maintenance due", "صيانة معدات مستحقة", "projects", ("equipment.maintenance",), 2, w_equipment_due, {}),
     ("attendance_today", "On site today", "الحضور اليوم", "hr", ("payroll.attendance",), 1, w_attendance_today, {}),
     ("quick_links", "Quick links", "روابط سريعة", "general", (), 2, w_quick_links, {}),
+    ("account_balance", "Account balance", "رصيد حساب", "overview", ("reports", "accounting.ledger"), 1, w_account_balance,
+     {"account": ("Account code (or its first digits)", "كود الحساب (أو أول أرقامه)", "text")}),
+    # building blocks: what they show is set in the card's design (any number of each)
+    ("text", "Text / note", "نص / ملاحظة", "design", (), 2, w_design, {}),
+    ("heading", "Section heading", "عنوان قسم", "design", (), 4, w_design, {}),
+    ("links", "Buttons / links", "أزرار وروابط", "design", (), 2, w_design, {}),
 ]
+MULTI = {"text", "heading", "links", "account_balance"}     # may appear more than once on a dashboard
 WIDGETS = {w[0]: {"id": w[0], "en": w[1], "ar": w[2], "cat": w[3], "perm": w[4], "size": w[5], "fn": w[6], "opts": w[7]} for w in _W}
 
 
 def catalog():
-    return [{k: v for k, v in w.items() if k != "fn"} | {"opts": {k: list(v) for k, v in w["opts"].items()}} for w in WIDGETS.values()]
+    return [{k: v for k, v in w.items() if k != "fn"} | {"opts": {k: list(v) for k, v in w["opts"].items()}, "multi": w["id"] in MULTI}
+            for w in WIDGETS.values()]
 
 
 def allowed(w, can):
@@ -457,9 +562,9 @@ def allowed(w, can):
 
 
 def view(db, user, q, can, group=None):
-    """The dashboard of a group as this person may see it: the layout and each widget's figures. Only super
-    administrators may look at another group's dashboard."""
-    is_super = bool((user or {}).get("is_super"))
+    """The dashboard of a group as this person may see it: the layout and each widget's figures. Only designers (super
+    administrators, or people they allow) may look at another group's dashboard."""
+    is_super = designer(user, can)
     key = group if (group and is_super) else group_of(db, user)
     g = db.one("SELECT * FROM user_groups WHERE key=?", (key,))
     if not g:
@@ -478,8 +583,8 @@ def view(db, user, q, can, group=None):
             except Exception as ex:   # one widget never breaks the page
                 item["error"] = str(ex)[:200]
         out.append(item)
-    return {"group": key, "name": g["name"], "name_ar": g["name_ar"], "widgets": [x for x in out if not x.get("hidden")]
-            if not is_super else out}
+    return {"group": key, "name": g["name"], "name_ar": g["name_ar"], "look": json.loads(g.get("look") or "{}") if g.get("look") else {},
+            "widgets": [x for x in out if not x.get("hidden")] if not is_super else out}
 
 
 # ------------------------------------------------------------------ alerts (the bell and the "Needs attention" widget)

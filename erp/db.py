@@ -1599,7 +1599,7 @@ SUBMODULES = {
     "reports": ["partner_pack", "income_statement", "balance_sheet", "cash_flow", "trial_balance", "budget", "aging", "statement", "forecast"],
     "tax": ["codes", "report", "einvoice", "ereceipt"],
     "import_export": ["export", "import"],
-    "settings": ["company", "branding", "menus", "layout", "system"],
+    "settings": ["company", "branding", "menus", "layout", "system", "dashboards"],
     "users": ["users", "audit"],
 }
 
@@ -1711,7 +1711,10 @@ class Database:
         self._add_cols("rental_lines", [("cost", "INTEGER NOT NULL DEFAULT 0")])
         self._add_cols("users", [("is_super", "INTEGER NOT NULL DEFAULT 0")])
         self._add_cols("users", [("group_key", "TEXT NOT NULL DEFAULT ''")])
-        self._add_cols("users", [("needs_approval", "INTEGER NOT NULL DEFAULT 0")])   # their entries wait for approval
+        self._add_cols("users", [("needs_approval", "INTEGER NOT NULL DEFAULT 0")])
+        self._add_cols("user_groups", [("look", "TEXT DEFAULT ''")])   # the dashboard page's own design (heading, accent…)
+        for t in ("boq_lines", "extract_lines"):      # a line's look: bold, italic, colours, alignment (as in Excel)
+            self._add_cols(t, [("style", "TEXT DEFAULT ''")])   # their entries wait for approval
         if not self.conn.execute("SELECT 1 FROM users WHERE is_super=1 AND active=1").fetchone():   # books from before the level
             self.conn.execute("UPDATE users SET is_super=1 WHERE id=(SELECT id FROM users WHERE is_admin=1 AND active=1 ORDER BY id LIMIT 1)")
         if "name_ar" not in have:

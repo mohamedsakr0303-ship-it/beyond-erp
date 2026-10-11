@@ -936,8 +936,40 @@ def export_extras(db):
             "sales": sales.export_rows(db), "bank": bankrec.export_rows(db), "recurring": recurring.export_rows(db),
             "entry_meta": _entry_meta_export(db), "attachments": _attachments_export(db),
             "purchase_orders": _po_export(db), "services": _svc_export(db), "chat": _chat_export(db),
-            "dashboard_groups": db.q("SELECT key, name, name_ar, layout, sort FROM user_groups ORDER BY sort, id"),
-            "site": site_extras(db)}
+            "dashboard_groups": db.q("SELECT key, name, name_ar, layout, sort, look FROM user_groups ORDER BY sort, id"),
+            "line_styles": _line_styles_export(db), "site": site_extras(db)}
+
+
+def _line_styles_export(db):
+    """Each styled BOQ / invoice line's look, by its document and its place in it (the sheets hold the lines)."""
+    out = {"boq": [], "invoice": []}
+    for b in db.q("SELECT b.id, b.title, u.code AS bu FROM boqs b LEFT JOIN business_units u ON u.id=b.bu_id"):
+        for i, ln in enumerate(db.q("SELECT style FROM boq_lines WHERE boq_id=? ORDER BY seq, id", (b["id"],))):
+            if ln["style"]:
+                out["boq"].append([b["title"], b["bu"] or "", i, ln["style"]])
+    for x in db.q("SELECT id, number FROM extracts"):
+        for i, ln in enumerate(db.q("SELECT style FROM extract_lines WHERE extract_id=? ORDER BY seq, id", (x["id"],))):
+            if ln["style"]:
+                out["invoice"].append([x["number"], i, ln["style"]])
+    return out
+
+
+def _line_styles_import(db, ls):
+    n = 0
+    for title, bu, i, st in ls.get("boq") or []:
+        b = db.one("SELECT b.id FROM boqs b LEFT JOIN business_units u ON u.id=b.bu_id WHERE b.title=? AND COALESCE(u.code,'')=? "
+                   "ORDER BY b.id DESC", (acc.text(title), acc.text(bu)))
+        rows = db.q("SELECT id FROM boq_lines WHERE boq_id=? ORDER BY seq, id", (b["id"],)) if b else []
+        if isinstance(i, int) and 0 <= i < len(rows):
+            db.conn.execute("UPDATE boq_lines SET style=? WHERE id=?", (acc.line_style(st), rows[i]["id"]))
+            n += 1
+    for number, i, st in ls.get("invoice") or []:
+        x = db.one("SELECT id FROM extracts WHERE number=?", (acc.text(number),))
+        rows = db.q("SELECT id FROM extract_lines WHERE extract_id=? ORDER BY seq, id", (x["id"],)) if x else []
+        if isinstance(i, int) and 0 <= i < len(rows):
+            db.conn.execute("UPDATE extract_lines SET style=? WHERE id=?", (acc.line_style(st), rows[i]["id"]))
+            n += 1
+    return n
 
 
 def _chat_export(db):
@@ -1086,11 +1118,19 @@ def _imp_extras(db, ex, mode, counts):
     if isinstance(ex.get("dashboard_groups"), list) and ex["dashboard_groups"]:   # each group's dashboard
         for g in ex["dashboard_groups"]:
             if isinstance(g, dict) and g.get("key"):
-                db.conn.execute("INSERT INTO user_groups(key,name,name_ar,layout,sort) VALUES (?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET "
-                                "name=excluded.name, name_ar=excluded.name_ar, layout=excluded.layout, sort=excluded.sort",
+                from . import dashboards
+                look = g.get("look")
+                look = json.loads(look) if isinstance(look, str) and look.strip() else look if isinstance(look, dict) else {}
+                db.conn.execute("INSERT INTO user_groups(key,name,name_ar,layout,sort,look) VALUES (?,?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET "
+                                "name=excluded.name, name_ar=excluded.name_ar, layout=excluded.layout, sort=excluded.sort, look=excluded.look",
                                 (acc.text(g["key"]), acc.text(g.get("name")) or g["key"], acc.text(g.get("name_ar")),
-                                 g.get("layout") if isinstance(g.get("layout"), str) else json.dumps(g.get("layout") or []), int(g.get("sort") or 0)))
+                                 json.dumps(dashboards._clean_layout(g.get("layout"))), int(g.get("sort") or 0),
+                                 json.dumps(dashboards.clean_page(look))))
         counts["Dashboard groups"] = len(ex["dashboard_groups"])
+    if isinstance(ex.get("line_styles"), dict):            # the look of BOQ / invoice lines
+        n = _line_styles_import(db, ex["line_styles"])
+        if n:
+            counts["Styled lines"] = n
     if isinstance(ex.get("chat"), dict):
         from . import chat
         chat.import_rows(db, ex["chat"], mode, counts)
@@ -1170,12 +1210,15 @@ def _norm_cell(v):
     return t[:10] if re.match(r"^\d{4}-\d{2}-\d{2}", t) else t
 
 
+WHOLE_DOCS = ("BOQ Lines", "Sales Invoices", "Invoice Lines")
+
+
 def only_new(db, data):
     """Keep only what is not in the books yet; returns (data, {sheet: {"new": n, "skipped": n}})."""
     have, out, report = export_data(db), {}, {}
     for name, rows in data.items():
-        if name.startswith("_") or name not in SHEET_BY_NAME or not rows:
-            out[name] = rows
+        if name.startswith("_") or name not in SHEET_BY_NAME or not rows or name in WHOLE_DOCS:
+            out[name] = rows             # BOQs and invoices: compared as whole documents when imported
             continue
         cols = [c["key"] for c in input_cols(SHEET_BY_NAME[name])]
         existing = have.get(name) or []
@@ -1226,7 +1269,7 @@ def import_data(db, data, mode="append", dry_run=False, user=""):
     mode "new": only rows that are not in the books yet (see only_new), then as "append"."""
     if mode not in ("append", "replace", "new"):
         raise acc.ValidationError("mode must be append, new or replace")
-    errors, counts = [], {}
+    errors, counts, stats = [], {}, {}
     skipped = None
     if mode == "new":
         data, skipped = only_new(db, data)
@@ -1276,12 +1319,12 @@ def import_data(db, data, mode="append", dry_run=False, user=""):
             run("Stock Items", lambda r: _imp_item(db, r))
             run("Price List", lambda r: _imp_rate(db, r))
             run("Products", lambda r: _imp_product(db, r))
-            _imp_boqs(db, data.get("BOQ Lines") or [], errors, counts)
+            _imp_boqs(db, data.get("BOQ Lines") or [], errors, counts, stats)
             run("Direct Costs", lambda r: acc.record_project_cost(db, r, user))
             run("Operating Expenses", lambda r: acc.record_expense(db, r, user))
             run("Payroll", lambda r: acc.record_payroll(db, r, user))
             run("Receipt Vouchers", lambda r: acc.record_collection(db, r, user))
-            _imp_invoices(db, data, errors, counts, user)
+            _imp_invoices(db, data, errors, counts, user, stats)
             run("Partner Transactions", lambda r: acc.record_partner_tx(db, {**r, "type": "Capital" if str(
                 r.get("type", "")).startswith("Capital") else "Distribution"}, user))
             data["Stock Moves"] = sorted(data.get("Stock Moves") or [],
@@ -1345,6 +1388,10 @@ def import_data(db, data, mode="append", dry_run=False, user=""):
     out = {"counts": counts, "dry_run": dry_run, "mode": "new" if skipped is not None else mode}
     if skipped is not None:
         out["skipped"] = {k: v["skipped"] for k, v in skipped.items() if v["skipped"]}
+    for k, v in stats.get("skipped", {}).items():          # whole documents found unchanged
+        out.setdefault("skipped", {})[k] = out.get("skipped", {}).get(k, 0) + v
+    if stats.get("updated"):
+        out["updated"] = stats["updated"]
     return out
 
 
@@ -1477,49 +1524,126 @@ def _imp_rate(db, r):
                      to_minor(price), acc.text(r.get("notes")), acc.text(r.get("eta_code"))))
 
 
-def _imp_boqs(db, rows, errors, counts):
+# BOQs and invoices are whole documents: one already in the books (a BOQ with the same title and business unit, an
+# invoice with the same number) is compared as a whole — unchanged it is skipped, changed it is updated in place
+# (a posted invoice is reopened: its entry voided and kept in the audit trail, then posted again with the new lines)
+_LINE_COLS = ("category", "sub", "item_no", "description", "unit", "qty", "price")
+
+
+def _same_lines(file_lines, db_rows, cols=_LINE_COLS):
+    a = [tuple(ln[c] for c in cols) for ln in acc._lines_in(file_lines)]
+    b = [tuple(r[c] for c in cols) for r in db_rows]
+    norm = lambda rows: [tuple(round(v, 6) if isinstance(v, float) else (v or "") for v in t) for t in rows]  # noqa: E731
+    return norm(a) == norm(b)
+
+
+def _imp_boqs(db, rows, errors, counts, stats):
     groups = {}
     for i, r in enumerate(rows, start=FIRST_DATA_ROW):
         groups.setdefault((acc.text(r.get("title")), acc.text(r.get("bu_code"))), []).append((i, r))
     n = 0
     for (title, bu), items in groups.items():
         first = items[0][1]
+        d = {"title": title, "bu_code": bu, "rev": first.get("rev"), "date": first.get("date"), "client": first.get("client"),
+             "location": first.get("location"), "lines": [r for _, r in items]}
         try:
-            acc.save_boq(db, {"title": title, "bu_code": bu, "rev": first.get("rev"), "date": first.get("date"),
-                              "client": first.get("client"), "location": first.get("location"),
-                              "lines": [r for _, r in items]})
+            bu_id = acc.bu_id_or_none(db, bu) if bu else None
+            old = db.one("SELECT * FROM boqs WHERE title=? AND " + ("bu_id=?" if bu_id else "bu_id IS NULL") + " ORDER BY id DESC",
+                         (title, bu_id) if bu_id else (title,))
+            if old:
+                same_head = all(acc.text(d.get(k)) in ("", acc.text(old.get(k))) for k in ("rev", "client", "location")) and \
+                    (not d.get("date") or acc.clean_date(d["date"]) == old["date"])
+                if same_head and _same_lines(d["lines"], db.q("SELECT * FROM boq_lines WHERE boq_id=? ORDER BY seq, id", (old["id"],))):
+                    stats.setdefault("skipped", {}).setdefault("BOQ Lines", 0)
+                    stats["skipped"]["BOQ Lines"] += 1
+                    continue
+                for k in ("rev", "client", "location", "date"):     # what the file leaves blank stays as it was
+                    if d.get(k) in ("", None):
+                        d[k] = old.get(k)
+                acc.save_boq(db, d, boq_id=old["id"])
+                stats.setdefault("updated", {}).setdefault("BOQ Lines", 0)
+                stats["updated"]["BOQ Lines"] += 1
+            else:
+                acc.save_boq(db, d)
             n += 1
-        except acc.ValidationError as e:
+        except (acc.ValidationError, LookupError) as e:
             errors.append({"sheet": "BOQ Lines", "row": items[0][0], "error": str(e)})
     if rows:
         counts["BOQ Lines"] = n
 
 
-def _imp_invoices(db, data, errors, counts, user):
+def _imp_invoices(db, data, errors, counts, user, stats):
     lines = {}
     for r in data.get("Invoice Lines") or []:
         lines.setdefault(acc.text(r.get("number")), []).append(r)
     n = 0
-    for i, r in enumerate(data.get("Sales Invoices") or [], start=FIRST_DATA_ROW):
+    heads = {acc.text(r.get("number")) for r in data.get("Sales Invoices") or []}
+    for num_ in [k for k in lines if k and k not in heads]:   # only the lines of an invoice already in the books
+        if not db.one("SELECT 1 FROM extracts WHERE number=?", (num_,)):
+            errors.append({"sheet": "Invoice Lines", "row": FIRST_DATA_ROW, "error": f"Invoice {num_} is not in 'Sales Invoices' or in the books"})
+    rows = list(data.get("Sales Invoices") or []) + [{"number": k, "_lines_only": True} for k in lines if k and k not in heads
+                                                      and db.one("SELECT 1 FROM extracts WHERE number=?", (k,))]
+    for i, r in enumerate(rows, start=FIRST_DATA_ROW):
+        sheet = "Invoice Lines" if r.get("_lines_only") else "Sales Invoices"
         try:
-            boq = db.one("SELECT id FROM boqs WHERE title=? ORDER BY id DESC", (acc.text(r.get("boq_title")),)) \
-                if r.get("boq_title") else None
             number = acc.text(r.get("number"), "invoice number", required=True)
+            old = db.one("SELECT * FROM extracts WHERE number=?", (number,))
+            if r.get("_lines_only"):      # take everything else from the invoice as it is
+                r = {"number": number, "date": old["date"], "bu_code": (db.one("SELECT code FROM business_units WHERE id=?", (old["bu_id"],)) or {}).get("code"),
+                     "customer": old["customer"], "vat_code": old["vat_code"], "wht_code": old["wht_code"], "extract_no": old["seq_no"],
+                     "project": old["project"], "work": old["work"], "notes": old["notes"], "final": old["final"],
+                     "status": "Posted" if old["status"] == "posted" else "Draft", "_boq_id": old["boq_id"],
+                     "prev_paid": None if old["prev_paid"] is None else acc.to_major(old["prev_paid"]),
+                     "deductions": acc.to_major(old["deductions"] or 0)}
+            boq_id = r.get("_boq_id")
+            if r.get("boq_title"):
+                b = db.one("SELECT id FROM boqs WHERE title=? ORDER BY id DESC", (acc.text(r.get("boq_title")),))
+                boq_id = b["id"] if b else None
             if not lines.get(number):
-                raise acc.ValidationError(f"Invoice {number} has no rows in 'Invoice Lines'")
-            xid = acc.save_extract(db, {"number": number, "date": r.get("date"), "bu_code": r.get("bu_code"),
-                                        "boq_id": boq["id"] if boq else None, "lines": lines[number],
-                                        "customer": r.get("customer"), "vat_code": r.get("vat_code"),
-                                        "wht_code": r.get("wht_code"), "seq_no": r.get("extract_no"), "project": r.get("project"),
-                                        "work": r.get("work"), "prev_paid": r.get("prev_paid"), "deductions": r.get("deductions"),
-                                        "final": r.get("final"), "notes": r.get("notes")})
-            if str(r.get("status") or "Posted").lower() != "draft":
+                if old:                    # header only: the lines stay as they are
+                    lines[number] = [dict(x, price=acc.to_major(x["price"])) for x in db.q("SELECT * FROM extract_lines WHERE extract_id=? ORDER BY seq, id", (old["id"],))]
+                else:
+                    raise acc.ValidationError(f"Invoice {number} has no rows in 'Invoice Lines'")
+            d = {"number": number, "date": r.get("date") or (old or {}).get("date"), "bu_code": r.get("bu_code"),
+                 "boq_id": boq_id if boq_id or not old else old["boq_id"], "lines": lines[number],
+                 "customer": r.get("customer"), "vat_code": r.get("vat_code"), "wht_code": r.get("wht_code"), "seq_no": r.get("extract_no"),
+                 "project": r.get("project"), "work": r.get("work"), "prev_paid": r.get("prev_paid"), "deductions": r.get("deductions"),
+                 "final": r.get("final"), "notes": r.get("notes")}
+            want_posted = str(r.get("status") or "Posted").lower() != "draft"
+            if old:                        # what the file leaves blank stays as it was
+                for k, ok_ in (("customer", "customer"), ("vat_code", "vat_code"), ("wht_code", "wht_code"), ("seq_no", "seq_no"),
+                               ("project", "project"), ("work", "work"), ("notes", "notes")):
+                    if d.get(k) in ("", None):
+                        d[k] = old[ok_]
+                if not d.get("bu_code"):
+                    d["bu_id"] = old["bu_id"]
+            if old:
+                cols = _LINE_COLS + ("account", "pct")
+                same = _same_lines(d["lines"], db.q("SELECT * FROM extract_lines WHERE extract_id=? ORDER BY seq, id", (old["id"],)), cols) \
+                    and acc.clean_date(d["date"]) == old["date"] and acc.text(d.get("customer")) in ("", old["customer"] or "") \
+                    and (old["status"] == "posted") == want_posted
+                if same:
+                    stats.setdefault("skipped", {}).setdefault(sheet, 0)
+                    stats["skipped"][sheet] += 1
+                    continue
+                if old["status"] == "posted":
+                    st = str(old.get("eta_status") or "").lower()
+                    if old.get("eta_uuid") and st and not any(w in st for w in ("cancel", "reject", "invalid")):
+                        raise acc.ValidationError(f"Invoice {number} was sent to the tax authority — cancel the e-invoice first, then import the change")
+                    if old["entry_id"]:
+                        acc.void_entry(db, old["entry_id"], "Updated from an imported file", user)
+                xid = acc.save_extract(db, d, extract_id=old["id"])
+                stats.setdefault("updated", {}).setdefault(sheet, 0)
+                stats["updated"][sheet] += 1
+            else:
+                xid = acc.save_extract(db, d)
+            if want_posted:
                 acc.post_extract(db, xid, user=user, ar_account=r.get("ar_account") or None,
                                  revenue_account=r.get("revenue_account") or None)
             n += 1
-        except acc.ValidationError as e:
-            errors.append({"sheet": "Sales Invoices", "row": i, "error": str(e)})
-    if data.get("Sales Invoices"):
+        except (acc.ValidationError, LookupError) as e:
+            errors.append({"sheet": sheet, "row": i, "error": str(e)})
+    if rows:
         counts["Sales Invoices"] = n
 
 

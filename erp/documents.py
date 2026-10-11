@@ -370,8 +370,8 @@ class Styles:
         d("itemNum", sz=9, num="money"); d("itemNumB", sz=9, b=1, num="moneyBlank"); d("itemNeed", sz=9, fill="#FFFF00")
         d("secTotL", b=1, sz=13, fill="#F2F2F2", border=2); d("secTotN", b=1, sz=13, fill="#F2F2F2", border=2, num="money")
 
-    def font_id(self, sz, bold=False, color=None):
-        x = (f'<font>{"<b/>" if bold else ""}<sz val="{sz}"/><color rgb="FF{hex6(color or "#000000")}"/>'
+    def font_id(self, sz, bold=False, color=None, italic=False, underline=False):
+        x = (f'<font>{"<b/>" if bold else ""}{"<i/>" if italic else ""}{"<u/>" if underline else ""}<sz val="{sz}"/><color rgb="FF{hex6(color or "#000000")}"/>'
              f'<name val="{X(self.b["font"] or "Arial")}"/></font>')
         if x not in self.fonts:
             self.fonts.append(x)
@@ -385,14 +385,28 @@ class Styles:
             self.fills.append(x)
         return self.fills.index(x)
 
-    def define(self, name, b=0, sz=10, color=None, fill=None, border=1, h="center", v="center", wrap=0, num=None):
+    def define(self, name, b=0, sz=10, color=None, fill=None, border=1, h="center", v="center", wrap=0, num=None, i=0, u=0):
         nf = 164 if num == "money" else 165 if num == "moneyBlank" else 0
-        self.xfs.append(f'<xf numFmtId="{nf}" fontId="{self.font_id(sz, b, color)}" fillId="{self.fill_id(fill)}" '
+        self.xfs.append(f'<xf numFmtId="{nf}" fontId="{self.font_id(sz, b, color, i, u)}" fillId="{self.fill_id(fill)}" '
                         f'borderId="{border}" xfId="0" applyFont="1" applyFill="1" applyBorder="1"'
                         + (' applyNumberFormat="1"' if nf else "") + f' applyAlignment="1"><alignment horizontal="{h}" '
                         f'vertical="{v}"' + (' wrapText="1"' if wrap else "") + ' readingOrder="2"/></xf>')
         self.S[name] = len(self.xfs) - 1
-        self.defs[len(self.xfs) - 1] = dict(b=b, sz=sz, color=color, fill=fill, border=border, h=h, wrap=wrap, num=num)
+        self.defs[len(self.xfs) - 1] = dict(b=b, sz=sz, color=color, fill=fill, border=border, h=h, wrap=wrap, num=num, i=i, u=u)
+
+    def like(self, name, look):
+        """Style `name` with a line's own look on top (bold, italic, underline, colours, alignment), made once."""
+        if isinstance(look, str):
+            look = json.loads(look) if look.strip() else {}
+        if not look:
+            return self.S[name]
+        key = name + "|" + json.dumps(look, sort_keys=True)
+        if key not in self.S:
+            d = dict(self.defs[self.S[name]])
+            d.update(b=1 if look.get("b") else d["b"], i=1 if look.get("i") else 0, u=1 if look.get("u") else 0,
+                     color=look.get("color") or d["color"], fill=look.get("bg") or d["fill"], h=look.get("align") or d["h"])
+            self.define(key, **d)
+        return self.S[key]
 
     def xml(self):
         m = self.money
@@ -577,6 +591,7 @@ def sheet_html(m, st, *, cols, rtl, title, logo=None, wm=None, font="Arial"):
         bd = {0: "none", 1: "1px solid #000", 2: "2px solid #000", 3: "1px solid #A6A6A6"}[dfn["border"]]
         ha = {"center": "center", "right": "right", "left": "left"}[dfn["h"]]
         rules.append(f".{c}{{font-weight:{700 if dfn['b'] else 400};font-size:{dfn['sz']}pt;color:{dfn['color'] or '#000'};"
+                     f"font-style:{'italic' if dfn.get('i') else 'normal'};text-decoration:{'underline' if dfn.get('u') else 'none'};"
                      f"background:{dfn['fill'] or 'transparent'};border:{bd};text-align:{ha};"
                      f"white-space:{'pre-wrap' if dfn['wrap'] else 'pre'}}}")
     body = []
@@ -733,17 +748,19 @@ def boq_model(db, kind, doc):
                 m.band(r, 1, N, sub, S["subBar"])
                 r += 1
             need = not (float(ln["qty"] or 0) > 0)
-            m.cell(r, 1, ln.get("item_no") or "", S["itemNo"])
-            m.cell(r, 2, ln["description"], S["itemDesc"])
-            m.cell(r, 3, ln.get("unit") or "", S["itemC"])
-            m.cell(r, col["q"], "" if need else float(ln["qty"]), S["itemNeed"] if need else S["itemC"])
-            m.cell(r, col["pr"], float(ln["price"] or 0), S["itemNum"])
-            m.cell(r, col["t"], r2(ln["qty"] * ln["price"]), S["itemNum"], f"{ref(r, col['q'])}*{ref(r, col['pr'])}")
+            lk = ln.get("style") or {}
+            L = lambda nm, lk=lk: st.like(nm, lk)  # noqa: E731 — the line's own look (set on the BOQ / invoice screen)
+            m.cell(r, 1, ln.get("item_no") or "", L("itemNo"))
+            m.cell(r, 2, ln["description"], L("itemDesc"))
+            m.cell(r, 3, ln.get("unit") or "", L("itemC"))
+            m.cell(r, col["q"], "" if need else float(ln["qty"]), S["itemNeed"] if need else L("itemC"))
+            m.cell(r, col["pr"], float(ln["price"] or 0), L("itemNum"))
+            m.cell(r, col["t"], r2(ln["qty"] * ln["price"]), L("itemNum"), f"{ref(r, col['q'])}*{ref(r, col['pr'])}")
             if inv:
                 e = exq.get(_lk(ln), 0)
-                m.cell(r, col["e"], e or "", S["itemC"])
-                m.cell(r, col["a"], val(ln), S["itemNumB"], f"{ref(r, col['e'])}*{ref(r, col['pr'])}")
-            m.cell(r, col["n"], ln.get("notes") or "", S["itemC"])
+                m.cell(r, col["e"], e or "", L("itemC"))
+                m.cell(r, col["a"], val(ln), L("itemNumB"), f"{ref(r, col['e'])}*{ref(r, col['pr'])}")
+            m.cell(r, col["n"], ln.get("notes") or "", L("itemC"))
             m.ht(r, max(15.75, -(-len(ln["description"] or "") // 95) * 12 + 4))
             r += 1
         last = r - 1

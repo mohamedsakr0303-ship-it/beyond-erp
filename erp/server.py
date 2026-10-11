@@ -3281,7 +3281,8 @@ def dashboard_view(ctx):
     ?group= to see — and customise — another group's dashboard."""
     from . import dashboards
     r = dashboards.view(ctx.db, ctx.user, ctx.q, ctx.can, ctx.q.get("group") or None)
-    if ctx.user.get("is_super"):
+    r["designer"] = dashboards.designer(ctx.user, ctx.can)
+    if r["designer"]:
         r["groups"] = [{k: g[k] for k in ("key", "name", "name_ar", "users")} for g in dashboards.groups(ctx.db)]
         r["catalog"] = dashboards.catalog()
         r["cats"] = dashboards.CATS
@@ -3292,14 +3293,15 @@ def dashboard_view(ctx):
 def dashboard_groups(ctx):
     """The groups (to put people in when they are created or edited)."""
     from . import dashboards
-    if not (ctx.user.get("is_admin") or ctx.can("users.users")):
+    if not (ctx.user.get("is_admin") or ctx.can("users.users") or dashboards.designer(ctx.user, ctx.can)):
         raise PermissionError()
     return ok({"groups": [{k: g[k] for k in ("key", "name", "name_ar", "users")} for g in dashboards.groups(ctx.db)]})
 
 
 def _need_super_dash(ctx):
-    if not ctx.user.get("is_super"):
-        raise PermissionError("Only a super administrator can change the dashboards")
+    from . import dashboards
+    if not dashboards.designer(ctx.user, ctx.can):
+        raise PermissionError("Only a super administrator — or someone they allow to design dashboards — can change the dashboards")
 
 
 @route("POST", "/api/dashboard/groups")
@@ -4050,6 +4052,17 @@ def _file_reply(data_name, fmt):
     if fmt in ("pdf", "html"):
         return Reply(data, ctype="text/html; charset=utf-8")
     return download(data, name, XLSX if name.endswith(".xlsx") else DOCX)
+
+
+@route("POST", "/api/lines/parse")
+def lines_parse(ctx):
+    """Lines of a BOQ / invoice read from an Excel file edited outside the app (nothing saved: they go back to the
+    screen, which shows them in place of the current lines until saved)."""
+    kind = "invoice" if ctx.q.get("kind") == "invoice" else "boq"
+    if not ctx.can("sales.invoices" if kind == "invoice" else "estimating.boqs", "add"):
+        raise PermissionError()
+    from . import linesheet
+    return ok(linesheet.parse(ctx.raw or b"", kind))
 
 
 @route("GET", "/api/boqs/<bid>/file")

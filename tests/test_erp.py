@@ -3622,6 +3622,120 @@ class ImportOnlyNew(unittest.TestCase):
         self.assertEqual(count(), after)
 
 
+class ImportUpdatesDocuments(unittest.TestCase):
+    """BOQs and invoices are whole documents: re-importing one edited outside updates it in place (both 'add' and
+    'new rows only'); an unchanged one is skipped; nothing is duplicated."""
+
+    def test_changed_boq_and_invoice(self):
+        from erp import demo
+        db = Database(":memory:")
+        demo.load(db)
+        data = interchange.export_data(db)
+        self.assertTrue(data.get("BOQ Lines") and data.get("Sales Invoices") and data.get("Invoice Lines"))
+        counts = lambda: (db.one("SELECT COUNT(*) n FROM boqs")["n"], db.one("SELECT COUNT(*) n FROM extracts")["n"])  # noqa: E731
+        before = counts()
+        for mode in ("append", "new"):          # unchanged: nothing new, nothing duplicated
+            res = interchange.import_data(db, {k: data[k] for k in ("BOQ Lines", "Sales Invoices", "Invoice Lines")}, mode=mode)
+            self.assertEqual(counts(), before, mode)
+            self.assertFalse(res.get("updated"), mode)
+            self.assertTrue(res["skipped"].get("BOQ Lines") and res["skipped"].get("Sales Invoices"), mode)
+        # one BOQ line's quantity and one invoice line's price change outside the app
+        boq_rows = [dict(r) for r in data["BOQ Lines"]]
+        title = boq_rows[0]["title"]
+        boq_rows[0]["qty"] = float(boq_rows[0]["qty"] or 0) + 7
+        posted = [r for r in data["Sales Invoices"] if str(r.get("status") or "Posted").lower() != "draft"][0]
+        inv_lines = [dict(r) for r in data["Invoice Lines"]]
+        ln = [r for r in inv_lines if r["number"] == posted["number"]][0]
+        ln["price"] = float(ln["price"] or 0) + 100
+        x0 = db.one("SELECT * FROM extracts WHERE number=?", (posted["number"],))
+        old_total = a.get_extract(db, x0["id"])["total"]
+        res = interchange.import_data(db, {"BOQ Lines": boq_rows, "Invoice Lines": inv_lines}, mode="new")
+        self.assertEqual(counts(), before)
+        self.assertEqual(res["updated"], {"BOQ Lines": 1, "Invoice Lines": 1})
+        b = db.one("SELECT id FROM boqs WHERE title=? ORDER BY id DESC", (title,))
+        self.assertIn(boq_rows[0]["qty"], [r["qty"] for r in db.q("SELECT qty FROM boq_lines WHERE boq_id=?", (b["id"],))])
+        x = a.get_extract(db, x0["id"])
+        self.assertEqual(x["status"], "posted")
+        self.assertAlmostEqual(x["total"] - old_total, 100 * float(ln.get("qty") or 1) * float(ln.get("pct") or 1), places=1)
+        self.assertEqual(db.one("SELECT status FROM journal_entries WHERE id=?", (x0["entry_id"],))["status"], "void")   # old entry kept, voided
+        self.assertNotEqual(x["entry_id"], x0["entry_id"])
+        # and importing that same file again changes nothing
+        res = interchange.import_data(db, {"BOQ Lines": boq_rows, "Invoice Lines": inv_lines}, mode="append")
+        self.assertFalse(res.get("updated"))
+
+
+class LinesFromExcel(unittest.TestCase):
+    """A BOQ / invoice edited outside the app comes back line for line, with each line's look; a plain sheet too."""
+
+    def test_round_trip_and_plain_sheet(self):
+        import io
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill
+        from erp import demo, documents, linesheet
+        db = Database(":memory:")
+        demo.load(db)
+        bid = db.one("SELECT id FROM boqs ORDER BY id")["id"]
+        B = a.get_boq(db, bid)
+        lines = [dict(x) for x in B["lines"]]
+        lines[1]["style"] = {"b": 1, "bg": "#FFFF00", "color": "#c00000", "align": "center", "junk": 1}
+        a.save_boq(db, dict(B, lines=lines), boq_id=bid)
+        B = a.get_boq(db, bid)
+        self.assertEqual(B["lines"][1]["style"], {"b": 1, "bg": "#ffff00", "color": "#c00000", "align": "center"})
+        data, _ = documents.boq_file(db, bid, "xlsx")
+        got = linesheet.parse(data)["lines"]
+        self.assertEqual([(x["category"], x["description"], x["qty"], x["price"]) for x in got],
+                         [(x["category"], x["description"], x["qty"], x["price"]) for x in B["lines"]])
+        self.assertEqual(got[1]["style"], {"b": 1, "bg": "#ffff00", "color": "#c00000", "align": "center"})
+        self.assertEqual(got[0]["style"], {})
+        # someone's own sheet: Arabic headers, a section bar, a total row, amounts with thousands separators
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.append(["مقايسة"])
+        ws.append(["م", "البيان", "الوحدة", "الكمية", "السعر", "الإجمالي"])
+        ws.append(["1- أعمال الهدم"])
+        ws.append([1, "هدم حوائط", "م2", "1,200", 50, 60000])
+        ws.append([2, "نقل مخلفات", "نقلة", 10, None, 3000])
+        ws["B5"].font = Font(bold=True)
+        ws["B5"].fill = PatternFill("solid", fgColor="FFE2EFDA")
+        ws.append(["إجمالي أعمال الهدم", None, None, None, None, 63000])
+        buf = io.BytesIO()
+        wb.save(buf)
+        got = linesheet.parse(buf.getvalue())["lines"]
+        self.assertEqual([(x["item_no"], x["category"], x["qty"], x["price"]) for x in got],
+                         [("1", "أعمال الهدم", 1200, 50), ("2", "أعمال الهدم", 10, 300)])
+        self.assertEqual(got[1]["style"], {"b": 1, "bg": "#e2efda"})
+        with self.assertRaises(a.ValidationError):
+            linesheet.parse(b"not a workbook")
+
+
+class DashboardDesign(unittest.TestCase):
+    """Cards and pages keep only what the designer allows (no unsafe links, no stray keys); building blocks may repeat;
+    designing is for super administrators and whoever they allow."""
+
+    def test_clean_and_permission(self):
+        from erp import dashboards as dsh
+        db = Database(":memory:")
+        dsh.seed(db)
+        lay = [{"w": "text", "look": {"title": "Hi", "body": "**b**", "style": "solid", "color": "#ABCDEF", "evil": 1}},
+               {"w": "text", "look": {"style": "nope"}},
+               {"w": "links", "look": {"links": [{"label": "Ok", "href": "#/invoices"}, {"label": "Bad", "href": "javascript:alert(1)"},
+                                                 {"label": "Web", "href": "https://example.com/x"}]}},
+               {"w": "monthly_chart", "look": {"chart": "area", "height": "tall"}}]
+        dsh.save_group(db, "finance", {"layout": lay, "look": {"heading": "Hello {name}", "accent": "#123456", "gap": "airy", "x": 1}})
+        g = db.one("SELECT layout, look FROM user_groups WHERE key='finance'")
+        L = json.loads(g["layout"])
+        self.assertEqual(L[0]["look"], {"title": "Hi", "body": "**b**", "style": "solid", "color": "#abcdef"})
+        self.assertNotIn("look", L[1])
+        self.assertEqual([x["href"] for x in L[2]["look"]["links"]], ["#/invoices", "https://example.com/x"])
+        self.assertEqual(L[3]["look"], {"chart": "area", "height": "tall"})
+        self.assertEqual(json.loads(g["look"]), {"heading": "Hello {name}", "accent": "#123456", "gap": "airy"})
+        self.assertTrue(dsh.designer({"is_super": True}, lambda *a: False))
+        self.assertTrue(dsh.designer({}, lambda m, lv="view": m == "settings.dashboards" and lv == "edit"))
+        self.assertFalse(dsh.designer({"is_admin": True}, lambda *a: False))
+        key = dsh.save_group(db, dsh.new_key(db, "Site engineers"), {"name": "Site engineers", "copy_from": "finance"})
+        self.assertEqual(json.loads(db.one("SELECT look FROM user_groups WHERE key=?", (key,))["look"])["accent"], "#123456")
+
+
 class Support(unittest.TestCase):
     """Help & support tickets: a reference built from the date and record number; people see their own, admins all."""
 

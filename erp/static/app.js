@@ -126,15 +126,15 @@ function uiDialog(msg, o = {}) {
     bg.innerHTML = `<div class="dlg${danger ? " danger" : ""}" role="${input ? "dialog" : "alertdialog"}" aria-modal="true">
       ${o.title ? `<h3>${esc(o.title)}</h3>` : ""}<div class="dlg-msg">${esc(String(msg == null ? "" : msg))}</div>
       ${input ? `<input class="dlg-in" value="${esc(String(o.input))}" dir="auto">` : ""}
-      <div class="dlg-foot">${o.cancel === false ? "" : `<button type="button" class="btn" data-r="0">${esc(o.cancel || L("Cancel", "إلغاء"))}</button>`}
+      <div class="dlg-foot">${o.cancel === false ? "" : `<button type="button" class="btn" data-r="0">${esc(o.cancel || L("Cancel", "إلغاء"))}</button>`}${o.alt ? `<button type="button" class="btn" data-r="2">${esc(o.alt)}</button>` : ""}
         <button type="button" class="btn ${danger ? "danger" : "pri"}" data-r="1">${esc(o.ok || (danger && !input && /\bdelete\b|حذف/i.test(msg) ? L("Delete", "حذف") : L("OK", "موافق")))}</button></div></div>`;
     const inp = $(".dlg-in", bg);
-    const value = yes => (input ? (yes ? inp.value : null) : o.cancel === false ? undefined : yes);
+    const value = yes => (yes === "alt" ? "alt" : input ? (yes ? inp.value : null) : o.cancel === false ? undefined : yes);
     const done = yes => { document.removeEventListener("keydown", key, true); bg.classList.add("out"); setTimeout(() => bg.remove(), 120);
       try { if (prev && prev.focus) prev.focus(); } catch { /* gone */ } resolve(value(yes)); };
     const key = e => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); done(false); }
       else if (e.key === "Enter" && !e.shiftKey && (!inp || document.activeElement === inp)) { e.preventDefault(); e.stopPropagation(); done(true); } };
-    bg.addEventListener("click", e => { e.stopPropagation(); const b = e.target.closest("[data-r]"); if (b) done(b.dataset.r === "1"); else if (e.target === bg) done(false); });
+    bg.addEventListener("click", e => { e.stopPropagation(); const b = e.target.closest("[data-r]"); if (b) done(b.dataset.r === "2" ? "alt" : b.dataset.r === "1"); else if (e.target === bg) done(false); });
     document.addEventListener("keydown", key, true);
     document.body.appendChild(bg);
     const f = inp || $("[data-r='1']", bg); f.focus(); if (inp) inp.select();
@@ -1838,35 +1838,52 @@ function countUp(root) {
 // look at any group's dashboard, and may let a group see a widget beyond its permissions. The server sends only the
 // widgets — and figures — the person may see.
 const DASH = { edit: null };
+// who may design the dashboards (and their groups): super administrators, and whoever they allow
+const canDesign = () => !!(S.boot.user.is_super || can("settings.dashboards", "edit"));
 PAGES.dashboard = async (view, parts, q) => {
-  const sup = !!S.boot.user.is_super;
+  const sup = canDesign();
   const group = sup ? (q.group || store.get("dashGroup", "")) : "";
   const d = await api("GET", "/api/dashboard/view?" + qs({ group, date_from: q.date_from || yearStart(), date_to: q.date_to || "", bu_id: q.bu_id || "" }));
   if (DASH.edit && DASH.edit.group !== d.group) DASH.edit = null;
+  if (DASH.autoEdit === d.group && sup) {     // a group just created: straight into designing its dashboard
+    DASH.autoEdit = null; DASH.edit = { group: d.group, look: JSON.parse(JSON.stringify(d.look || {})),
+      layout: d.widgets.map(({ w, size, grant, opts, look }) => ({ w, size, grant, opts: opts || {}, look: JSON.parse(JSON.stringify(look || {})) })) }; }
   const ed = DASH.edit, items = ed ? ed.layout : d.widgets;
-  const dataOf = {}; d.widgets.forEach(w => { dataOf[w.w] = w; });
+  const page = ed ? ed.look : (d.look || {});
+  // each card's figures (a card may appear more than once: text, buttons, account balances)
+  const pool = {}; d.widgets.forEach(w => { (pool[w.w] = pool[w.w] || []).push(w); });
+  const dataFor = items.map(e => { const l = pool[e.w] || []; return l.length > 1 ? l.shift() : l[0]; });
   const cat = Object.fromEntries((d.catalog || []).map(w => [w.id, w]));
   const gname = g => (S.lang === "ar" && g.name_ar) || g.name;
   const top = `<div class="toolbar dash-bar">
       ${sup ? `<label class="dash-grp">${svg("users")}<select data-change="dgroup" aria-label="${esc(L2("Dashboard of the group", "لوحة المجموعة"))}">${(d.groups || []).map(g => `<option value="${esc(g.key)}" ${g.key === d.group ? "selected" : ""}>${esc(gname(g))} (${g.users})</option>`).join("")}</select></label>` : ""}
       <span class="spacer"></span>
-      ${sup ? (ed ? `<button class="btn" data-a="dadd">${svg("plus")} ${esc(L2("Add widget", "إضافة عنصر"))}</button><button class="btn" data-a="dgroups">${esc(L2("Groups…", "المجموعات…"))}</button>
+      ${sup ? (ed ? `<button class="btn" data-a="dadd">${svg("plus")} ${esc(L2("Add card", "إضافة بطاقة"))}</button><button class="btn" data-a="dpage">🎨 ${esc(L2("Page design", "تصميم الصفحة"))}</button>
+          <button class="btn" data-a="dgroups">${svg("users")} ${esc(L2("Groups", "المجموعات"))}</button>
           <button class="btn" data-a="dcancel">${esc(t("cancel"))}</button><button class="btn pri" data-a="dsave">${esc(t("save"))}</button>`
-        : `<button class="btn" data-a="dedit">${svg("pen")} ${esc(L2("Customise this dashboard", "تخصيص هذه اللوحة"))}</button>`) : ""}</div>
-    ${ed ? `<div class="banner info">${esc(L2(`Customising the dashboard of “${d.name}”. Drag cards (or use the arrows) to reorder, choose a size, tick 🔓 to show a card even to people whose permissions do not include it, then Save.`,
-      `تخصيص لوحة «${d.name_ar || d.name}». اسحب البطاقات (أو استخدم الأسهم) لترتيبها، واختر الحجم، وفعّل 🔓 لإظهار بطاقة حتى لمن لا تشملها صلاحياته، ثم احفظ.`))}</div>` : ""}`;
-  view.innerHTML = filterBar({ date_from: q.date_from || yearStart(), ...q }, ["dates", "bu"]) +
+        : `<button class="btn" data-a="dgroups">${svg("users")} ${esc(L2("Groups", "المجموعات"))}</button><button class="btn" data-a="dedit">${svg("pen")} ${esc(L2("Design this dashboard", "تصميم هذه اللوحة"))}</button>`) : ""}</div>
+    ${ed ? `<div class="banner info">${esc(L2(`Designing the dashboard of “${d.name}”. Drag cards to reorder, pick a size, press 🎨 on a card for its title, style, colour and chart, double-click a title to rename it, “Page design” for the heading and look of the whole page, 🔓 to show a card even to people whose permissions do not include it — then Save.`,
+      `تصميم لوحة «${d.name_ar || d.name}». اسحب البطاقات لترتيبها، واختر الحجم، واضغط 🎨 على البطاقة لعنوانها وشكلها ولونها ونوع الرسم، وانقر مرتين على العنوان لتغييره، و«تصميم الصفحة» لعنوان الصفحة وشكلها، و🔓 لإظهار بطاقة حتى لمن لا تشملها صلاحياته — ثم احفظ.`))}</div>` : ""}`;
+  const who = (S.boot.profile && S.boot.profile.display_name) || S.boot.user.full_name || S.boot.user.username;
+  const fillName = x => String(x || "").replace(/\{name\}/g, who);
+  const head = page.heading || page.subtitle ? `<div class="dash-head"><h1>${esc(fillName(L2(page.heading || "", page.heading_ar || page.heading || "")))}</h1>${page.subtitle ? `<p>${esc(fillName(L2(page.subtitle, page.subtitle_ar || page.subtitle)))}</p>` : ""}</div>` : "";
+  const pageCls = ["dash-page", page.gap ? "gap-" + page.gap : "", page.corners ? "cor-" + page.corners : "", page.backdrop ? "bd-" + page.backdrop : ""].join(" ");
+  view.innerHTML = `<div class="${pageCls}" ${page.accent ? `style="--brand:${esc(page.accent)};--dash-accent:${esc(page.accent)}"` : ""}>` + head +
+    (page.hide_filters && !ed ? "" : filterBar({ date_from: q.date_from || yearStart(), ...q }, ["dates", "bu"])) +
     (S.boot.settings.demo_loaded ? `<div class="banner info">${L2("You are looking at the demo company (invented data).", "هذه بيانات الشركة التجريبية (بيانات وهمية).")} <a href="#/data">${L2("Demo & data", "البيانات التجريبية")}</a></div>` : "") +
-    top + `<div class="wgrid ${ed ? "editing" : ""}">${items.map((e, i) => widgetHtml(e, dataOf[e.w], cat[e.w], i, !!ed)).join("") ||
+    top + `<div class="wgrid ${ed ? "editing" : ""}">${items.map((e, i) => widgetHtml(e, dataFor[i], cat[e.w], i, !!ed)).join("") ||
       `<div class="card empty" style="grid-column:1/-1">${svg("chart")}<div>${esc(sup ? L2("No cards yet — press Customise to add some.", "لا توجد بطاقات — اضغط تخصيص لإضافتها.")
-        : L2("Your dashboard is empty — a super administrator sets it up for your group.", "لوحتك فارغة — يجهزها المدير العام لمجموعتك."))}</div></div>`}</div>`;
+        : L2("Your dashboard is empty — a super administrator sets it up for your group.", "لوحتك فارغة — يجهزها المدير العام لمجموعتك."))}</div></div>`}</div></div>`;
   const months = +(store.get("dashMonths", "12")) || 12;
   Object.assign(S.H, {
     dmonths: el => { store.set("dashMonths", el.dataset.m); route(); },
     dgroup: el => { store.set("dashGroup", el.value); DASH.edit = null; route(); },
-    dedit: () => { DASH.edit = { group: d.group, layout: d.widgets.map(({ w, size, grant, opts }) => ({ w, size, grant, opts: opts || {} })) }; route(); },
+    dedit: () => { DASH.edit = { group: d.group, look: JSON.parse(JSON.stringify(d.look || {})),
+      layout: d.widgets.map(({ w, size, grant, opts, look }) => ({ w, size, grant, opts: opts || {}, look: JSON.parse(JSON.stringify(look || {})) })) }; route(); },
     dcancel: () => { DASH.edit = null; route(); },
-    dsave: async () => { try { await api("PUT", "/api/dashboard/groups/" + d.group, { layout: DASH.edit.layout }); DASH.edit = null; toast(t("saved")); route(); } catch (e) { fail(e); } },
+    dsave: async () => { try { await api("PUT", "/api/dashboard/groups/" + d.group, { layout: DASH.edit.layout, look: DASH.edit.look }); DASH.edit = null; toast(t("saved")); route(); } catch (e) { fail(e); } },
+    ddesign: el => cardDesign(DASH.edit.layout[+el.dataset.i], cat[DASH.edit.layout[+el.dataset.i].w]),
+    dpage: () => pageDesign(DASH.edit.look),
     dmove: el => { const i = +el.dataset.i, j = i + +el.dataset.by, L = DASH.edit.layout; if (j < 0 || j >= L.length) return; [L[i], L[j]] = [L[j], L[i]]; route(); },
     dsize: el => { DASH.edit.layout[+el.dataset.i].size = +el.dataset.s; route(); },
     dgrant: el => { const e = DASH.edit.layout[+el.dataset.i]; e.grant = !e.grant; route(); },
@@ -1875,6 +1892,12 @@ PAGES.dashboard = async (view, parts, q) => {
     dadd: () => widgetPicker(d),
     dgroups: () => groupsDrawer(d),
   });
+  if (ed) {   // double-click a card's title to rename it
+    $$(".wg h2", view).forEach(h => h.addEventListener("dblclick", async () => { const e = DASH.edit.layout[+h.closest(".wg").dataset.i], info = cat[e.w] || {};
+      const k = S.lang === "ar" ? "title_ar" : "title", cur = (e.look || {})[k] || L2(info.en || "", info.ar || "");
+      const v = await uiPrompt(L2("Card title (empty = the standard name)", "عنوان البطاقة (فارغ = الاسم الأصلي)"), cur); if (v === null) return;
+      e.look = { ...(e.look || {}), [k]: v.trim() }; if (!v.trim()) delete e.look[k]; route(); }));
+  }
   if (ed) {   // drag to reorder
     let from = null;
     $$(".wg", view).forEach(c => {
@@ -1905,33 +1928,104 @@ PAGES.dashboard = async (view, parts, q) => {
 // one card
 function widgetHtml(e, got, info, i, editing) {
   const w = got || { ...e, en: (info || {}).en || e.w, ar: (info || {}).ar || e.w, size: e.size || (info || {}).size || 2 };
-  const size = e.size || w.size || 2, title = L2(w.en, w.ar);
+  const lk = e.look || {}, size = e.size || w.size || 2;
+  const title = (S.lang === "ar" ? lk.title_ar || lk.title : lk.title) || L2(w.en, w.ar);
   const tools = editing ? `<div class="wg-tools"><span class="wg-drag" title="${esc(L2("Drag to move", "اسحب للتحريك"))}">⠿</span>
       <button class="lnk" data-a="dmove" data-i="${i}" data-by="-1" title="${esc(L2("Earlier", "قبل"))}">‹</button><button class="lnk" data-a="dmove" data-i="${i}" data-by="1" title="${esc(L2("Later", "بعد"))}">›</button>
       <span class="wg-sizes">${[[1, "S"], [2, "M"], [4, "L"]].map(([v, l]) => `<button class="lnk ${size === v ? "on" : ""}" data-a="dsize" data-i="${i}" data-s="${v}" title="${esc(L2(["", "Small", "Medium", "", "Wide"][v], ["", "صغير", "متوسط", "", "عريض"][v]))}">${l}</button>`).join("")}</span>
       <button class="lnk ${e.grant ? "on" : ""}" data-a="dgrant" data-i="${i}" title="${esc(L2("Show even to people whose permissions do not include it", "إظهارها حتى لمن لا تشملها صلاحياته"))}">${e.grant ? "🔓" : "🔒"}</button>
+      <button class="lnk" data-a="ddesign" data-i="${i}" title="${esc(L2("Design: title, style, colour, chart", "التصميم: العنوان والشكل واللون والرسم"))}">🎨</button>
       ${info && Object.keys(info.opts || {}).length ? `<button class="lnk" data-a="dopts" data-i="${i}" title="${esc(L2("Options", "خيارات"))}">⚙</button>` : ""}
       <button class="lnk" data-a="ddel" data-i="${i}" title="${esc(L2("Remove", "إزالة"))}">✕</button></div>` : "";
+  const design = ["text", "heading", "links"].includes(e.w);
   let body;
-  if (!got || (!got.data && !got.error)) body = `<div class="empty small">${esc(L2("Figures appear after saving.", "تظهر الأرقام بعد الحفظ."))}</div>`;
+  if (design) body = (WIDGET_DRAW[e.w] || (() => ""))({}, w, e);
+  else if (!got || (!got.data && !got.error)) body = `<div class="empty small">${esc(L2("Figures appear after saving.", "تظهر الأرقام بعد الحفظ."))}</div>`;
   else if (got.error) body = `<div class="banner err">${esc(got.error)}</div>`;
-  else body = (WIDGET_DRAW[e.w] || (() => ""))(got.data, got, e);
-  const bare = ["revenue", "costs", "net_profit", "cash"].includes(e.w) && !editing;
-  return `<section class="wg s${size} ${bare ? "bare" : ""}" data-i="${i}" ${editing ? 'draggable="true"' : ""}>${tools}
-    ${bare ? body : `<div class="card wcard"><h2>${esc(title)}${e.grant && editing ? ` <span class="chip">🔓 ${esc(L2("shown to all", "ظاهرة للجميع"))}</span>` : ""}</h2>${body}</div>`}</section>`;
+  else body = (WIDGET_DRAW[e.w] || (() => ""))(got.data, { ...got, en: title, ar: title }, e);
+  const bare = (["revenue", "costs", "net_profit", "cash"].includes(e.w) && !editing) || (e.w === "heading" && !editing);
+  const cls = [`wg s${size}`, bare ? "bare" : "", lk.style ? "st-" + lk.style : "", lk.height ? "h-" + lk.height : "", lk.color ? "has-wc" : "", "w-" + e.w].join(" ");
+  const showTitle = !lk.hide_title && e.w !== "heading";
+  return `<section class="${cls}" data-i="${i}" ${lk.color ? `style="--wc:${esc(lk.color)}"` : ""} ${editing ? 'draggable="true"' : ""}>${tools}
+    ${bare ? body : `<div class="card wcard">${showTitle || editing ? `<h2 ${!showTitle ? 'class="ghost"' : ""} ${editing ? `title="${esc(L2("Double-click to rename", "انقر مرتين لتغيير الاسم"))}"` : ""}>${esc(title)}${e.grant && editing ? ` <span class="chip">🔓 ${esc(L2("shown to all", "ظاهرة للجميع"))}</span>` : ""}</h2>` : ""}${body}</div>`}</section>`;
+}
+// text, headings and buttons: their content is the card's design
+const cardText = s => esc(s || "").replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/(^|\s)_(.+?)_(?=\s|$)/g, "$1<i>$2</i>")
+  .split(/\n{2,}/).map(par => /^\s*[-•]\s/m.test(par) ? `<ul>${par.split("\n").filter(x => x.trim()).map(x => `<li>${x.replace(/^\s*[-•]\s*/, "")}</li>`).join("")}</ul>` : `<p>${par.replace(/\n/g, "<br>")}</p>`).join("");
+// the monthly chart as lines or a filled area (the bars are monthBars)
+function monthLines(series, area) {
+  if (!series.length) return `<div class="empty">${t("nothing")}</div>`;
+  const W = 640, H = 230, padB = 26, max = Math.max(1, ...series.map(s => Math.max(s.revenue, s.costs)));
+  const step = W / series.length, y = v => (H - padB) - v / max * (H - padB - 12), x = i => i * step + step / 2;
+  const line = k => smoothPath(series.map((s, i) => [x(i), y(s[k])]));
+  const grid = [0.25, 0.5, 0.75, 1].map(f => `<line x1="0" x2="${W}" y1="${y(max * f)}" y2="${y(max * f)}" class="gl"/>`).join("");
+  const fill = k => area ? `<path d="${line(k)} L${x(series.length - 1)},${H - padB} L${x(0)},${H - padB} Z" class="ar ${k === "revenue" ? "r" : "c"}"/>` : "";
+  const pts = k => series.map((s, i) => `<circle cx="${x(i)}" cy="${y(s[k])}" r="3.2" class="pt ${k === "revenue" ? "r" : "c"}"/>`).join("");
+  const hits = series.map((s, i) => `<g class="mb" data-tip="${esc(s.month)}&#10;${esc(t("rev"))}: ${money(s.revenue)}&#10;${esc(t("costs"))}: ${money(s.costs)}&#10;${esc(t("net_profit"))}: ${money(s.revenue - s.costs)}">
+      <rect x="${x(i) - step / 2}" y="0" width="${step}" height="${H}" class="hit"/><text x="${x(i)}" y="${H - 8}">${esc(s.month.slice(5))}/${esc(s.month.slice(2, 4))}</text></g>`).join("");
+  return `<div class="mchart"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${grid}${fill("revenue")}${fill("costs")}
+    <path d="${line("revenue")}" class="ln r"/><path d="${line("costs")}" class="ln c"/>${pts("revenue")}${pts("costs")}${hits}</svg><div class="tip" hidden></div></div>`;
+}
+// 🎨 one card's design
+function cardDesign(e, info) {
+  const lk = e.look = e.look || {}, ar = S.lang === "ar";
+  const isText = e.w === "text", isHead = e.w === "heading", isLinks = e.w === "links", chart = e.w === "monthly_chart", hero = ["revenue", "costs", "net_profit", "cash"].includes(e.w);
+  const styles = [["card", L2("Card", "بطاقة")], ["glass", L2("Glass", "زجاجي")], ["solid", L2("Solid colour", "لون كامل")], ["outline", L2("Outline", "إطار")], ["gradient", L2("Soft gradient", "تدرج ناعم")], ["plain", L2("No box", "بدون إطار")]];
+  drawer(L2("Card design", "تصميم البطاقة") + " — " + L2(info.en, info.ar), form([
+    ...inLang(["title", lk.title || ""], ["title_ar", lk.title_ar || ""], isHead ? L2("Heading", "العنوان") : L2("Title", "العنوان"), { ph: L2(info.en, info.ar) }),
+    ...(isHead ? inLang(["body", lk.body || ""], ["body_ar", lk.body_ar || ""], L2("Text under it", "نص أسفله"), {}) : []),
+    ...(isText ? [{ k: "body", l: L2("Text", "النص") + (ar ? "" : " (English)"), type: "textarea", v: lk.body || "", span: "spanall", help: L2("**bold**, _italic_, a line starting with “- ” is a list, an empty line starts a new paragraph.", "**عريض**، _مائل_، السطر الذي يبدأ بـ «- » قائمة، والسطر الفارغ فقرة جديدة.") },
+      { k: "body_ar", l: L2("Text (Arabic)", "النص (عربي)"), type: "textarea", v: lk.body_ar || "", span: "spanall" }] : []),
+    ...(isLinks ? [{ k: "links", l: L2("Buttons — one per line: Label | where it goes", "الأزرار — زر في كل سطر: الاسم | الوجهة"), type: "textarea", span: "spanall",
+      v: (lk.links || []).map(x => `${x.label} | ${x.href}`).join("\n"), help: L2("Where: a screen such as #/invoices or #/report/income_statement, or a web address (https://…).", "الوجهة: شاشة مثل #/invoices أو #/report/income_statement، أو عنوان ويب (https://…).") }] : []),
+    { k: "hide_title", l: L2("Hide the title", "إخفاء العنوان"), type: "checkbox", v: !!lk.hide_title },
+    ...(!isHead ? [{ k: "style", l: L2("Style", "الشكل"), type: "select", v: lk.style || "card", opts: styles }] : []),
+    { k: "color", l: L2("Colour", "اللون"), type: "color", v: lk.color || "#6f6cff" },
+    { k: "use_color", l: L2("Use this colour", "استخدام هذا اللون"), type: "checkbox", v: !!lk.color },
+    ...(!isHead ? [{ k: "height", l: L2("Height", "الارتفاع"), type: "select", v: lk.height || "auto", opts: [["auto", L2("Fit the content", "حسب المحتوى")], ["short", L2("Compact (scrolls)", "مضغوط (بتمرير)")], ["tall", L2("Tall", "طويل")]] }] : []),
+    ...(chart ? [{ k: "chart", l: L2("Chart style", "شكل الرسم"), type: "select", v: lk.chart || "bars", opts: [["bars", L2("Bars", "أعمدة")], ["lines", L2("Lines", "خطوط")], ["area", L2("Area", "مساحة")]] }] : []),
+    ...(hero ? [{ k: "no_trend", l: L2("Hide the trend line", "إخفاء خط الاتجاه"), type: "checkbox", v: !!lk.no_trend }] : []),
+    ...(isText || isHead || isLinks ? [{ k: "align", l: L2("Alignment", "المحاذاة"), type: "select", v: lk.align || "start", opts: [["start", L2("Start", "البداية")], ["center", L2("Centre", "الوسط")], ["end", L2("End", "النهاية")]] },
+      { k: "font", l: L2("Text size", "حجم النص"), type: "select", v: lk.font || "normal", opts: [["normal", L2("Normal", "عادي")], ["large", L2("Large", "كبير")], ["huge", L2("Very large", "كبير جداً")]] }] : []),
+  ]), async v => {
+    const out = { title: v.title, title_ar: v.title_ar, body: v.body, body_ar: v.body_ar, hide_title: v.hide_title, style: v.style, height: v.height, chart: v.chart,
+      no_trend: v.no_trend, align: v.align, font: v.font, color: v.use_color ? v.color : "" };
+    if (isLinks) out.links = String(v.links || "").split("\n").map(x => x.split("|")).filter(x => x.length >= 2 && x[0].trim() && x[1].trim()).map(([l, ...h]) => ({ label: l.trim(), href: h.join("|").trim() }));
+    Object.keys(out).forEach(k => { if (out[k] === "" || out[k] == null || out[k] === false || (Array.isArray(out[k]) && !out[k].length)) delete out[k]; });
+    e.look = out; route();
+  }, { submitLabel: L2("Apply", "تطبيق"), noDraft: true });
+}
+// 🎨 the page itself: heading, accent, spacing, corners, backdrop
+function pageDesign(lk) {
+  drawer(L2("Page design", "تصميم الصفحة"), form([
+    ...inLang(["heading", lk.heading || ""], ["heading_ar", lk.heading_ar || ""], L2("Heading", "العنوان"), { ph: L2("e.g. Good morning, {name}", "مثال: صباح الخير يا {name}") }),
+    ...inLang(["subtitle", lk.subtitle || ""], ["subtitle_ar", lk.subtitle_ar || ""], L2("Subtitle", "العنوان الفرعي"), {}),
+    { k: "accent", l: L2("Accent colour", "لون التمييز"), type: "color", v: lk.accent || "#6f6cff" }, { k: "use_accent", l: L2("Use this accent", "استخدام هذا اللون"), type: "checkbox", v: !!lk.accent },
+    { k: "gap", l: L2("Spacing", "المسافات"), type: "select", v: lk.gap || "", opts: [["compact", L2("Compact", "متقاربة")], ["", L2("Standard", "عادية")], ["airy", L2("Airy", "واسعة")]] },
+    { k: "corners", l: L2("Corners", "الحواف"), type: "select", v: lk.corners || "", opts: [["", L2("Rounded", "مستديرة")], ["soft", L2("Softer", "أنعم")], ["square", L2("Square", "حادة")]] },
+    { k: "backdrop", l: L2("Backdrop", "الخلفية"), type: "select", v: lk.backdrop || "", opts: [["", L2("Plain", "سادة")], ["glow", L2("Soft glow", "توهج خفيف")], ["gradient", L2("Gradient", "تدرج")]] },
+    { k: "hide_filters", l: L2("Hide the date / business-unit filters", "إخفاء فلاتر التاريخ ووحدة الأعمال"), type: "checkbox", v: !!lk.hide_filters },
+    { html: `<p class="muted">${esc(L2("{name} in the heading becomes the viewer's name.", "{name} في العنوان يُستبدل باسم المستخدم."))}</p>`, span: "spanall" },
+  ]), async v => {
+    const out = { heading: v.heading, heading_ar: v.heading_ar, subtitle: v.subtitle, subtitle_ar: v.subtitle_ar, accent: v.use_accent ? v.accent : "", gap: v.gap, corners: v.corners, backdrop: v.backdrop, hide_filters: v.hide_filters };
+    Object.keys(out).forEach(k => { if (!out[k]) delete out[k]; });
+    Object.keys(lk).forEach(k => delete lk[k]); Object.assign(lk, out); route();
+  }, { submitLabel: L2("Apply", "تطبيق"), noDraft: true });
 }
 const wList = (rows, empty) => rows && rows.length ? `<div class="wlist">${rows.map(r => `<a class="wl-row" href="${esc(r.href || "#/dashboard")}"><span class="dot ${r.level || "info"}"></span>
     <span class="wl-main"><b>${esc(r.title || "")}</b><small>${esc(r.sub || "")}</small></span>${r.value != null ? `<b class="wl-val ${r.value < 0 ? "neg" : ""}">${money(r.value)}</b>` : ""}</a>`).join("")}</div>`
   : `<div class="empty small">${svg("check")}<div>${esc(empty || L2("Nothing here right now.", "لا يوجد شيء الآن."))}</div></div>`;
 const wStat = (value, sub, href, isMoney) => `<a class="wstat" href="${esc(href || "#/dashboard")}"><b data-count="${value}" ${isMoney ? 'data-fmt="money"' : ""}>${isMoney ? money(value) : value}</b>${sub ? `<small>${esc(L2(sub[0], sub[1]))}</small>` : ""}</a>`;
+const lookColor = (e, dflt) => (((e || {}).look || {}).color) || dflt;
+const trendOf = (x, e) => (((e || {}).look || {}).no_trend ? null : x.series);
 function heroCard(cls, ic, label, value, series, color, extra = "", after = "") {
   return `<div class="hero ${cls}"><div class="hero-top"><span class="hero-ic">${svg(ic)}</span>
     <div><div class="hero-v" data-count="${value}" data-fmt="money">${money(value)}</div><div class="hero-l">${esc(label)}</div></div>${extra}</div>${series ? spark(series, color, cls) : ""}${after}</div>`;
 }
 const WIDGET_DRAW = {
-  revenue: (x, w) => heroCard("h-rev", "in", L2(w.en, w.ar), x.value, x.series, "#34c77b"),
-  costs: (x, w) => heroCard("h-cost", "out", L2(w.en, w.ar), x.value, x.series, "#ff5a5f"),
-  net_profit: (x, w) => heroCard("h-prof", "chart", L2(w.en, w.ar), x.value, x.series, "#ffa726", `<span class="chip ${x.value < 0 ? "bad" : "ok"} hero-chip">${pct(x.chip)}</span>`),
+  revenue: (x, w, e) => heroCard("h-rev", "in", L2(w.en, w.ar), x.value, trendOf(x, e), lookColor(e, "#34c77b")),
+  costs: (x, w, e) => heroCard("h-cost", "out", L2(w.en, w.ar), x.value, trendOf(x, e), lookColor(e, "#ff5a5f")),
+  net_profit: (x, w, e) => heroCard("h-prof", "chart", L2(w.en, w.ar), x.value, trendOf(x, e), lookColor(e, "#ffa726"), `<span class="chip ${x.value < 0 ? "bad" : "ok"} hero-chip">${pct(x.chip)}</span>`),
   cash: (x, w) => { const cp = x.floor, gap = cp.floor ? cp.cash / cp.floor : NaN;
     return heroCard("h-cash", "wallet", L2(w.en, w.ar), x.value, null, "#5b9dff", "", `<div class="hero-floor"><div class="meter"><i style="width:${Math.max(3, Math.min(100, (isFinite(gap) ? gap : 1) * 100)).toFixed(0)}%"></i></div>
       <small>${esc(t("cash_floor"))} ${money(cp.floor)} ${cp.gap > 0 ? `· <b class="neg">−${money(cp.gap)}</b>` : "✓"}</small></div>`); },
@@ -1940,9 +2034,17 @@ const WIDGET_DRAW = {
       ["accrued", t("accrued"), "#/payables", "var(--warn)"], ["inventory", t("inventory"), "#/stock", "#14b8a6"], ["ebitda", t("ebitda"), "#/report/income_statement", "var(--good)"]];
     return `<div class="posgrid">${pos.map(([k, l, href, c]) => `<a class="posit" href="${href}" style="--c:${c}"><i></i><div><small>${esc(l)}</small><b class="${x[k] < 0 ? "neg" : ""}" data-count="${x[k]}" data-fmt="money">${money(x[k])}</b></div></a>`).join("")}</div>
       <div class="rings">${ring(x.margins.ebitda, t("ebitda"), "r1")}${ring(x.margins.net, t("net_profit"), "r2")}${ring(gap, L2("Cash vs safety floor", "النقدية مقابل حد الأمان"), "r3")}</div>`; },
-  monthly_chart: x => { const months = +(store.get("dashMonths", "12")) || 12, sr = (x.series || []).slice(-months);
+  monthly_chart: (x, w, e) => { const months = +(store.get("dashMonths", "12")) || 12, sr = (x.series || []).slice(-months), kind = ((e || {}).look || {}).chart;
     return `<div class="row" style="justify-content:flex-end;margin:-6px 0 6px"><span class="seg">${[6, 12].map(m => `<button class="btn sm ${months === m ? "pri" : ""}" data-a="dmonths" data-m="${m}">${m} ${esc(L2("months", "شهر"))}</button>`).join("")}</span></div>
-      <div class="legend"><span class="r">${t("rev")}</span><span class="c">${t("costs")}</span></div>${monthBars(sr)}`; },
+      <div class="legend"><span class="r">${t("rev")}</span><span class="c">${t("costs")}</span></div>${kind === "lines" || kind === "area" ? monthLines(sr, kind === "area") : monthBars(sr)}`; },
+  text: (x, w, e) => { const lk = e.look || {}, body = S.lang === "ar" ? lk.body_ar || lk.body : lk.body || lk.body_ar;
+    return `<div class="wtext al-${lk.align || "start"} fs-${lk.font || "normal"}">${body ? cardText(body) : `<p class="muted">${esc(L2("Write the text in the card's design (🎨).", "اكتب النص من تصميم البطاقة (🎨)."))}</p>`}</div>`; },
+  heading: (x, w, e) => { const lk = e.look || {}, ttl = (S.lang === "ar" ? lk.title_ar || lk.title : lk.title || lk.title_ar) || L2("Section", "قسم"), sub = S.lang === "ar" ? lk.body_ar || lk.body : lk.body || lk.body_ar;
+    return `<div class="wheading al-${lk.align || "start"} fs-${lk.font || "normal"}"><h3>${esc(ttl)}</h3>${sub ? `<p>${esc(sub)}</p>` : ""}</div>`; },
+  links: (x, w, e) => { const lk = e.look || {}, L = lk.links || [];
+    return L.length ? `<div class="wlinks al-${lk.align || "start"} fs-${lk.font || "normal"}">${L.map(l => `<a class="btn ${lk.style === "solid" ? "" : "pri"}" href="${esc(l.href)}" ${l.href.startsWith("http") ? 'target="_blank" rel="noopener"' : ""}>${esc(l.label)}</a>`).join("")}</div>`
+      : `<p class="muted">${esc(L2("Add buttons in the card's design (🎨).", "أضف الأزرار من تصميم البطاقة (🎨)."))}</p>`; },
+  account_balance: x => wStat(x.value, x.sub, x.href, true),
   attention: x => x.rows.length ? `<div class="alist">${x.rows.map(r => `<a class="alert-row" href="${esc(r.href)}"><span class="dot ${r.level}">${svg(r.level === "bad" ? "alert" : r.level === "warn" ? "clock" : "bell")}</span><span>${esc(S.lang === "ar" ? r.ar : r.en)}</span></a>`).join("")}</div>`
     : `<div class="empty small">${svg("check")}<div>${esc(L2("All clear — nothing waiting on you.", "لا يوجد ما ينتظرك."))}</div></div>`,
   books_check: x => `<div class="audit">${x.checks.map(a => `<span class="chip ${a.ok ? "ok" : "bad"}" title="${esc(a.check)}">${a.ok ? "✓" : "✗"} ${esc(a.check)}</span>`).join("")}</div>`,
@@ -1980,12 +2082,12 @@ const WIDGET_DRAW = {
 };
 // super administrators: add cards to a group's dashboard
 function widgetPicker(d) {
-  const have = new Set(DASH.edit.layout.map(e => e.w));
+  const have = new Set(DASH.edit.layout.map(e => e.w).filter(w => !((d.catalog || []).find(c => c.id === w) || {}).multi));
   const byCat = {}; (d.catalog || []).forEach(w => { (byCat[w.cat] = byCat[w.cat] || []).push(w); });
   drawer(L2("Add a card", "إضافة بطاقة"), Object.entries(byCat).map(([c, ws]) => `<h4 style="margin:10px 0 6px">${esc(L2(...(d.cats[c] || [c, c])))}</h4>
     <div class="wpick">${ws.map(w => `<label class="f chk"><input type="checkbox" name="w_${w.id}" ${have.has(w.id) ? "checked disabled" : ""}>${esc(L2(w.en, w.ar))}
       <small class="muted">${esc(w.perm.length ? L2("needs: ", "تحتاج: ") + w.perm.join(" / ") : L2("everyone", "للجميع"))}</small></label>`).join("")}</div>`).join(""),
-    async v => { Object.keys(v).filter(k => v[k] && k.startsWith("w_") && !have.has(k.slice(2))).forEach(k => DASH.edit.layout.push({ w: k.slice(2), opts: {} })); route(); },
+    async v => { Object.keys(v).filter(k => v[k] && k.startsWith("w_") && !have.has(k.slice(2))).forEach(k => DASH.edit.layout.push({ w: k.slice(2), opts: {}, look: {}, ...(k === "w_heading" ? { size: 4 } : {}) })); route(); },
     { submitLabel: L2("Add", "إضافة"), noDraft: true });
 }
 function widgetOpts(e, info) {
@@ -1993,7 +2095,7 @@ function widgetOpts(e, info) {
   drawer(L2("Card options", "خيارات البطاقة") + " — " + L2(info.en, info.ar), form(Object.entries(info.opts).map(([k, [en, ar, kind]]) =>
     kind === "check" ? { k, l: L2(en, ar), type: "checkbox", v: !!o[k], span: "spanall" }
       : kind === "period" ? { k, l: L2(en, ar), type: "select", v: o[k] || "month", opts: [["month", L2("Month", "شهر")], ["quarter", L2("Quarter", "ربع سنة")], ["year", L2("Year", "سنة")]] }
-        : { k, l: L2(en, ar), type: "number", v: o[k] ?? "" })),
+        : kind === "text" ? { k, l: L2(en, ar), v: o[k] ?? "" } : { k, l: L2(en, ar), type: "number", v: o[k] ?? "" })),
     async v => { e.opts = Object.fromEntries(Object.entries(v).filter(([, x]) => x !== "" && x !== false).map(([k, x]) => [k, typeof x === "string" && x.trim() !== "" && !isNaN(+x) ? +x : x])); route(); },
     { submitLabel: L2("Done", "تم"), noDraft: true });
 }
@@ -2012,7 +2114,7 @@ function groupsDrawer(d) {
         const n = inp.dataset.f === "name" ? v : g.name, a = inp.dataset.f === "name_ar" ? v : (g.name_ar || "");
         if (n && (n !== g.name || a !== (g.name_ar || ""))) await api("PUT", "/api/dashboard/groups/" + g.key, { name: n, name_ar: a }); }
       const nn = $("#gnew").value.trim();
-      if (nn) { const r = await api("POST", "/api/dashboard/groups", { name: nn, copy_from: $("#gcopy").value }); store.set("dashGroup", r.key); }
+      if (nn) { const r = await api("POST", "/api/dashboard/groups", { name: nn, copy_from: $("#gcopy").value }); store.set("dashGroup", r.key); DASH.autoEdit = r.key; }
       DASH.edit = null; toast(t("saved"));
     }, { noDraft: true });
   S.H.gdel = async el => { if (!await uiConfirm(L2(`Delete the group “${el.dataset.n}”? Its people move to General.`, `حذف مجموعة «${el.dataset.n}»؟ ينتقل أفرادها إلى «عام».`))) return;
@@ -2318,20 +2420,211 @@ PAGES.invoices = async (view, parts, q) => {
     ${rows.map(x => `<tr class="click" data-href="#/invoice/${x.id}"><td><b>${esc(x.number)}</b><div class="lines">${esc(x.customer || "")}</div></td><td>${esc(x.bu_code)}</td><td>${esc(x.boq_title || t("standalone"))}</td><td>${fd(x.date)}</td><td class="num">${money(x.total)}</td><td><span class="chip ${x.status === "posted" ? "ok" : ""}">${x.status === "posted" ? t("invoiced") : t("draft")}</span> ${x.eta_status ? `<span class="chip">${esc(x.eta_status)}</span>` : ""}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${t("nothing")}</div>`}</div>`;
   bulkify(bulkTable(view, 'tr[data-href^="#/invoice/"]'), BULKS.invoices());
 };
+// a line's look, as on the BOQ / invoice files: bold, italic, underline, text colour, fill, alignment
+const lineCss = st => { st = st || {}; return `${st.b ? "font-weight:700;" : ""}${st.i ? "font-style:italic;" : ""}${st.u ? "text-decoration:underline;" : ""}${st.color ? `color:${st.color};` : ""}${st.align ? `text-align:${st.align};` : ""}`; };
+function paintLine(tr) {
+  let st = {}; try { st = JSON.parse(($(".l-style", tr) || {}).value || "{}") || {}; } catch { st = {}; }
+  $$("input:not([type=hidden])", tr).forEach(i => { i.style.cssText = i.style.cssText.replace(/(font-weight|font-style|text-decoration|color|text-align):[^;]*;?/g, "") + lineCss(st); });
+  $$("td", tr).forEach(td => { td.style.background = st.bg || ""; });
+}
 function linesEditor(lines, withCost, withContract) {
-  return `<div class="tbl"><table id="le"><thead><tr><th>${t("item_no")}</th><th>${t("category")}</th><th style="min-width:260px">${t("description")}</th><th>${t("unit")}</th>
+  return `<div class="tbl le-wrap"><table id="le" tabindex="-1"><thead><tr><th>${t("item_no")}</th><th>${t("category")}</th><th style="min-width:260px">${t("description")}</th><th>${t("unit")}</th>
     ${withContract ? `<th class="num">${t("contract_qty")}</th><th class="num">${t("billed_before")}</th>` : ""}<th class="num">${withContract ? t("executed") : t("qty")}</th><th class="num">${t("unit_price")}</th>${withCost ? `<th class="num">${t("unit_cost")}</th>` : ""}<th class="num">${t("amount")}</th><th></th></tr></thead><tbody>
     ${lines.map((l, i) => `<tr data-i="${i}"><td><input class="l-item_no" value="${esc(l.item_no)}" style="width:70px"></td><td><input class="l-category" value="${esc(l.category)}"></td>
-      <td><input class="l-description" value="${esc(l.description)}"><input type="hidden" class="l-sub" value="${esc(l.sub || "")}"><input type="hidden" class="l-account" value="${esc(l.account || "")}"></td><td><input class="l-unit" value="${esc(l.unit)}" style="width:70px" list="units"></td>
+      <td><input class="l-description" value="${esc(l.description)}"><input type="hidden" class="l-sub" value="${esc(l.sub || "")}"><input type="hidden" class="l-account" value="${esc(l.account || "")}"><input type="hidden" class="l-pct" value="${l.pct == null ? "" : l.pct}"><input type="hidden" class="l-cq" value="${l.contract_qty == null ? "" : l.contract_qty}"><input type="hidden" class="l-bb" value="${l.billed_before || ""}"><input type="hidden" class="l-style" value="${esc(JSON.stringify(l.style || {}))}"></td><td><input class="l-unit" value="${esc(l.unit)}" style="width:70px" list="units"></td>
       ${withContract ? `<td class="num">${l.contract_qty == null ? "—" : numf(l.contract_qty)}</td><td class="num">${numf(l.billed_before || 0)}</td>` : ""}
       <td><input class="l-qty num" type="number" step="any" value="${l.qty ?? 0}" data-input="letot" style="width:90px"></td><td><input class="l-price num" type="number" step="any" value="${l.price ?? 0}" data-input="letot" style="width:110px"></td>
       ${withCost ? `<td><input class="l-cost num" type="number" step="any" value="${l.cost ?? 0}" data-input="letot" style="width:110px"></td>` : ""}
       <td class="num l-amt">${money((l.qty || 0) * (l.price || 0))}</td><td><button class="btn sm danger" data-a="lerm">✕</button></td></tr>`).join("")}</tbody></table></div>`;
 }
-function readLines() {
+function readLines(keepEmpty) {
   return $$("#le tbody tr").map(tr => { const g = c => { const el = $(".l-" + c, tr); return el ? el.value : ""; };
-    return { item_no: g("item_no"), category: g("category"), sub: g("sub"), description: g("description"), unit: g("unit"), qty: +g("qty") || 0, price: +g("price") || 0, cost: +g("cost") || 0, account: g("account") }; })
-    .filter(l => l.description.trim());
+    let style = {}; try { style = JSON.parse(g("style") || "{}") || {}; } catch { style = {}; }
+    return { item_no: g("item_no"), category: g("category"), sub: g("sub"), description: g("description"), unit: g("unit"), qty: +g("qty") || 0, price: +g("price") || 0,
+      cost: +g("cost") || 0, account: g("account"), ...(g("pct") !== "" ? { pct: +g("pct") } : {}), style,
+      ...(g("cq") !== "" ? { contract_qty: +g("cq") } : {}), ...(g("bb") !== "" ? { billed_before: +g("bb") } : {}) }; })
+    .filter(l => keepEmpty || l.description.trim());
+}
+// ---- the lines table behaves like a spreadsheet: select cells with the mouse (drag) or Shift + arrows, copy / cut /
+// paste blocks to and from Excel (Ctrl+C / X / V), Delete clears, Ctrl+D fills down, Enter moves down (a new line at the
+// end), Ctrl+B / I / U style the selected lines, Ctrl+Z undoes the last block change. Right-click a line for more.
+// `o`: { setLines(lines) — redraw with these lines, after() — totals again }
+const PALETTE = ["#000000", "#c00000", "#e36c09", "#9c6500", "#00703c", "#1f4e79", "#7030a0", "#7f7f7f"];
+const FILLS = ["#fff2cc", "#fce4d6", "#e2efda", "#ddebf7", "#ede7f6", "#f2f2f2", "#ffff00", "#d9d9d9"];
+let GRID_NEXT = null;     // a redraw hands its undo history and selection to the new table
+function sheetGrid(o) {
+  const tbl = $("#le"); if (!tbl) return;
+  const carry = GRID_NEXT && Date.now() - GRID_NEXT.at < 2000 ? GRID_NEXT : null; GRID_NEXT = null;
+  const rows = () => $$("tbody tr", tbl);
+  const cellsOf = tr => $$("input:not([type=hidden])", tr);
+  const keyOf = inp => ([...inp.classList].find(c => c.startsWith("l-")) || "").slice(2);
+  const NUM = new Set(["qty", "price", "cost"]);
+  let sel = null, anchor = null, dragging = false, undo = [], typed = false;
+  const at = (r, c) => { const tr = rows()[r]; return tr ? cellsOf(tr)[c] : null; };
+  const pos = inp => { const tr = inp.closest("tr"); return { r: rows().indexOf(tr), c: cellsOf(tr).indexOf(inp) }; };
+  const box = () => sel && { r0: Math.min(sel.a.r, sel.b.r), r1: Math.max(sel.a.r, sel.b.r), c0: Math.min(sel.a.c, sel.b.c), c1: Math.max(sel.a.c, sel.b.c) };
+  const multi = () => { const b = box(); return b && (b.r1 > b.r0 || b.c1 > b.c0); };
+  const paint = () => { $$("td.gsel", tbl).forEach(td => td.classList.remove("gsel")); const b = box(); if (!b || !multi()) return;
+    for (let r = b.r0; r <= b.r1; r++) for (let c = b.c0; c <= b.c1; c++) { const i = at(r, c); if (i) i.closest("td").classList.add("gsel"); } };
+  const select = (a, b) => { sel = { a, b: b || a }; paint(); };
+  const go = (r, c, extend) => { const n = rows().length; if (!n) return; r = Math.max(0, Math.min(n - 1, r)); c = Math.max(0, Math.min(cellsOf(rows()[r]).length - 1, c));
+    if (extend) { select(sel ? sel.a : { r, c }, { r, c }); tbl.focus({ preventScroll: true }); at(r, c).scrollIntoView({ block: "nearest", inline: "nearest" }); }
+    else { const i = at(r, c); select({ r, c }); i.focus(); if (i.select) i.select(); } };
+  const snap = () => { undo.push(JSON.stringify(readLines(true))); if (undo.length > 40) undo.shift(); typed = false; };
+  const redraw = (lines, keep) => { GRID_NEXT = { at: Date.now(), undo, sel: keep }; o.setLines(lines); };
+  const clean = (k, v) => { v = String(v == null ? "" : v).replace(/\r/g, "");
+    if (!NUM.has(k)) return v.replace(/\s*\n\s*/g, " ").trim();     // a line break inside an Excel cell: a space here
+    const n = v.replace(/[٠-٩]/g, d => "٠١٢٣٤٥٦٧٨٩".indexOf(d)).replace(/[٬,\s]/g, "").replace("٫", ".").replace(/[^\d.\-eE]/g, "");
+    return n === "" || isNaN(+n) ? "" : String(+n); };
+  const parseTSV = text => { const out = [[]]; let cur = "", q = false;      // Excel quotes cells holding line breaks or tabs
+    text = text.replace(/\r\n?/g, "\n").replace(/\n$/, "");
+    for (let i = 0; i < text.length; i++) { const ch = text[i];
+      if (q) { if (ch === '"') { if (text[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += ch; }
+      else if (ch === '"' && cur === "") q = true;
+      else if (ch === "\t") { out[out.length - 1].push(cur); cur = ""; }
+      else if (ch === "\n") { out[out.length - 1].push(cur); out.push([]); cur = ""; }
+      else cur += ch; }
+    out[out.length - 1].push(cur); return out; };
+  const tsv = () => { const b = box(); const lines = [];
+    for (let r = b.r0; r <= b.r1; r++) { const row = []; for (let c = b.c0; c <= b.c1; c++) { const i = at(r, c); const v = i ? i.value : ""; row.push(/[\t\n"]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v); } lines.push(row.join("\t")); }
+    return lines.join("\n"); };
+  const setCell = (inp, v) => { if (!inp || inp.disabled) return; inp.value = clean(keyOf(inp), v); };
+  const changed = () => { if (o.after) o.after(); };
+  const clear = () => { const b = box(); snap(); for (let r = b.r0; r <= b.r1; r++) for (let c = b.c0; c <= b.c1; c++) setCell(at(r, c), ""); changed(); };
+  const paste = text => {
+    const grid = parseTSV(text); const b = box() || { r0: 0, c0: 0, r1: 0, c1: 0 }; snap();
+    if (grid.length === 1 && grid[0].length === 1 && multi()) {          // one value into a selection: fills it
+      for (let r = b.r0; r <= b.r1; r++) for (let c = b.c0; c <= b.c1; c++) setCell(at(r, c), grid[0][0]);
+      changed(); return; }
+    const need = b.r0 + grid.length - rows().length;
+    if (need > 0) {                                                       // more rows than the table has: add lines
+      const keys = cellsOf(rows()[0] || document.createElement("tr")).map(keyOf);
+      const lines = readLines(true);
+      for (let k = 0; k < need; k++) lines.push({ description: "", qty: 0, price: 0, cost: 0, style: {} });
+      grid.forEach((row, dr) => row.forEach((v, dc) => { const key = keys[b.c0 + dc]; if (key) lines[b.r0 + dr][key] = NUM.has(key) ? +clean(key, v) || 0 : clean(key, v); }));
+      redraw(lines, { a: { r: b.r0, c: b.c0 }, b: { r: b.r0 + grid.length - 1, c: Math.min(b.c0 + grid[0].length - 1, keys.length - 1) } });
+      return; }
+    grid.forEach((row, dr) => row.forEach((v, dc) => setCell(at(b.r0 + dr, b.c0 + dc), v)));
+    select({ r: b.r0, c: b.c0 }, { r: b.r0 + grid.length - 1, c: b.c0 + Math.max(...grid.map(x => x.length)) - 1 }); changed(); };
+  const fillDown = () => { const b = box(); if (!b || b.r1 === b.r0) return; snap();
+    for (let c = b.c0; c <= b.c1; c++) { const v = (at(b.r0, c) || {}).value; for (let r = b.r0 + 1; r <= b.r1; r++) setCell(at(r, c), v); } changed(); };
+  const selRows = tr => { const b = box(), i = tr ? rows().indexOf(tr) : -1;
+    if (b && (i < 0 || (i >= b.r0 && i <= b.r1))) return rows().slice(b.r0, b.r1 + 1);
+    return tr ? [tr] : []; };
+  const restyle = (trs, fn) => { snap(); trs.forEach(tr => { const h = $(".l-style", tr); let st = {}; try { st = JSON.parse(h.value || "{}") || {}; } catch { st = {}; }
+    st = fn(st) || {}; Object.keys(st).forEach(k => { if (!st[k]) delete st[k]; }); h.value = JSON.stringify(st); paintLine(tr); }); };
+  const toggle = (trs, k) => { const on = trs.every(tr => { try { return JSON.parse($(".l-style", tr).value || "{}")[k]; } catch { return false; } }); restyle(trs, st => ({ ...st, [k]: on ? 0 : 1 })); };
+  const rowOp = (trs, op) => { const lines = readLines(true), idx = trs.map(tr => rows().indexOf(tr)).sort((x, y) => x - y); snap();
+    const first = idx[0], last = idx[idx.length - 1], blank = () => ({ description: "", qty: 0, price: 0, cost: 0, style: {} });
+    if (op === "above") lines.splice(first, 0, ...idx.map(blank));
+    else if (op === "below") lines.splice(last + 1, 0, ...idx.map(blank));
+    else if (op === "dup") lines.splice(last + 1, 0, ...idx.map(i => JSON.parse(JSON.stringify(lines[i]))));
+    else if (op === "del") { for (let k = idx.length - 1; k >= 0; k--) lines.splice(idx[k], 1); if (!lines.length) lines.push(blank()); }
+    else if (op === "up" && first > 0) lines.splice(last, 0, lines.splice(first - 1, 1)[0]);
+    else if (op === "down" && last < lines.length - 1) lines.splice(first, 0, lines.splice(last + 1, 1)[0]);
+    else return;
+    const shift = op === "up" ? -1 : op === "down" ? 1 : op === "below" || op === "dup" ? idx.length : 0;
+    const r0 = op === "del" ? Math.min(first, lines.length - 1) : first + shift;
+    redraw(lines, { a: { r: r0, c: 0 }, b: { r: op === "del" ? r0 : r0 + idx.length - 1, c: 0 } }); };
+  o.api = { toggle: k => toggle(selRows(), k), color: (k, v) => restyle(selRows(), st => ({ ...st, [k]: v })), align: v => restyle(selRows(), st => ({ ...st, align: v })),
+    plain: () => restyle(selRows(), () => ({})), rows: (op, tr) => rowOp(selRows(tr), op) };
+  if (carry) undo = carry.undo;
+  rows().forEach(paintLine);
+  if (carry && carry.sel) { const s0 = carry.sel; setTimeout(() => { const i = at(s0.a.r, s0.a.c); if (i) { i.focus(); select(s0.a, s0.b); } }, 0); }
+  if (o.readOnly) return o.api;
+
+  tbl.addEventListener("mousedown", e => { const i = e.target.closest("input:not([type=hidden])"); if (!i || e.button !== 0) return;
+    const p = pos(i); if (e.shiftKey && sel) { e.preventDefault(); select(sel.a, p); tbl.focus({ preventScroll: true }); }
+    else { select(p); dragging = true; document.addEventListener("mouseup", () => { dragging = false; }, { once: true }); } });
+  tbl.addEventListener("mouseover", e => { if (!dragging) return; const i = e.target.closest("input:not([type=hidden])"); if (!i) return;
+    const p = pos(i); if (p.r !== sel.a.r || p.c !== sel.a.c) { select(sel.a, p); if (document.activeElement !== tbl) { tbl.focus({ preventScroll: true }); window.getSelection().removeAllRanges(); } } });
+  tbl.addEventListener("focusin", e => { const i = e.target.closest("input:not([type=hidden])"); if (i && !dragging && !(sel && multi() && document.activeElement === tbl)) select(pos(i)); });
+  tbl.addEventListener("input", () => { typed = true; });
+  tbl.addEventListener("keydown", e => {
+    const mod = e.ctrlKey || e.metaKey, inInput = e.target.matches("input"), b = box();
+    const caretEdge = dir => { const i = e.target; if (!inInput || i.type === "number") return true; try { return dir < 0 ? i.selectionStart === 0 && i.selectionEnd === 0 : i.selectionEnd === i.value.length; } catch { return true; } };
+    const cur = sel ? sel.b : null; if (!cur) return;
+    const rtl = document.dir === "rtl", step = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, rtl ? 1 : -1], ArrowRight: [0, rtl ? -1 : 1] }[e.key];
+    if (step && !mod) {
+      if (e.shiftKey) { e.preventDefault(); go(cur.r + step[0], cur.c + step[1], true); return; }
+      if (step[1] && !multi() && !caretEdge((e.key === "ArrowLeft") !== rtl ? -1 : 1)) return;
+      e.preventDefault(); go(cur.r + step[0], cur.c + step[1]); return; }
+    if (e.key === "Enter" && !mod) { e.preventDefault();
+      if (!e.shiftKey && cur.r === rows().length - 1) { const lines = readLines(true); snap(); lines.push({ description: "", qty: 0, price: 0, cost: 0, style: {} }); redraw(lines, { a: { r: cur.r + 1, c: cur.c } }); return; }
+      go(cur.r + (e.shiftKey ? -1 : 1), cur.c); return; }
+    if ((e.key === "Delete" || e.key === "Backspace") && multi()) { e.preventDefault(); clear(); return; }
+    if (!mod) { if (!inInput && e.key.length === 1 && b) { const i = at(cur.r, cur.c); if (i) { select(cur); i.focus(); i.value = ""; } } return; }
+    const k = e.key.toLowerCase();
+    if (k === "d") { e.preventDefault(); fillDown(); }
+    else if (k === "b" || k === "i" || k === "u") { e.preventDefault(); toggle(selRows(), k); }
+    else if (k === "a" && !inInput) { e.preventDefault(); const n = rows().length - 1; select({ r: 0, c: 0 }, { r: n, c: cellsOf(rows()[n]).length - 1 }); }
+    else if (k === "z" && !e.shiftKey && (!inInput || !typed || multi()) && undo.length) { e.preventDefault(); const prev = JSON.parse(undo.pop()); GRID_NEXT = { at: Date.now(), undo, sel: sel }; o.setLines(prev); }
+  });
+  tbl.addEventListener("copy", e => { if (!multi()) return; e.preventDefault(); e.clipboardData.setData("text/plain", tsv()); });
+  tbl.addEventListener("cut", e => { if (!multi()) return; e.preventDefault(); e.clipboardData.setData("text/plain", tsv()); clear(); });
+  tbl.addEventListener("paste", e => { const text = (e.clipboardData || window.clipboardData).getData("text/plain");
+    if (!text || (!/[\t\n]/.test(text.replace(/\n$/, "")) && !multi())) return;    // one value into one cell: the browser's own paste
+    e.preventDefault(); paste(text); });
+  // right-click a line: rows, styles, clipboard
+  tbl.addEventListener("contextmenu", e => { if (e.shiftKey) return; const tr = e.target.closest("tbody tr"); if (!tr) return;
+    e.preventDefault(); e.stopPropagation();
+    const i = e.target.closest("input:not([type=hidden])"); if (i && !(multi() && selRows(tr).includes(tr))) select(pos(i));
+    const trs = selRows(tr), n = trs.length, many = n > 1 ? ` (${n})` : "";
+    const sw = (c, k) => ({ label: c ? c.toUpperCase() : L2("None", "بدون"), ic: `<i class="sw-dot" style="background:${c || "transparent"}"></i>`, act: () => restyle(trs, st => ({ ...st, [k]: c })) });
+    ctxOpen(e.clientX, e.clientY, n > 1 ? L2(`${n} lines`, `${n} سطور`) : L2("Line", "سطر"), [
+      { label: L2("Insert line above", "إدراج سطر أعلاه"), ic: "↥", act: () => rowOp(trs, "above") },
+      { label: L2("Insert line below", "إدراج سطر أسفله"), ic: "↧", act: () => rowOp(trs, "below") },
+      { label: L2("Duplicate", "تكرار") + many, ic: "⧉", act: () => rowOp(trs, "dup") },
+      { label: L2("Move up", "تحريك لأعلى"), ic: "▲", act: () => rowOp(trs, "up") }, { label: L2("Move down", "تحريك لأسفل"), ic: "▼", act: () => rowOp(trs, "down") },
+      { sep: 1 },
+      { label: L2("Bold", "عريض") + "  Ctrl+B", ic: "<b>B</b>", act: () => toggle(trs, "b") }, { label: L2("Italic", "مائل") + "  Ctrl+I", ic: "<i>I</i>", act: () => toggle(trs, "i") },
+      { label: L2("Underline", "تسطير") + "  Ctrl+U", ic: "<u>U</u>", act: () => toggle(trs, "u") },
+      { label: L2("Text colour", "لون النص"), ic: "A", sub: () => [sw("", "color"), ...PALETTE.map(c => sw(c, "color"))] },
+      { label: L2("Fill colour", "لون التعبئة"), ic: "▨", sub: () => [sw("", "bg"), ...FILLS.map(c => sw(c, "bg"))] },
+      { label: L2("Align", "المحاذاة"), ic: "≡", sub: () => [["left", L2("Left", "يسار")], ["center", L2("Centre", "وسط")], ["right", L2("Right", "يمين")], ["", L2("Default", "افتراضي")]].map(([v, l]) => ({ label: l, act: () => restyle(trs, st => ({ ...st, align: v })) })) },
+      { label: L2("Clear formatting", "مسح التنسيق"), ic: "⌫", act: () => restyle(trs, () => ({})) },
+      { sep: 1 },
+      ...(multi() ? [{ label: L2("Copy", "نسخ") + "  Ctrl+C", ic: "⎘", act: () => navigator.clipboard && navigator.clipboard.writeText(tsv()).then(() => toast(L2("Copied — paste it in Excel or here", "تم النسخ — الصقه في Excel أو هنا"))) },
+        { label: L2("Clear cells", "مسح الخلايا") + "  Del", ic: "⌧", act: clear }, { label: L2("Fill down", "تعبئة لأسفل") + "  Ctrl+D", ic: "⇣", act: fillDown }] : []),
+      ...(navigator.clipboard && navigator.clipboard.readText ? [{ label: L2("Paste", "لصق") + "  Ctrl+V", ic: "⎀", act: async () => { try { paste(await navigator.clipboard.readText()); } catch { toast(L2("Use Ctrl+V to paste", "استخدم Ctrl+V للصق"), true); } } }] : []),
+      { sep: 1 },
+      { label: L2("Delete", "حذف") + many, ic: "✕", danger: 1, act: () => rowOp(trs, "del") }]);
+  });
+  return o.api;
+}
+// the bar above the lines: styles for the selected lines, more lines, Excel in
+function gridBar(kind) {
+  return `<div class="gbar"><div class="gbar-g">
+      <button type="button" class="btn sm" data-a="gfmt" data-k="b" title="${esc(L2("Bold (Ctrl+B)", "عريض (Ctrl+B)"))}"><b>B</b></button>
+      <button type="button" class="btn sm" data-a="gfmt" data-k="i" title="${esc(L2("Italic (Ctrl+I)", "مائل (Ctrl+I)"))}"><i>I</i></button>
+      <button type="button" class="btn sm" data-a="gfmt" data-k="u" title="${esc(L2("Underline (Ctrl+U)", "تسطير (Ctrl+U)"))}"><u>U</u></button>
+      <label class="btn sm gcol" title="${esc(L2("Text colour", "لون النص"))}">A<input type="color" data-change="gcolor" data-k="color" value="#c00000"></label>
+      <label class="btn sm gcol" title="${esc(L2("Fill colour", "لون التعبئة"))}">▨<input type="color" data-change="gcolor" data-k="bg" value="#fff2cc"></label>
+      <button type="button" class="btn sm" data-a="galign" data-v="left" title="${esc(L2("Align left", "محاذاة لليسار"))}">⇤</button>
+      <button type="button" class="btn sm" data-a="galign" data-v="center" title="${esc(L2("Centre", "توسيط"))}">↔</button>
+      <button type="button" class="btn sm" data-a="galign" data-v="right" title="${esc(L2("Align right", "محاذاة لليمين"))}">⇥</button>
+      <button type="button" class="btn sm" data-a="gplain" title="${esc(L2("Clear formatting", "مسح التنسيق"))}">⌫</button></div>
+    <div class="gbar-g"><button type="button" class="btn sm" data-a="gmore">+ 10 ${esc(L2("lines", "سطور"))}</button>
+      <label class="btn sm">⬆ ${esc(L2("Import from Excel", "استيراد من Excel"))}<input type="file" accept=".xlsx,.xlsm" hidden data-change="gimport" data-kind="${kind}"></label></div>
+    <span class="muted gbar-tip">${esc(L2("Select cells by dragging or Shift + arrows · Ctrl+C / Ctrl+V to and from Excel · Ctrl+D fills down · right-click a line for more",
+      "حدّد الخلايا بالسحب أو Shift + الأسهم · Ctrl+C / Ctrl+V من وإلى Excel · Ctrl+D تعبئة لأسفل · زر الفأرة الأيمن على السطر للمزيد"))}</span></div>`;
+}
+function wireGridBar(g, setLines) {
+  S.H.gfmt = el => g.toggle(el.dataset.k);
+  S.H.gcolor = el => g.color(el.dataset.k, el.value);
+  S.H.galign = el => g.align(el.dataset.v);
+  S.H.gplain = () => g.plain();
+  S.H.gmore = () => { const lines = readLines(true); for (let k = 0; k < 10; k++) lines.push({ description: "", qty: 0, price: 0, cost: 0, style: {} }); setLines(lines); };
+  // before saving, the blank lines at the end are dropped (readLines skips lines without a description)
+  S.H.gimport = async el => { const f = el.files[0]; el.value = ""; if (!f) return;
+    let r; try { r = await api("POST", "/api/lines/parse?kind=" + el.dataset.kind, undefined, await f.arrayBuffer()); } catch (e) { fail(e); return; }
+    const have = readLines().length;
+    const how = have ? await uiConfirm(L2(`${r.lines.length} lines read from “${r.sheet}”. Replace the ${have} lines on screen with them, or add them at the end? Nothing is saved until you press Save.`,
+      `تمت قراءة ${r.lines.length} سطر من «${r.sheet}». هل تستبدل بها السطور الحالية (${have}) أم تضيفها في النهاية؟ لا يُحفظ شيء حتى تضغط حفظ.`),
+      { ok: L2("Replace the lines", "استبدال السطور"), alt: L2("Add at the end", "إضافة في النهاية"), danger: false }) : true;
+    if (!how) return;
+    setLines(how === "alt" ? [...readLines(), ...r.lines] : r.lines);
+    toast(L2(`${r.lines.length} lines in — check them, then Save`, `تمت إضافة ${r.lines.length} سطر — راجعها ثم احفظ`)); };
 }
 function priceSearchBox() {
   S.H.psearch = async el => {
@@ -2363,11 +2656,13 @@ PAGES.invoice = async (view, parts, q) => {
         { k: "customer", l: t("customer"), v: x.customer, list: "custs", dis: locked, change: "xcust" }, { k: "vat_code", l: t("vat_code"), type: "select", opts: taxOpts("vat"), v: x.vat_code, dis: locked, change: "letot" },
         { k: "wht_code", l: t("wht_code"), type: "select", opts: taxOpts("wht"), v: x.wht_code, dis: locked, change: "letot" }], 4)}${datalist("custs", (S.boot.parties || []).filter(p => p.type !== "supplier").map(p => p.name))}</div>
       ${locked ? "" : `<div class="card">${priceSearchBox()}</div>`}
-      <div class="card"><h2>${t("lines")}</h2>${linesEditor(x.lines, false, withContract)}
+      <div class="card"><h2>${t("lines")}</h2>${locked ? "" : gridBar("invoice")}${linesEditor(x.lines, false, withContract)}
         <div class="row" style="margin-top:10px">${locked ? "" : `<button class="btn sm" data-a="leadd">${t("add_line")}</button>`}<span class="spacer"></span><b id="letot"></b></div></div>${unitsList()}
       ${!isNew && x.status === "posted" && can("sales.invoices") ? `<div class="card" id="etacard"><h2>${t("m_einv")}</h2><div id="etabody" class="muted">${t("loading")}</div></div>` : ""}`;
     if (locked) $$("#le input, #le button").forEach(e => { e.disabled = true; });
     if ($("#etacard")) etaPanel(x);
+    const setLines = ls => { x = { ...x, ...header(), lines: ls }; render(); };
+    const g = sheetGrid({ setLines, after: () => S.H.letot(), readOnly: locked }); if (!locked) wireGridBar(g, setLines);
     S.H.letot();
   };
   const header = () => ({ bu_id: $("[name=bu_id]").value, number: $("[name=number]").value, date: $("[name=date]").value, boq_id: $("[name=boq_id]").value,
@@ -2376,9 +2671,9 @@ PAGES.invoice = async (view, parts, q) => {
     const vc = $("[name=vat_code]"), wc = $("[name=wht_code]"); const vat = Math.round(s * rateOf(vc ? vc.value : "") * 100) / 100, wht = Math.round(s * rateOf(wc ? wc.value : "") * 100) / 100;
     const el = $("#letot"); if (el) el.textContent = `${t("total")}: ${money(s)} · ${t("vat_amt")}: ${money(vat)} · ${t("gross")}: ${money(s + vat)} · ${t("wht_amt")}: (${money(wht)}) · ${t("net_receivable")}: ${money(s + vat - wht)} ${cur()}`; };
   S.H.xcust = el => { const p = (S.boot.parties || []).find(z => z.name === el.value); if (!p) return; if (p.default_vat && !$("[name=vat_code]").value) $("[name=vat_code]").value = p.default_vat; if (p.default_wht && !$("[name=wht_code]").value) $("[name=wht_code]").value = p.default_wht; S.H.letot(); };
-  S.H.leadd = () => { x = { ...x, ...header(), lines: [...readLines(), { description: "", qty: 1, price: 0 }] }; render(); };
+  S.H.leadd = () => { x = { ...x, ...header(), lines: [...readLines(true), { description: "", qty: 1, price: 0 }] }; render(); };
   S.H.lerm = el => { el.closest("tr").remove(); S.H.letot(); };
-  S.H.padd = el => { const r = S.cache.rates[+el.dataset.i]; x = { ...x, ...header(), lines: [...readLines(), { item_no: r.item_no, category: r.category, sub: r.sub, description: r.description, unit: r.unit, qty: 1, price: r.price }] }; render(); };
+  S.H.padd = el => { const r = S.cache.rates[+el.dataset.i]; x = { ...x, ...header(), lines: [...readLines(true).filter(l => l.description.trim()), { item_no: r.item_no, category: r.category, sub: r.sub, description: r.description, unit: r.unit, qty: 1, price: r.price }] }; render(); };
   S.H.xboq = async el => { if (!el.value) return; const b = await api("GET", "/api/boqs/" + el.value); x = { ...x, ...header(), bu_id: b.bu_id, lines: b.lines.map(l => ({ ...l, contract_qty: l.qty, qty: 0 })) }; render(); };
   const save = async post => { const body = { ...header(), lines: readLines(), post };
     const r = isNew ? await api("POST", "/api/extracts", body) : await api("PUT", "/api/extracts/" + x.id, body);
@@ -2432,17 +2727,20 @@ PAGES.boq = async (view, parts, q = {}) => {
       <div class="card">${form([{ k: "title", l: t("title"), v: b.title }, { k: "bu_id", l: t("bu"), type: "select", opts: buOpts("—"), v: b.bu_id },
         { k: "rev", l: t("revision"), v: b.rev }, { k: "date", l: t("date"), type: "date", v: b.date }, { k: "client", l: t("client"), v: b.client }, { k: "location", l: t("location"), v: b.location }], 3)}</div>
       ${ro ? "" : `<div class="card">${priceSearchBox()}</div>`}
-      <div class="card"><h2>${t("lines")}</h2>${linesEditor(b.lines.map(l => ({ ...l })), true, false)}
+      <div class="card"><h2>${t("lines")}</h2>${ro ? "" : gridBar("boq")}${linesEditor(b.lines.map(l => ({ ...l })), true, false)}
         <div class="row" style="margin-top:10px">${ro ? "" : `<button class="btn sm" data-a="leadd">${t("add_line")}</button>`}<span class="spacer"></span><b id="letot"></b></div>
         ${!isNew ? `<div class="muted" style="margin-top:6px">${S.lang === "ar" ? "تمت فوترة" : "Billed so far"}: ${money(b.billed)} (${pct(b.total ? b.billed / b.total : 0)})</div>` : ""}</div>${unitsList()}`;
+    if (ro) $$("#le input, #le button").forEach(e => { e.disabled = true; });
+    const setLines = ls => { b = { ...b, ...header(), lines: ls }; render(); };
+    const g = sheetGrid({ setLines, after: () => S.H.letot(), readOnly: ro }); if (!ro) wireGridBar(g, setLines);
     S.H.letot();
   };
   const header = () => ({ title: $("[name=title]").value, bu_id: $("[name=bu_id]").value, rev: $("[name=rev]").value, date: $("[name=date]").value, client: $("[name=client]").value, location: $("[name=location]").value });
   S.H.letot = () => { let s = 0, c = 0; $$("#le tbody tr").forEach(tr => { const q2 = +$(".l-qty", tr).value || 0; const a = q2 * (+$(".l-price", tr).value || 0); s += a; c += q2 * (+($(".l-cost", tr) || {}).value || 0); $(".l-amt", tr).textContent = money(a); });
     const el = $("#letot"); if (el) el.textContent = `${t("budget")}: ${money(s)} · ${t("cost")}: ${money(c)} · ${t("margin")}: ${pct(s ? 1 - c / s : 0)}`; };
-  S.H.leadd = () => { b = { ...b, ...header(), lines: [...readLines(), { description: "", qty: 1, price: 0, cost: 0 }] }; render(); };
+  S.H.leadd = () => { b = { ...b, ...header(), lines: [...readLines(true), { description: "", qty: 1, price: 0, cost: 0 }] }; render(); };
   S.H.lerm = el => { el.closest("tr").remove(); S.H.letot(); };
-  S.H.padd = el => { const r = S.cache.rates[+el.dataset.i]; b = { ...b, ...header(), lines: [...readLines(), { item_no: r.item_no, category: r.category, sub: r.sub, description: r.description, unit: r.unit, qty: 1, price: r.price, cost: r.cost }] }; render(); };
+  S.H.padd = el => { const r = S.cache.rates[+el.dataset.i]; b = { ...b, ...header(), lines: [...readLines(true).filter(l => l.description.trim()), { item_no: r.item_no, category: r.category, sub: r.sub, description: r.description, unit: r.unit, qty: 1, price: r.price, cost: r.cost }] }; render(); };
   S.H.bsave = async () => { try { const body = { ...header(), lines: readLines() }; const r = isNew ? await api("POST", "/api/boqs", body) : await api("PUT", "/api/boqs/" + b.id, body); toast(t("saved")); location.hash = "#/boq/" + r.id; if (!isNew) route(); } catch (e) { fail(e); } };
   S.H.bdel = async () => { if (!await uiConfirm(t("confirm_delete"))) return; await api("DELETE", "/api/boqs/" + b.id).catch(fail); location.hash = "#/boqs"; };
   render();
@@ -2944,6 +3242,7 @@ PAGES.data = async (view) => {
       out.innerHTML = `<div class="banner ok">${r.dry_run ? (S.lang === "ar" ? "الفحص ناجح — لم يتم تغيير أي شيء. أزل علامة الفحص للاستيراد." : "Check passed — nothing was changed. Untick “check only” to import.") : t("saved")}</div>
         <div class="tbl"><table><tbody>${Object.entries(r.counts).map(([k, v]) => `<tr><td>${esc(k)}</td><td class="num">${v}</td></tr>`).join("") || `<tr><td>${esc(L2("Nothing new to import", "لا يوجد جديد للاستيراد"))}</td><td></td></tr>`}</tbody></table></div>
         ${r.skipped && Object.keys(r.skipped).length ? `<div class="banner info" style="margin-top:6px">${esc(L2("Already in the books, skipped: ", "موجود بالفعل وتم تخطيه: "))}${Object.entries(r.skipped).map(([k, v]) => `${esc(sheetLabel(k))} ${v}`).join(" · ")}</div>` : ""}
+        ${r.updated && Object.keys(r.updated).length ? `<div class="banner info" style="margin-top:6px">${esc(L2("Changed in the file, updated in the books: ", "تغيّر في الملف وتم تحديثه: "))}${Object.entries(r.updated).map(([k, v]) => `${esc(sheetLabel(k))} ${v}`).join(" · ")}</div>` : ""}
         ${(r.notes || []).map(n => `<div class="banner info" style="margin-top:6px">${esc(n)}</div>`).join("")}`;
       if (!r.dry_run) await refreshBoot();
     } catch (e) {

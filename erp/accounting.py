@@ -926,8 +926,29 @@ def _lines_in(raw):
                     "item_no": text(ln.get("item_no")), "description": desc, "unit": text(ln.get("unit")),
                     "qty": num(ln.get("qty"), "quantity"), "price": to_minor(num(ln.get("price"), "price")),
                     "cost": to_minor(num(ln.get("cost"), "cost")), "account": text(ln.get("account"), maxlen=20),
-                    "pct": _pct_in(ln.get("pct"))})
+                    "pct": _pct_in(ln.get("pct")), "style": line_style(ln.get("style"))})
     return out
+
+
+_HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+def line_style(v):
+    """A BOQ / invoice line's look, as JSON text ('' = plain): b, i, u; color and bg (#rrggbb); align left|center|right."""
+    if isinstance(v, str):
+        try:
+            v = json.loads(v) if v.strip() else {}
+        except ValueError:
+            v = {}
+    if not isinstance(v, dict):
+        return ""
+    out = {k: 1 for k in ("b", "i", "u") if v.get(k)}
+    for k in ("color", "bg"):
+        if isinstance(v.get(k), str) and _HEX.match(v[k]):
+            out[k] = v[k].lower()
+    if v.get("align") in ("left", "center", "right"):
+        out["align"] = v["align"]
+    return json.dumps(out, sort_keys=True) if out else ""
 
 
 def _pct_in(v):
@@ -945,6 +966,8 @@ def _pct_in(v):
 
 def _line_out(ln):
     ln = dict(ln)
+    if "style" in ln:
+        ln["style"] = json.loads(ln["style"]) if ln["style"] else {}
     ln["price"] = to_major(ln["price"])
     if "cost" in ln:
         ln["cost"] = to_major(ln["cost"])
@@ -969,10 +992,10 @@ def save_boq(db, d, boq_id=None):
         else:
             boq_id = db.conn.execute("INSERT INTO boqs(bu_id,title,rev,date,client,location,notes) "
                                      "VALUES (?,?,?,?,?,?,?)", vals).lastrowid
-        db.conn.executemany("INSERT INTO boq_lines(boq_id,seq,category,sub,item_no,description,unit,qty,price,cost) "
-                            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+        db.conn.executemany("INSERT INTO boq_lines(boq_id,seq,category,sub,item_no,description,unit,qty,price,cost,style) "
+                            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                             [(boq_id, ln["seq"], ln["category"], ln["sub"], ln["item_no"], ln["description"],
-                              ln["unit"], ln["qty"], ln["price"], ln["cost"]) for ln in lines])
+                              ln["unit"], ln["qty"], ln["price"], ln["cost"], ln["style"]) for ln in lines])
     return boq_id
 
 
@@ -1023,10 +1046,10 @@ def save_extract(db, d, extract_id=None):
         for ln in lines:   # a line may earn into its own revenue account (rent, services, compensation...)
             if ln["account"] and ln["account"] != db.acct("service_deferred"):   # billed in advance, earned month by month
                 account_code(db, ln["account"], types=("Revenue",), field="revenue account")
-        db.conn.executemany("INSERT INTO extract_lines(extract_id,seq,category,sub,item_no,description,unit,qty,price,account,pct) "
-                            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        db.conn.executemany("INSERT INTO extract_lines(extract_id,seq,category,sub,item_no,description,unit,qty,price,account,pct,style) "
+                            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                             [(extract_id, ln["seq"], ln["category"], ln["sub"], ln["item_no"], ln["description"],
-                              ln["unit"], ln["qty"], ln["price"], ln["account"], ln["pct"]) for ln in lines])
+                              ln["unit"], ln["qty"], ln["price"], ln["account"], ln["pct"], ln["style"]) for ln in lines])
         _wip_after(db, "Sales Invoice", bu, old_bu)
     return extract_id
 
