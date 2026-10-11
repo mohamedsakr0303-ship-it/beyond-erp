@@ -1058,7 +1058,8 @@ async function renderAuth() {
   }
   // a first visit on this device: the welcome screen first (never for someone still signed in)
   const stillIn = STATIC && window.BeyondCloud && window.BeyondCloud.configured() && !store.get("cloudLocal", false) && window.BeyondCloud.signedIn();
-  if (!stillIn && !S.landingOk && !store.get("landingSeen", false)) return renderLanding();
+  // the welcome screen: first visit, or its own address (#/discover — e.g. opened in a new tab from its BEYONDERP link)
+  if (!stillIn && ((!S.landingOk && !store.get("landingSeen", false)) || /^#\/discover/.test(location.hash))) return renderLanding();
   if (STATIC && window.BeyondCloud && window.BeyondCloud.configured() && !store.get("cloudLocal", false)) {
     // still signed in to the workspace (e.g. after switching company): carry on without asking again
     if (window.BeyondCloud.signedIn()) {
@@ -2498,7 +2499,13 @@ PAGES.journal = async (view, parts, q) => {
   const lq = { ...q, limit: Math.min(100, +(q.limit || pageSize())) };
   const d = await api("GET", "/api/journal?" + qs(lq));
   S.H.newjv = () => journalForm();
-  view.innerHTML = `<div class="toolbar">${can("accounting.journal", "add") ? `<button class="btn pri" data-a="newjv">+ ${t("m_journal")}</button>` : ""}<span class="spacer"></span>
+  // every kind of entry starts here too: a plain journal entry, or any voucher this person may add (direct project cost,
+  // expense, receipt, payment, payroll…) — the same list as "+ New"
+  const kinds = newMenuItems().filter(i => i.show && i.ok);
+  const newBtn = can("accounting.journal", "add") || kinds.length ? `<div class="dd newdd jv-new"><button class="btn pri" type="button">+ ${esc(L2("New entry", "قيد جديد"))} ▾</button><div class="dd-menu">
+      ${can("accounting.journal", "add") ? `<button data-a="newjv"><b>${esc(t("m_journal"))}</b> <span class="muted">${esc(L2("(any accounts)", "(أي حسابات)"))}</span></button>` : ""}
+      ${kinds.map(i => `<button data-a="quicknew" data-doc="${esc(i.key)}">${esc(i.label)}</button>`).join("")}</div></div>` : "";
+  view.innerHTML = `<div class="toolbar">${newBtn}<span class="spacer"></span>
     <span class="chip">${d.total}</span><span class="chip">${money(d.posted_amount)} ${cur()}</span>${exportMenu("vouchers", { ...q, title: t("m_journal") })}</div>` +
     filterBar(q, ["dates", "bu", ["kind", S.boot.enums.entry_kinds], "account", "qv", "party", "status"]) +
     `<div class="card">${voucherRows(d.rows)}${pager(d.total, lq)}</div>`;
@@ -8491,7 +8498,7 @@ function renderLanding(opt = {}) {
       <div class="lp-app-row"><span>${esc(L2("Projects on budget", "مشروعات ضمن الموازنة"))}</span><span>7 / 8</span></div>
       <small class="lp-demo">${esc(L2("Demo company", "شركة تجريبية"))}</small></div>`;
   $("#root").innerHTML = `<div class="lp" dir="${ar ? "rtl" : "ltr"}">
-    <header class="lp-nav"><span class="wordmark lp-mini">BEYOND<i>ERP</i></span><span class="spacer"></span>
+    <header class="lp-nav"><a class="wordmark lp-mini lp-home" href="#/discover" title="${esc(L2("Welcome screen", "شاشة الترحيب"))}">BEYOND<i>ERP</i></a><span class="spacer"></span>
       <button type="button" class="lp-motion" data-motion="1" title="${esc(L2("Turn the welcome animations on or off", "تشغيل أو إيقاف حركة شاشة الترحيب"))}">${store.get("lpMotion", "on") === "off" ? L2("✦ Animations: off", "✦ الحركة: متوقفة") : L2("✦ Animations: on", "✦ الحركة: تعمل")}</button><button type="button" class="lp-lang" data-l="1">${ar ? "EN" : "ع"}</button>${me ? `<span class="lp-me" title="${esc(L2("Signed in", "مسجّل الدخول"))}"><b>${esc(((me.full_name || me.username || "?").trim()[0] || "?").toUpperCase())}</b>${esc(me.full_name || me.username)}</span>` : ""}<button type="button" class="lp-pill sm" data-go="1">${esc(inApp ? L2("Back to the app", "العودة للتطبيق") : go)}</button></header>
     <div class="lp-story"><nav class="lp-dots" aria-label="${esc(L2("Sections", "الأقسام"))}">${[0, 1, 2, 3, 4, 5].map(i => `<button type="button" data-sc="${i}" aria-label="${i + 1}"></button>`).join("")}</nav><div class="lp-stage">
       <section class="lp-sc lp-s0 lp-hero"><div class="lp-ring" aria-hidden="true"><i></i></div>
@@ -8528,8 +8535,11 @@ function renderLanding(opt = {}) {
     <footer class="lp-foot"><span class="wordmark">BEYOND<i>ERP</i></span><small class="lp-copy">© ${new Date().getFullYear()} BEYOND DESIGN. ${esc(L2("All rights reserved.", "جميع الحقوق محفوظة."))}</small></footer></div>`;
   const root = $(".lp");
   root.addEventListener("click", e => {
+    const home = e.target.closest(".lp-home");
+    if (home && !(e.ctrlKey || e.metaKey || e.shiftKey || e.button)) { e.preventDefault(); scrollTo({ top: 0, behavior: "smooth" }); return; }   // already here: back to the top
     if (e.target.closest("[data-go]")) {
       if (inApp) { scrollTo(0, 0); location.hash = S.lastPage && !/discover/.test(S.lastPage) ? S.lastPage : "#/dashboard"; return; }   // back into the app, still signed in
+      if (/^#\/discover/.test(location.hash)) history.replaceState(null, "", location.pathname + location.search);
       store.set("landingSeen", true); S.landingOk = true; applyLook(); renderAuth(); }
     else if (e.target.closest("[data-l]")) { store.set("lang", S.lang === "ar" ? "en" : "ar"); S.lang = store.get("lang"); renderLanding(opt); }
     else if (e.target.closest("[data-motion]")) { store.set("lpMotion", store.get("lpMotion", "on") === "off" ? "on" : "off"); scrollTo(0, 0); renderLanding(opt); }
@@ -8840,7 +8850,7 @@ function fieldMenu(lab) {
     { note: L2("Renaming and hiding fields needs the “Arrange menus & forms” permission (given by an administrator).", "تعديل الحقول يحتاج صلاحية «ترتيب القوائم والنماذج» (يمنحها المسؤول).") }];
   out.push({ ic: "✎", label: L2("Rename this field…", "إعادة تسمية الحقل…"), act: async () => { const v = await uiPrompt(L2("New label (empty = the original)", "الاسم الجديد (فارغ = الأصلي)"), text); if (v === null) return;
       save(F => { F[k] = { ...(F[k] || {}) }; if (v.trim()) F[k].label = { ...(F[k].label || {}), [S.lang]: v.trim() }; else delete F[k].label; if (!Object.keys(F[k]).length) delete F[k]; }); } });
-  if (!ctl.required) out.push({ ic: "◌", label: L2("Hide this field", "إخفاء هذا الحقل"), act: () => save(F => { F[k] = { ...(F[k] || {}), hide: 1 }; }) });
+  if (!ctl.required) out.push({ ic: "◌", label: L2("Hide this field", "إخفاء هذا الحقل"), act: () => save(F => { F[k] = { ...(F[k] || {}), hide: 1, name: text }; }) });
   if (ctl.type !== "file" && ctl.type !== "hidden") out.push({ ic: "★", label: L2("Use the current value as the default", "استخدم القيمة الحالية كقيمة افتراضية"),
     hint: ctl.type === "checkbox" ? (ctl.checked ? "✓" : "✗") : String(ctl.value || "").slice(0, 18),
     act: () => save(F => { F[k] = { ...(F[k] || {}), def: ctl.type === "checkbox" ? ctl.checked : ctl.value }; }) });
@@ -8851,7 +8861,7 @@ function fieldMenu(lab) {
       save(F => { F.__extra = [...(F.__extra || []), { k: "x_" + Date.now().toString(36), type: ty, label: { [S.lang]: name.trim() } }]; }); } })) });
   if (extra) out.push({ ic: "✕", danger: 1, label: L2("Remove this detail field", "حذف حقل التفاصيل"), act: () => save(F => { F.__extra = (F.__extra || []).filter(x => x.k !== k); if (!F.__extra.length) delete F.__extra; }) });
   const hidden = Object.entries(fc).filter(([x, o]) => x !== "__extra" && o.hide);
-  if (hidden.length) out.push({ ic: "◎", label: L2("Show hidden fields", "إظهار الحقول المخفية") + ` (${hidden.length})`, sub: () => hidden.map(([x, o]) => ({ label: lbl2(o.label) || x,
+  if (hidden.length) out.push({ ic: "◎", label: L2("Show hidden fields", "إظهار الحقول المخفية") + ` (${hidden.length})`, sub: () => hidden.map(([x, o]) => ({ label: lbl2(o.label) || o.name || x,
     act: () => save(F => { delete F[x].hide; if (!Object.keys(F[x]).length) delete F[x]; }) })) });
   if (Object.keys(fc).length) out.push({ sep: 1 }, { ic: "↺", danger: 1, label: L2("Reset this form", "إعادة هذا النموذج للأصل"), act: async () => {
     if (await uiConfirm(L2("Undo every rename, hidden field, default and added field on this screen's forms?", "إلغاء كل تعديلات الحقول على نماذج هذه الشاشة؟"), { danger: true })) save(F => { Object.keys(F).forEach(x => delete F[x]); }); } });
@@ -9026,6 +9036,98 @@ document.addEventListener("contextmenu", e => {
   document.addEventListener("keydown", e => { if (e.key === "Escape") end(); });
   window.__dndActive = () => !!drag;
 }
+// ---- "⚙ Customise form": the same field changes as the right-click menu, as visible buttons on every field
+async function saveFormCustom(mut) {
+  const fk = formKey(), all = clone(FC()); all[fk] = all[fk] || {}; mut(all[fk]); if (!Object.keys(all[fk]).length) delete all[fk];
+  await api("PUT", "/api/settings", { form_custom: all }); S.boot.settings.form_custom = all;
+}
+const fieldName = lab => (lab.childNodes[0] && lab.childNodes[0].nodeType === 3 ? lab.childNodes[0].textContent : (lab.querySelector("span") || {}).textContent || "").trim();
+function formCustomise(drawerEl, on) {
+  drawerEl.classList.toggle("fc-edit", on);
+  $$(".fc-tools, .fc-bar", drawerEl).forEach(x => x.remove());
+  const btn = $(".fc-btn", drawerEl); if (btn) btn.textContent = on ? "✓ " + L2("Done", "تم") : "⚙ " + L2("Customise form", "تخصيص النموذج");
+  if (!on) return;
+  const fk = formKey(), fc = FC()[fk] || {}, form = $("form", drawerEl);
+  $$("label.f, .sw-field", form).forEach(lab => {
+    const ctl = $("[name]", lab); if (!ctl || ctl.type === "hidden") return;
+    const k = ctl.name, o = fc[k] || {}, extra = /^x_/.test(k);
+    const tools = document.createElement("span"); tools.className = "fc-tools";
+    tools.innerHTML = `<button type="button" data-fc="ren" title="${esc(L2("Rename", "إعادة تسمية"))}">✎</button>` +
+      (ctl.required ? "" : `<button type="button" data-fc="hide" title="${esc(L2("Hide this field", "إخفاء الحقل"))}">${L2("hide", "إخفاء")}</button>`) +
+      (ctl.type === "file" ? "" : `<button type="button" data-fc="def" class="${o.def !== undefined ? "on" : ""}" title="${esc(L2("Use the value in it now as the default for new entries (press again to remove)", "استخدم قيمته الحالية كقيمة افتراضية (اضغط مرة أخرى للإزالة)"))}">★ ${L2("default", "افتراضي")}</button>`) +
+      (extra ? `<button type="button" data-fc="del" title="${esc(L2("Remove this field", "حذف الحقل"))}">✕</button>` : "");
+    const first = lab.childNodes[0];
+    if (first && first.nodeType === 3) first.after(tools); else lab.prepend(tools);
+    tools.addEventListener("click", async e => {
+      const b = e.target.closest("[data-fc]"); if (!b) return; e.preventDefault(); e.stopPropagation();
+      try {
+        if (b.dataset.fc === "ren") { const v = await uiPrompt(L2("New label (empty = the original)", "الاسم الجديد (فارغ = الأصلي)"), fieldName(lab)); if (v === null) return;
+          await saveFormCustom(F => { F[k] = { ...(F[k] || {}) }; if (v.trim()) F[k].label = { ...(F[k].label || {}), [S.lang]: v.trim() }; else delete F[k].label; if (!Object.keys(F[k]).length) delete F[k]; });
+          if (v.trim() && lab.childNodes[0].nodeType === 3) lab.childNodes[0].textContent = v.trim(); }
+        else if (b.dataset.fc === "hide") { await saveFormCustom(F => { F[k] = { ...(F[k] || {}), hide: 1, name: fieldName(lab) }; }); lab.style.display = "none"; formCustomise(drawerEl, true); }
+        else if (b.dataset.fc === "def") { const had = (FC()[fk] || {})[k] && FC()[fk][k].def !== undefined;
+          await saveFormCustom(F => { F[k] = { ...(F[k] || {}) }; if (had) delete F[k].def; else F[k].def = ctl.type === "checkbox" ? ctl.checked : ctl.value; if (!Object.keys(F[k]).length) delete F[k]; });
+          b.classList.toggle("on", !had); toast(had ? L2("Default removed", "أزيلت القيمة الافتراضية") : L2("Saved as the default for new entries", "حُفظت كقيمة افتراضية للقيود الجديدة")); }
+        else if (b.dataset.fc === "del") { await saveFormCustom(F => { F.__extra = (F.__extra || []).filter(x => x.k !== k); if (!F.__extra.length) delete F.__extra; }); lab.remove(); }
+      } catch (x) { fail(x); }
+    });
+  });
+  // added fields and hidden fields
+  const hidden = Object.entries(FC()[fk] || {}).filter(([x, o]) => x !== "__extra" && o.hide);
+  const hasNote = NOTE_KEYS.some(n => $(`[name="${n}"]`, form));
+  const bar = document.createElement("div"); bar.className = "fc-bar";
+  bar.innerHTML = (hasNote ? `<button type="button" class="btn sm" data-fc="add">+ ${esc(L2("Add a field", "إضافة حقل"))}</button>` : `<span class="muted">${esc(L2("This form has no notes field, so extra fields cannot be added here.", "هذا النموذج بلا حقل ملاحظات، فلا يمكن إضافة حقول هنا."))}</span>`) +
+    (hidden.length ? `<span class="muted">${esc(L2("Hidden:", "مخفي:"))}</span>${hidden.map(([x, o]) => `<span class="chip" data-fc="show" data-k="${esc(x)}" title="${esc(L2("Show again", "إظهار"))}">${esc(lbl2(o.label) || o.name || x)} ↺</span>`).join("")}` : "") +
+    `<span class="spacer"></span>${Object.keys(FC()[fk] || {}).length ? `<button type="button" class="btn sm danger" data-fc="reset">${esc(L2("Reset this form", "إعادة النموذج للأصل"))}</button>` : ""}
+     <span class="muted" style="flex-basis:100%;font-size:.82em">${esc(L2("Changes apply to this screen's forms for everyone in the company. Added fields are saved in each record's notes.", "التغييرات تسري على نماذج هذه الشاشة لكل من في الشركة. الحقول المضافة تُحفظ في ملاحظات كل سجل."))}</span>`;
+  const foot = $(".foot", form); (foot ? foot.before(bar) : form.appendChild(bar));
+  bar.addEventListener("click", async e => {
+    const b = e.target.closest("[data-fc]"); if (!b) return; e.preventDefault();
+    try {
+      if (b.dataset.fc === "add") {
+        const name = await uiPrompt(L2("Name of the new field", "اسم الحقل الجديد"), ""); if (!name || !name.trim()) return;
+        const ty = /date|تاريخ/i.test(name) ? "date" : /no\.|number|qty|amount|رقم|كمية|مبلغ/i.test(name) ? "text" : "text";
+        const nk = "x_" + Date.now().toString(36);
+        await saveFormCustom(F => { F.__extra = [...(F.__extra || []), { k: nk, type: ty, label: { [S.lang]: name.trim() } }]; });
+        const grid = $(".grid", form); if (grid) grid.insertAdjacentHTML("beforeend", `<label class="f">${esc(name.trim())}<input type="${ty}" name="${nk}"></label>`);
+        formCustomise(drawerEl, true);
+      } else if (b.dataset.fc === "show") {
+        const k = b.dataset.k; await saveFormCustom(F => { delete F[k].hide; if (!Object.keys(F[k]).length) delete F[k]; });
+        toast(L2("Shown again — it appears the next time this form opens", "سيظهر مرة أخرى عند فتح النموذج القادم")); b.remove();
+      } else if (b.dataset.fc === "reset") {
+        if (!await uiConfirm(L2("Undo every rename, hidden field, default and added field on this screen's forms?", "إلغاء كل تعديلات الحقول على نماذج هذه الشاشة؟"), { danger: true })) return;
+        await saveFormCustom(F => { Object.keys(F).forEach(x => delete F[x]); }); toast(L2("Reset — reopen the form", "تمت الإعادة — أعد فتح النموذج")); formCustomise(drawerEl, false);
+      }
+    } catch (x) { fail(x); }
+  });
+}
+// every form panel (not read-only views) gets the button, for those who may arrange forms
+new MutationObserver(() => {
+  const d = $(".drawer"); if (!d || d.dataset.fcDone || !canMenus()) return;
+  const form = $("form", d); if (!form || !$("button[type=submit]", form) || !$("label.f [name]:not([type=hidden])", form)) return;
+  d.dataset.fcDone = "1";
+  const head = $(".dhead", d); if (!head) return;
+  head.insertAdjacentHTML("beforeend", `<button type="button" class="btn sm fc-btn">⚙ ${esc(L2("Customise form", "تخصيص النموذج"))}</button>`);
+  $(".fc-btn", head).addEventListener("click", () => formCustomise(d, !d.classList.contains("fc-edit")));
+}).observe(document.documentElement, { childList: true, subtree: true });
+
+// ---- a visible "⋯" on the row or menu item under the mouse: the same actions as right-click, for whoever does not know it
+{ const mb = document.createElement("button"); mb.type = "button"; mb.className = "more-btn"; mb.textContent = "⋯";
+  mb.title = "Actions"; let target = null;
+  const place = el => { const r = el.getBoundingClientRect(); mb.style.display = "flex";
+    mb.style.top = r.top + (Math.min(r.height, 40) - 24) / 2 + "px";
+    mb.style.left = (document.dir === "rtl" ? r.left + 6 : r.right - 34) + "px"; target = el; };
+  document.addEventListener("mousemove", e => {
+    if (!S.boot || !S.boot.user || e.target === mb) return;
+    if (ctxEl) { mb.style.display = "none"; return; }
+    const row = e.target.closest("#view .tbl tbody tr:not(.total)"), nav = canMenus() && e.target.closest("#nav a[data-k], #nav .grp[data-g]");
+    const el = nav || row;
+    if (el) { if (el !== target || mb.style.display === "none") place(el); } else if (!e.target.closest(".more-btn")) { mb.style.display = "none"; target = null; }
+  }, { passive: true });
+  document.addEventListener("scroll", () => { mb.style.display = "none"; target = null; }, { capture: true, passive: true });
+  mb.addEventListener("click", e => { e.stopPropagation(); if (!target) return; const r = ctxFor(target.querySelector("td, span") || target); const rc = mb.getBoundingClientRect();
+    mb.style.display = "none"; if (r) ctxOpen(rc.left - 200, rc.bottom + 4, r[0], r[1]); });
+  document.addEventListener("DOMContentLoaded", () => document.body.appendChild(mb)); if (document.body) document.body.appendChild(mb); }
 // ================================================== full view & landscape (phones)
 // Every wide table gets "⤢ Full view" on phones: the real grid (not the stacked cards), pinch or −/+ to zoom, "Fit" to
 // see it whole, ⟳ to turn it sideways. Turning uses the phone's own rotation where the browser allows it (Android, from

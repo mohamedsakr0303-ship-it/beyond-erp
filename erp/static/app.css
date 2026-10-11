@@ -1432,3 +1432,25 @@ html.dnd-on,html.dnd-on *{cursor:grabbing!important;user-select:none!important;-
 .lp-motion{all:unset;cursor:pointer;font-size:.8em;color:#b9bce6;padding:6px 10px;border-radius:999px;border:1px solid rgba(160,150,255,.25);white-space:nowrap}
 .lp-motion:hover{color:#fff;border-color:rgba(160,150,255,.5)}
 @media (max-width:640px){.lp-motion{display:none}}
+/* the halo's start: the whole ring fades in a little smaller and lower and settles into place — no squashed ellipse
+   (its thin edge looked jagged) and nothing shown before it starts moving */
+.lp-ring{animation:lpRing 1.9s cubic-bezier(.22,1,.36,1) .05s both}
+@keyframes lpRing{0%{opacity:0;transform:translateX(-50%) translateY(14vmin) scale(.62)}
+  35%{opacity:1}
+  100%{opacity:1;transform:translateX(-50%)}}
+.jv-new .dd-menu{inset-inline-start:0;inset-inline-end:auto;min-width:260px;max-height:70vh;overflow-y:auto}
+/* "Customise form": visible controls on each field instead of a hidden right-click */
+.fc-btn{margin-inline-start:auto;font-size:.8em}
+.drawer.fc-edit label.f,.drawer.fc-edit .sw-field{position:relative;outline:1px dashed color-mix(in srgb,var(--brand) 55%,transparent);outline-offset:4px;border-radius:6px}
+.fc-tools{display:inline-flex;gap:4px;margin-inline-start:8px;vertical-align:middle}
+.fc-tools button{all:unset;cursor:pointer;font-size:.78em;line-height:1;padding:3px 6px;border-radius:6px;background:var(--hover);color:var(--ink)}
+.fc-tools button:hover{background:color-mix(in srgb,var(--brand) 25%,transparent)}
+.fc-tools button.on{color:var(--brand);font-weight:700}
+.fc-bar{margin:12px 0 4px;padding:12px;border-radius:12px;border:1px dashed color-mix(in srgb,var(--brand) 55%,transparent);display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.fc-bar .chip{cursor:pointer}
+/* the ⋯ that shows the same actions as right-click, on the row or menu item under the mouse */
+.more-btn{position:fixed;z-index:70;display:none;align-items:center;justify-content:center;width:28px;height:24px;border-radius:8px;border:1px solid var(--line);
+  background:var(--panel);color:var(--ink);cursor:pointer;font-size:16px;line-height:1;box-shadow:0 4px 12px rgba(0,0,0,.18);padding:0}
+.more-btn:hover{background:var(--hover)}
+@media (hover:none){.more-btn{display:none!important}}
+.lp-home{color:inherit;text-decoration:none}.lp-home:hover{opacity:.85}
