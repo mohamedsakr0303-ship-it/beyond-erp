@@ -1300,3 +1300,6 @@ html:has(.lp),html:has(.lp) body{overflow-x:clip}
 .lp-me{display:inline-flex;align-items:center;gap:8px;color:#d9dbff;font-size:.85em;max-width:180px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .lp-me b{width:28px;height:28px;flex:none;border-radius:50%;display:grid;place-items:center;font-size:.85em;color:#fff;background:linear-gradient(135deg,#6c5cff,#2f3cff)}
 @media (max-width:520px){.lp-me{font-size:0;gap:0}}
+
+/* tour steps that open a screen: the page stays visible behind a lighter veil */
+.tour-ring.soft{box-shadow:0 0 0 9999px rgba(0,0,0,.28),0 0 0 3px var(--brand),0 0 26px rgba(108,92,255,.55)}

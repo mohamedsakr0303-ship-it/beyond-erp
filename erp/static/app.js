@@ -8214,8 +8214,16 @@ async function startTour(kind, from = 0) {
   $("#tourbar") && $("#tourbar").remove();
   const app = $(".app"), narrow = innerWidth <= 900, hadMenu = app && app.classList.contains("menu");
   if (narrow && app) app.classList.add("menu");          // phones: the menu slides in for the steps that point into it
-  const steps = tourSteps(kind).map(([sel, h, p]) => { const el = sel ? $$(sel).find(e => e.getBoundingClientRect().width > 0) : null; return { sel, el, h, p, side: !!(el && el.closest(".side")) }; })
-    .filter(s => !s.sel || s.el);
+  // each area of the menu is visited for real: its group opens, its first screen opens behind the card, and the open
+  // group is highlighted; the dashboard / chat steps open those screens too
+  const firstRoute = g => { const grp = window.MENU.find(([k]) => k === g); const it = grp && grp[1].find(i => can(i[2]) && shown(i[2])); return it ? it[1] : null; };
+  const steps = tourSteps(kind).map(([sel, h, p]) => {
+    const g = (sel.match(/data-g="(g_\w+)"/) || [])[1], link = (sel.match(/#nav a\[href="#\/([\w-]+)"\]/) || [])[1];
+    const go = g ? firstRoute(g) : link || null;
+    const el = sel && !go ? $$(sel).find(e => e.getBoundingClientRect().width > 0) : null;
+    return { sel, g, go, el, h, p, side: !!(go || (el && el.closest(".side"))) };
+  }).filter(s => !s.sel || s.el || s.go);
+  const startHash = location.hash;
   if (!steps.length) return;
   const wrap = document.createElement("div"); wrap.className = "tour";
   wrap.innerHTML = `<div class="tour-ring"></div><div class="tour-card" role="dialog" aria-live="polite"></div>`;
@@ -8224,7 +8232,8 @@ async function startTour(kind, from = 0) {
   let i = Math.min(from, steps.length - 1), pill = null;
   const cleanup = () => { document.removeEventListener("keydown", key, true); removeEventListener("resize", place); wrap.remove(); if (pill) pill.remove();
     if (narrow && app && !hadMenu) app.classList.remove("menu"); };
-  const end = state => { cleanup(); saveTour({ state, step: state === "paused" ? i : 0, kind }); };
+  const end = state => { cleanup(); saveTour({ state, step: state === "paused" ? i : 0, kind });
+    if (state === "done" && startHash && location.hash !== startHash) location.hash = startHash; };   // back where the tour began
   const place = () => {
     if (wrap.hidden) return;
     const s = steps[i], r = s.el && s.el.getBoundingClientRect();
@@ -8237,7 +8246,18 @@ async function startTour(kind, from = 0) {
       card.dataset.side = x > q.right ? "right" : y > q.bottom ? "below" : "above";
     } else { ring.style.display = "none"; Object.assign(card.style, { left: "50%", top: "50%", width: Math.min(350, innerWidth - 24) + "px" }); card.dataset.side = "center"; }
   };
-  const show = () => { const s = steps[i];
+  const settle = async test => { for (let k = 0; k < 60 && !test(); k++) await new Promise(r => setTimeout(r, 50)); };
+  let showing = 0;
+  const show = async () => { const s = steps[i], me = ++showing;
+    if (s.go) {   // open that screen and its menu group
+      if (parseHash().parts.join("/") !== s.go) { location.hash = "#/" + s.go; await settle(() => $(`#nav a.on[href="#/${s.go}"]`)); }
+      await settle(() => !$("#view .empty.ld"));
+      if (me !== showing || !wrap.isConnected) return;
+      const a = $(`#nav a[href="#/${s.go}"]`);
+      s.el = s.g ? (($(`[data-g="${s.g}"]`) || {}).closest ? $(`[data-g="${s.g}"]`).closest(".grp-wrap") : a) : a;
+      if (s.el && s.g) s.el.classList.add("open");
+    }
+    ring.classList.toggle("soft", !!s.go);
     if (narrow && app) app.classList.toggle("menu", s.side || i === 0);
     const last = i === steps.length - 1, fwd = S.lang === "ar" ? "←" : "→", bwd = S.lang === "ar" ? "→" : "←";
     card.innerHTML = `<div class="tour-step">${kind === "general" ? esc(L2("General tour", "جولة عامة")) : esc(TYPE_NAMES()[kind] || "")} · ${i + 1} / ${steps.length}</div><h3>${esc(s.h)}</h3><p>${esc(s.p)}</p>
