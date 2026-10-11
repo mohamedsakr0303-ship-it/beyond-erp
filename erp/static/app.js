@@ -8437,8 +8437,8 @@ function renderLanding(opt = {}) {
   // sweep in from the edges of the screen, stretched and blurred, and sharpen as they land on the ring
   const LETTERS = "BEYONDERP".split(""), mid = (LETTERS.length - 1) / 2;
   const word = LETTERS.map((c, i) => { const off = i - mid, dist = Math.abs(off), dir = Math.sign(off);
-    const x = dist >= mid ? dir * 46 : dir * (dist * 9 + 5), dl = 1.0 + [0, .22, .4, .55, .68][Math.round(dist)];
-    return `<span style="--x:${x}vw;--y:${dist ? -1.5 : 0}vh;--s:${dist ? 1.9 : 2.6};--dl:${dl.toFixed(2)}s" class="${i >= 6 ? "erp" : ""}">${c}</span>`; }).join("");
+    const x = dist >= mid ? dir * 46 : dir * (dist * 9 + 5), dl = 1.15 + [0, .2, .38, .54, .68][Math.round(dist)];
+    return `<span style="--x:${x}vw;--y:${dist ? -1.5 : 0}vh;--s:${dist ? 1.9 : 2.6};--dl:${dl.toFixed(2)}s" class="${i >= 6 ? "erp" : ""}" data-c="${c}"><b>${c}</b></span>`; }).join("");
   const chips = [L2("General Accounting", "المحاسبة العامة"), L2("Accounts Receivable", "حسابات العملاء"), L2("Accounts Payable", "حسابات الموردين"),
     L2("Inventory Management", "إدارة المخزون"), L2("Procurement", "المشتريات"), L2("Project Costing", "تكاليف المشروعات"), L2("Contracts & Progress Billing", "العقود والمستخلصات"),
     L2("Payroll & HR", "الرواتب وشؤون الموظفين"), L2("Fixed Assets", "الأصول الثابتة"), L2("Treasury & Banking", "الخزينة والبنوك"), L2("Budgeting", "الموازنات"),
@@ -8507,20 +8507,29 @@ function lpStory(root) {
   if (matchMedia("(prefers-reduced-motion: reduce)").matches) {
     root.classList.add("lp-static"); nums.forEach(n => { n.textContent = money(+n.dataset.count); }); return;
   }
-  let raf = 0;
-  const tick = () => {
+  // the scenes glide after the scroll position instead of jumping with each wheel notch: every frame closes part of the
+  // gap (time-based, so it is the same on 60 and 120 Hz screens) and the loop stops once they have caught up
+  let raf = 0, cur = null, last = 0, lpPast = null;
+  const tick = now => {
     raf = 0;
     if (!story.isConnected) { removeEventListener("scroll", onScroll); removeEventListener("resize", onScroll); return; }
     const span = story.offsetHeight - innerHeight, top = -story.getBoundingClientRect().top;
-    const p = Math.min(Math.max(top / Math.max(span, 1), 0), 1) * (scs.length - 1);
-    scs.forEach((sc, i) => {
-      const t = Math.max(-1, Math.min(1, p - i)), a = Math.abs(t);
-      sc.style.setProperty("--t", t.toFixed(4)); sc.style.setProperty("--a", a.toFixed(4));
-      sc.classList.toggle("on", a < 0.5); sc.classList.toggle("vis", a < 0.999);
+    const goal = Math.min(Math.max(top / Math.max(span, 1), 0), 1) * (scs.length - 1);
+    const dt = Math.min(64, now && last ? now - last : 16); last = now || 0;
+    cur = cur === null ? goal : cur + (goal - cur) * (1 - Math.exp(-dt / 110));
+    if (Math.abs(goal - cur) < 0.0008) cur = goal; else raf = requestAnimationFrame(tick);
+    if (cur === goal) last = 0;
+    const p = cur;
+    scs.forEach((sc, i) => {     // only scenes whose position changed are touched (off-screen ones stay put)
+      const t = Math.max(-1, Math.min(1, p - i)), a = Math.abs(t), ts = t.toFixed(4);
+      if (sc._t === ts) return;
+      sc._t = ts; sc.style.setProperty("--t", ts); sc.style.setProperty("--a", a.toFixed(4));
+      if (sc._on !== (a < 0.5)) sc.classList.toggle("on", sc._on = a < 0.5);
+      if (sc._vis !== (a < 0.999)) sc.classList.toggle("vis", sc._vis = a < 0.999);
     });
     const t1 = Math.max(-1, Math.min(1, p - 1));   // the profit counts up as its card arrives
-    nums.forEach(n => { const k = t1 >= 0 ? 1 : Math.max(0, 1 + t1 * 1.4); n.textContent = money(Math.round(+n.dataset.count * k)); });
-    root.classList.toggle("lp-past", p > 0.15);
+    nums.forEach(n => { const k = t1 >= 0 ? 1 : Math.max(0, 1 + t1 * 1.4), v = money(Math.round(+n.dataset.count * k)); if (n.textContent !== v) n.textContent = v; });
+    if (lpPast !== (p > 0.15)) root.classList.toggle("lp-past", lpPast = p > 0.15);
   };
   const onScroll = () => { if (!raf) raf = requestAnimationFrame(tick); };
   addEventListener("scroll", onScroll, { passive: true }); addEventListener("resize", onScroll, { passive: true });

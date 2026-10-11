@@ -1291,7 +1291,7 @@ html:has(.lp),html:has(.lp) body{overflow-x:clip}
 .lp-word span{opacity:0;transform:none;animation:lpFly 1.05s cubic-bezier(.16,.9,.25,1) forwards;animation-delay:var(--dl)}
 @keyframes lpFly{0%{opacity:0;transform:translate(var(--x),var(--y)) scale(var(--s),.72);filter:blur(16px)}
   30%{opacity:1}70%{filter:blur(1.5px)}100%{opacity:1;transform:none;filter:none}}
-.lp-tag{animation-delay:2.05s}.lp-sub{animation-delay:2.2s}.lp-hero .lp-pill{animation-delay:2.35s}.lp-note{animation-delay:2.5s}
+
 @media (prefers-reduced-motion:reduce){.lp-word span{animation:none;opacity:1;filter:none}}
 /* the ring starts as only its lower arc, like the film, then opens to the full ring */
 @keyframes lpArc{0%{opacity:0;transform:translateX(-50%) translateY(44vmin) scale(.32,.07);clip-path:inset(55% 0 0 0)}
@@ -1303,3 +1303,19 @@ html:has(.lp),html:has(.lp) body{overflow-x:clip}
 
 /* tour steps that open a screen: the page stays visible behind a lighter veil */
 .tour-ring.soft{box-shadow:0 0 0 9999px rgba(0,0,0,.28),0 0 0 3px var(--brand),0 0 26px rgba(108,92,255,.55)}
+/* smoother title sequence: only transform and opacity move (both drawn by the graphics card). The ring opens from a thin
+   flat arc; each letter arrives as a pre-blurred copy that hands over to the sharp letter, instead of a blur redrawn
+   every frame */
+.lp-ring{animation:lpArc2 2.3s cubic-bezier(.22,1,.36,1) both}
+@keyframes lpArc2{0%{opacity:0;transform:translateX(-50%) translateY(46vmin) scale(.3,.04)}
+  18%{opacity:1;transform:translateX(-50%) translateY(44vmin) scale(.36,.06)}
+  100%{opacity:1;transform:translateX(-50%)}}
+.lp-word span{position:relative;animation:lpFly2 1.6s cubic-bezier(.22,1,.36,1) forwards;animation-delay:var(--dl);will-change:transform,opacity}
+.lp-word span b{font-weight:inherit;opacity:0;animation:lpSharp 1.1s ease-out forwards;animation-delay:calc(var(--dl) + .35s);will-change:opacity}
+.lp-word span::before{content:attr(data-c);position:absolute;inset:0;filter:blur(9px);animation:lpSoft 1.3s ease-in forwards;animation-delay:calc(var(--dl) + .25s);will-change:opacity}
+@keyframes lpFly2{0%{opacity:0;transform:translate(var(--x),var(--y)) scale(var(--s),.72)}25%{opacity:1}100%{opacity:1;transform:none}}
+@keyframes lpSharp{to{opacity:1}}
+@keyframes lpSoft{to{opacity:0}}
+.lp-tag{animation-delay:2.45s}.lp-sub{animation-delay:2.6s}.lp-hero .lp-pill{animation-delay:2.75s}.lp-note{animation-delay:2.9s}
+.lp-tag,.lp-sub,.lp-hero .lp-pill,.lp-note{animation-duration:1.1s;animation-timing-function:cubic-bezier(.22,1,.36,1)}
+@media (prefers-reduced-motion:reduce){.lp-word span,.lp-word span b{animation:none;opacity:1}.lp-word span::before{display:none}}
