@@ -22,7 +22,7 @@ window.I18N = {
   m_products: ["Showroom (Products & Units)", "المعرض (المنتجات والوحدات)"], m_sales_orders: ["Sales Orders & Instalments", "أوامر البيع والتقسيط"], m_installments: ["Instalment Collections", "تحصيل الأقساط"],
   "Installment Interest": ["Installment Interest", "فوائد تقسيط"], "Advance Applied": ["Advance Applied", "تسوية دفعات مقدمة"], "Cost of Sales": ["Cost of Sales", "تكلفة مبيعات"],
   "Cheque Received": ["Cheque Received", "استلام شيك"], "Cheque Cleared": ["Cheque Cleared", "صرف شيك"], "Cheque Bounced": ["Cheque Bounced", "شيك مرتد"], "Sale Refund": ["Sale Refund", "رد مبلغ بيع"],
-  m_rentals: ["Rental Contracts", "عقود التأجير"], m_rentfleet: ["Rental Fleet & Stock", "أسطول ومخزون التأجير"], m_rentcalc: ["Scaffolding Estimator", "حاسبة السقالات"],
+  m_rentals: ["Rental Contracts", "عقود التأجير"], m_rentfleet: ["Rental Fleet & Stock", "أسطول ومخزون التأجير"], m_rentcalc: ["Rental Calculators", "حاسبات التأجير"], m_calcs: ["Calculators", "الحاسبات"],
   "Rental Equipment Purchase": ["Rental Equipment Purchase", "شراء معدات تأجير"], "Rental Equipment Loss": ["Rental Equipment Loss", "خسائر معدات تأجير"], "Rental Equipment Depreciation": ["Rental Equipment Depreciation", "إهلاك معدات تأجير"], "Rental Deposit": ["Rental Deposit", "تأمين تأجير"], m_loans: ["Loans & Borrowings", "القروض والتمويل"], m_bankrec: ["Bank Reconciliation", "التسوية البنكية"], m_recurring: ["Recurring Journals", "القيود الدورية"], "Bank Entry": ["Bank Entry", "قيد بنكي"], m_contacts: ["Customers, Suppliers & Contacts", "العملاء والموردون وجهات الاتصال"], m_custody: ["Petty Cash & Cash Advances", "العهد النقدية والسلف"],
   "Loan Received": ["Loan Received", "استلام قرض"], "Loan Repayment": ["Loan Repayment", "سداد قرض"], "Loan Given": ["Loan Given", "صرف قرض ممنوح"],
   "Loan Collection": ["Loan Collection", "تحصيل قرض"], "Loan Interest": ["Loan Interest", "فوائد قرض"], "Loan Charges": ["Loan Charges", "مصاريف قرض"],
@@ -207,7 +207,7 @@ window.SUBTYPE_LABELS = {
 };
 // sidebar: [group, [ [menuKey, route, module, icon], ... ]]
 window.MENU = [
-  ["g_home", [["m_dashboard", "dashboard", "dashboard", "◧"], ["m_chat", "chat", "chat", "💬"], ["m_assistant", "assistant", "chat.ai", "✦"]]],
+  ["g_home", [["m_dashboard", "dashboard", "dashboard", "◧"], ["m_chat", "chat", "chat", "💬"], ["m_assistant", "assistant", "chat.ai", "✦"], ["m_calcs", "calculators", "dashboard", "🧮"]]],
   ["g_bu", [["m_bus", "bus", "business_units.units", "▦"]]],
   ["g_crm", [["m_deals", "deals", "crm.deals", "◎"], ["m_crm_contacts", "crm-contacts", "crm.contacts", "☎"], ["m_followups", "followups", "crm.followups", "⏰"]]],
   ["g_prj", [["m_projects", "projects", "projects.overview", "◔"], ["m_tasks", "tasks", "projects.tasks", "☑"], ["m_materials", "materials", "projects.overview", "▤"], ["m_contracts", "contracts", "contracts.contracts", "✍"],

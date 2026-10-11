@@ -22,7 +22,7 @@ from . import accounting as acc
 from .accounting import ValidationError, num, text
 from .db import to_major, to_minor
 
-CATEGORIES = ("scaffolding", "elevator", "cradle_manual", "cradle_motorized", "other")
+CATEGORIES = ("scaffolding", "elevator", "cradle_manual", "cradle_motorized", "other", "general")   # general: any business calculation
 LINE_KINDS = ("item", "kit", "sqm", "charge")
 CHARGE_TYPES = ("install", "dismantle", "transport", "materials", "other")
 CHARGE_WHEN = ("delivery", "return", "manual")
@@ -758,10 +758,25 @@ def _spec(d):
         if isinstance(r, dict) and text(r.get("item")):
             comps.append({"item": text(r.get("item"), maxlen=40), "expr": text(r.get("expr"), maxlen=300) or "0",
                           "note": text(r.get("note"), maxlen=200)})
+    # installation, dismantling, transport…: a quantity formula × a rate formula, each a cost and / or a price
+    charges = []
+    for r in d.get("charges") or []:
+        if isinstance(r, dict) and text(r.get("label")):
+            charges.append({"label": text(r.get("label"), maxlen=120), "label_ar": text(r.get("label_ar"), maxlen=120),
+                            "kind": r.get("kind") if r.get("kind") in ("install", "dismantle", "transport", "labour", "materials", "other") else "other",
+                            "qty": text(r.get("qty"), maxlen=300) or "1", "unit": text(r.get("unit"), maxlen=20),
+                            "cost": text(r.get("cost"), maxlen=300) or "0", "price": text(r.get("price"), maxlen=300) or "0"})
+    # the calculator's own results (any formula over its names, totals included), shown big
+    results = []
+    for r in d.get("results") or []:
+        if isinstance(r, dict) and text(r.get("label")) and text(r.get("expr")):
+            results.append({"label": text(r.get("label"), maxlen=120), "label_ar": text(r.get("label_ar"), maxlen=120),
+                            "expr": text(r.get("expr"), maxlen=400), "unit": text(r.get("unit"), maxlen=20),
+                            "money": r.get("money") is True or str(r.get("money") or "").strip().lower() in ("1", "yes", "y", "true", "نعم")})
     return {"inputs": rows("inputs", ("label", "label_ar", "unit", "value")),
             "params": rows("params", ("label", "label_ar", "unit", "value")),
             "derived": rows("derived", ("expr", "label", "label_ar")), "components": comps,
-            "area": text(d.get("area"), maxlen=200) or "0"}
+            "area": text(d.get("area"), maxlen=200) or "0", "charges": charges, "results": results}
 
 
 def evaluate(db, spec, values=None):
@@ -792,7 +807,17 @@ def evaluate(db, spec, values=None):
         comps.append(row)
     value = round(sum(c.get("value", 0) for c in comps), 2)
     piece_rent = round(sum(c.get("piece_rent", 0) for c in comps), 2)
+    names.update(equipment_value=value, piece_rent=piece_rent, area=area)
+    charges = []
+    for r in spec["charges"]:
+        q = safe_eval(r["qty"], names)
+        c, pr = safe_eval(r["cost"], names), safe_eval(r["price"], names)
+        charges.append({**r, "qty_value": round(q, 4), "cost_rate": round(c, 4), "price_rate": round(pr, 4),
+                        "cost_total": round(q * c, 2), "price_total": round(q * pr, 2)})
+    names.update(charges_cost=sum(x["cost_total"] for x in charges), charges_price=sum(x["price_total"] for x in charges))
+    results = [{**r, "value": round(safe_eval(r["expr"], names), 4)} for r in spec["results"]]
     return {"values": {k: names[k] for k in (r["key"] for r in spec["inputs"] + spec["params"])}, "derived": derived,
+            "charges": charges, "charges_cost": round(names["charges_cost"], 2), "charges_price": round(names["charges_price"], 2), "results": results,
             "area": round(area, 4), "components": comps, "value": value, "piece_rent": piece_rent,
             "value_per_m2": round(value / area, 2) if area else 0, "piece_rent_per_m2": round(piece_rent / area, 2) if area else 0,
             "pieces": round(sum(c["qty"] for c in comps), 2), "weight": round(sum(c.get("weight", 0) for c in comps), 2)}

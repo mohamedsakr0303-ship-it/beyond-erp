@@ -2370,26 +2370,55 @@ def rent_settings_put(ctx):
     return ok(rentals.save_settings(ctx.db, ctx.body))
 
 
+def _calc_access(ctx):
+    """Equipment calculators: the rental screens; general calculators (any business sum): everyone signed in."""
+    return ctx.can("rentals.calculator") or ctx.can("rentals.contracts")
+
+
 @route("GET", "/api/rent-models")
 def rent_models(ctx):
-    if not (ctx.can("rentals.calculator") or ctx.can("rentals.contracts")):
-        raise PermissionError()
-    return ok({"models": rentals.list_models(ctx.db)})
+    models = rentals.list_models(ctx.db)
+    if not _calc_access(ctx):
+        models = [m for m in models if m["category"] == "general"]
+    return ok({"models": models, "can_build": auth.granted(ctx.user, "build_calculators")})
 
 
-@route("POST", "/api/rent-models", "rentals.calculator", "add")
+def _shape(spec):
+    """A calculator's structure without the default values (changing defaults is not rebuilding it)."""
+    sp = json.loads(json.dumps(spec or {}))
+    for k in ("inputs", "params"):
+        for r in sp.get(k) or []:
+            if isinstance(r, dict):
+                r.pop("value", None)
+    return json.dumps(sp, sort_keys=True)
+
+
+@route("POST", "/api/rent-models")
 def rent_model_add(ctx):
+    """New calculators (or copies): super administrators, and whoever they allow to build calculators."""
+    if not auth.granted(ctx.user, "build_calculators"):
+        raise PermissionError("Building calculators is for super administrators and people they allow (Users → special rights)")
     return ok({"id": rentals.save_model(ctx.db, ctx.body)})
 
 
-@route("PUT", "/api/rent-models/<mid>", "rentals.calculator", "edit")
+@route("PUT", "/api/rent-models/<mid>")
 def rent_model_edit(ctx, mid):
+    old = ctx.db.one("SELECT spec FROM rent_models WHERE id=?", (int(mid),))
+    if not old:
+        raise acc.ValidationError("Calculator not found")
+    if not auth.granted(ctx.user, "build_calculators"):
+        # without the right: only its default values change (Save these settings as defaults), with full rights on calculators
+        ctx.require("rentals.calculator", "edit")
+        if _shape(json.loads(old["spec"] or "{}")) != _shape(rentals._spec(ctx.body.get("spec") or {})):
+            raise PermissionError("Changing a calculator's formulas is for super administrators and people they allow")
     rentals.save_model(ctx.db, ctx.body, mid)
     return ok()
 
 
-@route("DELETE", "/api/rent-models/<mid>", "rentals.calculator", "edit")
+@route("DELETE", "/api/rent-models/<mid>")
 def rent_model_del(ctx, mid):
+    if not auth.granted(ctx.user, "build_calculators"):
+        raise PermissionError()
     rentals.delete_model(ctx.db, mid)
     return ok()
 
@@ -2418,12 +2447,16 @@ def rent_services_quote(ctx):
 
 @route("POST", "/api/rent-models-preview/eval")
 def rent_model_eval(ctx):
-    if not (ctx.can("rentals.calculator") or ctx.can("rentals.contracts")):
-        raise PermissionError()
     spec = ctx.body.get("spec")
     if not spec and ctx.body.get("model_id"):
-        m = ctx.db.one("SELECT spec FROM rent_models WHERE id=?", (int(ctx.body["model_id"]),))
+        m = ctx.db.one("SELECT spec, category FROM rent_models WHERE id=?", (int(ctx.body["model_id"]),))
         spec = json.loads(m["spec"]) if m else {}
+        if m and m["category"] != "general" and not _calc_access(ctx):
+            raise PermissionError()
+    elif not (_calc_access(ctx) or auth.granted(ctx.user, "build_calculators") or ctx.body.get("general")):
+        raise PermissionError()
+    if spec and not (_calc_access(ctx) or auth.granted(ctx.user, "build_calculators")):
+        spec = {**spec, "components": []}           # a general calculator never looks at equipment costs
     return ok(rentals.evaluate(ctx.db, spec or {}, ctx.body.get("values") or {}))
 
 

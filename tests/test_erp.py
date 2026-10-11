@@ -3855,6 +3855,63 @@ class SpecialRights(unittest.TestCase):
         self.assertEqual(ap, {"accent": "#123456"})
 
 
+class CalculatorBuilder(unittest.TestCase):
+    """Rental and general calculators: charges (installation, transport…) and results are formulas; only super
+    administrators and the people they allow build or change formulas; anyone may open a general calculator."""
+
+    def setUp(self):
+        from erp.server import handle
+        self.handle = handle
+        self.app = type("App", (), {"static": False})()
+        self.app.db = self.db = Database(":memory:")
+        auth.create_user(self.db, {"username": "boss", "password": "secret123"}, first=True)
+        auth.create_user(self.db, {"username": "rita", "password": "secret123", "perms": {"rentals": "edit"}})
+        auth.create_user(self.db, {"username": "sam", "password": "secret123", "perms": {"sales": "view"}})
+        self.tok = {u: auth.login(self.db, u, "secret123")[0] for u in ("boss", "rita", "sam")}
+
+    def call(self, who, method, url, body=None):
+        h = {"x-requested-with": "BeyondERP", "x-session": self.tok[who], "content-type": "application/json"}
+        r = self.handle(self.app, method, url, h, json.dumps(body).encode() if body is not None else b"")
+        return r.status, json.loads(r.body)
+
+    def test_build_and_run(self):
+        from erp import rentals
+        spec = {"inputs": [{"key": "length", "value": 10}, {"key": "height", "value": 5}], "params": [{"key": "rate", "value": 4}],
+                "area": "length * height", "derived": [], "components": [],
+                "charges": [{"label": "Installation", "kind": "install", "qty": "area", "unit": "m²", "cost": "2", "price": "3"},
+                            {"label": "Transport", "kind": "transport", "qty": "2", "unit": "trip", "cost": "100", "price": "150"}],
+                "results": [{"label": "Rent", "expr": "area * rate", "money": "yes"}, {"label": "Total", "expr": "area * rate + charges_price", "money": "no"}]}
+        r = rentals.evaluate(self.db, spec, {"length": 20})
+        self.assertEqual(r["area"], 100)
+        self.assertEqual([c["price_total"] for c in r["charges"]], [300, 300])
+        self.assertEqual((r["charges_cost"], r["charges_price"]), (400, 600))
+        self.assertEqual([(x["value"], x["money"]) for x in r["results"]], [(400, True), (1000, False)])
+        # building is a special right: rita may use and tune the calculator but not add one
+        gen = {"name": "Margin", "category": "general", "spec": {"inputs": [{"key": "q", "value": 2}], "params": [], "derived": [], "components": [],
+               "area": "0", "results": [{"label": "Twice", "expr": "q * 2", "money": False}]}}
+        self.assertEqual(self.call("rita", "POST", "/api/rent-models", gen)[0], 403)
+        st, made = self.call("boss", "POST", "/api/rent-models", gen)
+        self.assertEqual(st, 200)
+        mid = made["id"]
+        self.assertTrue(self.call("boss", "GET", "/api/rent-models")[1]["can_build"])
+        self.assertFalse(self.call("rita", "GET", "/api/rent-models")[1]["can_build"])
+        # new defaults are fine, a changed formula is not
+        tuned = json.loads(json.dumps(gen)); tuned["spec"]["inputs"][0]["value"] = 5
+        self.assertEqual(self.call("rita", "PUT", f"/api/rent-models/{mid}", tuned)[0], 200)
+        tuned["spec"]["results"][0]["expr"] = "q * 3"
+        self.assertEqual(self.call("rita", "PUT", f"/api/rent-models/{mid}", tuned)[0], 403)
+        self.assertEqual(self.call("rita", "DELETE", f"/api/rent-models/{mid}")[0], 403)
+        # once allowed, rita builds too
+        auth.update_user(self.db, self.db.one("SELECT id FROM users WHERE username='rita'")["id"], {"grants": ["build_calculators"]},
+                         self.db.one("SELECT id FROM users WHERE username='boss'")["id"])
+        self.assertEqual(self.call("rita", "PUT", f"/api/rent-models/{mid}", tuned)[0], 200)
+        # someone outside rentals sees only general calculators
+        st, v = self.call("sam", "GET", "/api/rent-models")
+        self.assertEqual((st, [m["category"] for m in v["models"]]), (200, ["general"]))
+        st, r = self.call("sam", "POST", "/api/rent-models-preview/eval", {"spec": v["models"][0]["spec"], "values": {"q": 4}, "general": True})
+        self.assertEqual((st, r["results"][0]["value"]), (200, 12))
+
+
 class Support(unittest.TestCase):
     """Help & support tickets: a reference built from the date and record number; people see their own, admins all."""
 

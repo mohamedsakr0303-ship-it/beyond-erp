@@ -4990,7 +4990,7 @@ async function rentalForm(d, pre) {
       if ($("#rmt", f)) $("#rmt", f).textContent = money(tot); if ($("#rot", f)) $("#rot", f).textContent = money(one);
       lines.forEach((l, i) => { const c = $(`[data-tot="${i}"]`, f); if (c) c.textContent = money((+l.qty || 0) * (+l.rate || 0)); }); };
     const drawCalc = () => { const box = $("#rcalcbox", f); if (!box) return; if (!calc) { box.innerHTML = ""; return; }
-      const m = models.find(x => x.id === +calc.model_id) || models[0]; if (!m) { box.innerHTML = `<div class="banner info">${L2("No calculator model yet — open Scaffold calculator (or Equipment & stock → Starter set).", "لا يوجد نموذج حاسبة بعد — افتح حاسبة السقالات (أو المعدات والمخزون ← المجموعة الأساسية).")}</div>`; return; }
+      const m = models.find(x => x.id === +calc.model_id) || models[0]; if (!m) { box.innerHTML = `<div class="banner info">${L2("No calculator model yet — open Rental Calculators (or Rental Fleet → Starter set).", "لا يوجد نموذج حاسبة بعد — افتح حاسبات التأجير (أو أسطول التأجير ← المجموعة الأساسية).")}</div>`; return; }
       calc.model_id = m.id; const sp = m.spec;
       box.innerHTML = `<div class="sec-ed" style="margin-top:10px"><div class="row" style="gap:8px;flex-wrap:wrap"><b>${L2("Scaffold calculator", "حاسبة السقالات")}</b>
         <select data-skip="1" data-change="rcm">${models.map(x => `<option value="${x.id}" ${x.id === m.id ? "selected" : ""}>${esc(nm(x))}</option>`).join("")}</select>
@@ -5327,9 +5327,20 @@ async function serviceRatesForm(after) {
   f.addEventListener("click", e => { if (e.target.dataset.k === "add") $("tbody", f).insertAdjacentHTML("beforeend", row()); if (e.target.dataset.k === "rm") e.target.closest("tr").remove(); });
   f.addEventListener("submit", () => setTimeout(() => closeDrawer(), 400));
 }
+// any business calculation (not tied to equipment): the general calculators, open to everyone
+PAGES.calculators = (view, parts, q) => PAGES.rentcalc(view, parts, { ...q, _general: 1 });
 PAGES.rentcalc = async (view, parts, q) => {
-  let { models } = await api("GET", "/api/rent-models");
-  const ed = can("rentals.calculator", "edit"), add = can("rentals.calculator", "add");
+  let { models, can_build: build } = await api("GET", "/api/rent-models");
+  const general = !!q._general;
+  models = models.filter(x => (x.category === "general") === general);
+  const ed = can("rentals.calculator", "edit"), add = build;
+  S.H.rcnew = () => newCalculator(null, general);
+  if (!models.length && (general || build)) {
+    view.innerHTML = `<div class="card"><div class="empty">${esc(general ? L2("No calculators yet. Build one for any sum your work repeats: quantities × prices with margin and VAT, pay by the piece, cutting lists…", "لا توجد حاسبات بعد. أنشئ واحدة لأي حساب يتكرر في عملك: كميات × أسعار مع الهامش والضريبة، أجر بالقطعة، قوائم القص…")
+      : L2("No calculator yet.", "لا توجد حاسبة بعد."))}</div>${build ? `<div class="row"><button class="btn pri" data-a="rcnew">+ ${esc(L2("New calculator", "حاسبة جديدة"))}</button></div>` : `<p class="muted">${esc(L2("A super administrator (or someone they allow) builds calculators.", "يُنشئ الحاسبات المسؤول الأعلى أو من يسمح له."))}</p>`}</div>`;
+    if (!general && can("rentals.fleet", "add")) view.insertAdjacentHTML("beforeend", `<div class="card"><button class="btn" data-a="rstart2">${L2("Add scaffolding starter set", "إضافة المجموعة الأساسية للسقالات")}</button></div>`);
+    S.H.rstart2 = async () => { try { await api("POST", "/api/rent-starter", {}); route(); } catch (e) { fail(e); } };
+    return; }
   if (!models.length) {
     S.H.rstart2 = async () => { try { await api("POST", "/api/rent-starter", {}); route(); } catch (e) { fail(e); } };
     view.innerHTML = `<div class="card"><div class="empty">${L2("No calculator model yet. Add the scaffolding starter set: the pieces from the standard handover form and a frame-scaffold model you can tune.", "لا يوجد نموذج حاسبة بعد. أضف المجموعة الأساسية: القطع من محضر التسليم القياسي ونموذج سقالة شبابيك قابل للتعديل.")}</div>
@@ -5337,30 +5348,41 @@ PAGES.rentcalc = async (view, parts, q) => {
   let m = models.find(x => String(x.id) === String(q.model)) || models[0], values = {}, res = null, tm;
   const lab = p => esc(S.lang === "ar" && p.label_ar ? p.label_ar : p.label || p.key);
   const draw = () => {
-    const sp = m.spec;
+    const sp = m.spec; S.H.rcnew = () => newCalculator(m, general);
+    const plain = m.category === "general" || !(sp.components || []).length;      // no equipment pieces: no pieces / pricing panels
     view.innerHTML = `<div class="toolbar"><select data-change="rcmodel">${models.map(x => `<option value="${x.id}" ${x.id === m.id ? "selected" : ""}>${esc(nm(x))}</option>`).join("")}</select>
-        ${ed ? `<button class="btn" data-a="rcedit">${L2("Edit formulas", "تعديل المعادلات")}</button><button class="btn" data-a="rcsave">${L2("Save these settings as the model's defaults", "حفظ الإعدادات كافتراضي للنموذج")}</button>` : ""}
+        ${build ? `<button class="btn pri" data-a="rcnew">+ ${esc(L2("New calculator", "حاسبة جديدة"))}</button><button class="btn" data-a="rcedit">✎ ${L2("Build / edit formulas", "بناء / تعديل المعادلات")}</button>` : ""}
+        ${ed ? `<button class="btn" data-a="rcsave">${L2("Save these settings as the model's defaults", "حفظ الإعدادات كافتراضي للنموذج")}</button>` : ""}
         ${add ? `<button class="btn" data-a="rccopy">${L2("Copy model", "نسخ النموذج")}</button>` : ""}<span class="spacer"></span>
         ${can("rentals.contracts", "add") ? `<button class="btn pri" data-a="rcoffer">${L2("Start a price offer from this", "بدء عرض سعر من هذا")}</button>` : ""}</div>
       <div class="grid g2"><div class="card"><h2>${L2("Size", "المقاسات")}</h2><div class="grid g2">${sp.inputs.map(p => `<label class="f">${lab(p)}${p.unit ? ` (${esc(p.unit)})` : ""}<input class="num" type="number" step="any" value="${values[p.key] ?? p.value}" data-input="rcval" data-k="${p.key}" style="font-size:1.2em"></label>`).join("")}</div>
           <h2 style="margin-top:14px">${L2("Settings you can tweak", "إعدادات قابلة للتعديل")}</h2><div class="grid g2">${sp.params.map(p => `<label class="f">${lab(p)}${p.unit ? ` (${esc(p.unit)})` : ""}<input class="num" type="number" step="any" value="${values[p.key] ?? p.value}" data-input="rcval" data-k="${p.key}"></label>`).join("")}</div></div>
-        <div class="card"><h2>${L2("Worked out", "المحسوب")}</h2><div id="rcder" class="muted">…</div>
-          <h2 style="margin-top:14px">${L2("Pricing", "التسعير")}</h2><label class="f" style="max-width:220px">${L2("Target monthly return on equipment cost %", "العائد الشهري المستهدف على تكلفة المعدات %")}<input class="num" type="number" step="any" id="rcpct" value="${values._pct ?? 3.5}" data-input="rcpctv"></label><div id="rcprice"></div></div></div>
-      <div class="card"><h2>${L2("Pieces needed", "القطع المطلوبة")}</h2><div id="rcres">…</div></div>
-      <div class="card"><h2>${L2("Installation, dismantling & transport", "التركيب والفك والنقل")}</h2><div id="rcsvc"></div></div>`;
+        <div class="card"><div id="rcout"></div>${(sp.derived || []).length || !plain ? `<h2>${L2("Worked out", "المحسوب")}</h2>` : ""}<div id="rcder" class="muted">…</div>
+          ${plain ? "" : `<h2 style="margin-top:14px">${L2("Pricing", "التسعير")}</h2><label class="f" style="max-width:220px">${L2("Target monthly return on equipment cost %", "العائد الشهري المستهدف على تكلفة المعدات %")}<input class="num" type="number" step="any" id="rcpct" value="${values._pct ?? 3.5}" data-input="rcpctv"></label><div id="rcprice"></div>`}</div></div>
+      <div class="card" id="rcchg" hidden><h2>${L2("Charges", "البنود")}</h2><div id="rcchgt"></div></div>
+      ${plain ? "" : `<div class="card"><h2>${L2("Pieces needed", "القطع المطلوبة")}</h2><div id="rcres">…</div></div>
+      <div class="card"><h2>${L2("Installation, dismantling & transport", "التركيب والفك والنقل")}</h2><div id="rcsvc"></div></div>`}`;
+    if (plain) $$("[data-a=rcoffer]", view).forEach(b => b.remove());
     svc = null; run(); };
   let svc = null;
   const svcSync = () => { if (!res) return; const rent = res.piece_rent || +(res.value * ((+$("#rcpct").value || 0) / 100)).toFixed(2);
     if (!svc) svc = svcPanel($("#rcsvc"), { area: res.area, weight: res.weight, rent, onAdd: null });
     else { svc.set("area", res.area); svc.set("weight", Math.round(res.weight)); svc.set("rent", rent); } };
-  const run = async () => { try { res = await api("POST", "/api/rent-models-preview/eval", { spec: m.spec, values });
-      $("#rcder").innerHTML = `<div class="tbl"><table><tbody>${res.derived.map(x => `<tr><td>${esc(S.lang === "ar" && x.label_ar ? x.label_ar : x.label || x.key)}</td><td class="num"><b>${numf(x.value)}</b></td><td class="muted" style="font-size:.8em">${esc(x.expr)}</td></tr>`).join("")}</tbody></table></div>`;
+  const run = async () => { try { res = await api("POST", "/api/rent-models-preview/eval", { spec: m.spec, values, general: m.category === "general" });
+      const lb = x => esc(S.lang === "ar" && x.label_ar ? x.label_ar : x.label || x.key || "");
+      $("#rcout").innerHTML = (res.results || []).length ? `<div class="grid g2" style="margin-bottom:12px">${res.results.map(r => `<div class="kpi"><div class="muted">${lb(r)}</div><div style="font-size:1.6em;font-weight:700">${r.error ? `<span class="neg" style="font-size:.6em">${esc(r.error)}</span>` : r.money ? money(r.value) : numf(r.value)}${r.unit && !r.money ? ` <span class="muted" style="font-size:.55em">${esc(r.unit)}</span>` : ""}</div></div>`).join("")}</div>` : "";
+      const ch = res.charges || []; $("#rcchg").hidden = !ch.length;
+      if (ch.length) $("#rcchgt").innerHTML = `<div class="tbl stack"><table><thead><tr><th>${L2("Charge", "البند")}</th><th class="num">${t("qty")}</th><th class="num">${L2("Cost", "التكلفة")}</th><th class="num">${L2("Price", "السعر")}</th></tr></thead><tbody>
+        ${ch.map(c => `<tr><td>${lb(c)}${c.error ? ` <span class="neg">${esc(c.error)}</span>` : ""}</td><td class="num">${numf(c.qty_value)} ${esc(c.unit || "")}</td><td class="num">${money(c.cost_total)}</td><td class="num">${money(c.price_total)}</td></tr>`).join("")}
+        <tr class="total"><td>${t("total")}</td><td></td><td class="num">${money(res.charges_cost)}</td><td class="num">${money(res.charges_price)}</td></tr></tbody></table></div>`;
+      $("#rcder").innerHTML = !res.derived.length ? "" : `<div class="tbl"><table><tbody>${res.derived.map(x => `<tr><td>${esc(S.lang === "ar" && x.label_ar ? x.label_ar : x.label || x.key)}</td><td class="num"><b>${numf(x.value)}</b></td><td class="muted" style="font-size:.8em">${esc(x.expr)}</td></tr>`).join("")}</tbody></table></div>`;
+      if (!$("#rcres")) return;
       $("#rcres").innerHTML = `<div class="tbl stack"><table><thead><tr><th>${L2("Piece", "القطعة")}</th><th class="num">${t("qty")}</th><th class="num">${L2("Per m²", "لكل م²")}</th><th class="num">${L2("In the yard", "بالمخزن")}</th><th class="num">${L2("Unit cost", "تكلفة القطعة")}</th><th class="num">${L2("Value", "القيمة")}</th><th class="muted">${L2("Formula", "المعادلة")}</th></tr></thead><tbody>
         ${res.components.map(c => `<tr><td>${c.missing ? `<span class="neg">${esc(c.item)} — ${L2("not in your equipment list", "غير موجود بقائمة المعدات")}</span>` : `${esc(c.item)} — ${esc(nm(c))}`}</td><td class="num"><b>${numf(c.qty)}</b></td><td class="num">${res.area ? (c.qty / res.area).toFixed(3) : ""}</td>
           <td class="num ${c.short ? "neg" : ""}">${c.missing ? "" : numf(c.in_yard)}${c.short ? `<div class="lines">${L2("short", "عجز")} ${numf(c.short)}</div>` : ""}</td><td class="num">${c.missing ? "" : money(c.unit_cost)}</td><td class="num">${c.missing ? "" : money(c.value)}</td><td class="muted" style="font-size:.8em">${esc(c.expr)}</td></tr>`).join("")}
         <tr class="total"><td>${t("total")}</td><td class="num">${numf(res.pieces)}</td><td></td><td></td><td></td><td class="num">${money(res.value)}</td><td></td></tr></tbody></table></div>`;
       price(); svcSync();
-    } catch (e) { $("#rcres").innerHTML = `<div class="banner err">${esc(e.message)}</div>`; } };
+    } catch (e) { ($("#rcres") || $("#rcout")).innerHTML = `<div class="banner err">${esc(e.message)}</div>`; } };
   const price = () => { if (!res) return; const p = (+$("#rcpct").value || 0) / 100;
     $("#rcprice").innerHTML = `<div class="tbl" style="margin-top:8px"><table><tbody><tr><td>${L2("Area", "المساحة")}</td><td class="num"><b>${numf(res.area)} m²</b></td></tr>
       <tr><td>${L2("Equipment cost", "تكلفة المعدات")}</td><td class="num">${money(res.value)} <span class="muted">(${money(res.value_per_m2)} / m²)</span></td></tr>
@@ -5373,8 +5395,8 @@ PAGES.rentcalc = async (view, parts, q) => {
     rcpctv: el => { values._pct = el.value; price(); svcSync(); },
     rcsave: async () => { const sp = JSON.parse(JSON.stringify(m.spec)); [...sp.inputs, ...sp.params].forEach(p => { if (values[p.key] !== undefined && values[p.key] !== "") p.value = +values[p.key]; });
       try { await api("PUT", "/api/rent-models/" + m.id, { name: m.name, name_ar: m.name_ar, category: m.category, spec: sp }); m.spec = sp; toast(t("saved")); } catch (e) { fail(e); } },
-    rccopy: async () => { try { const r = await api("POST", "/api/rent-models", { name: m.name + " (copy)", name_ar: (m.name_ar || "") + " (نسخة)", category: m.category, spec: m.spec }); location.hash = "#/rentcalc?model=" + r.id; } catch (e) { fail(e); } },
-    rcedit: () => rentModelEditor(m, async () => { models = (await api("GET", "/api/rent-models")).models; m = models.find(x => x.id === m.id) || models[0]; draw(); }),
+    rccopy: async () => { try { const r = await api("POST", "/api/rent-models", { name: m.name + " (copy)", name_ar: (m.name_ar || "") + " (نسخة)", category: m.category, spec: m.spec }); location.hash = `#/${general ? "calculators" : "rentcalc"}?model=` + r.id; } catch (e) { fail(e); } },
+    rcedit: () => rentModelEditor(m, async () => { models = (await api("GET", "/api/rent-models")).models.filter(x => !general || x.category === "general"); m = models.find(x => x.id === m.id) || models[0]; draw(); }),
     rcoffer: async () => { if (!res || !res.area) return;
       const sv = $("#rcsvc") ? Object.fromEntries($$("#rcsvc [data-sv]").filter(x => x.type !== "button").map(x => [x.dataset.sv, x.type === "checkbox" ? x.checked : x.value])) : null;
       const over = {}; $$("#rcsvc [data-ov]").forEach(x => { const [c, k] = x.dataset.ov.split(":"); (over[c] = over[c] || {})[k] = x.value; });
@@ -5385,11 +5407,13 @@ PAGES.rentcalc = async (view, parts, q) => {
       rentalForm(null, { lines: [{ kind: "sqm", model_id: m.id, description: `${nm(m)} — ${Object.values(res.values).slice(0, 2).map(numf).join(" × ")} m`, unit: "m²", qty: res.area,
         rate: +(res.value_per_m2 * ((+$("#rcpct").value || 0) / 100)).toFixed(2) || "", components: comps, inputs: res.values }, ...extra] }); } });
   draw();
+  if (q.edit && build) S.H.rcedit();
 };
 
 function rentModelEditor(m, after) {
-  const sp = JSON.parse(JSON.stringify(m.spec));
-  const sec = (key, cols) => `<h4 style="margin:10px 0 4px">${{ inputs: L2("Size inputs", "مدخلات المقاسات"), params: L2("Settings", "الإعدادات"), derived: L2("Worked-out values (formulas)", "القيم المحسوبة (معادلات)"), components: L2("Pieces (formulas)", "القطع (معادلات)") }[key]}</h4>
+  const sp = JSON.parse(JSON.stringify(m.spec)); sp.charges = sp.charges || []; sp.results = sp.results || [];
+  ["inputs", "params", "derived", "components"].forEach(k => { sp[k] = sp[k] || []; });
+  const sec = (key, cols) => `<h4 style="margin:10px 0 4px">${{ inputs: L2("Size inputs", "مدخلات المقاسات"), params: L2("Settings", "الإعدادات"), derived: L2("Worked-out values (formulas)", "القيم المحسوبة (معادلات)"), components: L2("Pieces (formulas)", "القطع (معادلات)"), charges: L2("Installation, dismantling, transport & other charges (quantity × rate)", "التركيب والفك والنقل ورسوم أخرى (الكمية × السعر)"), results: L2("Results (shown big)", "النتائج (تظهر بخط كبير)") }[key]}</h4>
     <div class="tbl"><table><thead><tr>${cols.map(c => `<th>${esc(c[1])}</th>`).join("")}<th></th></tr></thead><tbody>
     ${sp[key].map((r, i) => `<tr>${cols.map(([k]) => `<td><input data-skip="1" value="${esc(r[k] ?? "")}" data-input="rme" data-s="${key}" data-i="${i}" data-k="${k}" ${k === "expr" ? 'style="min-width:260px;font-family:monospace"' : k === "value" ? 'class="num" style="width:80px"' : 'style="width:130px"'}></td>`).join("")}
       <td><button type="button" class="btn sm danger" data-a="rmedel" data-s="${key}" data-i="${i}">✕</button></td></tr>`).join("")}</tbody></table></div>
@@ -5400,17 +5424,58 @@ function rentModelEditor(m, after) {
   const body = () => sec("inputs", [["key", L2("Name", "الاسم")], ["label", L2("Label", "العنوان")], ["label_ar", "عربي"], ["unit", t("unit")], ["value", L2("Default", "الافتراضي")]])
     + sec("params", [["key", L2("Name", "الاسم")], ["label", L2("Label", "العنوان")], ["label_ar", "عربي"], ["unit", t("unit")], ["value", L2("Default", "الافتراضي")]])
     + sec("derived", [["key", L2("Name", "الاسم")], ["expr", L2("Formula", "المعادلة")], ["label", L2("Label", "العنوان")], ["label_ar", "عربي"]])
-    + sec("components", [["item", L2("Item code", "كود الصنف")], ["expr", L2("Quantity formula", "معادلة الكمية")], ["note", t("notes")]])
+    + (m.category === "general" ? "" : sec("components", [["item", L2("Item code", "كود الصنف")], ["expr", L2("Quantity formula", "معادلة الكمية")], ["note", t("notes")]]))
+    + sec("charges", [["label", L2("Charge", "البند")], ["label_ar", "عربي"], ["kind", L2("Kind (install, transport…)", "النوع (تركيب، نقل…)")], ["qty", L2("Quantity formula", "معادلة الكمية")], ["unit", t("unit")], ["cost", L2("Cost per unit (formula)", "التكلفة للوحدة (معادلة)")], ["price", L2("Price per unit (formula)", "السعر للوحدة (معادلة)")]])
+    + sec("results", [["label", L2("Result", "النتيجة")], ["label_ar", "عربي"], ["expr", L2("Formula", "المعادلة")], ["unit", t("unit")], ["money", L2("Money? (yes/no)", "مبلغ؟ (نعم/لا)")]])
+    + `<p class="muted" style="font-size:.82em">${esc(L2("Results and charges can also use: area, equipment_value, piece_rent, charges_cost, charges_price.", "يمكن للنتائج والبنود أيضاً استخدام: area وequipment_value وpiece_rent وcharges_cost وcharges_price."))}</p>`
     + `<label class="f" style="margin-top:10px">${L2("Area formula (m²)", "معادلة المساحة (م²)")}<input data-skip="1" value="${esc(sp.area)}" data-input="rmearea" style="font-family:monospace"></label>`;
   drawer(`${L2("Calculator formulas", "معادلات الحاسبة")} — ${nm(m)}`, html(), async v => { await api("PUT", "/api/rent-models/" + m.id, { name: v.name, name_ar: v.name_ar, category: m.category, spec: sp }); toast(t("saved")); closeDrawer(true); await after(); return false; },
     { wide: true, extraButtons: models_del(m), onOpen: f => {
       const redraw = () => { $("#rmeb", f).innerHTML = body(); };
       Object.assign(S.H, { rme: el => { const r = sp[el.dataset.s][+el.dataset.i]; r[el.dataset.k] = el.dataset.k === "value" ? +el.value : el.value; },
-        rmeadd: el => { const s = el.dataset.s; sp[s].push(s === "components" ? { item: "", expr: "0" } : s === "derived" ? { key: "", expr: "0", label: "" } : { key: "", label: "", value: 0 }); redraw(); },
+        rmeadd: el => { const s = el.dataset.s; sp[s].push(s === "components" ? { item: "", expr: "0" } : s === "derived" ? { key: "", expr: "0", label: "" }
+          : s === "charges" ? { label: "", kind: "install", qty: "area", unit: "m²", cost: "0", price: "0" } : s === "results" ? { label: "", expr: "0", money: "yes" } : { key: "", label: "", value: 0 }); redraw(); },
         rmedel: el => { sp[el.dataset.s].splice(+el.dataset.i, 1); redraw(); }, rmearea: el => { sp.area = el.value; },
         rmdel: async () => { if (!await uiConfirm(t("confirm_delete"))) return; try { await api("DELETE", "/api/rent-models/" + m.id); closeDrawer(); location.hash = "#/rentcalc"; route(); } catch (e) { fail(e); } } }); } });
 }
-const models_del = m => can("rentals.calculator", "edit") ? `<button type="button" class="btn danger" data-a="rmdel">${t("delete")}</button>` : "";
+const models_del = m => granted("build_calculators") ? `<button type="button" class="btn danger" data-a="rmdel">${t("delete")}</button>` : "";
+// "+ New calculator": a name, what it is for, and where it starts from (blank, a ready template, or a copy)
+const CALC_TEMPLATES = () => ({
+  area: { name: L2("Equipment by area, with installation", "معدات بالمساحة مع التركيب"), category: "scaffolding", spec: {
+    inputs: [{ key: "length", label: "Length", label_ar: "الطول", unit: "m", value: 20 }, { key: "height", label: "Height", label_ar: "الارتفاع", unit: "m", value: 10 }, { key: "months", label: "Months", label_ar: "الشهور", unit: "", value: 1 }],
+    params: [{ key: "rent_m2", label: "Rent per m² per month", label_ar: "إيجار المتر شهرياً", unit: "", value: 0 }, { key: "install_m2", label: "Installation per m²", label_ar: "التركيب للمتر", unit: "", value: 0 },
+      { key: "dismantle_m2", label: "Dismantling per m²", label_ar: "الفك للمتر", unit: "", value: 0 }, { key: "trip", label: "Transport per trip", label_ar: "النقل للنقلة", unit: "", value: 0 }, { key: "trips", label: "Trips", label_ar: "عدد النقلات", unit: "", value: 2 }],
+    derived: [], components: [], area: "length * height",
+    charges: [{ label: "Installation", label_ar: "التركيب", kind: "install", qty: "area", unit: "m²", cost: "0", price: "install_m2" }, { label: "Dismantling", label_ar: "الفك", kind: "dismantle", qty: "area", unit: "m²", cost: "0", price: "dismantle_m2" },
+      { label: "Transport", label_ar: "النقل", kind: "transport", qty: "trips", unit: "trip", cost: "0", price: "trip" }],
+    results: [{ label: "Rent for the period", label_ar: "الإيجار للمدة", expr: "area * rent_m2 * months", money: true }, { label: "Total to the client", label_ar: "الإجمالي للعميل", expr: "area * rent_m2 * months + charges_price", money: true }] } },
+  unit: { name: L2("Equipment by the unit (elevator, cradle…)", "معدات بالوحدة (مصعد، كريدل…)"), category: "elevator", spec: {
+    inputs: [{ key: "units", label: "Units", label_ar: "عدد الوحدات", unit: "", value: 1 }, { key: "months", label: "Months", label_ar: "الشهور", unit: "", value: 3 }],
+    params: [{ key: "monthly", label: "Rent per unit per month", label_ar: "إيجار الوحدة شهرياً", unit: "", value: 0 }, { key: "install_unit", label: "Installation per unit", label_ar: "التركيب للوحدة", unit: "", value: 0 },
+      { key: "dismantle_unit", label: "Dismantling per unit", label_ar: "الفك للوحدة", unit: "", value: 0 }, { key: "trip", label: "Transport per trip", label_ar: "النقل للنقلة", unit: "", value: 0 }],
+    derived: [], components: [], area: "0",
+    charges: [{ label: "Installation", label_ar: "التركيب", kind: "install", qty: "units", unit: "unit", cost: "0", price: "install_unit" }, { label: "Dismantling", label_ar: "الفك", kind: "dismantle", qty: "units", unit: "unit", cost: "0", price: "dismantle_unit" },
+      { label: "Transport", label_ar: "النقل", kind: "transport", qty: "2", unit: "trip", cost: "0", price: "trip" }],
+    results: [{ label: "Rent for the period", label_ar: "الإيجار للمدة", expr: "units * monthly * months", money: true }, { label: "Total to the client", label_ar: "الإجمالي للعميل", expr: "units * monthly * months + charges_price", money: true }] } },
+  general: { name: L2("General: quantity × price, margin and VAT", "عام: الكمية × السعر والهامش والضريبة"), category: "general", spec: {
+    inputs: [{ key: "qty", label: "Quantity", label_ar: "الكمية", unit: "", value: 1 }, { key: "unit_cost", label: "Unit cost", label_ar: "تكلفة الوحدة", unit: "", value: 0 }],
+    params: [{ key: "margin_pct", label: "Margin", label_ar: "هامش الربح", unit: "%", value: 20 }, { key: "vat_pct", label: "VAT", label_ar: "ضريبة القيمة المضافة", unit: "%", value: 14 }],
+    derived: [{ key: "cost", expr: "qty * unit_cost", label: "Cost", label_ar: "التكلفة" }, { key: "price", expr: "cost * (1 + margin_pct / 100)", label: "Price before VAT", label_ar: "السعر قبل الضريبة" }],
+    components: [], area: "0", charges: [],
+    results: [{ label: "Price before VAT", label_ar: "السعر قبل الضريبة", expr: "price", money: true }, { label: "VAT", label_ar: "الضريبة", expr: "price * vat_pct / 100", money: true },
+      { label: "Total with VAT", label_ar: "الإجمالي شامل الضريبة", expr: "price * (1 + vat_pct / 100)", money: true }, { label: "Profit", label_ar: "الربح", expr: "price - cost", money: true }] } },
+  blank: { name: L2("Blank — build it yourself", "فارغة — ابنها بنفسك"), category: "other", spec: { inputs: [], params: [], derived: [], components: [], area: "0", charges: [], results: [] } },
+});
+function newCalculator(current, general) {
+  const T = CALC_TEMPLATES(), cats = [["scaffolding", L2("Scaffolding", "سقالات")], ["elevator", L2("Construction elevator", "مصعد إنشائي")], ["cradle_manual", L2("Cradle — manual", "كريدل يدوي")],
+    ["cradle_motorized", L2("Cradle — motorized", "كريدل كهربائي")], ["other", L2("Other equipment", "معدات أخرى")], ["general", L2("General (any business calculation)", "عام (أي حساب للعمل)")]];
+  drawer(L2("New calculator", "حاسبة جديدة"), form([...inLang(["name", ""], ["name_ar", ""], L2("Name", "الاسم"), { req: 1 }),
+    { k: "start", l: L2("Start from", "ابدأ من"), type: "select", v: general ? "general" : "area", opts: [...Object.entries(T).map(([k, x]) => [k, x.name]), ...(current ? [["copy", L2("A copy of “", "نسخة من «") + nm(current) + L2("”", "»")]] : [])] },
+    { k: "category", l: L2("For", "خاصة بـ"), type: "select", v: general ? "general" : "", opts: [["", L2("(as the template)", "(حسب القالب)")], ...cats] }]),
+  async v => { const t0 = v.start === "copy" ? { category: current.category, spec: current.spec } : T[v.start];
+    const r = await api("POST", "/api/rent-models", { name: v.name, name_ar: v.name_ar, category: v.category || t0.category, spec: t0.spec });
+    toast(L2("Made — set its formulas now", "تم — اضبط معادلاتها الآن")); location.hash = `#/${(v.category || t0.category) === "general" && general ? "calculators" : "rentcalc"}?model=${r.id}&edit=1`; });
+}
 
 // ------------------------------------------------------ assets: overview, cash & banks, depreciation
 PAGES["assets-overview"] = async (view, parts, q) => {
