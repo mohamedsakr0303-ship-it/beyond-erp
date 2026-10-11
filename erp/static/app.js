@@ -255,7 +255,7 @@ const THEME_SWATCHES = ["#ffffff", "#f5f6f8", "#e9ecef", "#adb5bd", "#6c757d", "
 const THEME_PRESETS = [
   { id: "default", en: "BeyondERP Night", ar: "ليل BeyondERP", mode: "auto" },
   { id: "daylight", en: "Daylight", ar: "نهار", mode: "light", primary: "#4b45f0", button: "#4b45f0", button2: "#eef0ff", menu: "#4b45f0", page: "#f6f6fb", sidebar: "#ffffff", nav: "#ffffff", card: "#ffffff", text: "#15163a" },
-  { id: "aurora", en: "Aurora", ar: "شفق", mode: "dark", primary: "#a78bfa", button: "#8b7bff", menu: "#c4b5fd", sidebar: "#0b0a2e", nav: "#0b0a2e", page: "#05061f" },
+  { id: "aurora", en: "Aurora", ar: "شفق", mode: "dark", primary: "#a78bfa", button: "#8b7bff", menu: "#c4b5fd", sidebar: "#0b0a2e", nav: "#0b0a2e", page: "#05061f", card: "#100f33" },
   { id: "blossom", en: "Blossom", ar: "زهر", mode: "light", primary: "#d6336c", button: "#e64980", button2: "#ffe3ec", menu: "#f06595", page: "#fff5f8", sidebar: "#fff0f5", nav: "#ffdeeb", card: "#ffffff", text: "#4a1d33" },
   { id: "lavender", en: "Lavender", ar: "خزامى", mode: "light", primary: "#7950f2", button: "#845ef7", button2: "#f3f0ff", menu: "#9775fa", page: "#faf8ff", sidebar: "#f3f0ff", nav: "#e5dbff", card: "#ffffff", text: "#2f2550" },
   { id: "rosegold", en: "Rose gold", ar: "ذهب وردي", mode: "light", primary: "#b76e79", button: "#b76e79", button2: "#f8e9e6", menu: "#d4a5a5", page: "#fdf8f6", sidebar: "#3d2c2e", nav: "#33252a", card: "#ffffff", text: "#3d2c2e" },
@@ -264,9 +264,9 @@ const THEME_PRESETS = [
   { id: "ocean", en: "Ocean breeze", ar: "نسيم البحر", mode: "light", primary: "#0b7285", button: "#0c8599", button2: "#e3fafc", menu: "#22b8cf", page: "#f3fbfd", sidebar: "#0b3c49", nav: "#082f38", card: "#ffffff", text: "#0b2830" },
   { id: "sunset", en: "Sunset glow", ar: "وهج الغروب", mode: "light", primary: "#e8590c", button: "#f76707", button2: "#fff4e6", menu: "#ff922b", page: "#fffaf3", sidebar: "#2b1a12", nav: "#24150e", card: "#ffffff", text: "#3b2314" },
   { id: "sand", en: "Sand & stone", ar: "رمل وحجر", mode: "light", primary: "#8d6e4f", button: "#7a5c3e", button2: "#f1ebe3", menu: "#b08968", page: "#faf7f2", sidebar: "#f3ede4", nav: "#e9dfd2", card: "#fffdf9", text: "#3b2f25" },
-  { id: "deepforest", en: "Deep forest", ar: "غابة ليلية", mode: "dark", primary: "#74c69d", button: "#40916c", menu: "#74c69d", sidebar: "#0f2a20", nav: "#0b2018", page: "#0a1712" },
-  { id: "midgold", en: "Midnight gold", ar: "ذهب الليل", mode: "dark", primary: "#d4af37", button: "#d4af37", menu: "#d4af37", sidebar: "#0d0d12", nav: "#0d0d12", page: "#0a0a0f" },
-  { id: "graphite", en: "Graphite", ar: "جرافيت", mode: "dark", primary: "#9aa4b2", button: "#e5e7eb", menu: "#9aa4b2", sidebar: "#16181d", nav: "#16181d", page: "#0f1115" },
+  { id: "deepforest", en: "Deep forest", ar: "غابة ليلية", mode: "dark", primary: "#74c69d", button: "#40916c", menu: "#74c69d", sidebar: "#0f2a20", nav: "#0b2018", page: "#0a1712", card: "#10241b" },
+  { id: "midgold", en: "Midnight gold", ar: "ذهب الليل", mode: "dark", primary: "#d4af37", button: "#d4af37", menu: "#d4af37", sidebar: "#0d0d12", nav: "#0d0d12", page: "#0a0a0f", card: "#15151c" },
+  { id: "graphite", en: "Graphite", ar: "جرافيت", mode: "dark", primary: "#9aa4b2", button: "#e5e7eb", menu: "#9aa4b2", sidebar: "#16181d", nav: "#16181d", page: "#0f1115", card: "#1a1d23" },
 ];
 const hexOk = c => /^#[0-9a-fA-F]{6}$/.test(c || "");
 // text that stays readable on a colour: dark ink on light colours, white on dark ones
@@ -317,8 +317,8 @@ try { matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () =
 function activeTheme() { return lookVal("theme") || null; }
 function applyTheme(th) {
   const de = document.documentElement, st = de.style;
-  ["--sb-bg", "--sb-ink", "--nav-bg", "--nav-ink", "--top-bg", "--top-ink", "--menu-c", "--btn-bg", "--btn-ink", "--btn2-bg", "--btn2-ink", "--page-ink", "--card-bg", "--card-ink", "--bg", "--ink", "--muted"].forEach(v => st.removeProperty(v));
-  ["nav", "top", "menu", "btn", "btn2", "page", "card", "text"].forEach(k => { delete de.dataset[k]; });
+  ["--sb-bg", "--sb-ink", "--nav-bg", "--nav-ink", "--top-bg", "--top-ink", "--menu-c", "--btn-bg", "--btn-ink", "--btn2-bg", "--btn2-ink", "--page-ink", "--card-bg", "--card-ink", "--bg", "--ink", "--muted", "--panel", "--sheet", "--input", "--line", "--chip", "--hover", "--surf-ink"].forEach(v => st.removeProperty(v));
+  ["nav", "top", "menu", "btn", "btn2", "page", "card", "text", "surf", "tint"].forEach(k => { delete de.dataset[k]; });
   if (!th) return;
   if (hexOk(th.primary)) { st.setProperty("--brand", th.primary); st.setProperty("--accent", th.primary); }
   if (hexOk(th.sidebar)) { de.dataset.sidebar = "custom"; st.setProperty("--sb-bg", th.sidebar); st.setProperty("--sb-ink", inkOn(th.sidebar)); }
@@ -330,7 +330,20 @@ function applyTheme(th) {
   if (hexOk(th.text)) { de.dataset.text = "custom"; st.setProperty("--ink", th.text); st.setProperty("--muted", `color-mix(in srgb, ${th.text} 65%, transparent)`); }
   if (hexOk(th.page)) { de.dataset.page = "custom"; st.setProperty("--bg", th.page); st.setProperty("--page-ink", hexOk(th.text) ? th.text : inkOn(th.page)); }
   if (hexOk(th.card)) { de.dataset.card = "custom"; st.setProperty("--card-bg", th.card); st.setProperty("--card-ink", hexOk(th.text) ? th.text : inkOn(th.card)); }
+  // every other surface (tables, drawers, dialogs, menus, inputs, lines) follows the cards — or, in the dark, the page —
+  // so no BeyondERP indigo is left behind under another theme's colours
+  const dark = de.getAttribute("data-theme") === "dark";
+  const surf = hexOk(th.card) ? th.card : dark && hexOk(th.page) ? mixHex(th.page, "#ffffff", 0.06) : "";
+  if (surf) { const ink = hexOk(th.text) ? th.text : inkOn(surf), deep = inkOn(surf) === "#ffffff";
+    de.dataset.surf = "custom";
+    st.setProperty("--panel", surf); st.setProperty("--sheet", surf); st.setProperty("--surf-ink", ink);
+    st.setProperty("--input", mixHex(surf, deep ? "#000000" : "#ffffff", deep ? 0.25 : 0.6));
+    st.setProperty("--line", mixHex(surf, ink, 0.14)); st.setProperty("--chip", mixHex(surf, ink, 0.08)); st.setProperty("--hover", mixHex(surf, ink, 0.06));
+    if (!hexOk(th.text)) { st.setProperty("--ink", ink); st.setProperty("--muted", mixHex(surf, ink, 0.62)); } }
+  if (dark && (hexOk(th.primary) || surf)) de.dataset.tint = "custom";     // focus rings, table heads, chips: the theme's colour, not indigo
 }
+const mixHex = (a, b, k) => { const p = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16)), x = p(a), y = p(b);
+  return "#" + x.map((v, i) => Math.round(v + (y[i] - v) * k).toString(16).padStart(2, "0")).join(""); };
 // background pictures behind the page, the top bar, the side menu and the logo area — faint by default so the screens stay easy to read
 const PIC_SLOTS = () => [["page", L2("Behind the whole app", "خلف التطبيق كله"), 0.12], ["header", L2("Top bar", "الشريط العلوي"), 0.25],
   ["sidebar", L2("Side menu", "القائمة الجانبية"), 0.18], ["logo", L2("Logo area", "منطقة الشعار"), 0.35]];
