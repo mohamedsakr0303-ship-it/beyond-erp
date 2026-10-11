@@ -284,6 +284,69 @@ class Api(unittest.TestCase):
         self.assertEqual(self.call(staff, "PUT", "/api/settings", {"menu_layout": {}, "form_custom": {}})[0], 200)
         self.assertEqual(self.call(sup, "DELETE", f"/api/users/{u['id']}")[0], 200)
 
+    def test_maker_checker(self):
+        """A person whose entries need approval only creates drafts; an approver in the same group posts them (maybe
+        corrected) or sends them back; nobody approves their own drafts."""
+        sup = self.client()
+        if self.call(sup, "POST", "/api/setup", {"username": "admin", "password": "secret123"})[0] != 200:
+            self.assertEqual(self.call(sup, "POST", "/api/login", {"username": "admin", "password": "secret123"})[0], 200)
+        jv = {"date": "2026-03-01", "memo": "Office rent", "party": "Landlord",
+              "lines": [{"account": "5010", "debit": 700}, {"account": "1010", "credit": 700}]}
+        add = lambda name, **kw: self.call(sup, "POST", "/api/users", {"username": name, "password": name + "pass1", **kw})
+        self.assertEqual(add("maker", perms={"accounting": "add", "purchasing": "add"}, needs_approval=True, group_key="finance")[0], 200)
+        self.assertEqual(add("checker", perms={"accounting": "edit", "purchasing": "edit", "accounting.approvals": "none"}, group_key="finance")[0], 200)
+        self.assertEqual(add("outsider", perms={"accounting": "edit"}, group_key="management")[0], 200)
+        maker, checker, outsider = self.client(), self.client(), self.client()
+        for c, n in ((maker, "maker"), (checker, "checker"), (outsider, "outsider")):
+            self.assertEqual(self.call(c, "POST", "/api/login", {"username": n, "password": n + "pass1"})[0], 200)
+        before = self.call(sup, "GET", "/api/journal?q=Landlord")[1]["total"]
+        st, r = self.call(maker, "POST", "/api/journal", jv)
+        self.assertEqual((st, r["pending"], r["id"]), (200, True, None))
+        aid = r["approval"]
+        self.assertEqual(self.call(sup, "GET", "/api/journal?q=Landlord")[1]["total"], before)     # not in the books
+        bad = dict(jv, lines=[{"account": "5010", "debit": 700}, {"account": "1010", "credit": 600}])
+        self.assertEqual(self.call(maker, "POST", "/api/journal", bad)[0], 400)                   # checked when sent
+        # who sees it: the checker (same group, approval permission) — not the outsider, never the maker themself
+        self.assertEqual(self.call(maker, "POST", f"/api/approvals/{aid}/approve", {})[0], 403)
+        self.assertEqual(self.call(checker, "POST", f"/api/approvals/{aid}/approve", {})[0], 403)  # no approval permission yet
+        self.assertEqual(self.call(sup, "PUT", "/api/users/" + str(self.call(sup, "GET", "/api/users")[1][-2]["id"]),
+                                   {"perms": {"accounting": "edit", "purchasing": "edit", "accounting.approvals": "edit"}})[0], 200)
+        al = self.call(checker, "GET", "/api/alerts")[1]
+        self.assertEqual(al["approvals"], [aid])
+        self.assertEqual(self.call(outsider, "GET", "/api/alerts")[1]["approvals"], [])
+        self.assertEqual(self.call(outsider, "GET", "/api/approvals")[1]["rows"], [])
+        # sent back (needs a reason), fixed by the maker, then approved with a correction
+        self.assertEqual(self.call(checker, "POST", f"/api/approvals/{aid}/reject", {})[0], 400)
+        self.assertEqual(self.call(checker, "POST", f"/api/approvals/{aid}/reject", {"note": "Wrong month"})[0], 200)
+        self.assertEqual(self.call(maker, "GET", "/api/alerts")[1]["rows"][0]["kind"], "approvals_back")
+        self.assertEqual(self.call(maker, "PUT", f"/api/approvals/{aid}", {"payload": dict(jv, date="2026-02-28")})[0], 200)
+        self.assertEqual(self.call(maker, "GET", f"/api/approvals/{aid}")[1]["status"], "pending")
+        fixed = dict(jv, date="2026-02-28", memo="Office rent Feb")
+        st, r = self.call(checker, "POST", f"/api/approvals/{aid}/approve", {"payload": fixed})
+        self.assertEqual(st, 200)
+        e = self.call(sup, "GET", f"/api/journal/{r['id']}")[1]
+        self.assertEqual((e["date"], e["memo"], e["status"], e["created_by"]), ("2026-02-28", "Office rent Feb", "posted", "maker"))
+        self.assertEqual((e["meta"]["approved_by"], e["meta"]["entered_by"]), ("checker", "maker"))
+        self.assertEqual(self.call(checker, "POST", f"/api/approvals/{aid}/approve", {})[0], 400)  # only once
+        # the journal's filters: entered by, approved by, amounts
+        ids = lambda q: [x["id"] for x in self.call(sup, "GET", "/api/journal?" + q)[1]["rows"]]
+        self.assertIn(r["id"], ids("approved_by=checker"))
+        self.assertIn(r["id"], ids("created_by=maker&min_amount=700&max_amount=700"))
+        self.assertNotIn(r["id"], ids("min_amount=701"))
+        # a correction to a posted entry also waits; vouchers (direct costs, expenses…) too
+        st, r2 = self.call(maker, "PUT", f"/api/journal/{r['id']}", dict(fixed, memo="Rent changed"))
+        self.assertTrue(r2["pending"])
+        self.assertEqual(self.call(sup, "GET", f"/api/journal/{r['id']}")[1]["memo"], "Office rent Feb")
+        st, r3 = self.call(maker, "POST", "/api/docs/expense", {"date": "2026-03-02", "description": "Paper", "amount": 50})
+        self.assertEqual((st, r3["pending"]), (200, True))
+        self.assertEqual(self.call(maker, "POST", f"/api/approvals/{r3['approval']}/withdraw", {})[0], 200)
+        self.assertEqual(self.call(sup, "POST", f"/api/approvals/{r2['approval']}/approve", {})[0], 200)   # administrators: any group
+        self.assertEqual(self.call(sup, "GET", f"/api/journal/{r['id']}")[1]["memo"], "Rent changed")
+        # nobody lifts their own approval requirement
+        me = [u for u in self.call(sup, "GET", "/api/users")[1] if u["username"] == "maker"][0]
+        self.call(maker, "PUT", f"/api/users/{me['id']}", {"needs_approval": False, "full_name": "M"})
+        self.assertTrue([u for u in self.call(sup, "GET", "/api/users")[1] if u["username"] == "maker"][0]["needs_approval"])
+
     def test_flow(self):
         admin = self.client()
         self.assertEqual(self.call(admin, "GET", "/api/journal")[0], 401)

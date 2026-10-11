@@ -236,7 +236,7 @@ const ROUTE_IC = { dashboard: "grid", chat: "chat", assistant: "spark", profile:
   payments: "out", payables: "wallet", contacts: "phone", negotiations: "scale", stock: "boxes", moves: "swap", warehouses: "store", rentals: "building",
   rentfleet: "layers", rentcalc: "calc", payruns: "cash", employees: "user", crew: "ruler", payroll: "pen", payset: "gear", "assets-overview": "pie",
   cash: "wallet", assets: "truck", depreciation: "down", loans: "bank", custody: "coins", partners: "hands", taxcodes: "pct", "report/tax": "chart", extracts: "clip",
-  einvoice: "send", journal: "book", ledger: "bookopen", coa: "tree", bankrec: "compare", recurring: "repeat", budgets: "target",
+  einvoice: "send", journal: "book", approvals: "check", ledger: "bookopen", coa: "tree", bankrec: "compare", recurring: "repeat", budgets: "target",
   "report/partner_pack": "pack", "report/income_statement": "chart", "report/balance_sheet": "layers", "report/cash_flow": "swap",
   "report/trial_balance": "list", "report/bu_pnl": "pie", "budget-report": "target", aging: "hour", statement: "file", data: "updown",
   settings: "gear", industry: "store", users: "users", audit: "history",
@@ -593,10 +593,23 @@ async function loadAlerts(force) {
   S.alertsAt = Date.now();
   let d; try { d = await api("GET", "/api/alerts"); } catch { d = { rows: [] }; }
   const n = d.rows.length, ar = S.lang === "ar";
+  approvalNotices(d);
   ["#bellc", "#bellc2"].forEach(id => { const b = $(id); if (b) { b.hidden = !n; b.textContent = n > 9 ? "9+" : n; } });
   const m = $("#bellmenu"); if (!m) return;
   m.innerHTML = `<div class="dd-head">${esc(L2("Needs attention", "يحتاج متابعة"))}</div>` + (n ? d.rows.map(r => `<a class="alert-row" href="${esc(r.href)}"><span class="dot ${r.level}">${svg(r.level === "bad" ? "alert" : r.level === "warn" ? "clock" : "bell")}</span><span>${esc(ar ? r.ar : r.en)}</span></a>`).join("")
     : `<div class="empty" style="padding:18px">${svg("check")}<div>${esc(L2("All clear", "لا يوجد ما يحتاج متابعة"))}</div></div>`);
+}
+// a draft newly waiting for this person's approval (or one of theirs sent back): a task in the bell plus a desktop /
+// phone notification — once per draft, remembered on this device
+function approvalNotices(d) {
+  const uid = (S.boot && S.boot.user && S.boot.user.id) || 0, key = "apprSeen:" + uid, first = store.get(key, null) === null;
+  const seen = new Set(store.get(key, [])), fresh = (d.approvals || []).filter(id => !seen.has(id));
+  const back = (d.rows.find(r => r.kind === "approvals_back") || {}).count || 0, backKey = "apprBack:" + uid, wasBack = store.get(backKey, 0);
+  store.set(key, d.approvals || []); store.set(backKey, back);
+  if (fresh.length && !first) alertPerson({ title: L2("Entries waiting for your approval", "قيود في انتظار اعتمادك"),
+    body: L2(`${fresh.length} new — review and post them`, `${fresh.length} جديد — راجعها ورحّلها`), href: "#/approvals", tag: "berp-approvals", force: true });
+  if (back > wasBack) alertPerson({ title: L2("An entry was sent back to you", "أُعيد إليك قيد للتعديل"),
+    body: L2("See the reason, fix it and send it again", "اطّلع على السبب وعدّله وأرسله مرة أخرى"), href: "#/approvals?status=rejected", tag: "berp-approvals-back", force: true });
 }
 // Ctrl+K: jump to any screen or start any new entry by typing
 function openPalette() {
@@ -1271,7 +1284,14 @@ function filterBar(q, fields, extra = "") {
     else if (f === "bu") parts.push(`<label class="f">${t("bu")}<select name="bu_id"><option value="">${t("all_bu")}</option><option value="none" ${q.bu_id === "none" ? "selected" : ""}>${t("shared")}</option>${S.boot.bus.map(b => `<option value="${b.id}" ${String(q.bu_id) === String(b.id) ? "selected" : ""}>${esc(b.code)} — ${esc(b.name)}</option>`).join("")}</select></label>`);
     else if (f === "qv") parts.push(`<label class="f">${t("search").replace("…", "")}<input name="q" value="${esc(q.q || "")}" placeholder="${t("search_v")}" title="${esc(t("search_v"))}"></label>`);
     else if (f === "q") parts.push(`<label class="f">${t("search").replace("…", "")}<input name="q" value="${esc(q.q || "")}" placeholder="${t("search")}"></label>`);
-    else if (f === "status") parts.push(`<label class="f">${t("status")}<select name="status"><option value="">${t("all")}</option><option value="posted" ${q.status === "posted" ? "selected" : ""}>${t("invoiced")}</option><option value="void" ${q.status === "void" ? "selected" : ""}>${t("void")}</option></select></label>`);
+    else if (f === "status" || f === "jstatus") {    // jstatus: the journal also lists drafts that wait for approval
+      const o = (v, l) => `<option value="${v}" ${q.status === v ? "selected" : ""}>${esc(l)}</option>`;
+      parts.push(`<label class="f">${t("status")}<select name="status"><option value="">${t("all")}</option>${o("posted", L2("Posted", "مُرحّل"))}${o("void", t("void"))}${o("reversed", L2("Reversed", "معكوس"))}${o("edited", L2("Corrected after posting", "عُدّل بعد الترحيل"))}
+        ${f === "jstatus" ? `<optgroup label="${esc(L2("Drafts (not posted)", "مسودات (غير مرحّلة)"))}">${o("pending", APPR_ST().pending)}${o("rejected", APPR_ST().rejected)}${o("withdrawn", APPR_ST().withdrawn)}</optgroup>` : ""}</select></label>`); }
+    else if (Array.isArray(f) && f[0] === "choice") parts.push(`<label class="f">${esc(f[2])}<select name="${f[1]}">${f[3].map(([v, l]) => `<option value="${esc(v)}" ${String(q[f[1]] || f[4] || "") === String(v) ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`);
+    else if (f === "amount") parts.push(`<label class="f">${esc(L2("Amount from", "المبلغ من"))}<input type="number" step="any" name="min_amount" value="${esc(q.min_amount || "")}" style="width:110px"></label>`,
+      `<label class="f">${esc(L2("Amount to", "المبلغ إلى"))}<input type="number" step="any" name="max_amount" value="${esc(q.max_amount || "")}" style="width:110px"></label>`);
+    else if (f === "attach") parts.push(`<label class="f">${esc(L2("Attachments", "المرفقات"))}<select name="has_attachment"><option value="">${t("all")}</option><option value="1" ${q.has_attachment === "1" ? "selected" : ""}>${esc(L2("Has a file attached", "عليه ملف مرفق"))}</option></select></label>`);
     else if (Array.isArray(f) && f[0] === "kind") parts.push(`<label class="f">${t("kind")}<select name="kind"><option value="">${t("all")}</option>${f[1].map(k => `<option value="${esc(k)}" ${q.kind === k ? "selected" : ""}>${esc(tl(k))}</option>`).join("")}</select></label>`);
     else if (Array.isArray(f) && f[0] === "select") parts.push(`<label class="f">${esc(f[2])}<select name="${f[1]}"><option value="">${t("all")}</option>${f[3].map(([v, l]) => `<option value="${esc(v)}" ${String(q[f[1]]) === String(v) ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`);
     else if (f === "account") parts.push(`<label class="f">${t("account")}<select name="account"><option value="">${t("all")}</option>${["1", "2", "3", "4", "5", "6", "7"].map(x => `<option value="${x}" ${q.account === x ? "selected" : ""}>${x}000s</option>`).join("")}${S.boot.accounts.map(a => `<option value="${a.code}" ${q.account === a.code ? "selected" : ""}>${esc(a.code)} ${esc(aname(a))}</option>`).join("")}</select></label>`);
@@ -1401,7 +1421,9 @@ async function openVoucher(id) {
   if (!e) return;
   const live = e.status === "posted" && !e.reversed_by && !e.reversal_of;
   const DOC_MOD = { direct_cost: "purchasing.costs", expense: "purchasing.expenses", payment: "purchasing.payments", supplier_discount: "purchasing.payments", payroll: "payroll", receipt: "sales.receipts", partner_tx: "partners.transactions" };
-  const edit = can("accounting.journal", "edit") || (e.doc && can(DOC_MOD[e.doc], "edit"));
+  const drafting = !!(S.boot.user && S.boot.user.needs_approval);     // their corrections wait for approval
+  const full = can("accounting.journal", "edit") || (e.doc && can(DOC_MOD[e.doc], "edit"));
+  const edit = full || (drafting && (can("accounting.journal", "add") || (e.doc && can(DOC_MOD[e.doc], "add"))));
   const html = `<div class="row" style="margin-bottom:10px"><span class="chip">${esc(tl(e.kind))}</span><span class="chip">#${e.id}</span><span class="chip">${fd(e.date)}</span>${e.bu_code ? `<span class="chip">${esc(e.bu_code)}</span>` : ""}${e.created_by ? `<span class="chip">${t("created_by")} ${esc(e.created_by)}</span>` : ""}</div>
     <p><b>${esc(e.memo)}</b>${e.party ? ` — ${esc(e.party)}` : ""}${e.ref ? ` · ${esc(e.ref)}` : ""}</p>
     ${e.meta && (e.meta.loan || e.meta.custody) ? `<p><a class="btn sm" href="#/${e.meta.loan ? "loan" : "cust"}/${encodeURIComponent(e.meta.loan || e.meta.custody)}" data-a="vgo">${e.meta.loan ? L2("Open the loan", "فتح القرض") : L2("Open the custody", "فتح العهدة")} ${esc(e.meta.loan || e.meta.custody)} →</a></p>` : ""}
@@ -1415,9 +1437,9 @@ async function openVoucher(id) {
     <p class="muted" style="font-size:.8em;margin-top:12px">${S.lang === "ar" ? "الإلغاء يستبعد القيد من كل الأرصدة مع إبقاء أثره؛ القيد العكسي هو التصحيح المحاسبي الرسمي." : "Void removes the entry from every total but keeps a visible trace. Reverse posts the formal correcting entry — both stay on record."}</p>`;
   const btns = [];
   if (edit && live) {
-    btns.push(`<button class="btn danger" type="button" data-a="vvoid" data-id="${e.id}">${t("void")}</button>`, `<button class="btn" type="button" data-a="vrev" data-id="${e.id}">${t("reverse")}</button>`);
+    if (full) btns.push(`<button class="btn danger" type="button" data-a="vvoid" data-id="${e.id}">${t("void")}</button>`, `<button class="btn" type="button" data-a="vrev" data-id="${e.id}">${t("reverse")}</button>`);
     if (e.doc) btns.push(`<button class="btn pri" type="button" data-a="vform">${t("edit")}</button>`);
-    if (!["Goods Receipt", "Material Issue", "Stock Transfer", "Stock Adjustment", "Sales Invoice"].includes(e.kind) && !(e.meta && e.meta.items) && can("accounting.journal", "edit"))
+    if (!["Goods Receipt", "Material Issue", "Stock Transfer", "Stock Adjustment", "Sales Invoice"].includes(e.kind) && !(e.meta && e.meta.items) && (can("accounting.journal", "edit") || (drafting && can("accounting.journal", "add"))))
       btns.push(`<button class="btn" type="button" data-a="vedit" data-id="${e.id}">${e.doc ? L2("Edit lines", "تعديل البنود") : t("edit")}</button>`);
   }
   const DUP_MOD = e.doc ? DOC_MOD[e.doc] : "accounting.journal";
@@ -1659,7 +1681,7 @@ function newItem(key) {
   if (kind === "bank") return bankImportForm();
   if (kind === "custody") return id === "settle" ? pickThen("custody", c => custodyAction(c, "settle")) : custodyForm();
 }
-async function openDoc(type, pre, edit, copyVals) {
+async function openDoc(type, pre, edit, copyVals, via) {
   if (type === "invoice") { location.hash = "#/invoice/new"; return; }
   if (type === "offer") { location.hash = "#/offers"; return; }
   if (type === "journal") return journalForm();
@@ -1668,12 +1690,13 @@ async function openDoc(type, pre, edit, copyVals) {
   let names = [];
   try { names = (await api("GET", "/api/parties?kind=all")).names; } catch { /* no permission */ }
   const items = S.boot.items.map(i => i.name);
-  const vals = (edit && edit.form) || copyVals;
+  const vals = (via && via.vals) || (edit && edit.form) || copyVals;
   const nc = [];
-  drawer(t(d.title) + " — " + (edit ? `${t("edit")} #${edit.id}` : t("new")), form(d.fields(pre)) + unitsList() + partyList("parties", names) + datalist("items", items),
-    async v => { if (edit) { await api("PUT", `/api/docs/${type}/${edit.id}`, v); toast(t("saved")); } else { await api("POST", "/api/docs/" + type, v); toast(t("posted")); }
+  drawer(t(d.title) + " — " + (via ? `${L2("Draft", "مسودة")} #${via.aid}` : edit ? `${t("edit")} #${edit.id}` : t("new")), form(d.fields(pre)) + unitsList() + partyList("parties", names) + datalist("items", items),
+    async v => { if (edit) await sendEntry("PUT", `/api/docs/${type}/${edit.id}`, v, via, t("saved")); else await sendEntry("POST", "/api/docs/" + type, v, via, t("posted"));
       await saveNewContacts(nc); },
-    { onOpen: f => { if (d.open) d.open(f, !!edit); if (vals) fillForm(f, vals); if (d.calc) { S.H.calc = () => d.calc(f); d.calc(f); }
+    { submitLabel: via ? (via.mode === "approve" ? L2("Approve & post", "اعتماد وترحيل") : L2("Send for approval", "إرسال للاعتماد")) : undefined,
+      onOpen: f => { if (d.open) d.open(f, !!edit); if (vals) fillForm(f, vals); if (d.calc) { S.H.calc = () => d.calc(f); d.calc(f); }
       [["vendor", "supplier"], ["party", type === "receipt" ? "customer" : "supplier"], ["worker", "employee"]].forEach(([k, c]) => { if ($(`[name=${k}]`, f) && $(`[name=${k}]`, f).getAttribute("list") === "parties") nc.push(offerContact(f, k, c)); }); } });
 }
 function fillForm(f, vals) {
@@ -1722,7 +1745,17 @@ function jItemsWire(f, bal) {
   S.H.jirm = el => { const tb = $("#ji tbody", f); if (tb.children.length > 1) el.closest("tr").remove(); else $$("input", el.closest("tr")).forEach(i => { i.value = ""; }); upd(); };
   upd();
 }
-function journalForm(e, copy) {
+// Saving an entry. Someone whose entries need approval gets a draft back instead of a posted entry. `via` = working on a
+// draft: the approver posts it (changed or not), or its maker fixes it and sends it again.
+async function sendEntry(method, path, body, via, okMsg) {
+  if (via && via.mode === "approve") { const r = await api("POST", `/api/approvals/${via.aid}/approve`, { payload: body }); toast(L2("Approved and posted", "تم الاعتماد والترحيل")); loadAlerts(true); return r; }
+  if (via) { await api("PUT", `/api/approvals/${via.aid}`, { payload: body }); toast(L2("Changed — waiting for approval again", "تم التعديل — في انتظار الاعتماد مرة أخرى")); loadAlerts(true); return {}; }
+  const r = await api(method, path, body);
+  if (r && r.pending) { toast(L2(`Saved as draft #${r.approval} — it is posted once someone approves it`, `حُفظ كمسودة رقم ${r.approval} — يُرحّل بعد اعتماده`)); loadAlerts(true); }
+  else toast(okMsg);
+  return r;
+}
+function journalForm(e, copy, via) {
   let lines = e ? e.lines : [{ account: "", debit: "", credit: "" }, { account: "", debit: "", credit: "" }];
   if (copy && e && e.meta && e.meta.items) {   // the item lines make their own debits again
     lines = e.lines.filter(l => !(l.debit && e.meta.items.some(x => x.account === l.account)));
@@ -1740,11 +1773,11 @@ function journalForm(e, copy) {
   const collect = f => $$("#jl tbody tr", f).map(tr => ({ account: $(".ja", tr).value, debit: $(".jd", tr).value, credit: $(".jc", tr).value, party: $(".jp", tr).value }));
   const items = f => $$("#ji tbody tr", f).map(tr => ({ item: $(".ji-n", tr).value.trim(), unit: $(".ji-u", tr).value.trim(), qty: $(".ji-q", tr).value, rate: $(".ji-p", tr).value, warehouse_id: $(".ji-w", tr).value }))
     .filter(x => x.item && +x.qty && +x.rate);
-  drawer((e && !copy ? t("edit") : t("new")) + " — " + t("m_journal"), html, async (v, f) => {
+  drawer((via ? `${L2("Draft", "مسودة")} #${via.aid}` : e && !copy ? t("edit") : t("new")) + " — " + t("m_journal"), html, async (v, f) => {
     const body = { ...v, lines: collect(f).filter(l => l.account && (+l.debit || +l.credit)), ...(items(f).length ? { items: items(f) } : {}) };
-    if (e && !copy) await api("PUT", "/api/journal/" + e.id, body); else await api("POST", "/api/journal", { ...body, kind: copy ? (Object.values(tpl).some(x => x.kind === e.kind) ? e.kind : "Journal Voucher") : v.template && tpl[v.template] ? tpl[v.template].kind : "Journal Voucher" });
-    toast(t("saved"));
-  }, { onOpen: f => {
+    if (e && !copy) await sendEntry("PUT", "/api/journal/" + e.id, body, via, t("saved"));
+    else await sendEntry("POST", "/api/journal", { ...body, kind: via ? e.kind || "Journal Voucher" : copy ? (Object.values(tpl).some(x => x.kind === e.kind) ? e.kind : "Journal Voucher") : v.template && tpl[v.template] ? tpl[v.template].kind : "Journal Voucher" }, via, t("saved"));
+  }, { submitLabel: via ? (via.mode === "approve" ? L2("Approve & post", "اعتماد وترحيل") : L2("Send for approval", "إرسال للاعتماد")) : undefined, onOpen: f => {
     const bal = () => { const L = collect(f); const it = $("#ji", f) ? jItemsTotal(f) : 0; const d = it + L.reduce((s, l) => s + (+l.debit || 0), 0), c = L.reduce((s, l) => s + (+l.credit || 0), 0);
       $("#jbal", f).innerHTML = `${t("debit")} ${money(d)} · ${t("credit")} ${money(c)} — <span class="${Math.abs(d - c) < 0.005 && d > 0 ? "bal-ok" : "bal-bad"}">${Math.abs(d - c) < 0.005 && d > 0 ? t("balanced") : t("unbalanced")}</span>`; };
     S.H.jbal = bal; bal();
@@ -2497,7 +2530,9 @@ PAGES.warehouses = async (view) => {
 // ------------------------------------------------------------- accounting
 PAGES.journal = async (view, parts, q) => {
   const lq = { ...q, limit: Math.min(100, +(q.limit || pageSize())) };
-  const d = await api("GET", "/api/journal?" + qs(lq));
+  const drafts = ["pending", "rejected", "withdrawn"].includes(q.status);   // drafts are not in the books yet: listed from approvals
+  const d = await api("GET", "/api/journal?" + qs(drafts ? { ...lq, status: "", limit: 1 } : lq));
+  const ad = drafts ? await api("GET", "/api/approvals?" + qs(q)) : null;
   S.H.newjv = () => journalForm();
   // every kind of entry starts here too: a plain journal entry, or any voucher this person may add (direct project cost,
   // expense, receipt, payment, payroll…) — the same list as "+ New"
@@ -2506,11 +2541,85 @@ PAGES.journal = async (view, parts, q) => {
       ${can("accounting.journal", "add") ? `<button data-a="newjv"><b>${esc(t("m_journal"))}</b> <span class="muted">${esc(L2("(any accounts)", "(أي حسابات)"))}</span></button>` : ""}
       ${kinds.map(i => `<button data-a="quicknew" data-doc="${esc(i.key)}">${esc(i.label)}</button>`).join("")}</div></div>` : "";
   view.innerHTML = `<div class="toolbar">${newBtn}<span class="spacer"></span>
-    <span class="chip">${d.total}</span><span class="chip">${money(d.posted_amount)} ${cur()}</span>${exportMenu("vouchers", { ...q, title: t("m_journal") })}</div>` +
-    filterBar(q, ["dates", "bu", ["kind", S.boot.enums.entry_kinds], "account", "qv", "party", "status"]) +
-    `<div class="card">${voucherRows(d.rows)}${pager(d.total, lq)}</div>`;
-  bulkify($("table.vtbl", view), BULKS.entries("accounting.journal"));
+    ${d.drafts && !drafts ? `<a class="chip warn" href="#/journal?status=pending" title="${esc(L2("Entered, not posted yet — waiting for someone to approve them", "مُدخلة ولم تُرحّل — في انتظار اعتمادها"))}">${esc(L2(`Drafts waiting: ${d.drafts}`, `مسودات في الانتظار: ${d.drafts}`))}</a>` : ""}
+    ${drafts ? `<span class="chip">${ad.rows.length}</span>` : `<span class="chip">${d.total}</span><span class="chip">${money(d.posted_amount)} ${cur()}</span>${exportMenu("vouchers", { ...q, title: t("m_journal") })}`}</div>` +
+    filterBar(q, ["dates", "bu", ["kind", S.boot.enums.entry_kinds], "account", "qv", "party", "jstatus", ["select", "created_by", L2("Entered by", "أدخله"), (d.people || []).map(u => [u, u])],
+      ["select", "approved_by", L2("Approved by", "اعتمده"), (d.people || []).map(u => [u, u])], "amount", "attach"]) +
+    `<div class="card">${drafts ? approvalRows(ad.rows) : voucherRows(d.rows) + pager(d.total, lq)}</div>`;
+  if (!drafts) bulkify($("table.vtbl", view), BULKS.entries("accounting.journal"));
 };
+// ---------------------------------------------------------- drafts waiting for approval (maker–checker)
+const APPR_ST = () => ({ pending: L2("Waiting for approval", "في انتظار الاعتماد"), rejected: L2("Sent back for changes", "أُعيد للتعديل"),
+  approved: L2("Approved & posted", "اعتُمد ورُحّل"), withdrawn: L2("Withdrawn", "مسحوب") });
+const apprChip = st => `<span class="chip ${st === "approved" ? "ok" : st === "rejected" ? "bad" : st === "pending" ? "warn" : ""}">${esc(APPR_ST()[st] || st)}</span>`;
+const dtypeLabel = d => d === "journal" ? t("m_journal") : DOCS[d] ? t(DOCS[d].title) : d;
+function approvalRows(rows) {
+  if (!rows.length) return `<div class="empty">${svg("check")}<div>${esc(L2("Nothing here", "لا يوجد شيء هنا"))}</div></div>`;
+  S.H.openappr = el => openApproval(+el.dataset.id).catch(fail);
+  return `<div class="tbl stack"><table class="atbl"><thead><tr><th>${t("date")}</th><th>${esc(L2("Draft", "مسودة"))}</th><th>${t("kind")}</th><th>${t("description")}</th><th>${t("party")}</th>
+    <th class="num">${t("amount")}</th><th>${esc(L2("Entered by", "أدخله"))}</th><th>${t("status")}</th></tr></thead><tbody>
+    ${rows.map(r => `<tr class="click" data-a="openappr" data-id="${r.id}"><td>${fd(r.date)}</td><td>#${r.id}${r.target_id ? ` <span class="chip" title="${esc(L2("A change to a posted entry", "تعديل على قيد مُرحّل"))}">✎ #${r.target_id}</span>` : ""}</td>
+      <td><span class="chip">${esc(dtypeLabel(r.dtype))}</span></td><td>${esc(r.summary)}${r.note ? `<div class="muted">${esc(L2("Note", "ملاحظة"))}: ${esc(r.note)}</div>` : ""}</td><td>${esc(r.party || "")}</td>
+      <td class="num">${money(r.amount)}</td><td>${esc(r.created_by)}<div class="muted">${esc((r.created_at || "").slice(0, 16).replace("T", " "))}</div></td>
+      <td>${apprChip(r.status)}${r.decided_by ? `<div class="muted">${esc(r.decided_by)}</div>` : ""}${r.can_approve ? ` <span class="chip pri">${esc(L2("Yours to approve", "بانتظار اعتمادك"))}</span>` : ""}</td></tr>`).join("")}</tbody></table></div>`;
+}
+PAGES.approvals = async (view, parts, q) => {
+  const d = await api("GET", "/api/approvals?" + qs(q));
+  const st = APPR_ST();
+  view.innerHTML = `<div class="banner info">${esc(L2("Entries made by people whose work needs approval wait here as drafts. Someone who may approve them checks each one, then posts it (as is, or after correcting it) or sends it back with a reason. Who needs approval is set per person in Users; approvers need the “Approve & post entries” permission and, when the person is in a group, the same group.",
+      "القيود التي يُدخلها من يحتاج عمله إلى اعتماد تنتظر هنا كمسودات. يراجعها من له صلاحية الاعتماد ثم يرحّلها (كما هي أو بعد تصحيحها) أو يعيدها مع ذكر السبب. يُحدَّد من يحتاج إلى اعتماد لكل مستخدم في شاشة المستخدمين؛ ويحتاج المعتمِد صلاحية «اعتماد وترحيل القيود» ونفس المجموعة إن كان المستخدم ضمن مجموعة."))}</div>` +
+    filterBar(q, [["choice", "status", t("status"), [["pending", st.pending], ["rejected", st.rejected], ["approved", st.approved], ["withdrawn", st.withdrawn], ["all", t("all")]], "pending"],
+      "dates", ["select", "created_by", L2("Entered by", "أدخله"), d.makers.map(m => [m, m])],
+      ["select", "dtype", t("kind"), ["journal", ...Object.keys(DOCS)].map(k => [k, dtypeLabel(k)])], "q"]) +
+    `<div class="card">${approvalRows(d.rows)}</div>`;
+};
+async function openApproval(id) {
+  const r = await api("GET", "/api/approvals/" + id), p = r.payload || {};
+  const acct = code => { const a = S.boot.accounts.find(x => x.code === code); return a ? `${code} ${aname(a)}` : code; };
+  const bu = id => { const b = S.boot.bus.find(x => String(x.id) === String(id)); return b ? `${b.code} — ${b.name}` : ""; };
+  let body;
+  if (r.dtype === "journal") {
+    body = `<div class="tbl"><table><thead><tr><th>${t("account")}</th><th class="num">${t("debit")}</th><th class="num">${t("credit")}</th><th>${t("line_party")}</th></tr></thead><tbody>
+      ${(p.items || []).map(x => `<tr><td>${esc(x.item)} — ${esc(x.qty)} ${esc(x.unit || "")} × ${money(+x.rate || 0)}</td><td class="num">${money((+x.qty || 0) * (+x.rate || 0))}</td><td></td><td></td></tr>`).join("")}
+      ${(p.lines || []).map(l => `<tr><td>${esc(acct(l.account))}</td><td class="num">${+l.debit ? money(+l.debit) : ""}</td><td class="num">${+l.credit ? money(+l.credit) : ""}</td><td>${esc(l.party || "")}</td></tr>`).join("")}</tbody></table></div>`;
+  } else {
+    const labels = Object.fromEntries((DOCS[r.dtype] ? DOCS[r.dtype].fields() : []).filter(f => f.k).map(f => [f.k, f]));
+    body = `<div class="tbl"><table><tbody>${Object.entries(p).filter(([k, v]) => v !== "" && v != null && typeof v !== "object" && labels[k]).map(([k, v]) => {
+      const f = labels[k]; let shown = String(v);
+      if (k === "bu_id") shown = bu(v); else if (f.type === "select" && f.opts) { const o = f.opts.find(o => String(Array.isArray(o) ? o[0] : o) === String(v)); if (o) shown = Array.isArray(o) ? o[1] : tl(o); }
+      else if (f.type === "number") shown = money(+v); else if (f.type === "checkbox") shown = v ? t("yes") : t("no");
+      return `<tr><th style="text-align:start">${esc(f.l)}</th><td>${esc(shown)}</td></tr>`; }).join("")}</tbody></table></div>`;
+  }
+  const head = `<div class="row" style="margin-bottom:10px;flex-wrap:wrap;gap:6px">${apprChip(r.status)}<span class="chip">${esc(dtypeLabel(r.dtype))}</span><span class="chip">${fd(r.date)}</span>
+      ${p.bu_id ? `<span class="chip">${esc(bu(p.bu_id))}</span>` : ""}<span class="chip">${esc(L2("Entered by", "أدخله"))}: ${esc(r.created_by)}</span>${r.decided_by ? `<span class="chip">${esc(r.status === "approved" ? L2("Approved by", "اعتمده") : L2("Decided by", "قرّر"))}: ${esc(r.decided_by)}</span>` : ""}</div>
+    ${r.target_id ? `<div class="banner info">${esc(L2(`This is a change to posted entry #${r.target_id} — approving it replaces that entry (its earlier version is kept in its history).`, `هذا تعديل على القيد المرحّل رقم ${r.target_id} — اعتماده يستبدل ذلك القيد (وتبقى نسخته السابقة في سجله).`))} <a href="#" data-a="apprtarget">${esc(L2("Open the entry", "فتح القيد"))}</a></div>` : ""}
+    ${r.note ? `<div class="banner ${r.status === "rejected" ? "err" : "info"}"><b>${esc(r.status === "rejected" ? L2("Sent back because", "أُعيد بسبب") : L2("Note", "ملاحظة"))}:</b> ${esc(r.note)}</div>` : ""}
+    ${p.memo || p.description ? `<p><b>${esc(p.memo || p.description)}</b></p>` : ""}${p.party ? `<p>${t("party")}: ${esc(p.party)}</p>` : ""}`;
+  const formOf = mode => {
+    const via = { aid: r.id, mode, vals: p };
+    if (r.dtype === "journal") {
+      const items = (p.items || []).map(x => ({ ...x, warehouse: ((S.boot.warehouses || []).find(w => String(w.id) === String(x.warehouse_id)) || {}).name }));
+      const base = r.target ? { ...r.target, meta: { ...(r.target.meta || {}), deal_ref: p.deal_ref, deal_status: p.deal_status } } : { kind: p.kind, meta: { items } };
+      const e = { ...base, date: p.date, bu_id: p.bu_id, party: p.party, ref: p.ref, memo: p.memo, lines: (p.lines && p.lines.length ? p.lines : [{}, {}]) };
+      return journalForm(e, !r.target, via);
+    }
+    return openDoc(r.dtype, undefined, r.target ? { id: r.target_id } : undefined, p, via);
+  };
+  S.H.apprtarget = () => openVoucher(r.target_id);
+  S.H.approk = async () => { try { await api("POST", `/api/approvals/${r.id}/approve`, {}); closeDrawer(); toast(L2("Approved and posted", "تم الاعتماد والترحيل")); loadAlerts(true); route(); } catch (e) { fail(e); } };
+  S.H.appredit = () => formOf("approve");
+  S.H.apprback = async () => { const why = await uiPrompt(L2("Why is it sent back? (the person who entered it sees this)", "لماذا يُعاد؟ (يراه من أدخل القيد)")); if (why === null) return;
+    try { await api("POST", `/api/approvals/${r.id}/reject`, { note: why }); closeDrawer(); toast(L2("Sent back", "أُعيد للتعديل")); loadAlerts(true); route(); } catch (e) { fail(e); } };
+  S.H.apprfix = () => formOf("fix");
+  S.H.apprwd = async () => { if (!await uiConfirm(L2("Withdraw this draft? It will not be posted.", "سحب هذه المسودة؟ لن تُرحّل."))) return;
+    try { await api("POST", `/api/approvals/${r.id}/withdraw`, {}); closeDrawer(); toast(t("saved")); loadAlerts(true); route(); } catch (e) { fail(e); } };
+  S.H.apprentry = () => openVoucher(r.entry_id);
+  const open = ["pending", "rejected"].includes(r.status);
+  const btns = (r.can_approve ? `<button type="button" class="btn danger" data-a="apprback">${esc(L2("Send back", "إعادة للتعديل"))}</button><button type="button" class="btn" data-a="appredit">${esc(L2("Correct, then approve", "تصحيح ثم اعتماد"))}</button><button type="button" class="btn pri" data-a="approk">${esc(L2("Approve & post", "اعتماد وترحيل"))}</button>` : "")
+    + (r.mine && open ? `<button type="button" class="btn danger" data-a="apprwd">${esc(L2("Withdraw", "سحب"))}</button><button type="button" class="btn pri" data-a="apprfix">${esc(r.status === "rejected" ? L2("Fix and send again", "تعديل وإرسال مرة أخرى") : t("edit"))}</button>` : "")
+    + (r.entry_id ? `<button type="button" class="btn" data-a="apprentry">${esc(L2(`Open entry #${r.entry_id}`, `فتح القيد رقم ${r.entry_id}`))}</button>` : "");
+  drawer(`${L2("Draft", "مسودة")} #${r.id} — ${dtypeLabel(r.dtype)}`, head + body, null, { readOnly: true, extraButtons: btns, wide: r.dtype === "journal" });
+}
 PAGES.ledger = async (view, parts, q) => reportPage(view, "general_ledger", q, ["dates", "account", "bu", "party", "lang"]);
 PAGES.coa = async (view, parts, q) => {
   const rows = await api("GET", "/api/accounts?" + qs(q));
@@ -3324,10 +3433,12 @@ PAGES.users = async (view) => {
         cloudOn() ? (ar ? "يسجل بها الدخول فوراً — بدون رسائل تأكيد." : "They can sign in with it right away — no confirmation email.") : ""), span: "spanall" },
     ...(S.boot.user.is_super ? [{ k: "is_admin", l: t("admin") + (S.lang === "ar" ? " (كل الصلاحيات)" : " (everything, ignores the matrix)"), type: "checkbox", v: u.is_admin },
       { k: "is_super", l: L2("Super administrator (manages administrators, can erase / restore the books)", "مسؤول أعلى (يدير المسؤولين ويمكنه مسح / استبدال الدفاتر)"), type: "checkbox", v: u.is_super }] : []),
+    { k: "needs_approval", type: "checkbox", v: !!u.needs_approval, dis: !!(u.is_admin || u.is_super) || (u.id && u.id === S.boot.user.id && !S.boot.user.is_super),
+      l: L2("Their entries wait for approval (saved as drafts; someone with “Approve & post entries” in their group posts them)", "قيوده تنتظر الاعتماد (تُحفظ كمسودات ويرحّلها من له صلاحية «اعتماد وترحيل القيود» في مجموعته)") },
     ...(u.id ? [{ k: "active", l: t("active") + (cloudOn() ? (ar ? " (إلغاء التحديد يمنع تسجيل الدخول)" : " (untick to block sign-in)") : ""), type: "checkbox", v: u.active !== false }] : []),
     { html: `<h4 style="margin:8px 0 0">${t("perm_matrix")}</h4>${permMatrix(u.perms || {})}`, span: "spanall" }]),
   async (v, f) => { const perms = readPerms(f);
-    const body = { username: v.username || u.username, full_name: v.full_name, email: v.email, password: v.password, is_admin: v.is_admin || v.is_super, active: v.active, perms, _no_password: !v.password };
+    const body = { username: v.username || u.username, full_name: v.full_name, email: v.email, password: v.password, is_admin: v.is_admin || v.is_super, active: v.active, perms, _no_password: !v.password, needs_approval: !!v.needs_approval };
     if (v.group_key !== undefined) body.group_key = v.group_key === "general" ? "" : v.group_key;
     if (S.boot.user.is_super) body.is_super = !!v.is_super; else { body.is_admin = !!u.is_admin; }
     if (u.id) await api("PUT", "/api/users/" + u.id, body); else await api("POST", "/api/users", body);
@@ -3371,7 +3482,7 @@ PAGES.users = async (view) => {
       return `<span class="chip warn">${esc(t("mod_" + m))}: ${ss.map((s, i) => vals[i] === "none" ? "" : `${esc(t(window.SUBPERM[`${m}.${s}`] || s))} ${esc({ view: "👁", add: "+", edit: "✎" }[vals[i]])}`).filter(Boolean).join(", ")}</span>`; }).join(" ");
   };
   view.innerHTML = `<div class="toolbar">${can("users.users", "add") ? `<button class="btn pri" data-a="unew">+ ${t("new")}</button>` : ""}</div><div class="card"><div class="tbl"><table><thead><tr><th>${t("username")}</th><th>${t("full_name")}</th><th>${t("email")}</th><th>${L2("Group", "المجموعة")}</th><th>${t("perm_matrix")}</th><th>${t("status")}</th></tr></thead><tbody>
-    ${rows.map(u => `<tr class="click ${u.active ? "" : "void"}" data-a="${ed ? "uedit" : ""}" data-id="${u.id}"><td><b>${esc(u.username)}</b></td><td>${esc(u.full_name)}</td><td>${esc(u.email || "")}</td><td>${esc(groupName(u.group_key))}</td><td>${summary(u)}</td><td>${u.active ? "" : `<span class="chip bad">${t("no")}</span>`}</td></tr>`).join("")}</tbody></table></div>
+    ${rows.map(u => `<tr class="click ${u.active ? "" : "void"}" data-a="${ed ? "uedit" : ""}" data-id="${u.id}"><td><b>${esc(u.username)}</b></td><td>${esc(u.full_name)}</td><td>${esc(u.email || "")}</td><td>${esc(groupName(u.group_key))}</td><td>${u.needs_approval ? `<span class="chip warn">${esc(L2("Entries need approval", "قيوده تحتاج اعتماد"))}</span> ` : ""}${summary(u)}</td><td>${u.active ? "" : `<span class="chip bad">${t("no")}</span>`}</td></tr>`).join("")}</tbody></table></div>
     <p class="muted" style="font-size:.82em">👁 ${t("perm_view")} · + ${t("perm_add")} · ✎ ${t("perm_full")}</p></div>`;
 };
 PAGES.audit = async (view, parts, q) => {
@@ -6954,7 +7065,7 @@ function setChatBadge(unread, mentions) {
     b.hidden = !n; b.textContent = n > 99 ? "99+" : n; b.classList.toggle("at", !!C2.mentions); });
   const base = document.title.replace(/^\(\d+\+?\) /, ""); document.title = n ? `(${n > 99 ? "99+" : n}) ${base}` : base;
 }
-setInterval(() => { if (!document.hidden || Math.random() < .5) pollChat(); }, 8000);
+setInterval(() => { if (!document.hidden || Math.random() < .5) { pollChat(); if (S.boot && S.boot.user) loadAlerts(); } }, 8000);
 
 // keep the chat badge and the profile picture in the shell
 const _renderNav = renderNav;

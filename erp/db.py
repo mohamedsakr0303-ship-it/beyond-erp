@@ -919,6 +919,23 @@ CREATE TABLE IF NOT EXISTS sessions (
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     expires TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS approvals (     -- entries waiting for approval (maker–checker, erp/approvals.py)
+    id         INTEGER PRIMARY KEY,
+    dtype      TEXT NOT NULL,                -- a voucher type (direct_cost, expense…) or 'journal'
+    target_id  INTEGER,                      -- the posted entry it changes (an edit), or NULL (a new entry)
+    module     TEXT NOT NULL DEFAULT '',     -- the screen whose "add" right posting needs
+    payload    TEXT NOT NULL DEFAULT '{}',   -- what the form sent
+    summary    TEXT NOT NULL DEFAULT '',
+    party      TEXT NOT NULL DEFAULT '',
+    amount     INTEGER NOT NULL DEFAULT 0,
+    date       TEXT NOT NULL DEFAULT '',
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT '',
+    group_key  TEXT NOT NULL DEFAULT '',
+    status     TEXT NOT NULL DEFAULT 'pending',
+    decided_by TEXT, decided_at TEXT, note TEXT, entry_id INTEGER
+);
+CREATE INDEX IF NOT EXISTS approvals_status ON approvals(status, id);
 CREATE TABLE IF NOT EXISTS audit_log (
     id INTEGER PRIMARY KEY,
     ts TEXT DEFAULT (datetime('now')),
@@ -1577,7 +1594,7 @@ SUBMODULES = {
     "rentals": ["contracts", "fleet", "calculator"],
     "payroll": ["employees", "attendance", "runs", "entries", "crew", "settings"],
     "assets": ["overview", "cash", "register", "depreciation"],
-    "accounting": ["journal", "ledger", "coa", "loans", "bankrec", "recurring", "budgets"],
+    "accounting": ["journal", "ledger", "coa", "loans", "bankrec", "recurring", "budgets", "approvals"],
     "partners": ["equity", "transactions", "ownership"],
     "reports": ["partner_pack", "income_statement", "balance_sheet", "cash_flow", "trial_balance", "budget", "aging", "statement", "forecast"],
     "tax": ["codes", "report", "einvoice", "ereceipt"],
@@ -1694,6 +1711,7 @@ class Database:
         self._add_cols("rental_lines", [("cost", "INTEGER NOT NULL DEFAULT 0")])
         self._add_cols("users", [("is_super", "INTEGER NOT NULL DEFAULT 0")])
         self._add_cols("users", [("group_key", "TEXT NOT NULL DEFAULT ''")])
+        self._add_cols("users", [("needs_approval", "INTEGER NOT NULL DEFAULT 0")])   # their entries wait for approval
         if not self.conn.execute("SELECT 1 FROM users WHERE is_super=1 AND active=1").fetchone():   # books from before the level
             self.conn.execute("UPDATE users SET is_super=1 WHERE id=(SELECT id FROM users WHERE is_admin=1 AND active=1 ORDER BY id LIMIT 1)")
         if "name_ar" not in have:

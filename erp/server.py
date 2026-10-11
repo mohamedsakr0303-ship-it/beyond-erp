@@ -462,6 +462,18 @@ def journal_filters(q):
     if q.get("status") in ("posted", "void"):
         w.append("e.status=?")
         p.append(q["status"])
+    elif q.get("status") == "reversed":      # reversed, or the reversing entry itself
+        w.append("(e.reversed_by IS NOT NULL OR e.reversal_of IS NOT NULL)")
+    elif q.get("status") == "edited":        # corrected after posting (its earlier versions are kept)
+        w.append("e.history IS NOT NULL AND e.history NOT IN ('', '[]')")
+    if q.get("created_by"):                 # who entered it (or, for an approved draft, who made it)
+        w.append("(e.created_by=? OR json_extract(e.meta,'$.entered_by')=?)")
+        p += [q["created_by"], q["created_by"]]
+    if q.get("approved_by"):
+        w.append("json_extract(e.meta,'$.approved_by')=?")
+        p.append(q["approved_by"])
+    if q.get("has_attachment") in ("1", "yes"):
+        w.append("EXISTS (SELECT 1 FROM attachments t WHERE t.owner='entry' AND t.owner_id=e.id)")
     if q.get("kind"):
         w.append("e.kind=?")
         p.append(q["kind"])
@@ -506,6 +518,9 @@ def journal_filters(q):
     if q.get("min_amount"):
         w.append("(SELECT SUM(debit) FROM journal_lines WHERE entry_id=e.id) >= ?")
         p.append(to_minor(acc.num(q["min_amount"])))
+    if q.get("max_amount"):
+        w.append("(SELECT SUM(debit) FROM journal_lines WHERE entry_id=e.id) <= ?")
+        p.append(to_minor(acc.num(q["max_amount"])))
     return " AND ".join(w), p
 
 
@@ -518,8 +533,13 @@ def journal(ctx):
     count = ctx.db.one(f"SELECT COUNT(*) AS n FROM journal_entries e WHERE {w}", p)["n"]
     ids = [r["id"] for r in ctx.db.q(f"SELECT e.id FROM journal_entries e WHERE {w} ORDER BY e.date DESC, e.id DESC "
                                      f"LIMIT ? OFFSET ?", p + [limit, offset])]
+    people = sorted({r["u"] for r in ctx.db.q("SELECT DISTINCT created_by AS u FROM journal_entries WHERE created_by<>'' "
+                                                "UNION SELECT DISTINCT json_extract(meta,'$.approved_by') FROM journal_entries "
+                                                "WHERE json_extract(meta,'$.approved_by') IS NOT NULL") if r["u"]})
+    from . import approvals
+    drafts = len(approvals.listing(ctx.db, ctx.user, ctx.can, {"status": "pending"}))    # the ones this person may see
     return ok({"rows": [acc.get_entry(ctx.db, i) for i in ids], "total": count, "posted_amount": to_major(total["amt"]),
-               "limit": limit, "offset": offset})
+               "limit": limit, "offset": offset, "people": people, "drafts": drafts})
 
 
 @route("GET", "/api/bu-journal", "business_units.units")
@@ -547,15 +567,31 @@ def journal_one(ctx, eid):
     return ok(e)
 
 
+def _to_approval(ctx, dtype, body, run, target_id=None, module="accounting.journal"):
+    """Someone whose entries need approval: check it now (rolled back), keep it as a draft waiting for an approver."""
+    from . import approvals
+    approvals.check(ctx.db, run)
+    aid = approvals.submit(ctx.db, ctx.user, dtype, body, target_id, module)
+    ctx.log("approval.submit", f"{dtype} #{aid}")
+    return ok({"id": None, "approval": aid, "pending": True})
+
+
 @route("POST", "/api/journal", "accounting.journal", "add")
 def journal_add(ctx):
+    from . import approvals
+    if approvals.needs_approval(ctx.db, ctx.user):
+        return _to_approval(ctx, "journal", ctx.body, lambda: acc.record_journal(ctx.db, ctx.body, ctx.user["username"]))
     eid = acc.record_journal(ctx.db, ctx.body, ctx.user["username"])
     ctx.log("journal.add", eid)
     return ok({"id": eid})
 
 
-@route("PUT", "/api/journal/<eid>", "accounting.journal", "edit")
+@route("PUT", "/api/journal/<eid>", "accounting.journal", "add")
 def journal_edit(ctx, eid):
+    from . import approvals
+    if approvals.needs_approval(ctx.db, ctx.user):      # a proposed correction: adding rights are enough, it waits
+        return _to_approval(ctx, "journal", ctx.body, lambda: acc.edit_entry(ctx.db, int(eid), ctx.body, ctx.user["username"]), int(eid))
+    ctx.require("accounting.journal", "edit")
     acc.edit_entry(ctx.db, int(eid), ctx.body, ctx.user["username"])
     ctx.log("journal.edit", eid)
     return ok()
@@ -603,6 +639,9 @@ def post_doc(ctx, dtype):
     ctx.require(module, "add")
     from .db import CLOCK
     kw = {"strict": True} if dtype == "direct_cost" and CLOCK["at"] is None else {}  # typed in now, not a replay
+    from . import approvals
+    if approvals.needs_approval(ctx.db, ctx.user):
+        return _to_approval(ctx, dtype, ctx.body, lambda: fn(ctx.db, ctx.body, ctx.user["username"], **kw), None, module)
     eid = fn(ctx.db, ctx.body, ctx.user["username"], **kw)
     _remember_form(ctx.db, dtype, eid, ctx.body)
     ctx.log(f"doc.{dtype}", eid)
@@ -633,18 +672,126 @@ def edit_doc(ctx, dtype, eid):
     if dtype not in DOCS or dtype == "stock_move":
         return ok({"error": "Unknown document"}, 404)
     fn, module = DOCS[dtype]
-    if not (ctx.can(module, "edit") or ctx.can("accounting.journal", "edit")):
+    from . import approvals
+    drafting = approvals.needs_approval(ctx.db, ctx.user)      # a proposed correction: adding rights are enough
+    if not (ctx.can(module, "edit") or ctx.can("accounting.journal", "edit") or (drafting and ctx.can(module, "add"))):
         raise PermissionError()
     from .db import CLOCK
     e = acc.get_entry(ctx.db, int(eid))
     if not e or FORM_DOCS.get(e["kind"]) != dtype:
         raise acc.ValidationError("This entry is not a " + dtype.replace("_", " "))
     kw = {"strict": True} if dtype == "direct_cost" and CLOCK["at"] is None else {}
+    if drafting:
+        return _to_approval(ctx, dtype, ctx.body, lambda: acc.replace_doc(ctx.db, int(eid), fn, ctx.body, ctx.user["username"], **kw),
+                            int(eid), module)
     with ctx.db.tx():
         acc.replace_doc(ctx.db, int(eid), fn, ctx.body, ctx.user["username"], **kw)
         _remember_form(ctx.db, dtype, int(eid), ctx.body)
     ctx.log(f"doc.{dtype}.edit", eid)
     return ok({"id": int(eid)})
+
+
+# ---------------------------------------------------------------- entries waiting for approval (erp/approvals.py)
+@route("GET", "/api/approvals")
+def approvals_list(ctx):
+    from . import approvals
+    return ok({"rows": approvals.listing(ctx.db, ctx.user, ctx.can, ctx.q),
+               "makers": [r["created_by"] for r in ctx.db.q("SELECT DISTINCT created_by FROM approvals ORDER BY created_by")]})
+
+
+@route("GET", "/api/approvals/<aid>")
+def approval_one(ctx, aid):
+    from . import approvals
+    r = approvals.get(ctx.db, aid)
+    r["can_approve"] = r["status"] == "pending" and approvals.can_approve(ctx.user, ctx.can, r)
+    r["mine"] = r["created_by"] == ctx.user["username"]
+    if not (r["mine"] or r["can_approve"] or approvals.may_see(ctx.user, ctx.can, r)):
+        raise PermissionError()
+    if r["target_id"]:
+        r["target"] = acc.get_entry(ctx.db, int(r["target_id"]))
+    return ok(r)
+
+
+def _post_approved(ctx, r, body):
+    """Run what the maker's form would have run, under the maker's name."""
+    maker, dtype, tid = r["created_by"], r["dtype"], r["target_id"]
+    if dtype == "journal":
+        if tid:
+            acc.edit_entry(ctx.db, int(tid), body, maker)
+            return int(tid)
+        return acc.record_journal(ctx.db, body, maker)
+    fn, _module = DOCS[dtype]
+    from .db import CLOCK
+    kw = {"strict": True} if dtype == "direct_cost" and CLOCK["at"] is None else {}
+    if tid:
+        acc.replace_doc(ctx.db, int(tid), fn, body, maker, **kw)
+        eid = int(tid)
+    else:
+        eid = fn(ctx.db, body, maker, **kw)
+    _remember_form(ctx.db, dtype, eid, body)
+    return eid
+
+
+@route("POST", "/api/approvals/<aid>/approve")
+def approval_approve(ctx, aid):
+    from . import approvals
+    r = approvals.get(ctx.db, aid)
+    if r["status"] != "pending":
+        raise acc.ValidationError("This draft is no longer waiting for approval")
+    if not approvals.can_approve(ctx.user, ctx.can, r):
+        raise PermissionError()
+    body = ctx.body.get("payload") if isinstance(ctx.body.get("payload"), dict) else r["payload"]
+    with ctx.db.tx():
+        if body is not r["payload"]:
+            approvals.update_payload(ctx.db, aid, body)
+        eid = _post_approved(ctx, r, body)
+        if isinstance(eid, int):
+            row = ctx.db.one("SELECT meta FROM journal_entries WHERE id=?", (eid,))
+            if row:
+                meta = json.loads(row["meta"] or "{}")
+                meta.update(approved_by=ctx.user["username"], entered_by=r["created_by"])
+                ctx.db.x("UPDATE journal_entries SET meta=? WHERE id=?", (json.dumps(meta, ensure_ascii=False), eid))
+        approvals.decide(ctx.db, aid, ctx.user, "approved", ctx.body.get("note") or "", eid if isinstance(eid, int) else None)
+    ctx.log("approval.approve", f"#{aid} -> {eid}")
+    return ok({"id": eid})
+
+
+@route("POST", "/api/approvals/<aid>/reject")
+def approval_reject(ctx, aid):
+    from . import approvals
+    r = approvals.get(ctx.db, aid)
+    if r["status"] != "pending":
+        raise acc.ValidationError("This draft is no longer waiting for approval")
+    if not approvals.can_approve(ctx.user, ctx.can, r):
+        raise PermissionError()
+    if not str(ctx.body.get("note") or "").strip():
+        raise acc.ValidationError("Say why it is sent back, so it can be fixed")
+    approvals.decide(ctx.db, aid, ctx.user, "rejected", ctx.body.get("note"))
+    ctx.log("approval.reject", f"#{aid}")
+    return ok()
+
+
+@route("PUT", "/api/approvals/<aid>")
+def approval_update(ctx, aid):
+    """The maker fixes their draft (pending, or sent back — it then waits again)."""
+    from . import approvals
+    r = approvals.get(ctx.db, aid)
+    if r["created_by"] != ctx.user["username"] or r["status"] not in ("pending", "rejected"):
+        raise PermissionError()
+    body = ctx.body.get("payload") if isinstance(ctx.body.get("payload"), dict) else ctx.body
+    approvals.update_payload(ctx.db, aid, body)
+    ctx.db.x("UPDATE approvals SET status='pending', decided_by=NULL, decided_at=NULL WHERE id=?", (int(aid),))
+    return ok()
+
+
+@route("POST", "/api/approvals/<aid>/withdraw")
+def approval_withdraw(ctx, aid):
+    from . import approvals
+    r = approvals.get(ctx.db, aid)
+    if r["created_by"] != ctx.user["username"] or r["status"] not in ("pending", "rejected"):
+        raise PermissionError()
+    approvals.decide(ctx.db, aid, ctx.user, "withdrawn")
+    return ok()
 
 
 @route("GET", "/api/negotiations")
@@ -2224,9 +2371,18 @@ def app_update_install(ctx):
 @route("GET", "/api/alerts")
 def alerts(ctx):
     """What needs attention now, for the bell in the top bar — only what this user may see."""
-    from . import dashboards
+    from . import approvals, dashboards
     out = dashboards.alerts(ctx.db, ctx.can)
-    return ok({"rows": out, "count": len(out)})
+    waiting = approvals.waiting_for(ctx.db, ctx.user, ctx.can)
+    if waiting:
+        out.insert(0, {"level": "warn", "en": f"Entries waiting for your approval: {len(waiting)}",
+                       "ar": f"قيود في انتظار اعتمادك: {len(waiting)}", "href": "#/approvals", "count": len(waiting), "kind": "approvals"})
+    sent_back = ctx.db.one("SELECT COUNT(*) n FROM approvals WHERE created_by=? AND status='rejected'", (ctx.user["username"],))["n"]
+    if sent_back:
+        out.insert(0, {"level": "bad", "en": f"Your entries sent back for changes: {sent_back}",
+                       "ar": f"قيود أُعيدت إليك للتعديل: {sent_back}", "href": "#/approvals?status=rejected", "count": sent_back,
+                       "kind": "approvals_back"})
+    return ok({"rows": out, "count": len(out), "approvals": [w["id"] for w in waiting]})
 
 
 @route("GET", "/api/assets-overview", "assets.overview")
@@ -3522,6 +3678,8 @@ def user_edit(ctx, uid):
     b = ctx.body
     if int(uid) != ctx.user["id"]:
         _need_super(ctx, "edit other people's accounts (administrators may add users)")
+    elif not ctx.user.get("is_super"):
+        b.pop("needs_approval", None)     # nobody lifts their own approval requirement
     raises = bool(b.get("is_admin")) and not target["is_admin"] or bool(b.get("is_super")) and not target["is_super"]
     lowers = ("is_admin" in b and not b["is_admin"] and target["is_admin"]) or ("is_super" in b and not b["is_super"] and target["is_super"])
     if raises or ((target["is_admin"] or target["is_super"]) and int(uid) != ctx.user["id"]) or (lowers and int(uid) != ctx.user["id"]):

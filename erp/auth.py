@@ -76,7 +76,7 @@ def public_user(u):
     perms = {m: "edit" for m in MODULES} if u["is_admin"] else clean_perms(json.loads(u["perms"] or "{}"))
     return {"id": u["id"], "username": u["username"], "full_name": u["full_name"], "email": u.get("email") or "",
             "is_admin": bool(u["is_admin"]), "is_super": bool(u.get("is_super")), "active": bool(u["active"]), "perms": perms,
-            "group_key": u.get("group_key") or ""}
+            "group_key": u.get("group_key") or "", "needs_approval": bool(u.get("needs_approval"))}
 
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -114,6 +114,8 @@ def create_user(db, d, first=False):
                (username, text(d.get("full_name")), pw, is_admin, is_super,
                 json.dumps(clean_perms(d.get("perms"))), now().strftime("%Y-%m-%d %H:%M:%S"), email,
                 _group(db, d.get("group_key")))).lastrowid
+    if d.get("needs_approval") and not d.get("is_admin") and not d.get("is_super"):
+        db.x("UPDATE users SET needs_approval=1 WHERE id=?", (uid,))
     return uid
 
 
@@ -150,6 +152,8 @@ def update_user(db, uid, d, acting_user_id):
           json.dumps(clean_perms(d.get("perms") or json.loads(u["perms"] or "{}"))), email, uid))
     if "group_key" in d:
         db.x("UPDATE users SET group_key=? WHERE id=?", (_group(db, d.get("group_key")), uid))
+    if "needs_approval" in d:      # their entries wait for someone to approve and post them
+        db.x("UPDATE users SET needs_approval=? WHERE id=?", (1 if d["needs_approval"] and not is_admin else 0, uid))
     if d.get("password"):
         db.x("UPDATE users SET pw_hash=? WHERE id=?", (hash_password(d["password"]), uid))
         db.x("DELETE FROM sessions WHERE user_id=? ", (uid,))
