@@ -3399,7 +3399,7 @@ PAGES.data = async (view) => {
   view.appendChild(demoCard);
   S.H.demoload = async el => { el.disabled = true; el.textContent = L2("Loading…", "جارٍ التحميل…");
     try { await api("POST", "/api/demo", { industry: ($("#demoind") || {}).value || "" }); await refreshBoot(); toast(L2("Demo company loaded", "تم تحميل الشركة التجريبية")); location.hash = "#/dashboard"; } catch (e) { fail(e); el.disabled = false; } };
-  S.H.demorepl = async () => { const c = await uiPrompt(L2("This ERASES all data in these books (a backup is made first) and loads the demo company. Type DEMO to continue.", "سيتم مسح كل البيانات (بعد عمل نسخة احتياطية) وتحميل الشركة التجريبية. اكتب DEMO للمتابعة."), "");
+  S.H.demorepl = async () => { const c = await uiPrompt(L2("This ERASES all data in these books (a backup is made first) and loads the demo company. Type DEMO to continue.", "ستُمسح كل البيانات (بعد أخذ نسخة احتياطية) وتُحمَّل الشركة التجريبية. اكتب DEMO للمتابعة."), "");
     if (c == null) return; try { await api("POST", "/api/demo", { replace: true, confirm: c, industry: ($("#demoind") || {}).value || "" }); await refreshBoot(); toast(L2("Demo company loaded", "تم تحميل الشركة التجريبية")); location.hash = "#/dashboard"; } catch (e) { fail(e); } };
   S.H.impopen = el => importWizard(el.dataset.sheet);
   S.H.csv = () => openApi("/api/export/csv?" + qs({ sheet: $("#csvs").value }));
@@ -3418,11 +3418,11 @@ PAGES.data = async (view) => {
       try { file = await fetchGoogleSheet(link); fmtSel.value = "xlsx"; } catch (e) { out.innerHTML = `<div class="banner err">${esc(e.message)}</div>`; return; }
     }
     if (!file) { toast(t("file") + "?", true); return; }
-    if ($("#impmode").value === "replace" && !$("#impdry").checked && !await uiConfirm(S.lang === "ar" ? "سيتم استبدال كل البيانات (مع نسخة احتياطية تلقائية). متابعة؟" : "This replaces ALL data (an automatic backup is taken first). Continue?")) return;
+    if ($("#impmode").value === "replace" && !$("#impdry").checked && !await uiConfirm(S.lang === "ar" ? "ستُستبدل كل البيانات (مع نسخة احتياطية تلقائية). هل تريد المتابعة؟" : "This replaces ALL data (an automatic backup is taken first). Continue?")) return;
     out.innerHTML = `<div class="muted">${t("loading")}</div>`;
     try {
       const r = await api("POST", "/api/import?" + qs({ format: fmtSel.value, mode: $("#impmode").value, dry_run: $("#impdry").checked ? 1 : "", sheet: $("#impsheet").value }), undefined, await file.arrayBuffer());
-      out.innerHTML = `<div class="banner ok">${r.dry_run ? (S.lang === "ar" ? "الفحص ناجح — لم يتم تغيير أي شيء. أزل علامة الفحص للاستيراد." : "Check passed — nothing was changed. Untick “check only” to import.") : t("saved")}</div>
+      out.innerHTML = `<div class="banner ok">${r.dry_run ? (S.lang === "ar" ? "الفحص سليم ولم يتغير شيء. أزل علامة «فحص فقط» لتستورد فعلاً." : "Check passed — nothing was changed. Untick “check only” to import.") : t("saved")}</div>
         <div class="tbl"><table><tbody>${Object.entries(r.counts).map(([k, v]) => `<tr><td>${esc(k)}</td><td class="num">${v}</td></tr>`).join("") || `<tr><td>${esc(L2("Nothing new to import", "لا يوجد جديد للاستيراد"))}</td><td></td></tr>`}</tbody></table></div>
         ${r.skipped && Object.keys(r.skipped).length ? `<div class="banner info" style="margin-top:6px">${esc(L2("Already in the books, skipped: ", "موجود بالفعل وتم تخطيه: "))}${Object.entries(r.skipped).map(([k, v]) => `${esc(sheetLabel(k))} ${v}`).join(" · ")}</div>` : ""}
         ${r.updated && Object.keys(r.updated).length ? `<div class="banner info" style="margin-top:6px">${esc(L2("Changed in the file, updated in the books: ", "تغيّر في الملف وتم تحديثه: "))}${Object.entries(r.updated).map(([k, v]) => `${esc(sheetLabel(k))} ${v}`).join(" · ")}</div>` : ""}
@@ -3559,7 +3559,7 @@ PAGES.einvoice = async (view, parts, q) => {
       <p class="muted">${S.lang === "ar" ? "الطريقة ١ — التوليد للاستيراد: نزّل المستندات بصيغة المنظومة (JSON) أو ملف Excel، ثم ارفعها عبر بوابة المنظومة أو سلّمها لمزود الخدمة." : "Option 1 — generate for import: download the documents in ETA format (JSON) or an Excel batch, then upload them through the ETA portal or hand them to your integrator."}</p>
       ${filterBar(q, ["dates", "bu"])}
       <div class="row"><a class="btn" href="/api/einvoice-batch?${qs({ ...q, format: "json" })}">⬇ ${t("eta_batch_json")}</a><a class="btn" href="/api/einvoice-batch?${qs({ ...q, format: "xlsx" })}">⬇ ${t("eta_batch_xlsx")}</a></div></div>
-    <div class="card" id="etaset"><h2>${t("eta_setup")}</h2><p class="muted">${S.lang === "ar" ? "الطريقة ٢ — الربط المباشر: يرسل النظام الفواتير الموقعة إلى المنظومة ويتابع حالتها. التوقيع يتم عبر خدمة توقيع محلية متصلة بالتوكن." : "Option 2 — direct link: the app signs through your local signing service (USB token) and submits to the ETA API, then tracks status."}</p>
+    <div class="card" id="etaset"><h2>${t("eta_setup")}</h2><p class="muted">${S.lang === "ar" ? "الطريقة ٢ — الربط المباشر: يرسل النظام الفواتير الموقعة إلى المنظومة ويتابع حالتها. والتوقيع من خلال خدمة توقيع محلية متصلة بالتوكن." : "Option 2 — direct link: the app signs through your local signing service (USB token) and submits to the ETA API, then tracks status."}</p>
       ${form([{ k: "eta_env", l: t("eta_env"), type: "select", opts: [["preprod", "Pre-production (testing)"], ["prod", "Production"]], v: st.eta_env },
         { k: "eta_doc_version", l: t("eta_version"), type: "select", opts: [["1.0", "1.0 (signed)"], ["0.9", "0.9 (unsigned — pre-production only)"]], v: st.eta_doc_version },
         { k: "eta_client_id", l: t("eta_client_id"), v: st.eta_client_id }, { k: "eta_client_secret", l: t("eta_client_secret"), type: "password", v: st.eta_client_secret },
@@ -4058,7 +4058,7 @@ async function workspaceTab(view, head) {
       <button class="btn danger" data-a="wsoff">${ar ? "فصل هذا الجهاز" : "Disconnect this device"}</button></div>
       ${!STATIC && !info.gateway ? `<p class="muted" style="font-size:.85em;margin-top:8px">${ar ? "لخادم مكتبي يخدم عدة مستخدمين محليين: فعّل «بوابة» لهذا الحساب في قائمة الأعضاء حتى تُسجل التعديلات بأسماء المستخدمين الفعليين." : "Desktop server for several local users: tick “gateway” for this account in the member list so changes are recorded under each local user rather than this account."}</p>` : ""}` : ""}`
     : `<div class="muted">${ar ? "سجّل الدخول أولاً." : "Sign in first."}</div>`}</div>` : `<div class="banner info">${t("admin_only")}</div>`}
-  ${info && info.is_admin ? `<div class="card"><h2>${ar ? "الأعضاء" : "Members"}</h2><p class="muted" style="font-size:.85em">${ar ? "كل عضو يسجل الدخول ببريده. أضف له أيضاً مستخدماً في التطبيق بنفس البريد كاسم مستخدم لتحديد صلاحياته (يتم ذلك تلقائياً هنا)." : "Each member signs in with their email. Adding a member here also creates their app user (username = email) — set their permissions under Users."}</p>
+  ${info && info.is_admin ? `<div class="card"><h2>${ar ? "الأعضاء" : "Members"}</h2><p class="muted" style="font-size:.85em">${ar ? "كل عضو يسجل الدخول ببريده. أضف له أيضاً مستخدماً في التطبيق بنفس البريد كاسم مستخدم لتحديد صلاحياته (وهذا يحدث تلقائياً هنا)." : "Each member signs in with their email. Adding a member here also creates their app user (username = email) — set their permissions under Users."}</p>
     <div class="tbl"><table><thead><tr><th>${t("email")}</th><th>${t("username")}</th><th>${t("admin")}</th><th>Gateway</th><th>${t("active")}</th><th></th></tr></thead><tbody>
     ${members.filter(m => m.pending).map(m => `<tr class="pending"><td>${esc(m.email)}<div class="lines">${ar ? "يطلب الانضمام" : "asks to join"}</div></td><td>${esc(m.username || "—")}</td><td colspan="3"></td>
       <td style="white-space:nowrap"><button class="btn sm pri" data-a="wsapprove" data-e="${esc(m.email)}">${ar ? "موافقة" : "Approve"}</button> <button class="btn sm danger" data-a="wsdecline" data-e="${esc(m.email)}">${ar ? "رفض" : "Decline"}</button></td></tr>`).join("")}
@@ -4084,7 +4084,7 @@ async function workspaceTab(view, head) {
     await api("POST", "/api/users", { username, email, full_name: email.split("@")[0], _no_password: true, perms: { dashboard: "view" } }).catch(() => {}); },
     ar ? "تمت الموافقة — حدد صلاحياته من المستخدمين" : "Approved — set their permissions under Users");
   S.H.wsdecline = async el => await uiConfirm((ar ? "رفض طلب " : "Decline the request from ") + el.dataset.e + "?") && run(() => CloudAPI.removeMember(el.dataset.e), t("saved"));
-  S.H.wsjoin = async () => await uiConfirm(ar ? "سيتم استبدال بيانات هذا الجهاز ببيانات مساحة العمل. متابعة؟" : "This device's books will be replaced by the workspace's. Continue?") && run(async () => {
+  S.H.wsjoin = async () => await uiConfirm(ar ? "ستحل بيانات مساحة العمل محل بيانات هذا الجهاز. هل تريد المتابعة؟" : "This device's books will be replaced by the workspace's. Continue?") && run(async () => {
     await CloudAPI.join(); if (!STATIC) { toast(ar ? "تم الانضمام — سجّل الدخول مجدداً" : "Joined — please sign in again"); setTimeout(() => location.reload(), 1200); } });
   S.H.wspull = () => run(() => CloudAPI.pull(), ar ? "تمت المزامنة" : "Synced");
   S.H.wsoff = async () => await uiConfirm(ar ? "فصل هذا الجهاز؟ تبقى البيانات الحالية عليه." : "Disconnect this device? Its current books stay on it.") && run(() => CloudAPI.disconnect(), t("saved"));
@@ -4152,7 +4152,7 @@ function planHtml(p) {
     ${p.ownership.map(o => `<tr><td>${esc(o.partner)}</td><td class="num">${pct(o.before)}</td><td class="num ${o.after > o.before + 1e-9 ? "pos" : o.after < o.before - 1e-9 ? "neg" : ""}"><b>${pct(o.after)}</b></td></tr>`).join("")}
     <tr class="total"><td>${t("total")}</td><td class="num">${pct(p.ownership.reduce((a, o) => a + o.before, 0))}</td><td class="num">${pct(p.ownership.reduce((a, o) => a + o.after, 0))}</td></tr></tbody></table></div>` : "";
   const notes = (p.notes || []).map(n => `<div class="banner info" style="margin-top:8px">${esc(n)}</div>`).join("");
-  return (p.statement ? appropriationHtml(p.statement) : "") + `<h4 style="margin:4px 0 6px">${L2("What will be booked", "ما سيتم تسجيله")}</h4>${lines}${own}${notes}`;
+  return (p.statement ? appropriationHtml(p.statement) : "") + `<h4 style="margin:4px 0 6px">${L2("What will be booked", "ما سيُسجَّل")}</h4>${lines}${own}${notes}`;
 }
 // the profit and loss appropriation statement: how the period's result is shared, then each partner's current account
 function appropriationHtml(st) {
@@ -4309,7 +4309,7 @@ async function equityForm(action, pre = {}) {
     f.addEventListener("input", e => { if (e.isTrusted) touched = true; }, true); f.addEventListener("change", e => { if (e.isTrusted) touched = true; }, true);
     const preview = debounce(async () => {
       const v = readForm(f); const box = $("#eqplan", f); if (!box) return;
-      if (!touched && !pre.partner && action !== "appropriate") { box.innerHTML = `<div class="muted">${esc(L2("What will be booked appears here as you fill the form.", "يظهر ما سيتم تسجيله هنا أثناء ملء النموذج."))}</div>`; return; }
+      if (!touched && !pre.partner && action !== "appropriate") { box.innerHTML = `<div class="muted">${esc(L2("What will be booked appears here as you fill the form.", "يظهر هنا ما سيُسجَّل وأنت تملأ النموذج."))}</div>`; return; }
       try { box.innerHTML = planHtml(await api("POST", "/api/equity-preview/" + action, def.body ? def.body(v, f) : v)); }
       catch (e) { box.innerHTML = `<div class="banner err">${esc(e.message)}</div>`; }
     });
@@ -5032,7 +5032,7 @@ async function rentalForm(d, pre) {
 }
 
 function rentPO(R) {
-  drawer(`${L2("Client purchase order", "أمر شراء العميل")} — ${R.code}`, `<p class="muted">${L2("Nothing is delivered before the client's purchase order is recorded.", "لا يتم أي تسليم قبل تسجيل أمر شراء العميل.")}</p>` + form([
+  drawer(`${L2("Client purchase order", "أمر شراء العميل")} — ${R.code}`, `<p class="muted">${L2("Nothing is delivered before the client's purchase order is recorded.", "لا تسليم قبل تسجيل أمر شراء العميل.")}</p>` + form([
     { k: "po_number", l: L2("PO number", "رقم أمر الشراء"), req: 1 }, { k: "po_date", l: t("date"), type: "date", v: today(), req: 1 },
     { k: "start_date", l: L2("Rental starts", "بداية الإيجار"), type: "date", v: R.start_date || today() }, { k: "po_notes", l: t("notes"), span: "spanall" }]),
     async v => { await api("POST", `/api/rentals/${R.id}/po`, v); toast(t("saved")); });
@@ -6202,7 +6202,7 @@ PAGES.installments = async (view, parts, q) => {
   view.innerHTML = `<div class="toolbar"><a class="btn" href="#/sales">${t("m_sales_orders")}</a><span class="spacer"></span>${exportMenu("installments", lq)}</div>` +
     filterBar(lq, ["q", "dates", ["select", "status", t("status"), [["open", L2("Not paid yet", "غير مسدد")], ["overdue", L2("Overdue", "متأخر")], ["due", L2("Due", "مستحق")], ["partial", L2("Part paid", "جزئي")], ["cheque", L2("By cheque", "بشيك")], ["paid", L2("Paid", "مسدد")], ["all", t("all")]]]]) +
     `<div class="kpis">${kpiBox(L2("Installments listed", "الأقساط المعروضة"), T.amount, "", `${d.rows.length}`)}${kpiBox(L2("Still owed", "المتبقي"), T.left)}${kpiBox(L2("Overdue", "متأخرات"), T.overdue, T.overdue > 0 ? "neg" : "")}${kpiBox(L2("Covered by cheques", "مغطى بشيكات"), T.by_cheque)}</div>
-    ${d.cheques_due.length ? `<div class="card"><h2>${L2("Cheques due — deposit them", "شيكات مستحقة — قم بإيداعها")}</h2><div class="tbl stack"><table><tbody>${d.cheques_due.map(c => `<tr><td>${fd(c.due)}</td><td><a href="#/sale/${c.sale_id}">${esc(c.code)}</a> · ${esc(c.customer)}</td><td>${esc(c.number)} ${esc(c.bank)}</td><td class="num">${money(c.amount)}</td>
+    ${d.cheques_due.length ? `<div class="card"><h2>${L2("Cheques due — deposit them", "شيكات مستحقة — أودعها")}</h2><div class="tbl stack"><table><tbody>${d.cheques_due.map(c => `<tr><td>${fd(c.due)}</td><td><a href="#/sale/${c.sale_id}">${esc(c.code)}</a> · ${esc(c.customer)}</td><td>${esc(c.number)} ${esc(c.bank)}</td><td class="num">${money(c.amount)}</td>
       <td>${coll ? `<button class="btn sm" data-a="chclr" data-id="${c.id}">${L2("Cleared", "تم الصرف")}</button><button class="btn sm danger" data-a="chbnc" data-id="${c.id}">${L2("Bounced", "مرتد")}</button>` : ""}</td></tr>`).join("")}</tbody></table></div></div>` : ""}
     <div class="card">${d.rows.length ? `<div class="tbl stack"><table><thead><tr><th>${L2("Due", "الاستحقاق")}</th><th>${L2("Sale", "البيع")}</th><th>${L2("Customer", "العميل")}</th><th>${L2("Payment", "الدفعة")}</th><th class="num">${t("amount")}</th><th class="num">${L2("Left", "المتبقي")}</th><th>${t("status")}</th><th></th></tr></thead><tbody>
       ${d.rows.filter(r => !q.q || (r.customer + r.code).toLowerCase().includes(q.q.toLowerCase())).map(r => { const wa = waNumber(r.whatsapp || r.phone);
@@ -6234,7 +6234,7 @@ PAGES.bankrec = async (view) => {
       <button class="btn" data-a="brrules">${L2("Bank rules", "قواعد البنك")} (${d.rules.length})</button></div>
     <div class="cgrid">${d.accounts.map(a => `<div class="card"><b>${esc(a.code)} — ${esc(aname(a))}</b>
       <div class="kpis" style="margin:8px 0 6px">${kpiBox(L2("Book balance", "الرصيد الدفتري"), a.book)}</div>
-      <div class="muted">${a.reconciled_to ? `${L2("Reconciled to", "تمت التسوية حتى")} <b>${fd(a.reconciled_to)}</b>` : L2("Never reconciled", "لم تتم تسوية بعد")}${a.open ? ` · ${a.open} ${L2("open", "مفتوحة")}` : ""}</div>
+      <div class="muted">${a.reconciled_to ? `${L2("Reconciled to", "تمت التسوية حتى")} <b>${fd(a.reconciled_to)}</b>` : L2("Never reconciled", "لم تُسوَّ بعد")}${a.open ? ` · ${a.open} ${L2("open", "مفتوحة")}` : ""}</div>
       ${add ? `<div class="row" style="gap:6px;margin-top:8px"><button class="btn sm" data-a="brimp" data-acc="${esc(a.code)}">⇪ ${L2("Import", "استيراد")}</button><button class="btn sm" data-a="brpaper" data-acc="${esc(a.code)}">${L2("Paper statement", "كشف ورقي")}</button></div>` : ""}</div>`).join("")}</div>
     <div class="card"><h2>${L2("Statements", "الكشوف")}</h2>${d.statements.length ? `<div class="tbl stack"><table><thead><tr><th>${t("account")}</th><th>${L2("Period", "الفترة")}</th><th>${L2("Name", "الاسم")}</th><th class="num">${L2("Opening", "الافتتاحي")}</th><th class="num">${L2("Closing", "الختامي")}</th><th class="num">${L2("Lines", "الحركات")}</th><th>${t("status")}</th></tr></thead><tbody>
       ${d.statements.map(s => `<tr class="click" data-a="brgo" data-id="${s.id}"><td>${esc(s.account)}</td><td>${fd(s.date_from)} → ${fd(s.date_to)}</td><td>${esc(s.name)}</td><td class="num">${money(s.opening)}</td><td class="num">${money(s.closing)}</td><td class="num">${s.n}${s.open_lines ? ` <span class="chip warn">${s.open_lines} ${L2("open", "مفتوح")}</span>` : ""}</td>
@@ -6424,7 +6424,7 @@ function renderBillBar() {
   const msg = b.status === "trial" ? (ar ? `فترة تجريبية مجانية — متبقي ${d} يوم.` : `Free trial — ${d} day${d === 1 ? "" : "s"} left.`)
     : b.status === "active" ? (ar ? `ينتهي الاشتراك خلال ${d} يوم.` : `Your subscription ends in ${d} day${d === 1 ? "" : "s"}.`)
     : b.status === "past_due" ? (ar ? `انتهت الفترة المدفوعة — ادفع خلال ${d} يوم لتستمر في الحفظ.` : `Your paid period has ended — pay within ${d} day${d === 1 ? "" : "s"} to keep saving changes.`)
-    : (ar ? "انتهت الفترة التجريبية / المدفوعة: يمكنك العرض والطباعة والتصدير فقط حتى يتم الاشتراك." : "Your trial / paid period has ended: you can view, print and export, but not save changes, until you subscribe.");
+    : (ar ? "انتهت الفترة التجريبية / المدفوعة: يمكنك العرض والطباعة والتصدير فقط حتى تشترك." : "Your trial / paid period has ended: you can view, print and export, but not save changes, until you subscribe.");
   const cls = b.status === "expired" ? "err" : b.status === "trial" && d > 3 ? "info" : "warn";
   box.innerHTML = `<div class="banner ${cls} billbar">${esc(msg)} ${b.is_admin ? `<a class="btn sm ${cls === "err" ? "pri" : ""}" href="#/subscription">${ar ? "اشترك الآن" : "Subscribe"}</a>` : `<span class="muted">${ar ? "اطلب من مسؤول الشركة الاشتراك." : "Ask your company administrator to subscribe."}</span>`}</div>`;
 }
@@ -6618,7 +6618,7 @@ PAGES.sub = async (view, parts) => {
         ${s.visits.map(v => `<tr class="${v.status === "cancelled" ? "void" : ""}"><td>${fd(v.date)}</td><td>${esc(v.description)}</td><td>${esc(v.technician)}</td><td class="num">${v.cost ? money(v.cost) : ""}</td><td class="num">${v.charge ? money(v.charge) + (v.extract_id ? " ✓" : "") : ""}</td><td><span class="chip ${v.status === "scheduled" ? "warn" : ""}">${esc(vSt[v.status])}</span></td><td>${ed && !v.extract_id ? `<button class="btn sm" data-a="subvedit" data-id="${v.id}">${t("edit")}</button>` : ""}</td></tr>`).join("")}</tbody></table></div>`
         : `<div class="muted">${L2("No visits logged.", "لا توجد زيارات مسجلة.")}</div>`}</div>
     <div class="card"><h2>${L2("Invoices", "الفواتير")}</h2>${s.invoices.length ? `<div class="tbl"><table><thead><tr><th>${L2("Invoice", "الفاتورة")}</th><th>${L2("Period", "الفترة")}</th><th class="num">${t("amount")}</th></tr></thead><tbody>
-      ${s.invoices.map(i => `<tr class="click" ${i.entry_id ? `data-a="openv" data-id="${i.entry_id}"` : ""}><td><b>${esc(i.number)}</b></td><td>${fd(i.period_from)} → ${fd(i.period_to)}</td><td class="num">${money(i.amount)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="muted">${L2("Not invoiced yet.", "لم تتم الفوترة بعد.")}</div>`}</div>`;
+      ${s.invoices.map(i => `<tr class="click" ${i.entry_id ? `data-a="openv" data-id="${i.entry_id}"` : ""}><td><b>${esc(i.number)}</b></td><td>${fd(i.period_from)} → ${fd(i.period_to)}</td><td class="num">${money(i.amount)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="muted">${L2("Not invoiced yet.", "لم تُصدر فاتورة بعد.")}</div>`}</div>`;
 };
 function planForm(p) {
   p = p || { kind: "maintenance", period_months: 12, visits: 0 };
@@ -6985,7 +6985,7 @@ function importWizard(sheet) {
   let file = null, an = null, checked = false, check, params;
   const sheetInfo = () => (S.cache.impSheets || []).find(s => s.name === sheet) || { columns: [] };
   drawer(`${L2("Import", "استيراد")} — ${sheetLabel(sheet)}`, `
-    <p class="muted" style="margin-top:0">${L2("Use the app's template, or your own sheet: its columns are matched by name (English or Arabic) and you can fix the matching below. A check runs first and lists every problem with its row number — nothing is saved until you press Import.", "استخدم قالب البرنامج أو ملفك الخاص: تتم مطابقة الأعمدة بالاسم (عربي أو إنجليزي) ويمكنك تعديل المطابقة بالأسفل. يتم الفحص أولاً ويعرض كل خطأ برقم الصف — ولا يُحفظ شيء حتى تضغط استيراد.")}</p>
+    <p class="muted" style="margin-top:0">${L2("Use the app's template, or your own sheet: its columns are matched by name (English or Arabic) and you can fix the matching below. A check runs first and lists every problem with its row number — nothing is saved until you press Import.", "استخدم قالب البرنامج أو ملفك أنت: الأعمدة تُطابَق بالاسم (عربي أو إنجليزي) ويمكنك تعديل المطابقة بالأسفل. يُفحص الملف أولاً ويظهر كل خطأ برقم صفه، ولا يُحفظ شيء حتى تضغط «استيراد».")}</p>
     <div class="row" style="gap:6px;flex-wrap:wrap;margin-bottom:8px"><a class="btn sm" href="${tplUrl(sheet, "xlsx")}">⬇ ${L2("Excel template", "قالب Excel")}</a><a class="btn sm" href="${tplUrl(sheet, "csv")}">⬇ ${L2("CSV template", "قالب CSV")}</a></div>
     <div class="f">${L2("Your file (Excel or CSV)", "ملفك (Excel أو CSV)")}<input type="file" id="impwf" data-skip="1" accept=".xlsx,.xlsm,.csv,.txt"></div>
     <label class="f chk"><input type="checkbox" id="impwnew" data-skip="1" checked>${esc(L2("New rows only — skip rows already in the books (your edits in the app are kept)", "الجديد فقط — تخطي الصفوف الموجودة (تبقى تعديلاتك في التطبيق كما هي)"))}</label>
@@ -7023,7 +7023,7 @@ function importWizard(sheet) {
       try { const r = await api("POST", "/api/import-preview/check?" + qs(params()), undefined, await file.arrayBuffer());
         try { localStorage.setItem(mapKey(sheet, an.headers), JSON.stringify(mapping())); } catch { /* private mode */ }
         const sk = Object.values(r.skipped || {}).reduce((x, y) => x + y, 0);
-        out.innerHTML = `<div class="banner ok">✓ ${r.rows} ${L2("rows checked — no problems. Press Import to save them.", "صف تم فحصها — لا توجد أخطاء. اضغط استيراد للحفظ.")}</div>${sk ? `<div class="banner info" style="margin-top:6px">${esc(L2(`${sk} of them are already in the books and will be skipped; ${Math.max(0, r.rows - sk)} new.`, `${sk} منها موجودة بالفعل وسيتم تخطيها؛ ${Math.max(0, r.rows - sk)} جديدة.`))}</div>` : ""}`;
+        out.innerHTML = `<div class="banner ok">✓ ${r.rows} ${L2("rows checked — no problems. Press Import to save them.", "صف تم فحصها — لا توجد أخطاء. اضغط استيراد للحفظ.")}</div>${sk ? `<div class="banner info" style="margin-top:6px">${esc(L2(`${sk} of them are already in the books and will be skipped; ${Math.max(0, r.rows - sk)} new.`, `${sk} منها موجودة بالفعل وستُتخطى؛ ${Math.max(0, r.rows - sk)} جديدة.`))}</div>` : ""}`;
         checked = true; btn().textContent = L2("Import", "استيراد");
       } catch (e) { const errs = (e.data && e.data.errors) || [];
         out.innerHTML = `<div class="banner err">${esc(e.message)}</div>${errs.length ? `<div class="tbl" style="max-height:300px;overflow:auto"><table><thead><tr><th>${L2("Row in your file", "الصف في ملفك")}</th><th>${L2("Problem", "المشكلة")}</th></tr></thead><tbody>
@@ -7144,7 +7144,7 @@ PAGES.download = async view => {
       <p><b>Mac</b> — ${dl(f("mac"), L2("Download for Mac (.zip)", "تحميل للماك (.zip)"))}</p>`) +
     // the offline editions carry the whole app, so they are not public: the platform owner gets them from the private
     // GitHub release that every deploy refreshes (only people with access to the private repository can open it)
-    (S.billing && S.billing.is_owner ? card(L2("Offline desktop app — owner only", "برنامج الكمبيوتر بدون إنترنت — للمالك فقط"), `<p>${L2("The offline editions contain the whole app, so they are not offered to anyone else. Every deploy puts the fresh Windows and Mac installers on your private GitHub release — sign in to GitHub with the account that owns the repository to download them.", "النسخ التي تعمل بدون إنترنت تحتوي التطبيق كاملاً، لذلك لا تُتاح لأي شخص آخر. كل نشر يضع أحدث برامج التثبيت لويندوز وماك على إصدار GitHub الخاص بك — ادخل GitHub بالحساب المالك للمستودع لتحميلها.")}</p>
+    (S.billing && S.billing.is_owner ? card(L2("Offline desktop app — owner only", "برنامج الكمبيوتر بدون إنترنت — للمالك فقط"), `<p>${L2("The offline editions contain the whole app, so they are not offered to anyone else. Every deploy puts the fresh Windows and Mac installers on your private GitHub release — sign in to GitHub with the account that owns the repository to download them.", "النسخ التي تعمل بدون إنترنت تحتوي التطبيق كاملاً، لذلك لا تُتاح لأي شخص آخر. كل نشر يضع أحدث برامج التثبيت لويندوز وماك على إصدارك الخاص في GitHub — ادخل GitHub بالحساب المالك للمستودع لتحميلها.")}</p>
       ${window.BEYOND_RELEASES ? `<p><a class="btn pri" href="${esc(window.BEYOND_RELEASES)}" target="_blank" rel="noopener">⬇ ${L2("Open the private release", "فتح الإصدار الخاص")}</a></p>` : `<p class="muted">${L2("GitHub → your repository → Releases → “Desktop apps (latest build)”.", "GitHub ← المستودع ← Releases ← «Desktop apps (latest build)».")}</p>`}`) : "") +
     (cfg.url ? card(L2("Connect the desktop app to this workspace", "ربط برنامج الكمبيوتر بمساحة العمل"), `<p>${L2("In the desktop app: Settings → Workspace (cloud) → paste these two values, then sign in with your usual email or username and password.", "في برنامج الكمبيوتر: الإعدادات ← مساحة العمل ← الصق القيمتين ثم سجّل الدخول بنفس البريد أو اسم المستخدم وكلمة المرور.")}</p>
       <div class="grid g2"><label class="f">${L2("Workspace URL", "رابط مساحة العمل")}<input value="${esc(cfg.url)}" readonly></label><div class="row" style="align-items:end"><button class="btn" data-a="copycfg" data-v="${esc(cfg.url)}">${L2("Copy", "نسخ")}</button></div>
@@ -8250,7 +8250,7 @@ async function aiSettingsTab(view, head) {
     $("#aiform [name=effort]").closest("label").hidden = !claude;
     if (fill && !claude) { $("#aiform [name=base_url]").value = pr.base_url || ""; $("#aiform [name=model_other]").placeholder = pr.model || ""; }
     $("#aikey").placeholder = claude ? L2("Anthropic API key (sk-ant-…) — leave empty to keep", "مفتاح Anthropic API (sk-ant-…) — اتركه فارغاً للإبقاء")
-      : /localhost|127\.0\.0\.1/.test($("#aiform [name=base_url]").value) ? L2("Local model: no key needed", "نموذج محلي: لا يحتاج مفتاحاً") : L2("The provider's API key — leave empty to keep", "مفتاح API الخاص بالمزوّد — اتركه فارغاً للإبقاء");
+      : /localhost|127\.0\.0\.1/.test($("#aiform [name=base_url]").value) ? L2("Local model: no key needed", "نموذج محلي: لا يحتاج مفتاحاً") : L2("The provider's API key — leave empty to keep", "مفتاح API من المزوّد — اتركه فارغاً لإبقاء الحالي");
   };
   S.H.aiprov = () => showProv(true);
   showProv(false);
@@ -8884,19 +8884,20 @@ const TYPE_NAMES = () => ({ interior: L2("Interior design & finishing", "الت�
   development: L2("Real-estate development", "التطوير العقاري"), sales: L2("Trading & sales", "التجارة والمبيعات"), investment: L2("Investment & holding", "الاستثمار والقابضة"),
   scaffolding: L2("Scaffolding & equipment rental", "السقالات وتأجير المعدات"), general: L2("General business", "نشاط عام") });
 const TOUR = () => [
-  ["", L2("Welcome to BeyondERP", "مرحباً بك في BeyondERP"), L2("A quick look around. Next to move on, Hide to look at something closely, Skip any time.", "جولة سريعة. «التالي» للمتابعة، «إخفاء» لتتأمل شيئاً عن قرب، و«تخطي» في أي وقت."), "core"],
-  ["#nav", L2("The menu", "القائمة"), L2("Everything lives here, grouped by area. Click a group to open its screens.", "كل شيء هنا، مجمّع حسب المجال. اضغط مجموعة لفتح شاشاتها."), "core"],
+  ["", L2("Welcome to BeyondERP", "مرحباً بك في BeyondERP"), L2("A quick look around. Next to move on, Hide to look at something closely, Skip any time.", "جولة سريعة. «التالي» للمتابعة، و«إخفاء» لترى شيئاً عن قرب، و«تخطي» في أي وقت."), "core"],
+  ["#nav", L2("The menu", "القائمة"), L2("Everything lives here, grouped by area. Click a group to open its screens.", "كل الشاشات هنا مقسّمة حسب المجال. اضغط على أي مجموعة لتظهر شاشاتها."), "core"],
   [".newbtn", L2("+ New", "+ جديد"), L2("Record anything from anywhere: payments, receipts, invoices, entries…", "سجّل أي شيء من أي مكان: مدفوعات، مقبوضات، فواتير، قيود…"), "core"],
   [".top .search", L2("Search", "البحث"), L2("Jump to any screen or action — or press Ctrl K.", "انتقل لأي شاشة أو إجراء — أو اضغط Ctrl K."), "core"],
-  ['#nav a[href="#/dashboard"]', L2("Dashboard", "لوحة التحكم"), L2("Cash, receivables, payables and profit at a glance. Admins can tailor it per team.", "النقدية والمستحقات والالتزامات والربح في لمحة. يمكن للمدير تخصيصها لكل فريق."), "core"],
+  ['#nav a[href="#/dashboard"]', L2("Dashboard", "لوحة التحكم"), L2("Cash, receivables, payables and profit at a glance. Super admins, and people they allow, can tailor it per team.", "النقدية والمستحقات والالتزامات والربح في نظرة واحدة. يخصصها المسؤول الأعلى (ومن يسمح له) لكل فريق."), "core"],
   ['[data-g="g_bu"]', L2("Business units", "وحدات الأعمال"), L2("Each project or branch keeps its own costs, billing and profit.", "كل مشروع أو فرع له تكاليفه وفواتيره وربحه."), "interior contracting development scaffolding general"],
+  ['[data-g="g_crm"]', L2("Customers & deals", "العملاء والصفقات"), L2("Deals by stage, every call and visit per contact, and follow-ups that ring the bell when due.", "الصفقات حسب المرحلة، وكل مكالمة وزيارة لكل عميل، ومتابعات تنبّهك في موعدها."), "core"],
   ['[data-g="g_prj"]', L2("Projects & contracts", "المشروعات والعقود"), L2("Phases, tasks, client and subcontracts, variation orders and progress billings.", "المراحل والمهام وعقود العملاء ومقاولي الباطن وأوامر التغيير والمستخلصات."), "interior contracting development"],
   ['[data-g="g_est"]', L2("Quotations", "عروض الأسعار"), L2("BOQ quotations or package offers (Essential · Signature · Prestige) as branded PDF or Word.", "مقايسات أو عروض باقات بصيغة PDF أو Word بهوية شركتك."), "interior contracting"],
-  ['[data-g="g_sales"]', L2("Sales & receivables", "المبيعات والمستحقات"), L2("Invoices, client payments and who owes you what.", "الفواتير ومقبوضات العملاء ومن يدين لك بماذا."), "core"],
+  ['[data-g="g_sales"]', L2("Sales & receivables", "المبيعات والمستحقات"), L2("Invoices, client payments and who owes you what.", "الفواتير ومقبوضات العملاء والمبالغ المستحقة لك على كل عميل."), "core"],
   ['[data-g="g_shop"]', L2("Showroom & unit sales", "المعرض وبيع الوحدات"), L2("Units and products with photos, sales on installments and cheques.", "الوحدات والمنتجات بالصور، والبيع بالتقسيط والشيكات."), "development sales"],
   ['[data-g="g_buy"]', L2("Procurement & payables", "المشتريات والالتزامات"), L2("Purchase requests, supplier quotes, orders and payments out.", "طلبات الشراء وعروض الموردين وأوامر الشراء والمدفوعات."), "core"],
   ['[data-g="g_stock"]', L2("Inventory", "المخزون"), L2("Items with their prices — even with no stock yet — warehouses, moves and counts.", "الأصناف بأسعارها — حتى دون رصيد — والمخازن والحركات والجرد."), "interior contracting sales scaffolding"],
-  ['[data-g="g_rent"]', L2("Equipment rental", "تأجير المعدات"), L2("Rental contracts, deliveries and returns, monthly billing and the rent calculator.", "عقود الإيجار والتسليم والاسترجاع والفوترة الشهرية وحاسبة الإيجار."), "scaffolding"],
+  ['[data-g="g_rent"]', L2("Equipment rental", "تأجير المعدات"), L2("Rental contracts, deliveries and returns, monthly billing and the rental calculators.", "عقود الإيجار والتسليم والاسترجاع والفوترة الشهرية وحاسبات التأجير."), "scaffolding"],
   ['[data-g="g_eq"]', L2("Plant & equipment", "المعدات والآلات"), L2("Equipment register, maintenance and operating hours charged to projects.", "سجل المعدات والصيانة وساعات التشغيل المحمّلة على المشروعات."), "scaffolding contracting"],
   ['[data-g="g_hr"]', L2("People & payroll", "الموظفون والرواتب"), L2("Employees, attendance and monthly payroll with Egyptian tax and social insurance.", "الموظفون والحضور والرواتب الشهرية مع الضرائب والتأمينات المصرية."), "core"],
   ['[data-g="g_assets"]', L2("Assets & treasury", "الأصول والخزينة"), L2("Fixed assets with monthly depreciation, banks and reconciliation.", "الأصول الثابتة والإهلاك الشهري والبنوك والتسويات."), "investment general development"],
@@ -8908,7 +8909,7 @@ const TOUR = () => [
   ['[data-g="g_sys"]', L2("Administration", "الإدارة"), L2("Settings, users, and Excel import & export — 'New rows only' adds just what is new in your sheet.", "الإعدادات والمستخدمون واستيراد وتصدير Excel — «الجديد فقط» يضيف ما استجد في ملفك."), "core"],
   ['#nav a[href="#/chat"]', L2("Team chat", "دردشة الفريق"), L2("Rooms and direct messages with your team, with files and mentions.", "غرف ورسائل خاصة مع فريقك، مع الملفات والإشارات."), "core"],
   [".dd.bell", L2("Alerts", "التنبيهات"), L2("What needs attention: bills to issue, dues, checks.", "ما يحتاج انتباهك: فواتير للإصدار، مستحقات، مراجعات."), "core"],
-  [".ucard", L2("You, settings and help", "حسابك والإعدادات والمساعدة"), L2("Settings, Help & support to report a problem or ask us, and this tour again.", "الإعدادات، والمساعدة والدعم للإبلاغ عن مشكلة أو سؤالنا، وهذه الجولة مجدداً."), "core"],
+  [".ucard", L2("You, settings and help", "حسابك والإعدادات والمساعدة"), L2("Settings, Help & support to report a problem or ask us, and this tour again.", "الإعدادات، و«المساعدة والدعم» لتبلغ عن مشكلة أو تسألنا، وهذه الجولة مرة أخرى."), "core"],
 ];
 const tourPref = () => ((S.boot && S.boot.profile && S.boot.profile.prefs) || {}).tour || null;
 const saveTour = st => { const p = S.boot.profile || (S.boot.profile = { prefs: {} }); p.prefs = { ...(p.prefs || {}), tour: st };
@@ -9162,7 +9163,7 @@ function renderLanding(opt = {}) {
     L2("Inventory Management", "إدارة المخزون"), L2("Procurement", "المشتريات"), L2("Project Costing", "تكاليف المشروعات"), L2("Contracts & Progress Billing", "العقود والمستخلصات"),
     L2("Payroll & HR", "الرواتب وشؤون الموظفين"), L2("Fixed Assets", "الأصول الثابتة"), L2("Treasury & Banking", "الخزينة والبنوك"), L2("Budgeting", "الموازنات"),
     L2("Tax & E-Invoicing", "الضرائب والفاتورة الإلكترونية"), L2("Sales & Installments", "المبيعات والتقسيط"), L2("Equipment Rental", "تأجير المعدات"),
-    L2("Partners & Equity", "الشركاء وحقوق الملكية"), L2("Financial Reports", "التقارير المالية"), L2("Team Chat", "دردشة الفريق"), L2("AI Assistant", "المساعد الذكي")];
+    L2("Partners & Equity", "الشركاء وحقوق الملكية"), L2("Financial Reports", "التقارير المالية"), L2("Customers & Deals (CRM)", "العملاء والصفقات"), L2("Team Chat", "دردشة الفريق"), L2("AI Assistant", "المساعد الذكي")];
   const tiles = [["scale", L2("General ledger", "الأستاذ العام")], ["box", L2("Inventory", "المخزون")], ["users", L2("Payroll", "الرواتب")],
     ["receipt", L2("Tax & e-invoicing", "الضرائب والفاتورة")], ["file", L2("Offers & BOQs", "العروض والمقايسات")], ["brief", L2("Projects", "المشروعات")]];
   const go = inApp ? L2("Back to BeyondERP", "العودة إلى BeyondERP") : L2(setup ? "Get started" : "Sign in", setup ? "ابدأ الآن" : "تسجيل الدخول");
@@ -9179,8 +9180,8 @@ function renderLanding(opt = {}) {
     <div class="lp-story"><nav class="lp-dots" aria-label="${esc(L2("Sections", "الأقسام"))}">${[0, 1, 2, 3, 4, 5].map(i => `<button type="button" data-sc="${i}" aria-label="${i + 1}"></button>`).join("")}</nav><div class="lp-stage">
       <section class="lp-sc lp-s0 lp-hero"><div class="lp-ring" aria-hidden="true"><i></i></div>
         <h1 class="lp-word wordmark" aria-label="BeyondERP">${word}</h1>
-        <p class="lp-tag">${esc(L2("RUN THE BUSINESS, NOT THE PAPERWORK", "نظام واحد.. لنموّ لا محدود"))}</p>
-        <p class="lp-sub">${esc(L2("Accounts, projects, partners and payroll — together in one place.", "حساباتك ومشروعاتك وشركاؤك ورواتب فريقك… كلها في مكان واحد."))}</p>
+        <p class="lp-tag">${esc(L2("RUN THE BUSINESS, NOT THE PAPERWORK", "أدِر شركتك.. لا أوراقها"))}</p>
+        <p class="lp-sub">${esc(L2("Accounts, projects, partners and payroll — together in one place.", "حساباتك ومشروعاتك وشركاؤك ورواتب فريقك في مكان واحد."))}</p>
         <button type="button" class="lp-pill" data-go="1">${esc(go)}</button>
         <small class="lp-note">${esc(L2("General ledger · Inventory · Projects · Payroll · Tax", "الأستاذ العام · المخزون · المشروعات · الرواتب · الضرائب"))}</small>
         <div class="lp-scroll" aria-hidden="true"></div></section>
@@ -9189,24 +9190,24 @@ function renderLanding(opt = {}) {
           <p>${esc(L2("Every voucher posts double entry — trial balance, profit & loss and balance sheet are ready as you work.", "كل سند يُرحَّل بقيد مزدوج، فتجد ميزان المراجعة وقائمة الدخل والميزانية جاهزة أولاً بأول."))}</p>
           <button type="button" class="lp-pill sm" data-go="1">${esc(go)}</button></div>${appMock("lp-app-wide")}<div class="lp-floor" aria-hidden="true"></div></div></section>
       <section class="lp-sc lp-s2"><div class="lp-orb2" aria-hidden="true"><i class="lp-comet"></i></div>
-        <h2>${esc(L2("Profit per project", "اعرف ربح كل مشروع"))}</h2>
-        <p>${esc(L2("Costs, progress billings, retentions and subcontractor certificates — live work in progress for every project.", "التكاليف والمستخلصات والمحتجزات وحسابات مقاولي الباطن — تكلفة الأعمال الجارية لكل مشروع لحظة بلحظة."))}</p>
+        <h2>${esc(L2("Profit per project", "ربح كل مشروع على حدة"))}</h2>
+        <p>${esc(L2("Costs, progress billings, retentions and subcontractor certificates — live work in progress for every project.", "التكاليف والمستخلصات والمحتجزات وحسابات مقاولي الباطن وتكلفة الأعمال الجارية لكل مشروع أولاً بأول."))}</p>
         <div class="lp-minis"><div class="lp-mini2"><b>${esc(L2("Partners & funding", "الشركاء والتمويل"))}</b><span>${esc(L2("Shares, capital and profit sharing, worked out for you.", "الحصص ورأس المال وتوزيع الأرباح، محسوبة لك."))}</span></div>
-          <div class="lp-mini2"><b>${esc(L2("Materials used", "الخامات المستخدمة"))}</b><span>${esc(L2("Every material that went into a project, searchable.", "كل خامة دخلت مشروعاً، بالبحث والتصفية."))}</span></div></div></section>
+          <div class="lp-mini2"><b>${esc(L2("Materials used", "الخامات المستخدمة"))}</b><span>${esc(L2("Every material that went into a project, searchable.", "كل خامة دخلت في مشروع، تجدها بالبحث."))}</span></div></div></section>
       <section class="lp-sc lp-s3"><div class="lp-ecl" aria-hidden="true"><i class="lp-ecl-light"></i><i class="lp-ecl-disc"></i></div>
-        <h2>${esc(L2("Every system in one place", "كل الأنظمة في مكان واحد"))}</h2>
-        <p>${esc(L2("Accounting, stock, payroll, tax and projects share one set of books — nothing to reconcile between them.", "المحاسبة والمخزون والرواتب والضرائب والمشروعات في دفاتر واحدة — لا تسويات بينها."))}</p>
+        <h2>${esc(L2("All your systems in one place", "أنظمتك كلها في مكان واحد"))}</h2>
+        <p>${esc(L2("Accounting, stock, payroll, tax and projects share one set of books — nothing to reconcile between them.", "المحاسبة والمخزون والرواتب والضرائب والمشروعات على دفاتر واحدة، فلا حاجة للمطابقة بينها."))}</p>
         <div class="lp-tiles">${tiles.map(([ic, l], i) => `<div class="lp-tile" style="--i:${i}">${svg(ic)}<span>${esc(l)}</span></div>`).join("")}</div></section>
       <section class="lp-sc lp-s4"><div class="lp-globe-wrap" aria-hidden="true"><div class="lp-globe"></div>
-          <div class="lp-stat l"><b>18</b><span>${esc(L2("systems", "نظاماً"))}</span><i></i></div>
+          <div class="lp-stat l"><b>${chips.length}</b><span>${esc(L2("systems", "نظاماً"))}</span><i></i></div>
           <div class="lp-stat r"><b>4</b><span>${esc(L2("quarters ahead", "أرباع قادمة"))}</span><i></i></div></div>
-        <h2>${esc(L2("See prices coming", "اعرف أسعار الغد"))}</h2>
-        <p>${esc(L2("Costs and prices forecast quarter by quarter from inflation, the dollar and your own history.", "توقّع تكاليفك وأسعارك ربعاً بربع، من التضخم وسعر الدولار وتاريخ شركتك."))}</p></section>
-      <section class="lp-sc lp-s5"><h2>${esc(L2("Ready to run the business, not the paperwork?", "جاهز تدير شركتك بلا أوراق؟"))}</h2>
+        <h2>${esc(L2("See where prices are heading", "توقّع الأسعار القادمة"))}</h2>
+        <p>${esc(L2("Costs and prices forecast quarter by quarter from inflation, the dollar and your own history.", "تقدير لتكاليفك وأسعارك ربعاً بربع، مبني على التضخم وسعر الدولار وسجل شركتك."))}</p></section>
+      <section class="lp-sc lp-s5"><h2>${esc(L2("Ready to run the business, not the paperwork?", "مستعد تدير شركتك بدل أوراقها؟"))}</h2>
         <button type="button" class="lp-pill" data-go="1">${esc(go)}</button>
         <div class="lp-rise">${appMock("lp-app-phone")}</div><div class="lp-grid" aria-hidden="true"></div></section>
     </div></div>
-    <section class="lp-band"><h2>${esc(L2("Every system a growing company runs on", "كل ما تحتاجه شركتك وهي تكبر"))}</h2>
+    <section class="lp-band"><h2>${esc(L2("The systems a growing company runs on", "الأنظمة التي تحتاجها شركتك وهي تكبر"))}</h2>
       <div class="lp-chips">${chips.map(c => `<span>${esc(c)}</span>`).join("")}</div></section>
     <footer class="lp-foot"><span class="wordmark">BEYOND<i>ERP</i></span><small class="lp-copy">© ${new Date().getFullYear()} BEYONDERP. ${esc(L2("All rights reserved.", "جميع الحقوق محفوظة."))}</small></footer></div>`;
   const root = $(".lp");
@@ -10074,7 +10075,7 @@ async function doUpdate(bar, info) {
   if (UPD.busy) return;
   UPD.busy = true;
   const msg = $(".tb-msg", bar);
-  const say = (en, ar) => { msg.innerHTML = `<b>${esc(L2(en, ar))}</b><small class="muted">${esc(L2("Please keep the app open.", "من فضلك اترك التطبيق مفتوحاً."))}</small>`; };
+  const say = (en, ar) => { msg.innerHTML = `<b>${esc(L2(en, ar))}</b><small class="muted">${esc(L2("Please keep the app open.", "اترك التطبيق مفتوحاً."))}</small>`; };
   say("Saving your work…", "جارٍ حفظ عملك…");
   for (let i = 0; i < 150 && API_WRITES > 0; i++) await new Promise(r => setTimeout(r, 100));   // let saves finish (max 15 s)
   try {
