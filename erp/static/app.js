@@ -550,7 +550,7 @@ function renderShell() {
   const initials = esc(((u.full_name || u.username || "?").trim().split(/\s+/).map(w => w[0]).join("").slice(0, 2)).toUpperCase());
   const role = u.is_super ? L2("Super admin", "مدير عام") : u.is_admin ? L2("Administrator", "مدير النظام") : L2("User", "مستخدم");
   const dark = document.documentElement.dataset.theme === "dark" || (!document.documentElement.dataset.theme && matchMedia("(prefers-color-scheme: dark)").matches);
-  $("#root").innerHTML = `<div class="app ${store.get("navMini", "") === "1" ? "mini" : ""} nav-${navMode()}">
+  $("#root").innerHTML = `<div class="app ${store.get("navMini", "") === "1" ? "mini" : ""} nav-${navMode()} pm-${phoneMenu()}">
     <aside class="side">${brandBlock(st)}
       <div class="dd ucard"><button class="btn ucard-btn"><span class="avatar">${initials}</span><span class="ucard-t"><b>${esc(u.full_name || u.username)}</b><small>${esc(role)}</small></span>${svg("chev", "chev")}</button>
         <div class="dd-menu">${userMenu()}</div></div>
@@ -696,6 +696,8 @@ S.GLOBAL_H = {
   palette: () => openPalette(),
   bellopen: () => { const b = $(".bell"); if (b) { b.classList.add("open"); loadAlerts(true); } },
   grp: el => { const w = el.closest(".grp-wrap"), app = $(".app");
+    if (innerWidth <= 900 && app.classList.contains("pm-rail") && !app.classList.contains("menu")) {   // the icon strip: open the menu at that section
+      app.classList.add("menu"); w.classList.add("open"); setTimeout(() => w.scrollIntoView({ block: "nearest", behavior: "smooth" }), 230); return; }
     if (app.classList.contains("mini") && innerWidth > 900 && matchMedia("(hover:hover) and (pointer:fine)").matches) {   // slim menu: the group opens as a panel beside the icons
       const was = w.classList.contains("fly"); $$(".grp-wrap.fly").forEach(x => x.classList.remove("fly")); if (!was) w.classList.add("fly"); return; }
     if (hoverNav()) return;                                    // hover mode: groups open while the pointer is on them
@@ -723,6 +725,14 @@ function saveNavMode(m) {
   const p = S.boot.profile || (S.boot.profile = { prefs: {} }); p.prefs = { ...(p.prefs || {}), nav_mode: m };
   api("PUT", "/api/me/profile", { prefs: { nav_mode: m } }).then(r => { S.boot.profile = r; }).catch(fail);
 }
+// on a phone the menu either slides over the screen (default) or stays as a slim strip of section icons at the side
+const phoneMenu = () => (((S.boot || {}).profile || {}).prefs || {}).phone_menu === "rail" ? "rail" : "overlay";
+function savePhoneMenu(m) {
+  if (m === phoneMenu()) return;
+  const p = S.boot.profile || (S.boot.profile = { prefs: {} }); p.prefs = { ...(p.prefs || {}), phone_menu: m };
+  api("PUT", "/api/me/profile", { prefs: { phone_menu: m } }).then(r => { S.boot.profile = r; }).catch(fail);
+}
+const phoneMenuSelect = (attrs) => `<label class="f">${esc(L2("Menu on a phone", "القائمة على الهاتف"))}<select ${attrs}>${[["overlay", L2("Slides over the screen (default)", "تنزلق فوق الشاشة (افتراضي)")], ["rail", L2("Slim strip of icons at the side — tap one to open its section", "شريط أيقونات رفيع على الجانب — اضغط أيقونة لفتح قسمها")]].map(([v, l]) => `<option value="${v}" ${phoneMenu() === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`;
 const hoverNav = () => navMode() === "hover" && matchMedia("(hover:hover) and (pointer:fine)").matches;
 document.addEventListener("click", e => { if (!e.target.closest(".grp-wrap.fly")) $$(".grp-wrap.fly").forEach(x => x.classList.remove("fly")); });
 function renderNav(active) {
@@ -3071,7 +3081,8 @@ PAGES.settings = async (view, parts, q) => {
         <label class="f">${t("font_family")}<select id="my_font" data-change="mysave"><option value="">${t("default")}</option>${FONTS.map(f => `<option ${store.get("font", "") === f ? "selected" : ""}>${f}</option>`).join("")}</select></label>
         <label class="f">${t("font_size")} <input id="my_size" data-change="mysave" type="range" min="11" max="22" value="${store.get("fontSize", "") || st.font_size || 15}"></label>
         <label class="f">${t("theme")}<select id="my_theme" data-change="mysave">${["auto", "light", "dark"].map(x => `<option ${store.get("theme", DEFAULT_THEME) === x ? "selected" : ""}>${x}</option>`).join("")}</select></label>
-        <label class="f">${L2("Menu groups open on", "فتح مجموعات القائمة عند")}<select id="my_navmode" data-change="mysave">${[["hover", L2("Hover — open while the mouse is over them", "المرور — تفتح أثناء مرور الماوس")], ["click", L2("Click — stay open until clicked again", "النقر — تبقى مفتوحة حتى النقر مرة أخرى")]].map(([v, l]) => `<option value="${v}" ${navMode() === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label></div>
+        <label class="f">${L2("Menu groups open on", "فتح مجموعات القائمة عند")}<select id="my_navmode" data-change="mysave">${[["hover", L2("Hover — open while the mouse is over them", "المرور — تفتح أثناء مرور الماوس")], ["click", L2("Click — stay open until clicked again", "النقر — تبقى مفتوحة حتى النقر مرة أخرى")]].map(([v, l]) => `<option value="${v}" ${navMode() === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
+        ${phoneMenuSelect('id="my_phonemenu" data-change="mysave"')}</div>
         <div class="row" style="margin-top:10px"><button class="btn" data-a="mysave">${t("save")}</button><button class="btn" data-a="myreset">${t("clear")}</button></div></div>
       ${can("settings.branding") ? `<div class="card" id="apcard"><h2>${t("appearance")} — ${S.lang === "ar" ? "لكل المستخدمين" : "for everyone"}</h2>${form([
         { k: "app_name", l: t("app_name"), v: ap.app_name || "", ph: "BeyondERP" },
@@ -3107,7 +3118,7 @@ PAGES.settings = async (view, parts, q) => {
     const icf = $("#icfile"); if (icf) icf.addEventListener("change", async e => { const f = e.target.files[0]; if (!f) return;
       try { const png = await iconPng(URL.createObjectURL(f), 512); await api("PUT", "/api/branding/image/app_icon", { mime: "image/png", data: png.split(",")[1] });
         await api("PUT", "/api/settings", { appearance: { ...ap, app_icon: "custom" } }); await refreshBoot(); applyAppIcon(); route(); toast(t("saved")); } catch (err) { fail(err); } });
-    S.H.mysave = () => { store.set("lang", $("#my_lang").value); store.set("font", $("#my_font").value); store.set("fontSize", $("#my_size").value); store.set("theme", $("#my_theme").value); saveNavMode($("#my_navmode").value); applyLook(); renderShell(); route(); };
+    S.H.mysave = () => { store.set("lang", $("#my_lang").value); store.set("font", $("#my_font").value); store.set("fontSize", $("#my_size").value); store.set("theme", $("#my_theme").value); saveNavMode($("#my_navmode").value); savePhoneMenu($("#my_phonemenu").value); applyLook(); renderShell(); route(); };
     S.H.myreset = () => { ["font", "fontSize"].forEach(k => store.set(k, "")); store.set("theme", DEFAULT_THEME); saveNavMode("click"); applyLook(); renderShell(); route(); };
     let noAccent = !ap.accent;
     S.H.apnoacc = () => { noAccent = true; toast(t("default")); };
@@ -3328,8 +3339,12 @@ PAGES.users = async (view) => {
         toast(ar ? "تم الحفظ. إنشاء حسابات الدخول من هنا غير مفعّل بعد — يُنشئ الشخص حسابه بنفسه ببريده." : "Saved. Creating sign-in accounts from here isn't set up yet — the person creates their own account with that email.", true);
       } else toast((ar ? "تم حفظ المستخدم، لكن لم يُنشأ حساب الدخول: " : "User saved, but the sign-in account was not set: ") + e.message, true);
     } },
-  { onOpen: f => { wirePerms(f); pwWire(f); },
-    extraButtons: u.id && ed && u.id !== S.boot.user.id && (!u.is_admin || S.boot.user.is_super) ? `<button type="button" class="btn danger" data-a="udel">${t("delete")}</button>` : "" });
+  { onOpen: f => { wirePerms(f); pwWire(f);
+      if (u.id && u.id !== S.boot.user.id && !S.boot.user.is_super) {     // administrators add people; only the super administrator changes or removes them
+        $$("input, select, textarea", f).forEach(x => { x.disabled = true; });
+        f.querySelector(".dbody, form").insertAdjacentHTML("afterbegin", `<div class="banner info">${esc(L2("Only the super administrator can change or remove someone's account. You can add new users.", "المسؤول الأعلى فقط يمكنه تعديل حساب أي شخص أو حذفه. يمكنك إضافة مستخدمين جدد."))}</div>`); } },
+    readOnly: !!(u.id && u.id !== S.boot.user.id && !S.boot.user.is_super),
+    extraButtons: u.id && ed && u.id !== S.boot.user.id && S.boot.user.is_super ? `<button type="button" class="btn danger" data-a="udel">${t("delete")}</button>` : "" });
   S.H.udel = () => {};
   S.H.unew = () => edit({ perms: { dashboard: "view" } });
   S.H.uedit = el => { const u = rows.find(x => String(x.id) === el.dataset.id);
@@ -6831,6 +6846,7 @@ PAGES.profile = async view => {
           <div class="row" style="margin-top:10px"><button class="btn pri" type="submit">${t("save")}</button></div></form></div>
       <div class="card"><h2>${esc(L2("Menu", "القائمة"))}</h2>
         <div class="grid g2"><label class="f">${esc(L2("Menu groups open on", "فتح مجموعات القائمة عند"))}<select data-change="pnav">${[["click", L2("Click — stay open until clicked again", "النقر — تبقى مفتوحة حتى النقر مرة أخرى")], ["hover", L2("Hover — open while the mouse is over them", "المرور — تفتح أثناء مرور الماوس")]].map(([v, l]) => `<option value="${v}" ${navMode() === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
+        ${phoneMenuSelect('data-change="ppm"')}
         <label class="f">${esc(L2("Light / dark", "فاتح / داكن"))}<select data-change="pmode">${[["auto", L2("Follow this device", "حسب إعداد الجهاز")], ["light", L2("Light", "فاتح")], ["dark", L2("Dark", "داكن")]].map(([v, l]) => `<option value="${v}" ${store.get("theme", DEFAULT_THEME) === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label></div>
         <div class="muted" style="margin-top:6px">${esc(L2("Colours and saved themes: Settings → Theme.", "الألوان والسمات المحفوظة: الإعدادات ← السمات."))} <a href="#/settings?tab=theme">${esc(L2("Open", "فتح"))}</a></div></div>
       <div class="card" id="notifcard"><h2>${esc(L2("Notifications", "الإشعارات"))}</h2>
@@ -6857,6 +6873,7 @@ PAGES.profile = async view => {
       S.boot.profile = await api("PUT", "/api/me/profile", { avatar: small }); C2.people = null; toast(t("saved")); renderShell(); route(); } catch (err) { fail(err); } });
   S.H.pavdel = async () => { S.boot.profile = await api("PUT", "/api/me/profile", { avatar: "" }); C2.people = null; renderShell(); route(); };
   S.H.pnav = el => { saveNavMode(el.value); setTimeout(() => { renderShell(); route(); }, 150); };
+  S.H.ppm = el => { savePhoneMenu(el.value); setTimeout(() => { renderShell(); route(); }, 150); };
   S.H.pmode = el => { store.set("theme", el.value); applyLook(); renderShell(); route(); };
   S.H.nsave = async () => {
     const level = $("#nlevel").value; $("#nrooms").hidden = level !== "rooms";
@@ -8677,7 +8694,7 @@ new MutationObserver(muts => {
 // Shift + right-click keeps the browser's own menu.
 const ML = () => (S.boot && S.boot.settings && S.boot.settings.menu_layout) || {};
 const FC = () => (S.boot && S.boot.settings && S.boot.settings.form_custom) || {};
-const canMenus = () => can("settings.menus", "edit");
+const canMenus = () => can("settings.layout", "edit");
 const clone = o => JSON.parse(JSON.stringify(o || {}));
 const lbl2 = o => (o && (o[S.lang] || o.en || o.ar)) || "";
 // the menu as this company arranged it: items moved between sections, copies, order, hidden items, new sections
@@ -8754,7 +8771,7 @@ function navItemMenu(a) {
   const out = [{ ic: "↗", label: L2("Open", "فتح"), act: () => { location.hash = "#/" + route; } },
     { ic: "⧉", label: L2("Open in a new tab", "فتح في تبويب جديد"), act: () => open(location.pathname + "#/" + route, "_blank") },
     { ic: "🔗", label: L2("Copy link", "نسخ الرابط"), act: () => copyText(location.origin + location.pathname + "#/" + route) }];
-  if (!canMenus()) return out.concat({ note: L2("Renaming and arranging the menu needs Settings → Menus (edit).", "إعادة التسمية وترتيب القائمة تحتاج صلاحية تعديل القوائم.") });
+  if (!canMenus()) return out.concat({ note: L2("Renaming and arranging the menu needs the “Arrange menus & forms” permission (given by an administrator).", "إعادة التسمية وترتيب القائمة تحتاج صلاحية «ترتيب القوائم والنماذج» (يمنحها المسؤول).") });
   const moveTo = gg => saveLayout(L => { if (copy) { const c = (L.copies || []).find(x => x.k === k); if (c) c.g = gg; } else { L.move = L.move || {}; L.move[k] = gg; } });
   const reorder = d => saveLayout(L => { L.order = L.order || {}; const keys = items.map(i => i[0]); const j = idx + d; if (j < 0 || j >= keys.length) return;
     [keys[idx], keys[j]] = [keys[j], keys[idx]]; L.order[g] = keys; });
@@ -8786,7 +8803,7 @@ function navGroupMenu(btn) {
   const g = btn.dataset.g, em = effectiveMenu(), gs = em.map(([gg]) => gg).filter(gg => gg !== "g_home"), i = gs.indexOf(g), L0 = ML();
   const custom = (L0.groups || []).find(x => x.k === g);
   const out = [{ ic: "▾", label: btn.closest(".grp-wrap").classList.contains("open") ? L2("Collapse", "طي") : L2("Expand", "فتح"), act: () => btn.click() }];
-  if (!canMenus()) return out.concat({ note: L2("Arranging the menu needs Settings → Menus (edit).", "ترتيب القائمة يحتاج صلاحية تعديل القوائم.") });
+  if (!canMenus()) return out.concat({ note: L2("Arranging the menu needs the “Arrange menus & forms” permission (given by an administrator).", "ترتيب القائمة يحتاج صلاحية «ترتيب القوائم والنماذج» (يمنحها المسؤول).") });
   const hidden = [...(L0.hide || [])].map(k => { const it = window.MENU.flatMap(([, x]) => x).find(x => x[0] === k); const c = (L0.copies || []).find(x => x.k === k);
     return it ? [k, t(k)] : c ? [k, lbl2(c.label)] : null; }).filter(Boolean);
   const greorder = d => saveLayout(L => { const arr = gs.slice(); const j = i + d; if (j < 0 || j >= arr.length) return; [arr[i], arr[j]] = [arr[j], arr[i]]; L.gorder = arr; });
@@ -8819,7 +8836,7 @@ function fieldMenu(lab) {
     return api("PUT", "/api/settings", { form_custom: all }).then(() => { S.boot.settings.form_custom = all; toast(L2("Saved — reopen the form to see it", "تم الحفظ — أعد فتح النموذج لرؤيته")); }).catch(fail); };
   const out = [];
   if (!canMenus()) return [{ ic: "⧉", label: L2("Copy the value", "نسخ القيمة"), act: () => copyText(ctl.value || "") },
-    { note: L2("Renaming and hiding fields needs Settings → Menus (edit).", "تعديل الحقول يحتاج صلاحية تعديل القوائم.") }];
+    { note: L2("Renaming and hiding fields needs the “Arrange menus & forms” permission (given by an administrator).", "تعديل الحقول يحتاج صلاحية «ترتيب القوائم والنماذج» (يمنحها المسؤول).") }];
   out.push({ ic: "✎", label: L2("Rename this field…", "إعادة تسمية الحقل…"), act: async () => { const v = await uiPrompt(L2("New label (empty = the original)", "الاسم الجديد (فارغ = الأصلي)"), text); if (v === null) return;
       save(F => { F[k] = { ...(F[k] || {}) }; if (v.trim()) F[k].label = { ...(F[k].label || {}), [S.lang]: v.trim() }; else delete F[k].label; if (!Object.keys(F[k]).length) delete F[k]; }); } });
   if (!ctl.required) out.push({ ic: "◌", label: L2("Hide this field", "إخفاء هذا الحقل"), act: () => save(F => { F[k] = { ...(F[k] || {}), hide: 1 }; }) });
@@ -8922,6 +8939,7 @@ function ctxFor(target) {
 }
 const itemLabelByKey = k => { for (const [, items] of effectiveMenu()) { const it = items.find(i => i[0] === k); if (it) return itemLabel(it); } return t(k); };
 document.addEventListener("contextmenu", e => {
+  if (window.__dndActive && window.__dndActive()) { e.preventDefault(); return; }    // a long press that became a drag
   if (e.shiftKey) return;
   const r = ctxFor(e.target); if (!r || !r[1] || !r[1].length) return;
   e.preventDefault(); ctxOpen(e.clientX, e.clientY, r[0], r[1]);
@@ -8930,10 +8948,83 @@ document.addEventListener("contextmenu", e => {
 { let timer = 0, sx = 0, sy = 0, fired = false;
   document.addEventListener("touchstart", e => { if (e.touches.length !== 1) return; const tch = e.touches[0]; sx = tch.clientX; sy = tch.clientY; fired = false;
     const r0 = e.target; clearTimeout(timer);
-    timer = setTimeout(() => { if (ctxEl) return; const r = ctxFor(r0); if (!r || !r[1] || !r[1].length) return; fired = true; if (navigator.vibrate) navigator.vibrate(12); ctxOpen(sx, sy, r[0], r[1]); }, 550); }, { passive: true });
+    timer = setTimeout(() => { if (ctxEl || (window.__dndActive && window.__dndActive()) || (r0.closest && r0.closest("#nav") && canMenus())) return; const r = ctxFor(r0); if (!r || !r[1] || !r[1].length) return; fired = true; if (navigator.vibrate) navigator.vibrate(12); ctxOpen(sx, sy, r[0], r[1]); }, 550); }, { passive: true });
   document.addEventListener("touchmove", e => { const tch = e.touches[0]; if (Math.hypot(tch.clientX - sx, tch.clientY - sy) > 10) clearTimeout(timer); }, { passive: true });
   document.addEventListener("touchend", e => { clearTimeout(timer); if (fired) { e.preventDefault(); fired = false; } }); }
 
+// ---- drag and drop in the menu: press and hold a screen or a section, then drag it. A screen dropped on another
+// screen goes just above / below it (in that section); dropped on a section heading it goes to the end of that section.
+// A section dropped on another section goes above / below it. Released without moving, it opens the right-click menu.
+// Needs the "Arrange menus & forms" permission, like the rest of arranging.
+{ let drag = null, hold = 0;
+  const origGroup = k => (window.MENU.find(([, items]) => items.some(i => i[0] === k)) || [])[0];
+  const end = () => { clearTimeout(hold); if (!drag) return; drag.ghost.remove(); $$(".dnd-src,.dnd-before,.dnd-after,.dnd-into").forEach(x => x.classList.remove("dnd-src", "dnd-before", "dnd-after", "dnd-into"));
+    document.documentElement.classList.remove("dnd-on"); drag = null; };
+  const target = (x, y) => {
+    const el = document.elementFromPoint(x, y); if (!el || !el.closest("#nav")) return null;
+    const a = el.closest("#nav a[data-k]"), g = el.closest("#nav .grp[data-g]");
+    if (drag.kind === "item") {
+      if (a && a.dataset.k !== drag.k) { const r = a.getBoundingClientRect(); return { el: a, k: a.dataset.k, pos: y < r.top + r.height / 2 ? "before" : "after" }; }
+      if (g) return { el: g, g: g.dataset.g, pos: "into" };
+    } else { const w = el.closest("#nav .grp-wrap"); const gb = w && $(".grp[data-g]", w);
+      if (gb && gb.dataset.g !== drag.g) { const r = w.getBoundingClientRect(); return { el: gb, g: gb.dataset.g, pos: y < r.top + Math.min(r.height, 44) / 2 ? "before" : "after" }; } }
+    return null;
+  };
+  const drop = t => {
+    const em = effectiveMenu();
+    if (drag.kind === "item") {
+      const k = drag.k, copy = (ML().copies || []).some(c => c.k === k);
+      const tg = t.g || (em.find(([, items]) => items.some(i => i[0] === t.k)) || [])[0]; if (!tg) return;
+      const keys = ((em.find(([g]) => g === tg) || [, []])[1]).map(i => i[0]).filter(x => x !== k);
+      if (t.pos === "into") keys.push(k); else keys.splice(keys.indexOf(t.k) + (t.pos === "after" ? 1 : 0), 0, k);
+      saveLayout(L => { if (copy) { const c = (L.copies || []).find(x => x.k === k); if (c) c.g = tg; }
+        else { L.move = L.move || {}; if (tg === origGroup(k)) delete L.move[k]; else L.move[k] = tg; }
+        L.order = L.order || {}; L.order[tg] = keys; });
+    } else {
+      const gs = em.map(([g]) => g).filter(g => g !== "g_home" && g !== drag.g);
+      gs.splice(gs.indexOf(t.g) + (t.pos === "after" ? 1 : 0), 0, drag.g);
+      saveLayout(L => { L.gorder = gs; });
+    }
+  };
+  const start = (src, x, y) => {
+    const isItem = src.matches("a[data-k]");
+    drag = { kind: isItem ? "item" : "group", k: src.dataset.k, g: src.dataset.g, src, moved: false, x, y };
+    const r = src.getBoundingClientRect(), ghost = drag.ghost = src.cloneNode(true);
+    ghost.className = "dnd-ghost"; ghost.style.width = r.width + "px"; ghost.style.left = r.left + "px"; ghost.style.top = r.top + "px";
+    drag.dx = x - r.left; drag.dy = y - r.top; document.body.appendChild(ghost);
+    (isItem ? src : src.closest(".grp-wrap")).classList.add("dnd-src"); document.documentElement.classList.add("dnd-on");
+    if (navigator.vibrate) navigator.vibrate(10);
+  };
+  document.addEventListener("pointerdown", e => {
+    if (e.button !== 0 || !S.boot || !S.boot.user || !canMenus()) return;
+    const src = e.target.closest("#nav a[data-k], #nav .grp[data-g]"); if (!src) return;
+    const x0 = e.clientX, y0 = e.clientY; clearTimeout(hold);
+    const cancel = ev => { if (Math.hypot(ev.clientX - x0, ev.clientY - y0) > 8) { clearTimeout(hold); document.removeEventListener("pointermove", cancel); } };
+    document.addEventListener("pointermove", cancel);
+    hold = setTimeout(() => { document.removeEventListener("pointermove", cancel); ctxClose(); start(src, x0, y0); }, e.pointerType === "mouse" ? 350 : 420);
+  });
+  document.addEventListener("pointermove", e => {
+    if (!drag) return; e.preventDefault();
+    if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) > 6) drag.moved = true;
+    drag.ghost.style.left = e.clientX - drag.dx + "px"; drag.ghost.style.top = e.clientY - drag.dy + "px";
+    $$(".dnd-before,.dnd-after,.dnd-into").forEach(x => x.classList.remove("dnd-before", "dnd-after", "dnd-into"));
+    const t = target(e.clientX, e.clientY); drag.t = t; if (t) t.el.classList.add("dnd-" + t.pos);
+    const side = $(".side"); if (side) { const r = side.getBoundingClientRect();          // near the top / bottom edge the menu scrolls
+      if (e.clientY < r.top + 50) side.scrollTop -= 12; else if (e.clientY > r.bottom - 50) side.scrollTop += 12; }
+  }, { passive: false });
+  document.addEventListener("touchmove", e => { if (drag) e.preventDefault(); }, { passive: false });     // no page scroll while dragging
+  document.addEventListener("pointerup", e => {
+    clearTimeout(hold); if (!drag) return;
+    const d = drag, t = d.t; end();
+    const stop = ev => { ev.preventDefault(); ev.stopPropagation(); }; document.addEventListener("click", stop, { capture: true, once: true }); setTimeout(() => document.removeEventListener("click", stop, true), 400);
+    if (!d.moved) { const r = ctxFor(d.src); if (r) ctxOpen(e.clientX, e.clientY, r[0], r[1]); return; }
+    if (t) { drag = d; drop(t); drag = null; }
+  });
+  document.addEventListener("dragstart", e => { if (e.target.closest && e.target.closest("#nav")) e.preventDefault(); });   // not the browser's own link dragging
+  document.addEventListener("pointercancel", end);
+  document.addEventListener("keydown", e => { if (e.key === "Escape") end(); });
+  window.__dndActive = () => !!drag;
+}
 // ================================================== full view & landscape (phones)
 // Every wide table gets "⤢ Full view" on phones: the real grid (not the stacked cards), pinch or −/+ to zoom, "Fit" to
 // see it whole, ⟳ to turn it sideways. Turning uses the phone's own rotation where the browser allows it (Android, from

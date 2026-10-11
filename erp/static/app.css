@@ -1400,3 +1400,30 @@ html.wv-open,html.wv-open body{overflow:hidden}
 .ctx-sep{height:1px;background:var(--line);margin:4px 6px}
 .ctx-note{padding:6px 10px 4px;font-size:.78em;color:var(--muted);line-height:1.4}
 .col-off{display:none!important}
+/* phones: the menu over the screen is solid (the page no longer shows through it) and the page behind is dimmed more */
+@media (max-width:900px){
+  .side{background:linear-gradient(var(--side),var(--side)),var(--bg);backdrop-filter:blur(12px)}
+  .app.menu::before{background:rgba(0,0,0,.55);backdrop-filter:blur(2px)}
+  /* or: a slim strip of section icons at the side; tapping one opens the menu at that section */
+  .app.pm-rail{--rail:56px}
+  .app.pm-rail .main{padding-inline-start:var(--rail)}
+  .app.pm-rail:not(.menu) .side{transform:none;width:var(--rail);padding:8px 6px calc(80px + env(safe-area-inset-bottom));overflow-x:hidden;border-radius:0 18px 18px 0;align-items:center;gap:2px}
+  [dir=rtl] .app.pm-rail:not(.menu) .side{border-radius:18px 0 0 18px}
+  .app.pm-rail:not(.menu) .side .brand,.app.pm-rail:not(.menu) .side .ucard-t,.app.pm-rail:not(.menu) .side .ucard .chev,
+  .app.pm-rail:not(.menu) .side .grp>span,.app.pm-rail:not(.menu) .side .grp .chev,.app.pm-rail:not(.menu) .side .grp-wrap>:not(.grp),
+  .app.pm-rail:not(.menu) .side .grp-solo a span{display:none!important}
+  .app.pm-rail:not(.menu) .side .ucard-btn{padding:4px;justify-content:center;width:44px;min-width:0}
+  .app.pm-rail:not(.menu) .side .grp,.app.pm-rail:not(.menu) .side .grp-solo a{justify-content:center;padding:10px 0;width:44px}
+  .app.pm-rail:not(.menu) .side .grp-wrap.has>.grp{background:var(--side-active)}
+}
+@media (max-width:900px){.app.pm-rail .bottombar{inset-inline-start:calc(var(--rail) + 6px)}}
+/* drag and drop in the menu */
+.dnd-ghost{position:fixed;z-index:450;pointer-events:none;opacity:.92;border-radius:10px;background:var(--side-active,var(--hover));box-shadow:0 12px 30px rgba(0,0,0,.35);
+  display:flex;align-items:center;gap:10px;padding:8px 12px;color:var(--side-ink,var(--ink));transform:scale(1.03);list-style:none}
+.dnd-ghost .chev{display:none}
+html.dnd-on,html.dnd-on *{cursor:grabbing!important;user-select:none!important;-webkit-user-select:none!important}
+.dnd-src{opacity:.35}
+#nav .dnd-before{box-shadow:inset 0 3px 0 var(--brand)}
+#nav .dnd-after{box-shadow:inset 0 -3px 0 var(--brand)}
+#nav .dnd-into{outline:2px dashed var(--brand);outline-offset:-2px;border-radius:10px}
+#nav a[data-k],#nav .grp{-webkit-touch-callout:none}

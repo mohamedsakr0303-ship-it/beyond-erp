@@ -261,6 +261,29 @@ class Api(unittest.TestCase):
         self.assertEqual(self.call(op, "POST", "/api/docs/supplier_discount", {"party": "Hani", "amount": 1000})[0], 200)
         self.assertEqual(self.call(op, "GET", "/api/supplier-discount?party=Hani")[1]["owed"], 0)
 
+    def test_people_and_arranging_rules(self):
+        """Administrators add people; only the super administrator edits or removes them. Arranging the menu and the
+        forms needs its own permission."""
+        sup = self.client()
+        if self.call(sup, "POST", "/api/setup", {"username": "admin", "password": "secret123"})[0] != 200:
+            self.assertEqual(self.call(sup, "POST", "/api/login", {"username": "admin", "password": "secret123"})[0], 200)
+        self.assertEqual(self.call(sup, "POST", "/api/users", {"username": "adm2", "password": "adm2pass1", "is_admin": True})[0], 200)
+        adm = self.client()
+        self.assertEqual(self.call(adm, "POST", "/api/login", {"username": "adm2", "password": "adm2pass1"})[0], 200)
+        st, u = self.call(adm, "POST", "/api/users", {"username": "staff2", "password": "staff2pass", "perms": {"sales": "view"}})
+        self.assertEqual(st, 200)                                                       # an administrator may add a user
+        self.assertEqual(self.call(adm, "PUT", f"/api/users/{u['id']}", {"full_name": "Changed"})[0], 403)   # but not edit them
+        self.assertEqual(self.call(adm, "DELETE", f"/api/users/{u['id']}")[0], 403)                          # nor remove them
+        self.assertEqual(self.call(sup, "PUT", f"/api/users/{u['id']}", {"full_name": "Changed", "perms": {"sales": "view"}})[0], 200)
+        staff = self.client()
+        self.call(staff, "POST", "/api/login", {"username": "staff2", "password": "staff2pass"})
+        layout = {"menu_layout": {"hide": ["m_budgets"]}}
+        self.assertEqual(self.call(staff, "PUT", "/api/settings", layout)[0], 403)
+        self.assertEqual(self.call(adm, "PUT", "/api/settings", layout)[0], 200)
+        self.assertEqual(self.call(sup, "PUT", f"/api/users/{u['id']}", {"perms": {"sales": "view", "settings.layout": "edit"}})[0], 200)
+        self.assertEqual(self.call(staff, "PUT", "/api/settings", {"menu_layout": {}, "form_custom": {}})[0], 200)
+        self.assertEqual(self.call(sup, "DELETE", f"/api/users/{u['id']}")[0], 200)
+
     def test_flow(self):
         admin = self.client()
         self.assertEqual(self.call(admin, "GET", "/api/journal")[0], 401)
@@ -1492,7 +1515,9 @@ class SuperAdmin(unittest.TestCase):
         self.assertEqual(r.status, 403)
         self.assertIn("super administrator", json.loads(r.body)["error"])
         self.assertEqual(call("POST", "/api/users", {"username": "x", "password": "pw123456", "is_admin": True}).status, 403)
-        self.assertEqual(call("PUT", f"/api/users/{clerk}", {"full_name": "Clerk K", "is_admin": False, "active": True}).status, 200)
+        # administrators add people; changing someone else's account is for the super administrator
+        self.assertEqual(call("PUT", f"/api/users/{clerk}", {"full_name": "Clerk K", "is_admin": False, "active": True}).status, 403)
+        self.assertEqual(call("POST", "/api/users", {"username": "clerk2", "password": "pw123456"}).status, 200)
         boss = db.one("SELECT id FROM users WHERE username='boss'")["id"]
         self.assertEqual(call("PUT", f"/api/users/{boss}", {"active": False}).status, 403)       # admins cannot touch the owner
 

@@ -1582,7 +1582,7 @@ SUBMODULES = {
     "reports": ["partner_pack", "income_statement", "balance_sheet", "cash_flow", "trial_balance", "budget", "aging", "statement", "forecast"],
     "tax": ["codes", "report", "einvoice", "ereceipt"],
     "import_export": ["export", "import"],
-    "settings": ["company", "branding", "menus", "system"],
+    "settings": ["company", "branding", "menus", "layout", "system"],
     "users": ["users", "audit"],
 }
 

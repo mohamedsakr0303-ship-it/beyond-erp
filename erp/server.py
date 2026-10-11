@@ -261,7 +261,10 @@ def logout(ctx):
 @route("PUT", "/api/settings")
 def put_settings(ctx):
     keys = set(ctx.body)
-    if keys & {"menu_labels", "menu_layout", "form_custom"}:     # the menu and the forms, as set up from right-click
+    # arranging the menu and the forms (right-click, drag and drop) is its own permission; menu names also from Settings → Menus
+    if keys & {"menu_layout", "form_custom"}:
+        ctx.require("settings.layout", "edit")
+    if "menu_labels" in keys and not ctx.can("settings.layout", "edit"):
         ctx.require("settings.menus", "edit")
     if keys & set(COMPANY_KEYS):
         ctx.require("settings.company", "edit")
@@ -3517,6 +3520,8 @@ def user_edit(ctx, uid):
     if not target:
         raise acc.ValidationError("User not found")
     b = ctx.body
+    if int(uid) != ctx.user["id"]:
+        _need_super(ctx, "edit other people's accounts (administrators may add users)")
     raises = bool(b.get("is_admin")) and not target["is_admin"] or bool(b.get("is_super")) and not target["is_super"]
     lowers = ("is_admin" in b and not b["is_admin"] and target["is_admin"]) or ("is_super" in b and not b["is_super"] and target["is_super"])
     if raises or ((target["is_admin"] or target["is_super"]) and int(uid) != ctx.user["id"]) or (lowers and int(uid) != ctx.user["id"]):
@@ -3530,9 +3535,7 @@ def user_edit(ctx, uid):
 
 @route("DELETE", "/api/users/<uid>", "users.users", "edit")
 def user_del(ctx, uid):
-    target = ctx.db.one("SELECT is_admin, is_super FROM users WHERE id=?", (int(uid),))
-    if target and (target["is_admin"] or target["is_super"]):
-        _need_super(ctx, "remove administrators")
+    _need_super(ctx, "remove users")
     u = auth.delete_user(ctx.db, int(uid), ctx.user["id"])
     ctx.log("user.delete", u["username"])
     return ok({"username": u["username"], "email": u.get("email") or ""})

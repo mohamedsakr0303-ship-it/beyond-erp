@@ -34,7 +34,7 @@ class ChatError(acc.ValidationError):
 
 # ------------------------------------------------------------------ people
 PROFILE_FIELDS = ("display_name", "job_title", "department", "phone", "bio", "status")
-DEFAULT_PREFS = {"nav_mode": "click",
+DEFAULT_PREFS = {"nav_mode": "click", "phone_menu": "overlay",
                  "notify": {"level": "all", "rooms": [], "mode": "sound", "desktop": True}}
 
 
@@ -66,6 +66,8 @@ def save_profile(db, uid, d):
         new = d["prefs"]
         if new.get("nav_mode") in ("hover", "click"):
             prefs["nav_mode"] = new["nav_mode"]
+        if new.get("phone_menu") in ("overlay", "rail"):     # on a phone: the menu over the screen, or a slim strip of icons
+            prefs["phone_menu"] = new["phone_menu"]
         tr = new.get("tour")      # the guided tour: where this person stopped, or that they never want it
         if isinstance(tr, dict) and tr.get("state") in ("new", "paused", "done", "never"):
             prefs["tour"] = {"state": tr["state"], "step": max(0, min(99, int(tr.get("step") or 0))),

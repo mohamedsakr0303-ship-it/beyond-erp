@@ -55,8 +55,10 @@ Deno.serve(async (req) => {
   }
   if (!/^[0-9a-f-]{36}$/i.test(company)) return fail(400, "Say which company");
   const inCo = `company_id=eq.${enc(company)}`;
-  const adm = await call("GET", `/rest/v1/members?select=email&${inCo}&email=eq.${enc(caller)}&active=is.true&pending=is.false&is_admin=is.true`);
+  const adm = await call("GET", `/rest/v1/members?select=email,is_super&${inCo}&email=eq.${enc(caller)}&active=is.true&pending=is.false&is_admin=is.true`);
   if (!adm.ok || !adm.data.length) return fail(403, "Only administrators of this company can manage sign-in accounts");
+  // administrators add people; changing or removing someone's account is for the company's super administrators
+  const isSuper = !!adm.data[0].is_super;
 
   const username = String(b.username || "").trim().toLowerCase();
   // a username may be the person's email address: they then sign in with that address (sign-in treats "@" as an email)
@@ -75,6 +77,7 @@ Deno.serve(async (req) => {
     const target: string = p ? p.email : (email || (username ? `${username}@${PLACEHOLDER_DOMAIN}` : ""));
     if (!target) return fail(400, "Say which account to delete");
     if (target === caller) return fail(400, "You cannot delete your own sign-in account");
+    if (!isSuper) return fail(403, "Only a super administrator can remove people");
     const row = await call("GET", `/rest/v1/members?select=is_admin,active&${inCo}&email=eq.${enc(target)}`);
     if (row.ok && row.data.length && row.data[0].is_admin && row.data[0].active) {
       const admins = await call("GET", `/rest/v1/members?select=email&${inCo}&is_admin=is.true&active=is.true&pending=is.false`);
@@ -149,6 +152,7 @@ Deno.serve(async (req) => {
       return fail(400, "This person already has a sign-in account (used by another company too). They keep their own password — leave the password empty to add them.");
     }
   } else {
+    if (!isSuper && target !== caller && (await inThis(target))) return fail(403, "Only a super administrator can change someone's sign-in account — administrators may add people");
     const upd: any = { ban_duration: active ? "none" : "876000h", user_metadata: { username, full_name: b.full_name || "" } };
     if (password) upd.password = password;
     if (oldEmail && oldEmail !== wanted) { upd.email = wanted; upd.email_confirm = true; }
