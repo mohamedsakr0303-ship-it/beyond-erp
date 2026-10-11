@@ -8368,7 +8368,7 @@ function renderLanding() {
     ["users", L2("Partners & funding", "الشركاء والتمويل"), L2("Shares, capital, a funding partner's account and profit sharing — worked out for you.", "حصص الشركاء ورأس المال وحساب الشريك المموِّل وتوزيع الأرباح… يحسبها النظام عنك.")],
     ["file", L2("Offers your way", "عروض أسعار احترافية"), L2("BOQ quotations or package offers (Essential · Signature · Prestige), branded PDF and Word in one click.", "مقايسات تفصيلية أو عروض باقات بهوية شركتك، تخرج PDF أو Word بضغطة واحدة.")],
     ["receipt", L2("Ready for Egyptian tax", "متوافق مع منظومة الضرائب المصرية"), L2("ETA e-invoices and e-receipts, VAT and withholding, payroll with social insurance.", "الفاتورة والإيصال الإلكتروني، والقيمة المضافة والخصم تحت حساب الضريبة، ورواتب بحساب التأمينات.")],
-    ["phone", L2("Anywhere, even offline", "معك أينما كنت"), L2("Phone, browser or desktop. Keeps working without internet and syncs when you are back.", "على الموبايل أو المتصفح أو الكمبيوتر، ويستمر في العمل دون إنترنت ثم يُزامن بياناتك فور عودة الاتصال.")],
+    ["chart", L2("See prices coming", "اعرف أسعار الغد"), L2("Forecast costs and prices quarter by quarter from inflation, the dollar and your own history.", "توقّع تكاليفك وأسعارك ربعاً بربع، من التضخم وسعر الدولار وتاريخ شركتك.")],
   ];
   const chips = [L2("General Accounting", "المحاسبة العامة"), L2("Accounts Receivable", "حسابات العملاء"), L2("Accounts Payable", "حسابات الموردين"),
     L2("Inventory Management", "إدارة المخزون"), L2("Procurement", "المشتريات"), L2("Project Costing", "تكاليف المشروعات"), L2("Contracts & Progress Billing", "العقود والمستخلصات"),
@@ -8381,8 +8381,8 @@ function renderLanding() {
       <button type="button" class="lp-lang" data-l="1">${ar ? "EN" : "ع"}</button><button type="button" class="lp-pill sm" data-go="1">${esc(go)}</button></header>
     <section class="lp-hero"><div class="lp-ring" aria-hidden="true"><i></i></div>
       <h1 class="lp-word wordmark" aria-label="BeyondERP">${word}</h1>
-      <p class="lp-tag">${esc(L2("RUN THE BUSINESS, NOT THE PAPERWORK", "أدِر شركتك بثقة… والأرقام دائماً في مكانها"))}</p>
-      <p class="lp-sub">${esc(L2("Accounts, projects, partners and payroll in one app — online or offline.", "حساباتك ومشروعاتك وشركاؤك ورواتب فريقك في تطبيق واحد، يعمل بالإنترنت ومن دونه."))}</p>
+      <p class="lp-tag">${esc(L2("RUN THE BUSINESS, NOT THE PAPERWORK", "نظام واحد.. لنموّ لا محدود"))}</p>
+      <p class="lp-sub">${esc(L2("Accounts, projects, partners and payroll — together in one place.", "حساباتك ومشروعاتك وشركاؤك ورواتب فريقك… كلها في مكان واحد."))}</p>
       <button type="button" class="lp-pill" data-go="1">${esc(go)}</button>
       <small class="lp-note">${esc(L2("General ledger · Inventory · Projects · Payroll · Tax", "الأستاذ العام · المخزون · المشروعات · الرواتب · الضرائب"))}</small>
       <div class="lp-scroll" aria-hidden="true"></div></section>
