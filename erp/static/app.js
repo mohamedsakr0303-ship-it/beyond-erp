@@ -8473,7 +8473,7 @@ function renderLanding(opt = {}) {
   $("#root").innerHTML = `<div class="lp" dir="${ar ? "rtl" : "ltr"}">
     <header class="lp-nav"><span class="wordmark lp-mini">BEYOND<i>ERP</i></span><span class="spacer"></span>
       <button type="button" class="lp-lang" data-l="1">${ar ? "EN" : "ع"}</button>${me ? `<span class="lp-me" title="${esc(L2("Signed in", "مسجّل الدخول"))}"><b>${esc(((me.full_name || me.username || "?").trim()[0] || "?").toUpperCase())}</b>${esc(me.full_name || me.username)}</span>` : ""}<button type="button" class="lp-pill sm" data-go="1">${esc(inApp ? L2("Back to the app", "العودة للتطبيق") : go)}</button></header>
-    <div class="lp-story"><div class="lp-stage">
+    <div class="lp-story"><nav class="lp-dots" aria-label="${esc(L2("Sections", "الأقسام"))}">${[0, 1, 2, 3, 4, 5].map(i => `<button type="button" data-sc="${i}" aria-label="${i + 1}"></button>`).join("")}</nav><div class="lp-stage">
       <section class="lp-sc lp-s0 lp-hero"><div class="lp-ring" aria-hidden="true"><i></i></div>
         <h1 class="lp-word wordmark" aria-label="BeyondERP">${word}</h1>
         <p class="lp-tag">${esc(L2("RUN THE BUSINESS, NOT THE PAPERWORK", "نظام واحد.. لنموّ لا محدود"))}</p>
@@ -8514,6 +8514,10 @@ function renderLanding(opt = {}) {
     else if (e.target.closest("[data-l]")) { store.set("lang", S.lang === "ar" ? "en" : "ar"); S.lang = store.get("lang"); renderLanding(opt); }
   });
   lpStory(root);
+  // the title sequence waits until the page has settled (fonts in, first paint done): started during that work its
+  // first frames stall, which is the jump at the very start of the halo
+  const start = () => requestAnimationFrame(() => requestAnimationFrame(() => root.classList.add("lp-go")));
+  Promise.race([document.fonts ? document.fonts.ready : Promise.resolve(), new Promise(r => setTimeout(r, 700))]).then(() => setTimeout(start, 60));
 }
 // The welcome story: one stage pinned on screen while the page scrolls past it; each scene gets its place in the scroll
 // (--t: -1 coming in … 0 centre … 1 leaving, --a = |t|) and the CSS moves only opacity and transforms, so it stays smooth
@@ -8525,14 +8529,17 @@ function lpStory(root) {
   }
   // the scenes glide after the scroll position instead of jumping with each wheel notch: every frame closes part of the
   // gap (time-based, so it is the same on 60 and 120 Hz screens) and the loop stops once they have caught up
-  let raf = 0, cur = null, last = 0, lpPast = null;
+  let raf = 0, cur = null, last = 0, lpPast = null, lpOn = -1;
+  const dots = $$(".lp-dots button", story);
+  dots.forEach((b, i) => b.addEventListener("click", () => { const span = story.offsetHeight - innerHeight;
+    scrollTo({ top: story.offsetTop + span * i / (scs.length - 1), behavior: "smooth" }); }));
   const tick = now => {
     raf = 0;
     if (!story.isConnected) { removeEventListener("scroll", onScroll); removeEventListener("resize", onScroll); return; }
     const span = story.offsetHeight - innerHeight, top = -story.getBoundingClientRect().top;
     const goal = Math.min(Math.max(top / Math.max(span, 1), 0), 1) * (scs.length - 1);
     const dt = Math.min(64, now && last ? now - last : 16); last = now || 0;
-    cur = cur === null ? goal : cur + (goal - cur) * (1 - Math.exp(-dt / 110));
+    cur = cur === null ? goal : cur + (goal - cur) * (1 - Math.exp(-dt / 80));
     if (Math.abs(goal - cur) < 0.0008) cur = goal; else raf = requestAnimationFrame(tick);
     if (cur === goal) last = 0;
     const p = cur;
@@ -8546,6 +8553,7 @@ function lpStory(root) {
     const t1 = Math.max(-1, Math.min(1, p - 1));   // the profit counts up as its card arrives
     nums.forEach(n => { const k = t1 >= 0 ? 1 : Math.max(0, 1 + t1 * 1.4), v = money(Math.round(+n.dataset.count * k)); if (n.textContent !== v) n.textContent = v; });
     if (lpPast !== (p > 0.15)) root.classList.toggle("lp-past", lpPast = p > 0.15);
+    const on = Math.round(p); if (on !== lpOn) { lpOn = on; dots.forEach((b, i) => b.classList.toggle("on", i === on)); }
   };
   const onScroll = () => { if (!raf) raf = requestAnimationFrame(tick); };
   addEventListener("scroll", onScroll, { passive: true }); addEventListener("resize", onScroll, { passive: true });

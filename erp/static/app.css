@@ -1359,3 +1359,25 @@ html.wv-open,html.wv-open body{overflow:hidden}
   .content{padding-bottom:calc(64px + env(safe-area-inset-bottom))}
   html.bb-away .bottombar{transform:translateY(calc(100% + 20px))}
 }
+/* the title sequence holds its first frame until the page has settled (.lp-go), and the halo starts all but invisible
+   rather than invisible so it is already drawn when it starts to move */
+.lp:not(.lp-go) .lp-ring,.lp:not(.lp-go) .lp-word span,.lp:not(.lp-go) .lp-word span b,.lp:not(.lp-go) .lp-word span::before,
+.lp:not(.lp-go) .lp-tag,.lp:not(.lp-go) .lp-sub,.lp:not(.lp-go) .lp-hero .lp-pill,.lp:not(.lp-go) .lp-note{animation-play-state:paused}
+@keyframes lpArc2{0%{opacity:.01;transform:translateX(-50%) translateY(46vmin) scale(.3,.04)}
+  18%{opacity:1;transform:translateX(-50%) translateY(44vmin) scale(.36,.06)}
+  100%{opacity:1;transform:translateX(-50%)}}
+/* a slightly shorter story */
+.lp-story{height:calc(6 * 100vh)}
+/* where you are in the story; tap a dot to glide there */
+.lp-dots{position:fixed;z-index:6;inset-inline-end:18px;top:50%;translate:0 -50%;display:flex;flex-direction:column;gap:10px;opacity:0;transition:opacity .4s}
+.lp-past .lp-dots{opacity:1}
+.lp-dots button{all:unset;width:8px;height:8px;border-radius:50%;background:rgba(200,200,255,.28);cursor:pointer;transition:transform .25s,background .25s}
+.lp-dots button.on{background:#fff;transform:scale(1.5);box-shadow:0 0 10px rgba(160,150,255,.9)}
+.lp-dots button:focus-visible{outline:2px solid #b9b2ff;outline-offset:3px}
+.lp-static .lp-dots{display:none}
+@media (max-width:640px){.lp-dots{inset-inline-end:8px;gap:8px}}
+/* the halo's glow drawn as gradients (cheap for the graphics card) instead of large blurred shadows, which had to be
+   repainted when the title sequence starts — that was the hitch at its very start */
+.lp-ring{box-shadow:none;background:radial-gradient(closest-side,transparent 0 78%,rgba(47,60,255,.16) 88%,rgba(47,60,255,.4) 96%,rgba(120,108,255,.85) 99.1%,rgba(225,222,255,.95) 99.6%,rgba(190,180,255,.9) 100%)}
+.lp-ring::before{content:"";position:absolute;inset:-14%;border-radius:50%;pointer-events:none;
+  background:radial-gradient(closest-side,transparent 0 77.9%,rgba(160,148,255,.7) 78.15%,rgba(108,92,255,.42) 79.6%,rgba(70,66,255,.24) 83%,rgba(47,60,255,.12) 89%,rgba(47,60,255,.04) 95%,transparent 100%)}
