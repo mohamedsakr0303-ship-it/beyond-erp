@@ -16,7 +16,7 @@
 <link rel="stylesheet" href="vendor/fonts.css">
 <link rel="stylesheet" href="app.css">
 <style>#boot{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:16px;background:radial-gradient(700px 400px at 50% 0,rgba(47,60,255,.35),transparent 70%),#00010f;z-index:100;font-family:system-ui,Arial,sans-serif;color:#b7b9e6}
-#boot b{font:400 1.2em "Michroma",system-ui,sans-serif;letter-spacing:.34em;color:#eef0ff;text-shadow:0 0 22px rgba(108,92,255,.7)}#boot .sp{width:34px;height:34px;border:3px solid rgba(140,140,255,.2);border-top-color:#9d95ff;border-radius:50%;animation:s 1s linear infinite;box-shadow:0 0 18px rgba(108,92,255,.5)}
+#boot b{font:400 1.2em "Michroma",system-ui,sans-serif;letter-spacing:.34em;color:#eef0ff;text-shadow:0 0 22px rgba(108,92,255,.7)}#boot .sp{position:relative;width:64px;height:64px;border-radius:50%;background:#02031a;margin:6px 0}#boot .sp::before{content:"";position:absolute;inset:-3px;border-radius:50%;animation:s 1.3s linear infinite;background:conic-gradient(from 0deg,transparent 0 50%,rgba(108,92,255,.25) 62%,#b9b2ff 80%,#fff 86%,transparent 92%);-webkit-mask:radial-gradient(circle,transparent 60%,#000 62%);mask:radial-gradient(circle,transparent 60%,#000 62%);filter:drop-shadow(0 0 9px #7d74ff)}#boot .sp::after{content:"";position:absolute;inset:-18px;border-radius:50%;z-index:-1;background:radial-gradient(circle,rgba(108,92,255,.4),transparent 70%)}
 @keyframes s{to{transform:rotate(360deg)}}</style>
 </head>
 <body>

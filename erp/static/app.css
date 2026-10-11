@@ -628,7 +628,7 @@ tr.click:hover td{background:color-mix(in srgb,var(--brand) 6%,transparent)}
 
 /* ---------------------------------------------------------------- "preparing your file" */
 .toast.busy{display:flex;align-items:center;gap:10px}
-.spin{width:14px;height:14px;border-radius:50%;border:2px solid currentColor;border-right-color:transparent;display:inline-block;animation:spin .8s linear infinite;flex:none}
+.spin{width:14px;height:14px;border-radius:50%;display:inline-block;flex:none;background:conic-gradient(from 0deg,transparent 0 50%,rgba(140,130,255,.35) 65%,currentColor 88%,transparent 94%);-webkit-mask:radial-gradient(circle,transparent 52%,#000 56%);mask:radial-gradient(circle,transparent 52%,#000 56%);animation:spin 1.1s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
 
 /* ---------------------------------------------------------------- phone top bar: theme + language always reachable */
@@ -1169,3 +1169,117 @@ td .pick-w{min-width:180px}
 /* the filled red confirm button in dialogs keeps white text in the dark look too */
 :root[data-theme="dark"] .dlg-foot .btn.danger{color:#fff;background:var(--bad);border-color:var(--bad)}
 .ji-box .ji-w{min-width:140px}.ji-box .ji-n{min-width:140px}.ji-box td{padding-inline:4px}
+
+/* ===== welcome story: one stage pinned while the page scrolls; scenes cross-fade and move with the scroll =====
+   --t: -1 coming in … 0 centre … 1 leaving; --a = |t|. Only opacity / transforms change, so it stays smooth. */
+.lp-story{position:relative;height:calc(6 * 115vh)}
+.lp-stage{position:sticky;top:0;height:100vh;height:100dvh;overflow:hidden}
+.lp-sc{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:88px 16px 40px;
+  opacity:calc(1 - var(--a,1) * 1.7);visibility:hidden;pointer-events:none;will-change:opacity,transform}
+.lp-sc.vis{visibility:visible}.lp-sc.on{pointer-events:auto}
+.lp-sc.lp-s0{--a:0;--t:0;visibility:visible;opacity:calc(1 - max(var(--t),0) * 1.5);min-height:0;padding-top:110px}
+.lp-s0 .lp-ring{translate:0 calc(var(--t) * -24vh);scale:calc(1 + var(--t) * .5)}
+.lp-s0 .lp-word{translate:0 calc(var(--t) * -10vh);scale:calc(1 - var(--t) * .12)}
+.lp-past .lp-scroll{opacity:0;transition:opacity .4s}
+.lp-sc h2{font-size:clamp(24px,3.6vw,42px);margin:0 0 10px;font-weight:600;letter-spacing:-.01em;position:relative;z-index:1}
+.lp-sc>p{color:#aeb0dc;max-width:560px;line-height:1.6;margin:0 0 22px;position:relative;z-index:1}
+[dir=rtl] .lp-sc h2{letter-spacing:0}
+
+/* 1 · a panel rises with the app in it; its figures count up as it arrives */
+.lp-panel{position:relative;width:min(1080px,94vw);display:grid;grid-template-columns:1fr minmax(250px,370px);gap:clamp(18px,3vw,40px);align-items:center;
+  padding:clamp(22px,4vw,52px);border-radius:30px;text-align:start;overflow:hidden;
+  background:linear-gradient(160deg,rgba(36,32,120,.92),rgba(10,11,46,.95));border:1px solid rgba(140,140,255,.24);
+  box-shadow:0 40px 120px rgba(76,68,255,.35);translate:0 calc(var(--t) * -38vh);scale:calc(1 - var(--a) * .12)}
+.lp-panel-txt{position:relative;z-index:1}
+.lp-panel h2{font-size:clamp(32px,5.2vw,62px);line-height:1.03;margin:0 0 16px}
+.lp-panel p{color:#b7b9e6;max-width:430px;line-height:1.6;margin:0 0 20px}
+.lp-floor{position:absolute;inset:auto -10% -2% -10%;height:46%;z-index:0;pointer-events:none;opacity:.55;
+  background:repeating-linear-gradient(90deg,rgba(150,140,255,.32) 0 1px,transparent 1px 56px),repeating-linear-gradient(0deg,rgba(150,140,255,.32) 0 1px,transparent 1px 34px);
+  transform:perspective(420px) rotateX(64deg);transform-origin:bottom;-webkit-mask:linear-gradient(transparent,#000 70%);mask:linear-gradient(transparent,#000 70%)}
+.lp-app{position:relative;z-index:1;border-radius:22px;padding:18px;color:#e9eaff;text-align:start;
+  background:linear-gradient(180deg,#0e0f3e,#07082a);border:1px solid rgba(140,140,255,.3);box-shadow:0 20px 60px rgba(0,0,0,.5),0 0 60px rgba(108,92,255,.28)}
+.lp-app-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;font-size:.66em;letter-spacing:.3em}
+.lp-dot{width:8px;height:8px;border-radius:50%;background:#7cffb2;box-shadow:0 0 10px #7cffb2}
+.lp-app small{color:#9a9dd6;font-size:.78em}
+.lp-app-num{font:600 clamp(26px,3.2vw,38px) "Inter",sans-serif;margin:4px 0 12px;font-variant-numeric:tabular-nums}
+.lp-app-bars{display:flex;align-items:flex-end;gap:6px;height:74px;margin-bottom:12px}
+.lp-app-bars i{flex:1;height:calc(var(--h) * (1 - min(var(--a), 1)));min-height:3px;border-radius:6px 6px 2px 2px;background:linear-gradient(180deg,#a59dff,#4b45f0)}
+.lp-app-row{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid rgba(140,140,255,.15);font-size:.84em}
+.lp-ok{color:#7cffb2}.lp-demo{display:block;margin-top:8px;opacity:.6}
+
+/* 2 · a glowing orb with a comet across it */
+.lp-orb2{position:relative;width:min(44vmin,350px);aspect-ratio:1;border-radius:50%;margin-bottom:24px;overflow:hidden;
+  background:radial-gradient(circle at 32% 26%,rgba(190,182,255,.42),rgba(70,60,210,.3) 38%,rgba(9,10,44,.96) 70%);
+  box-shadow:inset 0 0 70px rgba(150,140,255,.35),0 0 100px rgba(76,68,255,.4);scale:calc(.8 + (1 - var(--a)) * .2)}
+.lp-comet{position:absolute;inset:0;rotate:calc(-30deg + var(--t) * 80deg)}
+.lp-comet::before{content:"";position:absolute;top:34%;left:12%;width:52%;height:3px;border-radius:3px;rotate:-24deg;
+  background:linear-gradient(90deg,transparent,rgba(185,178,255,.6) 60%,#fff);box-shadow:0 0 12px #fff,0 0 30px #8f86ff}
+.lp-minis{display:grid;grid-template-columns:repeat(2,minmax(0,290px));gap:14px;translate:0 calc(var(--a) * 16vh);position:relative;z-index:1}
+.lp-mini2{text-align:start;padding:16px 18px;border-radius:18px;background:linear-gradient(180deg,rgba(32,32,100,.75),rgba(12,13,46,.75));border:1px solid rgba(140,140,255,.22)}
+.lp-mini2 b{display:block;margin-bottom:4px}.lp-mini2 span{color:#a9abd8;font-size:.88em;line-height:1.5}
+
+/* 3 · the eclipse: light slides out from behind the dark disc as the scene arrives */
+.lp-ecl{position:relative;width:min(38vmin,290px);aspect-ratio:1;margin-bottom:28px}
+.lp-ecl-light{position:absolute;inset:0;border-radius:50%;opacity:calc(1 - var(--a) * .9);translate:calc((1 - min(var(--a), 1)) * -13%) 0;
+  background:radial-gradient(circle,#fff 0 46%,#c9c3ff 54%,#6c5cff 63%,transparent 71%);box-shadow:0 0 120px 30px rgba(108,92,255,.55)}
+.lp-ecl-disc{position:absolute;inset:3%;border-radius:50%;background:radial-gradient(circle at 62% 42%,#0c0d36,#02031a 70%)}
+.lp-tiles{display:grid;grid-template-columns:repeat(6,minmax(0,124px));gap:10px;position:relative;z-index:1}
+.lp-tile{padding:14px 8px;border-radius:16px;background:rgba(22,23,76,.75);border:1px solid rgba(140,140,255,.22);display:flex;flex-direction:column;align-items:center;gap:8px;
+  font-size:.78em;color:#cdd0f5;opacity:clamp(0, (1 - var(--a)) * 3 - var(--i) * .3, 1);translate:0 calc(var(--a) * 34px)}
+.lp-tile svg.i{width:22px;height:22px;color:#b9b2ff}
+
+/* 4 · a dotted globe turning, with two figures drawn out to it */
+.lp-globe-wrap{position:relative;width:min(70vmin,560px);aspect-ratio:1.55;margin-bottom:6px}
+.lp-globe-wrap::before{content:"";position:absolute;left:50%;top:6%;width:62%;aspect-ratio:1;translate:-50% 0;border-radius:50%;background:radial-gradient(circle,rgba(108,92,255,.35),transparent 65%)}
+.lp-globe{position:absolute;left:50%;top:0;width:min(46vmin,360px);aspect-ratio:1;translate:-50% 0;border-radius:50%;
+  background:radial-gradient(circle,#9d95ff 1.1px,transparent 1.7px) 0 0/9px 9px;scale:calc(.85 + (1 - var(--a)) * .15);
+  -webkit-mask:radial-gradient(circle at 42% 36%,#000 28%,rgba(0,0,0,.5) 56%,transparent 70.5%);mask:radial-gradient(circle at 42% 36%,#000 28%,rgba(0,0,0,.5) 56%,transparent 70.5%);
+  animation:lpGlobe 40s linear infinite;animation-play-state:paused}
+.lp-s4.on .lp-globe{animation-play-state:running}
+@keyframes lpGlobe{to{background-position:-720px 0}}
+.lp-stat{position:absolute;top:40%;display:flex;flex-direction:column;align-items:flex-start;opacity:clamp(0, 1 - var(--a) * 2.4, 1)}
+.lp-stat b{font:600 clamp(28px,4vw,46px) "Inter",sans-serif;line-height:1}.lp-stat span{font-size:.76em;color:#9a9dd6;margin-top:4px}
+.lp-stat.l{left:0}.lp-stat.r{right:0;align-items:flex-end;top:54%}
+.lp-stat i{position:absolute;top:18px;width:min(12vmin,96px);height:1px;scale:calc(1 - min(var(--a) * 2, 1)) 1}
+.lp-stat.l i{left:calc(100% + 10px);transform-origin:left;background:linear-gradient(90deg,#8f86ff,rgba(143,134,255,.2))}
+.lp-stat.r i{right:calc(100% + 10px);transform-origin:right;background:linear-gradient(270deg,#8f86ff,rgba(143,134,255,.2))}
+
+/* 5 · the app rises out of a glowing floor */
+.lp-s5{justify-content:flex-start;padding-top:max(16vh,96px)}
+.lp-s5 h2{max-width:660px;font-size:clamp(24px,4vw,46px)}.lp-s5 .lp-pill{position:relative;z-index:2}
+.lp-rise{position:absolute;bottom:-4vh;left:50%;translate:-50% calc(var(--a) * 45vh);z-index:1}
+.lp-app-phone{width:min(290px,66vw);border-radius:34px;padding:24px 18px 30px;border:6px solid #1b1c50}
+.lp-grid{position:absolute;inset:auto -30% 0 -30%;height:38vh;z-index:0;opacity:calc(1 - var(--a));pointer-events:none;
+  background:linear-gradient(transparent,rgba(108,92,255,.45)),repeating-linear-gradient(90deg,rgba(150,140,255,.4) 0 1px,transparent 1px 64px),repeating-linear-gradient(0deg,rgba(150,140,255,.4) 0 1px,transparent 1px 40px);
+  transform:perspective(520px) rotateX(64deg);transform-origin:bottom;-webkit-mask:linear-gradient(transparent,#000 55%);mask:linear-gradient(transparent,#000 55%)}
+
+@media (max-width:760px){
+  .lp-panel{grid-template-columns:1fr;gap:16px;padding:22px}.lp-panel h2{font-size:clamp(28px,8vw,40px);margin-bottom:8px}.lp-panel p{font-size:.92em;margin-bottom:12px}
+  .lp-app-wide{padding:14px}.lp-app-wide .lp-app-bars{height:48px}.lp-app-wide .lp-app-row:last-of-type{display:none}
+  .lp-minis{grid-template-columns:1fr;max-width:340px;gap:10px}.lp-orb2{width:min(56vmin,260px)}
+  .lp-tiles{grid-template-columns:repeat(3,minmax(0,1fr));max-width:360px}
+  .lp-globe-wrap{width:92vw}.lp-stat i{display:none}
+  .lp-sc>p{font-size:.92em}
+}
+@media (max-height:560px){.lp-panel{scale:.85}.lp-app-bars{display:none}}
+/* reduced motion: no pinned stage, the scenes simply stack */
+.lp-static .lp-story{height:auto}.lp-static .lp-stage{position:static;height:auto;overflow:visible}
+.lp-static .lp-sc{position:relative;min-height:100vh;visibility:visible;opacity:1;pointer-events:auto;--a:0;--t:0}
+
+/* the eclipse loader: a lit rim sweeping round a dark disc (start-up and page loading) */
+.ecl-ld{position:relative;width:56px;height:56px;border-radius:50%;background:#02031a;flex:none}
+.ecl-ld::before{content:"";position:absolute;inset:-3px;border-radius:50%;animation:spin 1.3s linear infinite;
+  background:conic-gradient(from 0deg,transparent 0 50%,rgba(108,92,255,.25) 62%,#b9b2ff 80%,#fff 86%,transparent 92%);
+  -webkit-mask:radial-gradient(circle,transparent 60%,#000 62%);mask:radial-gradient(circle,transparent 60%,#000 62%);filter:drop-shadow(0 0 8px #7d74ff)}
+.ecl-ld::after{content:"";position:absolute;inset:-14px;border-radius:50%;z-index:-1;background:radial-gradient(circle,rgba(108,92,255,.35),transparent 70%)}
+.ecl-ld.sm{width:18px;height:18px}.ecl-ld.sm::after{inset:-5px}
+.page>.empty.ld,.login .empty.ld{display:flex;flex-direction:column;align-items:center;gap:16px;padding:60px 0;color:var(--muted)}
+/* the pinned stage needs no scrolling box above it: clip (not hidden) keeps the page from widening without making one */
+.lp{overflow-x:clip}
+html:has(.lp),html:has(.lp) body{overflow-x:clip}
+/* hand-offs pass through the dark like the film (no two scenes' text at once); every moving part on its own layer */
+.lp-sc{opacity:calc(1 - var(--a,1) * 2.3)}
+.lp-sc.lp-s0{opacity:calc(1 - max(var(--t),0) * 2)}
+.lp-ring,.lp-word,.lp-panel,.lp-orb2,.lp-comet,.lp-minis,.lp-ecl-light,.lp-tiles,.lp-globe,.lp-rise,.lp-grid,.lp-floor{will-change:transform}
+.lp-app-bars i{height:var(--h);transform-origin:bottom;scale:1 calc(1 - min(var(--a), 1));will-change:transform}
+.lp-tile{will-change:auto}

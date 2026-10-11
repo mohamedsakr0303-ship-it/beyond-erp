@@ -427,7 +427,7 @@ async function route() {
   const page = PAGES[parts[0]] || PAGES.dashboard;
   // each visit draws into its own box: a slower page still loading when the person moved on draws off-screen
   const host = $("#view"), view = document.createElement("div");
-  view.className = "page"; view.innerHTML = `<div class="empty">${t("loading")}</div>`;
+  view.className = "page"; view.innerHTML = `<div class="empty ld"><i class="ecl-ld"></i>${t("loading")}</div>`;
   host.replaceChildren(view);
   try { await page(view, parts, q); } catch (e) { view.innerHTML = `<div class="banner err">${esc(e.message)}</div>`; }
   if (view.isConnected) { if ($("[data-a=xsave]", view)) Drafts.track(view, $("h1,h2", view)?.textContent || t("m_invoices"), { page: true }); Drafts.banner(view); }
@@ -1044,7 +1044,7 @@ async function renderAuth() {
   if (STATIC && window.BeyondCloud && window.BeyondCloud.configured() && !store.get("cloudLocal", false)) {
     // still signed in to the workspace (e.g. after switching company): carry on without asking again
     if (window.BeyondCloud.signedIn()) {
-      applyLook(); $("#root").innerHTML = `<div class="login"><div class="empty">${t("loading")}</div><div id="lerr"></div></div>`;
+      applyLook(); $("#root").innerHTML = `<div class="login"><div class="empty ld"><i class="ecl-ld"></i>${t("loading")}</div><div id="lerr"></div></div>`;
       try { return await cloudEnter(await window.BeyondCloud.info()); } catch (e) { return renderCloudAuth(plainNetErr(e), "err"); }
     }
     return renderCloudAuth();
@@ -8408,45 +8408,90 @@ function renderLanding() {
   const ar = S.lang === "ar", setup = S.boot && S.boot.needs_setup;
   document.documentElement.setAttribute("data-theme", "dark");
   const word = "BEYONDERP".split("").map((c, i) => `<span style="--d:${(i * 0.07).toFixed(2)}s" class="${i >= 6 ? "erp" : ""}">${c}</span>`).join("");
-  const feats = [
-    ["scale", L2("Books that balance themselves", "قيود متوازنة دائماً"), L2("Every voucher posts double entry. Trial balance, profit & loss and balance sheet update as you work.", "كل سند يُرحَّل بقيد مزدوج، فتجد ميزان المراجعة وقائمة الدخل والميزانية محدَّثة أولاً بأول.")],
-    ["brief", L2("Profit per project", "اعرف ربح كل مشروع"), L2("Business units, progress billings, retentions, subcontractor certificates and live work in progress.", "مراكز تكلفة ومستخلصات ومحتجزات وحسابات مقاولي الباطن، وتكلفة الأعمال الجارية لحظة بلحظة.")],
-    ["users", L2("Partners & funding", "الشركاء والتمويل"), L2("Shares, capital, a funding partner's account and profit sharing — worked out for you.", "حصص الشركاء ورأس المال وحساب الشريك المموِّل وتوزيع الأرباح… يحسبها النظام عنك.")],
-    ["file", L2("Offers your way", "عروض أسعار احترافية"), L2("BOQ quotations or package offers (Essential · Signature · Prestige), branded PDF and Word in one click.", "مقايسات تفصيلية أو عروض باقات بهوية شركتك، تخرج PDF أو Word بضغطة واحدة.")],
-    ["receipt", L2("Ready for Egyptian tax", "متوافق مع منظومة الضرائب المصرية"), L2("ETA e-invoices and e-receipts, VAT and withholding, payroll with social insurance.", "الفاتورة والإيصال الإلكتروني، والقيمة المضافة والخصم تحت حساب الضريبة، ورواتب بحساب التأمينات.")],
-    ["chart", L2("See prices coming", "اعرف أسعار الغد"), L2("Forecast costs and prices quarter by quarter from inflation, the dollar and your own history.", "توقّع تكاليفك وأسعارك ربعاً بربع، من التضخم وسعر الدولار وتاريخ شركتك.")],
-  ];
   const chips = [L2("General Accounting", "المحاسبة العامة"), L2("Accounts Receivable", "حسابات العملاء"), L2("Accounts Payable", "حسابات الموردين"),
     L2("Inventory Management", "إدارة المخزون"), L2("Procurement", "المشتريات"), L2("Project Costing", "تكاليف المشروعات"), L2("Contracts & Progress Billing", "العقود والمستخلصات"),
     L2("Payroll & HR", "الرواتب وشؤون الموظفين"), L2("Fixed Assets", "الأصول الثابتة"), L2("Treasury & Banking", "الخزينة والبنوك"), L2("Budgeting", "الموازنات"),
     L2("Tax & E-Invoicing", "الضرائب والفاتورة الإلكترونية"), L2("Sales & Installments", "المبيعات والتقسيط"), L2("Equipment Rental", "تأجير المعدات"),
     L2("Partners & Equity", "الشركاء وحقوق الملكية"), L2("Financial Reports", "التقارير المالية"), L2("Team Chat", "دردشة الفريق"), L2("AI Assistant", "المساعد الذكي")];
+  const tiles = [["scale", L2("General ledger", "الأستاذ العام")], ["box", L2("Inventory", "المخزون")], ["users", L2("Payroll", "الرواتب")],
+    ["receipt", L2("Tax & e-invoicing", "الضرائب والفاتورة")], ["file", L2("Offers & BOQs", "العروض والمقايسات")], ["brief", L2("Projects", "المشروعات")]];
   const go = L2(setup ? "Get started" : "Sign in", setup ? "ابدأ الآن" : "تسجيل الدخول");
+  const bars = [38, 52, 44, 63, 58, 72, 66, 84].map((h, i) => `<i style="--h:${h}%;--i:${i}"></i>`).join("");
+  const appMock = cls => `<div class="lp-app ${cls}" aria-hidden="true"><div class="lp-app-top"><span class="wordmark">BEYOND<i>ERP</i></span><b class="lp-dot"></b></div>
+      <small>${esc(L2("Net profit this year", "صافي الربح هذا العام"))}</small><div class="lp-app-num" data-count="1284500">0</div>
+      <div class="lp-app-bars">${bars}</div>
+      <div class="lp-app-row"><span>${esc(L2("Trial balance", "ميزان المراجعة"))}</span><span class="lp-ok">✓ ${esc(L2("Balanced", "متوازن"))}</span></div>
+      <div class="lp-app-row"><span>${esc(L2("Projects on budget", "مشروعات ضمن الموازنة"))}</span><span>7 / 8</span></div>
+      <small class="lp-demo">${esc(L2("Demo company", "شركة تجريبية"))}</small></div>`;
   $("#root").innerHTML = `<div class="lp" dir="${ar ? "rtl" : "ltr"}">
     <header class="lp-nav"><span class="wordmark lp-mini">BEYOND<i>ERP</i></span><span class="spacer"></span>
       <button type="button" class="lp-lang" data-l="1">${ar ? "EN" : "ع"}</button><button type="button" class="lp-pill sm" data-go="1">${esc(go)}</button></header>
-    <section class="lp-hero"><div class="lp-ring" aria-hidden="true"><i></i></div>
-      <h1 class="lp-word wordmark" aria-label="BeyondERP">${word}</h1>
-      <p class="lp-tag">${esc(L2("RUN THE BUSINESS, NOT THE PAPERWORK", "نظام واحد.. لنموّ لا محدود"))}</p>
-      <p class="lp-sub">${esc(L2("Accounts, projects, partners and payroll — together in one place.", "حساباتك ومشروعاتك وشركاؤك ورواتب فريقك… كلها في مكان واحد."))}</p>
-      <button type="button" class="lp-pill" data-go="1">${esc(go)}</button>
-      <small class="lp-note">${esc(L2("General ledger · Inventory · Projects · Payroll · Tax", "الأستاذ العام · المخزون · المشروعات · الرواتب · الضرائب"))}</small>
-      <div class="lp-scroll" aria-hidden="true"></div></section>
-    <section class="lp-feats">${feats.map(([ic, h, p], i) => `<article class="lp-card lp-rv" style="--i:${i}"><div class="lp-orb">${svg(ic)}</div><h3>${esc(h)}</h3><p>${esc(p)}</p></article>`).join("")}</section>
-    <section class="lp-band lp-rv"><div class="lp-eclipse" aria-hidden="true"></div><h2>${esc(L2("Every system a growing company runs on", "كل ما تحتاجه شركتك وهي تكبر"))}</h2>
+    <div class="lp-story"><div class="lp-stage">
+      <section class="lp-sc lp-s0 lp-hero"><div class="lp-ring" aria-hidden="true"><i></i></div>
+        <h1 class="lp-word wordmark" aria-label="BeyondERP">${word}</h1>
+        <p class="lp-tag">${esc(L2("RUN THE BUSINESS, NOT THE PAPERWORK", "نظام واحد.. لنموّ لا محدود"))}</p>
+        <p class="lp-sub">${esc(L2("Accounts, projects, partners and payroll — together in one place.", "حساباتك ومشروعاتك وشركاؤك ورواتب فريقك… كلها في مكان واحد."))}</p>
+        <button type="button" class="lp-pill" data-go="1">${esc(go)}</button>
+        <small class="lp-note">${esc(L2("General ledger · Inventory · Projects · Payroll · Tax", "الأستاذ العام · المخزون · المشروعات · الرواتب · الضرائب"))}</small>
+        <div class="lp-scroll" aria-hidden="true"></div></section>
+      <section class="lp-sc lp-s1"><div class="lp-panel"><div class="lp-panel-txt">
+          <h2>${ar ? "قيود<br>متوازنة<br>دائماً." : "Books that<br>balance<br>themselves."}</h2>
+          <p>${esc(L2("Every voucher posts double entry — trial balance, profit & loss and balance sheet are ready as you work.", "كل سند يُرحَّل بقيد مزدوج، فتجد ميزان المراجعة وقائمة الدخل والميزانية جاهزة أولاً بأول."))}</p>
+          <button type="button" class="lp-pill sm" data-go="1">${esc(go)}</button></div>${appMock("lp-app-wide")}<div class="lp-floor" aria-hidden="true"></div></div></section>
+      <section class="lp-sc lp-s2"><div class="lp-orb2" aria-hidden="true"><i class="lp-comet"></i></div>
+        <h2>${esc(L2("Profit per project", "اعرف ربح كل مشروع"))}</h2>
+        <p>${esc(L2("Costs, progress billings, retentions and subcontractor certificates — live work in progress for every project.", "التكاليف والمستخلصات والمحتجزات وحسابات مقاولي الباطن — تكلفة الأعمال الجارية لكل مشروع لحظة بلحظة."))}</p>
+        <div class="lp-minis"><div class="lp-mini2"><b>${esc(L2("Partners & funding", "الشركاء والتمويل"))}</b><span>${esc(L2("Shares, capital and profit sharing, worked out for you.", "الحصص ورأس المال وتوزيع الأرباح، محسوبة لك."))}</span></div>
+          <div class="lp-mini2"><b>${esc(L2("Materials used", "الخامات المستخدمة"))}</b><span>${esc(L2("Every material that went into a project, searchable.", "كل خامة دخلت مشروعاً، بالبحث والتصفية."))}</span></div></div></section>
+      <section class="lp-sc lp-s3"><div class="lp-ecl" aria-hidden="true"><i class="lp-ecl-light"></i><i class="lp-ecl-disc"></i></div>
+        <h2>${esc(L2("Every system in one place", "كل الأنظمة في مكان واحد"))}</h2>
+        <p>${esc(L2("Accounting, stock, payroll, tax and projects share one set of books — nothing to reconcile between them.", "المحاسبة والمخزون والرواتب والضرائب والمشروعات في دفاتر واحدة — لا تسويات بينها."))}</p>
+        <div class="lp-tiles">${tiles.map(([ic, l], i) => `<div class="lp-tile" style="--i:${i}">${svg(ic)}<span>${esc(l)}</span></div>`).join("")}</div></section>
+      <section class="lp-sc lp-s4"><div class="lp-globe-wrap" aria-hidden="true"><div class="lp-globe"></div>
+          <div class="lp-stat l"><b>18</b><span>${esc(L2("systems", "نظاماً"))}</span><i></i></div>
+          <div class="lp-stat r"><b>4</b><span>${esc(L2("quarters ahead", "أرباع قادمة"))}</span><i></i></div></div>
+        <h2>${esc(L2("See prices coming", "اعرف أسعار الغد"))}</h2>
+        <p>${esc(L2("Costs and prices forecast quarter by quarter from inflation, the dollar and your own history.", "توقّع تكاليفك وأسعارك ربعاً بربع، من التضخم وسعر الدولار وتاريخ شركتك."))}</p></section>
+      <section class="lp-sc lp-s5"><h2>${esc(L2("Ready to run the business, not the paperwork?", "جاهز تدير شركتك بلا أوراق؟"))}</h2>
+        <button type="button" class="lp-pill" data-go="1">${esc(go)}</button>
+        <div class="lp-rise">${appMock("lp-app-phone")}</div><div class="lp-grid" aria-hidden="true"></div></section>
+    </div></div>
+    <section class="lp-band"><h2>${esc(L2("Every system a growing company runs on", "كل ما تحتاجه شركتك وهي تكبر"))}</h2>
       <div class="lp-chips">${chips.map(c => `<span>${esc(c)}</span>`).join("")}</div></section>
-    <section class="lp-end lp-rv"><h2>${esc(L2("Ready when you are.", "ابدأ وقتما تشاء."))}</h2><button type="button" class="lp-pill" data-go="1">${esc(go)}</button></section>
     <footer class="lp-foot"><span class="wordmark">BEYOND<i>ERP</i></span></footer></div>`;
   const root = $(".lp");
   root.addEventListener("click", e => {
     if (e.target.closest("[data-go]")) { store.set("landingSeen", true); S.landingOk = true; applyLook(); renderAuth(); }
     else if (e.target.closest("[data-l]")) { store.set("lang", S.lang === "ar" ? "en" : "ar"); S.lang = store.get("lang"); renderLanding(); }
   });
-  // reveal sections as they scroll into view (one observer, no scroll handlers)
-  if ("IntersectionObserver" in window) {
-    const io = new IntersectionObserver(es => es.forEach(x => { if (x.isIntersecting) { x.target.classList.add("in"); io.unobserve(x.target); } }), { threshold: 0.15 });
-    $$(".lp-rv", root).forEach(el => io.observe(el));
-  } else $$(".lp-rv", root).forEach(el => el.classList.add("in"));
+  lpStory(root);
+}
+// The welcome story: one stage pinned on screen while the page scrolls past it; each scene gets its place in the scroll
+// (--t: -1 coming in … 0 centre … 1 leaving, --a = |t|) and the CSS moves only opacity and transforms, so it stays smooth
+// on phones. Reduced motion: the scenes simply stack.
+function lpStory(root) {
+  const story = $(".lp-story", root), scs = $$(".lp-sc", story), nums = $$("[data-count]", story);
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    root.classList.add("lp-static"); nums.forEach(n => { n.textContent = money(+n.dataset.count); }); return;
+  }
+  let raf = 0;
+  const tick = () => {
+    raf = 0;
+    if (!story.isConnected) { removeEventListener("scroll", onScroll); removeEventListener("resize", onScroll); return; }
+    const span = story.offsetHeight - innerHeight, top = -story.getBoundingClientRect().top;
+    const p = Math.min(Math.max(top / Math.max(span, 1), 0), 1) * (scs.length - 1);
+    scs.forEach((sc, i) => {
+      const t = Math.max(-1, Math.min(1, p - i)), a = Math.abs(t);
+      sc.style.setProperty("--t", t.toFixed(4)); sc.style.setProperty("--a", a.toFixed(4));
+      sc.classList.toggle("on", a < 0.5); sc.classList.toggle("vis", a < 0.999);
+    });
+    const t1 = Math.max(-1, Math.min(1, p - 1));   // the profit counts up as its card arrives
+    nums.forEach(n => { const k = t1 >= 0 ? 1 : Math.max(0, 1 + t1 * 1.4); n.textContent = money(Math.round(+n.dataset.count * k)); });
+    root.classList.toggle("lp-past", p > 0.15);
+  };
+  const onScroll = () => { if (!raf) raf = requestAnimationFrame(tick); };
+  addEventListener("scroll", onScroll, { passive: true }); addEventListener("resize", onScroll, { passive: true });
+  tick();
 }
 
 // ================================================== type-to-search pickers
