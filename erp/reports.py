@@ -493,7 +493,7 @@ def negotiations_table(db, date_from=None, date_to=None, bu_id=None, lang="en"):
     rows.append({"cells": [L("total", lang), "", "", "", "", t["quoted"], t["savings"], t["kept"], t["passed"]],
                  "style": "grand", "indent": 0})
     pers = [("", date_from or "…", acc.clean_date(date_to))]
-    return {"title": "أرباح التفاوض" if ar else "Negotiation earnings", "subtitle": _subtitle(db, lang, pers, None),
+    return {"title": "مكاسب التفاوض مع الموردين" if ar else "Negotiation earnings", "subtitle": _subtitle(db, lang, pers, None),
             "columns": cols, "rows": rows, "lang": lang}
 
 

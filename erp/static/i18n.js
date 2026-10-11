@@ -15,7 +15,7 @@ window.I18N = {
   m_receivables: ["Accounts Receivable", "حسابات العملاء (المدينون)"],
   m_boqs: ["Bills of Quantities (BOQ)", "المقايسات (جداول الكميات)"], m_prices: ["Unit Rate Library", "مكتبة فئات الأسعار"],
   m_costs: ["Direct Project Costs", "التكاليف المباشرة للمشروعات"], m_expenses: ["Operating Expenses", "المصروفات التشغيلية"],
-  m_payments: ["Payment Vouchers", "سندات الصرف"], m_payables: ["Accounts Payable", "حسابات الموردين (الدائنون)"], m_nego: ["Negotiated Savings", "وفورات التفاوض"],
+  m_payments: ["Payment Vouchers", "سندات الصرف"], m_payables: ["Accounts Payable", "حسابات الموردين (الدائنون)"], m_nego: ["Negotiated Savings", "مكاسب التفاوض مع الموردين"],
   g_fin: ["Financing & Petty Cash", "التمويل والعهد"], g_rent: ["Equipment Rental", "تأجير المعدات"], mod_rentals: ["Equipment rental", "تأجير المعدات"], g_shop: ["Showroom & Unit Sales", "المعرض ومبيعات الوحدات"], mod_shop: ["Sales & showroom", "المبيعات والمعرض"],
   m_products: ["Showroom (Products & Units)", "المعرض (المنتجات والوحدات)"], m_sales_orders: ["Sales Orders & Instalments", "أوامر البيع والتقسيط"], m_installments: ["Instalment Collections", "تحصيل الأقساط"],
   "Installment Interest": ["Installment Interest", "فوائد تقسيط"], "Advance Applied": ["Advance Applied", "تسوية دفعات مقدمة"], "Cost of Sales": ["Cost of Sales", "تكلفة مبيعات"],

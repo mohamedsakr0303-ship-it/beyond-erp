@@ -1333,3 +1333,29 @@ html:has(.lp),html:has(.lp) body{overflow-x:clip}
   box-shadow:0 0 8px 2px #fff,0 0 22px 6px rgba(170,160,255,.7)}
 .lp-s2 h2{position:relative;z-index:1}
 @media (max-width:640px){.lp-orb2{width:min(76vmin,310px);margin-bottom:calc(min(76vmin,310px) * -.2)}}
+/* full view of a wide table on phones (zoom, fit, sideways) */
+.wv-btn{display:flex;margin:0 0 6px auto;align-items:center;gap:5px;padding:4px 11px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--ink);font:inherit;font-size:.8em;cursor:pointer}
+.wv{position:fixed;inset:0;z-index:300;background:var(--bg);display:flex;flex-direction:column}
+.wv-bar{display:flex;align-items:center;gap:6px;padding:8px 10px;padding-top:max(8px,env(safe-area-inset-top));border-bottom:1px solid var(--line);background:var(--panel)}
+.wv-bar b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;font-size:.9em}.wv-bar .spacer{flex:1}
+.wv-bar .btn{min-width:36px;justify-content:center}
+.wv-stage{flex:1;overflow:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;padding:6px}
+.wv-pan{width:max-content;transform-origin:0 0}
+.wv-pan table{border-collapse:collapse;background:var(--panel);font-size:13px}
+.wv-pan th,.wv-pan td{white-space:nowrap;padding:6px 10px;border-bottom:1px solid var(--line)}
+.wv-pan td::before{display:none}
+.wv-pan tbody tr.click{cursor:pointer}
+.wv.turned{inset:auto;top:0;left:0;width:100vh;height:100vw;width:100dvh;height:100dvw;transform-origin:top left;transform:rotate(90deg) translateY(-100%)}
+html.wv-open,html.wv-open body{overflow:hidden}
+@media (min-width:901px){.wv-btn{display:none}}
+.wv-pan td:has(.lines),.wv-pan td:has(br){white-space:normal;min-width:220px;max-width:360px}
+/* phone turned sideways: a slim bottom bar (icons only) that slides away while scrolling down */
+@media (max-height:500px) and (orientation:landscape){
+  .bottombar{height:44px;bottom:calc(6px + env(safe-area-inset-bottom));inset-inline:auto;left:50%;translate:-50% 0;width:min(460px,70vw);border-radius:16px;transition:transform .25s ease}
+  .bottombar>a span,.bottombar>button span{display:none}
+  .bb-new>.btn{width:40px;height:40px;margin-top:0;border-radius:13px}
+  .bb-new>.btn svg.i{width:20px;height:20px}
+  .bb-new .dd-menu,.bell .dd-menu{bottom:calc(56px + env(safe-area-inset-bottom));max-height:calc(100vh - 80px)}
+  .content{padding-bottom:calc(64px + env(safe-area-inset-bottom))}
+  html.bb-away .bottombar{transform:translateY(calc(100% + 20px))}
+}

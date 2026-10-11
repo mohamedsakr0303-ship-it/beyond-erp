@@ -585,7 +585,7 @@ function userMenu() {
   return `<button data-a="theme">${t("theme")}: ${esc(store.get("theme", DEFAULT_THEME))}</button>
     ${cloudOn() ? `<button data-a="coswitch">⇄ ${S.lang === "ar" ? "الشركات" : "Companies"}</button>` : ""}
     ${cloudOn() && window.BeyondCloud && window.BeyondCloud.billing ? `<a href="#/subscription">◎ ${S.lang === "ar" ? "الاشتراك" : "Subscription"}</a>` : ""}${S.billing && S.billing.is_owner ? `<a href="#/platform">⚙ ${S.lang === "ar" ? "إدارة الاشتراكات (المالك)" : "Platform billing (owner)"}</a>` : ""}
-    <a href="#/settings">${t("m_settings")}</a><button data-a="tour">➜ ${S.lang === "ar" ? "جولة في التطبيق" : "Take the tour"}</button><a href="#/discover">✦ ${S.lang === "ar" ? "اكتشف BeyondERP" : "Discover BeyondERP"}</a><a href="#/support">? ${S.lang === "ar" ? "المساعدة والدعم" : "Help & support"}</a>${STATIC && /^https?:$/.test(location.protocol) ? `<a href="#/download">⬇ ${S.lang === "ar" ? "تحميل التطبيق" : "Get the app"}</a>` : ""}<button data-a="pw">${t("change_pw")}</button><button data-a="logout">${t("logout")}</button>`;
+    <a href="#/settings">${t("m_settings")}</a><button data-a="tour">➜ ${S.lang === "ar" ? "جولة في التطبيق" : "Take the tour"}</button><a href="#/discover">✦ ${S.lang === "ar" ? "اكتشف BeyondERP" : "Discover BeyondERP"}</a>${isPhone() ? `<button data-a="landscape">⟳ ${S.lang === "ar" ? "عرض أفقي" : "Landscape"}</button>` : ""}<a href="#/support">? ${S.lang === "ar" ? "المساعدة والدعم" : "Help & support"}</a>${STATIC && /^https?:$/.test(location.protocol) ? `<a href="#/download">⬇ ${S.lang === "ar" ? "تحميل التطبيق" : "Get the app"}</a>` : ""}<button data-a="pw">${t("change_pw")}</button><button data-a="logout">${t("logout")}</button>`;
 }
 // the bell: what needs attention (bills to issue, overdue installments, depreciation, books checks…)
 async function loadAlerts(force) {
@@ -1561,7 +1561,7 @@ const DOCS = {
       const keep = $("[name=negotiation]", f).value === "keep" && g("savings") > 0;
       $("[name=negotiation]", f).closest("label").style.opacity = g("savings") > 0 ? "" : ".55";
       $("#calc", f).innerHTML = `${t("net_cost")}: <b>${money(tot)}</b> · ${t("vat_amt")}: ${money(vat)} · ${t("wht_amt")}: (${money(wht)}) · ${t("unpaid")}: <b>${money(tot + vat - wht - g("paid"))}</b>` +
-        (keep ? `<br>${L2("Booked as cost (client billed on)", "تُسجّل كتكلفة (ويُحاسب العميل عليها)")}: <b>${money(quoted)}</b> · ${L2("Negotiation earnings", "أرباح التفاوض")}: <b class="pos">${money(g("savings"))}</b>`
+        (keep ? `<br>${L2("Booked as cost (client billed on)", "تُسجّل كتكلفة (ويُحاسب العميل عليها)")}: <b>${money(quoted)}</b> · ${L2("Negotiation earnings", "مكاسب التفاوض")}: <b class="pos">${money(g("savings"))}</b>`
           : g("savings") > 0 ? `<br>${L2("The discount lowers the project cost to", "الخصم يخفّض تكلفة المشروع إلى")} <b>${money(tot)}</b>` : ""); },
     open: (f, edit) => { partyDefaults(f, "vendor"); const bu = $("[name=bu_id]", f), ng = $("[name=negotiation]", f);
       if (!edit) ng.value = buNego(bu.value);
@@ -2010,7 +2010,7 @@ PAGES.bus = async (view, parts, q) => {
 const BANK_F = () => [["label", L2("Name for this account", "اسم مختصر للحساب"), "CIB — EGP"], ["bank", t("bank_name")], ["acct", t("bank_account")], ["holder", t("bank_holder")], ["swift", t("swift")], ["iban", t("iban")]];
 const bankName = b => b.label || b.bank || b.acct || "—";
 // what happens to a discount negotiated with a supplier (per business unit; each cost can override it)
-const NEGO_OPTS = () => [["keep", L2("Company earnings — client billed on the full price", "أرباح للشركة — العميل يُحاسب بالسعر الكامل")],
+const NEGO_OPTS = () => [["keep", L2("Company earnings — client billed on the full price", "مكسب للشركة — العميل يُحاسب بالسعر الكامل")],
   ["pass", L2("Lower the cost — the client benefits", "تخفيض التكلفة — لصالح العميل")]];
 const buNego = id => ((S.boot.bus.find(b => String(b.id) === String(id)) || {}).negotiation) || "keep";
 function buForm(b) {
@@ -2139,7 +2139,7 @@ PAGES.negotiations = async (view, parts, q) => {
         <td class="num">${money(g.quoted)}</td><td class="num">${money(g.savings)}</td><td class="num pos">${money(g.kept)}</td><td class="num">${money(g.passed)}</td></tr>`).join("")}</tbody></table></div>`
       : `<div class="empty">${t("nothing")}</div>`}
       <p class="muted" style="font-size:.85em;margin-top:10px">${L2("Company earnings: the cost stays at the supplier's full price — a cost-plus client is billed on it — and the discount is booked to Negotiation Earnings. Lower cost: the discount reduces the project's cost. Each project has a default (Business units → Edit); each cost can override it, and older entries can be switched by opening them and pressing Edit.",
-        "أرباح للشركة: تبقى التكلفة بالسعر الكامل للمورد — ويُحاسب عميل التكلفة+ عليه — ويُسجّل الخصم في أرباح التفاوض. تخفيض التكلفة: الخصم يقلل تكلفة المشروع. لكل مشروع اختيار افتراضي (وحدات الأعمال ← تعديل) ويمكن تغييره لكل تكلفة، ويمكن تحويل القيود القديمة بفتحها ثم «تعديل».")}</p></div>` +
+        "مكسب للشركة: تبقى التكلفة بالسعر الكامل للمورد — ويُحاسب عميل التكلفة+ عليه — ويُسجّل الخصم في مكاسب التفاوض. تخفيض التكلفة: الخصم يقلل تكلفة المشروع. لكل مشروع اختيار افتراضي (وحدات الأعمال ← تعديل) ويمكن تغييره لكل تكلفة، ويمكن تحويل القيود القديمة بفتحها ثم «تعديل».")}</p></div>` +
     `<div class="card"><h2>${L2("Every negotiation", "كل المفاوضات")}</h2>${d.rows.length ? `<div class="tbl stack"><table><thead><tr><th>${t("date")}</th><th>#</th><th>${t("bu")}</th><th>${t("supplier")}</th><th>${t("deal_ref")}</th><th>${t("description")}</th><th class="num">${L2("Quoted", "المعروض")}</th><th class="num">${t("savings")}</th><th>${L2("Goes to", "يذهب إلى")}</th></tr></thead><tbody>
       ${d.rows.slice().reverse().map(r => `<tr class="click" data-a="openv" data-id="${r.id}"><td>${fd(r.date)}</td><td>${r.id}</td><td>${esc(r.bu_code)}</td><td>${esc(r.party)}</td><td>${esc(r.deal_ref)}</td><td>${esc(r.memo)}</td>
         <td class="num">${r.quoted ? money(r.quoted) : ""}</td><td class="num">${money(r.savings)}</td><td><span class="chip ${r.mode === "keep" ? "ok" : ""}">${esc(setting(r.mode))}</span></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${t("nothing")}</div>`}</div>`;
@@ -2153,7 +2153,7 @@ async function supplierDiscountForm(party, account, balance) {
     { k: "date", l: t("date"), type: "date", v: today(), req: 1 }, { k: "amount", l: ar ? "مبلغ الخصم" : "Discount amount", type: "number", v: balance, req: 1 },
     { k: "negotiation", l: L2("The discount goes to", "الخصم يذهب إلى"), type: "select", opts: NEGO_OPTS(), v: dflt.negotiation || "keep", change: "sdmode" },
     { k: "credit_account", l: ar ? "الحساب الدائن" : "Credit account", type: "select", v: dflt.credit_account, opts: accts(["COGS", "Expense", "Revenue"]),
-      help: ar ? "أرباح التفاوض، أو حساب تكلفة آخر شراء من هذا المورد" : "Negotiation Earnings, or the cost account of the last purchase from this supplier" },
+      help: ar ? "مكاسب التفاوض، أو حساب تكلفة آخر شراء من هذا المورد" : "Negotiation Earnings, or the cost account of the last purchase from this supplier" },
     { k: "bu_id", l: t("bu"), type: "select", opts: buOpts("—"), v: dflt.bu_id || "" }, { k: "deal_ref", l: t("deal_ref"), v: dflt.deal_ref || "" },
     { k: "memo", l: t("memo"), span: "spanall" }]),
   async v => { await api("POST", "/api/docs/supplier_discount", { ...v, party, against: account }); toast(t("posted")); },
@@ -8639,6 +8639,98 @@ new MutationObserver(muts => {
     for (const n of nodes) { if (!n.isConnected) continue; if (n.tagName === "SELECT") enhanceSelect(n); else if (n.tagName === "INPUT") { if (n.hasAttribute("list")) enhanceList(n); } else enhancePickers(n); }
   });
 }).observe(document.documentElement, { childList: true, subtree: true });
+
+// ================================================== full view & landscape (phones)
+// Every wide table gets "⤢ Full view" on phones: the real grid (not the stacked cards), pinch or −/+ to zoom, "Fit" to
+// see it whole, ⟳ to turn it sideways. Turning uses the phone's own rotation where the browser allows it (Android, from
+// full screen); otherwise the view itself is drawn sideways (iPhone). Tapping a row opens it as on the screen.
+function isPhone() { return matchMedia("(max-width: 900px)").matches; }
+async function goLandscape(on) {
+  try {
+    if (on) {
+      if (!document.fullscreenElement && document.documentElement.requestFullscreen) await document.documentElement.requestFullscreen({ navigationUI: "hide" });
+      await screen.orientation.lock("landscape"); return true;
+    }
+    if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock();
+    if (document.fullscreenElement) await document.exitFullscreen();
+    return true;
+  } catch (e) { return false; }
+}
+function wideView(tbl) {
+  const src = tbl.querySelector("table"); if (!src) return;
+  const title = ($("#view h2") || $(".top h1") || {}).textContent || "";
+  const wrap = document.createElement("div"); wrap.className = "wv"; wrap.setAttribute("role", "dialog");
+  wrap.innerHTML = `<div class="wv-bar"><b>${esc(title)}</b><span class="spacer"></span>
+    <button class="btn sm" data-z="-" aria-label="${esc(L2("Zoom out", "تصغير"))}">−</button><button class="btn sm" data-z="fit">${esc(L2("Fit", "ملاءمة"))}</button>
+    <button class="btn sm" data-z="+" aria-label="${esc(L2("Zoom in", "تكبير"))}">+</button><button class="btn sm" data-z="rot" title="${esc(L2("Landscape", "عرض أفقي"))}">⟳</button>
+    <button class="btn sm" data-z="x" aria-label="${esc(L2("Close", "إغلاق"))}">✕</button></div><div class="wv-stage"><div class="wv-pan"></div></div>`;
+  const pan = $(".wv-pan", wrap), stage = $(".wv-stage", wrap), copy = src.cloneNode(true);
+  copy.querySelectorAll("input[type=checkbox]").forEach(c => { const cell = c.closest("td,th"); if (cell && !cell.textContent.trim()) cell.remove(); else c.remove(); });
+  pan.appendChild(copy); document.body.appendChild(wrap); document.documentElement.classList.add("wv-open");
+  let z = 1, turned = false, locked = false;
+  const setZ = (v, cx, cy) => {
+    const old = z; z = Math.min(3, Math.max(0.25, v));
+    const r = stage.getBoundingClientRect(), fx = cx == null ? stage.clientWidth / 2 : cx - r.left, fy = cy == null ? stage.clientHeight / 2 : cy - r.top;
+    const ax = (stage.scrollLeft + fx) / old, ay = (stage.scrollTop + fy) / old;
+    pan.style.zoom = z; stage.scrollLeft = ax * z - fx; stage.scrollTop = ay * z - fy;
+  };
+  const fit = () => { pan.style.zoom = 1; setZ(Math.min(1, (stage.clientWidth - 8) / Math.max(copy.scrollWidth, 1))); stage.scrollLeft = 0; stage.scrollTop = 0; };
+  const close = () => { wrap.remove(); document.documentElement.classList.remove("wv-open"); if (locked) goLandscape(false); removeEventListener("popstate", close); };
+  wrap.addEventListener("click", async e => {
+    const b = e.target.closest("[data-z]");
+    if (b) {
+      const k = b.dataset.z;
+      if (k === "x") return history.state && history.state.wv ? history.back() : close();
+      if (k === "+") setZ(z * 1.25); else if (k === "-") setZ(z / 1.25); else if (k === "fit") fit();
+      else if (k === "rot") {
+        if (turned) { wrap.classList.remove("turned"); turned = false; }
+        else if (locked) { await goLandscape(false); locked = false; }
+        else if (await goLandscape(true)) locked = true;
+        else { wrap.classList.add("turned"); turned = true; }
+        requestAnimationFrame(fit);
+      }
+      return;
+    }
+    const tr = e.target.closest("tbody tr");      // a row: open it as on the screen
+    if (tr) { const i = [...copy.querySelectorAll("tbody tr")].indexOf(tr), orig = src.querySelectorAll("tbody tr")[i];
+      if (orig && (orig.classList.contains("click") || orig.dataset.a)) { history.state && history.state.wv ? history.back() : close(); setTimeout(() => orig.click(), 60); } }
+  });
+  // two fingers zoom around the point between them; one finger scrolls as usual
+  let pinch = null;
+  stage.addEventListener("touchstart", e => { if (e.touches.length === 2) { const [a, b] = e.touches;
+    pinch = { d: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY), z }; } }, { passive: true });
+  stage.addEventListener("touchmove", e => { if (!pinch || e.touches.length !== 2) return; e.preventDefault(); const [a, b] = e.touches;
+    let cx = (a.clientX + b.clientX) / 2, cy = (a.clientY + b.clientY) / 2;
+    if (turned) { const r = stage.getBoundingClientRect(); [cx, cy] = [r.left + (cy - r.top), r.top + (r.right - cx)]; }
+    setZ(pinch.z * Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) / pinch.d, cx, cy); }, { passive: false });
+  stage.addEventListener("touchend", e => { if (e.touches.length < 2) pinch = null; }, { passive: true });
+  history.pushState({ wv: 1 }, ""); addEventListener("popstate", close);      // the phone's back button closes it
+  requestAnimationFrame(fit);
+}
+S.GLOBAL_H.wideview = el => { const t = el.nextElementSibling; if (t && t.classList.contains("tbl")) wideView(t); };
+S.GLOBAL_H.landscape = async () => {
+  if (screen.orientation && /landscape/.test(screen.orientation.type) && document.fullscreenElement) return goLandscape(false);
+  if (!(await goLandscape(true)))          // this phone does not let a page rotate itself (iPhone, or not from full screen)
+    toast(L2("Turn on auto-rotate and turn your phone sideways — every screen adapts. For one wide table, use ⤢ Full view → ⟳.",
+             "فعّل التدوير التلقائي وأدر الهاتف أفقياً — كل الشاشات تتكيّف. ولجدول عريض استخدم ⤢ عرض كامل ← ⟳."));
+};
+// the button goes in front of each table that has several columns (not the entry lines of a form)
+function markWide(root) {
+  if (!isPhone()) return;
+  $$(".tbl", root).forEach(t => {
+    if (t.previousElementSibling && t.previousElementSibling.classList.contains("wv-btn")) return;
+    if (t.closest(".drawer,.wv,.ch-bubble,.recon") || t.querySelector("input:not([type=checkbox]),select,textarea")) return;
+    const cols = t.querySelectorAll("thead th").length || (t.querySelector("tr") || { children: [] }).children.length;
+    if (cols < 3) return;
+    t.insertAdjacentHTML("beforebegin", `<button type="button" class="wv-btn" data-a="wideview">⤢ ${esc(L2("Full view", "عرض كامل"))}</button>`);
+  });
+}
+// sideways, the bottom bar steps aside while scrolling down and comes back on the way up
+{ let lastY = 0; addEventListener("scroll", () => { const y = scrollY, h = document.documentElement;
+  if (Math.abs(y - lastY) < 8) return; h.classList.toggle("bb-away", y > lastY && y > 80); lastY = y; }, { passive: true }); }
+let wideTimer = 0;
+new MutationObserver(() => { if (!wideTimer) wideTimer = requestAnimationFrame(() => { wideTimer = 0; const v = $("#view"); if (v) markWide(v); }); })
+  .observe(document.documentElement, { childList: true, subtree: true });
 
 // ================================================== forecasting
 // Drivers (per quarter, with their source) → categories (what each kind of cost is made of) → every price, item,

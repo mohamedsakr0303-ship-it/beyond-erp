@@ -117,7 +117,7 @@ SHEETS = [
               C("fee_pct", "Fee %", "نسبة الأتعاب", kind="pct", width=8),
               C("contract_value", "Contract Value", "قيمة العقد", kind="money"),
               C("overhead_pct", "Overhead Allocation %", "نسبة تحميل المصروفات المشتركة", kind="pct", width=10),
-              C("negotiation", "Negotiation Earnings", "أرباح التفاوض", width=12, choices=["", "keep", "pass"]),
+              C("negotiation", "Negotiation Earnings", "مكاسب التفاوض", width=12, choices=["", "keep", "pass"]),
               C("wip_mode", "Work in Progress From", "أعمال تحت التنفيذ من", width=14, choices=["", "cost_plus", "drafts"]),
               C("customer", "Customer", "العميل", width=24), C("notes", "Notes", "ملاحظات", width=24)]},
     {"name": "Parties", "ar": "العملاء والموردون", "module": "sales",
