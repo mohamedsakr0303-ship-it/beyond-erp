@@ -409,6 +409,11 @@ function setQ(q) { const { parts } = parseHash(); location.hash = "#/" + parts.j
 
 const PAGES = {};
 async function route() {
+  // "Discover BeyondERP" from the profile menu: the welcome story while signed in; any other address returns to the app
+  if (S.boot && S.boot.user && !S.boot.needs_setup) {
+    if (parseHash().parts[0] === "discover") { S.discover = true; renderLanding({ inApp: true }); return; }
+    if (S.discover) { S.discover = false; applyLook(); renderShell(); }
+  }
   if (!S.boot || !S.boot.user || !$("#nav")) return;   // still on sign-in / set-up: nothing to route yet
   S.H = { ...S.GLOBAL_H };
   const { parts, q } = parseHash();
@@ -580,7 +585,7 @@ function userMenu() {
   return `<button data-a="theme">${t("theme")}: ${esc(store.get("theme", DEFAULT_THEME))}</button>
     ${cloudOn() ? `<button data-a="coswitch">⇄ ${S.lang === "ar" ? "الشركات" : "Companies"}</button>` : ""}
     ${cloudOn() && window.BeyondCloud && window.BeyondCloud.billing ? `<a href="#/subscription">◎ ${S.lang === "ar" ? "الاشتراك" : "Subscription"}</a>` : ""}${S.billing && S.billing.is_owner ? `<a href="#/platform">⚙ ${S.lang === "ar" ? "إدارة الاشتراكات (المالك)" : "Platform billing (owner)"}</a>` : ""}
-    <a href="#/settings">${t("m_settings")}</a><button data-a="tour">➜ ${S.lang === "ar" ? "جولة في التطبيق" : "Take the tour"}</button><a href="#/support">? ${S.lang === "ar" ? "المساعدة والدعم" : "Help & support"}</a>${STATIC && /^https?:$/.test(location.protocol) ? `<a href="#/download">⬇ ${S.lang === "ar" ? "تحميل التطبيق" : "Get the app"}</a>` : ""}<button data-a="pw">${t("change_pw")}</button><button data-a="logout">${t("logout")}</button>`;
+    <a href="#/settings">${t("m_settings")}</a><button data-a="tour">➜ ${S.lang === "ar" ? "جولة في التطبيق" : "Take the tour"}</button><a href="#/discover">✦ ${S.lang === "ar" ? "اكتشف BeyondERP" : "Discover BeyondERP"}</a><a href="#/support">? ${S.lang === "ar" ? "المساعدة والدعم" : "Help & support"}</a>${STATIC && /^https?:$/.test(location.protocol) ? `<a href="#/download">⬇ ${S.lang === "ar" ? "تحميل التطبيق" : "Get the app"}</a>` : ""}<button data-a="pw">${t("change_pw")}</button><button data-a="logout">${t("logout")}</button>`;
 }
 // the bell: what needs attention (bills to issue, overdue installments, depreciation, books checks…)
 async function loadAlerts(force) {
@@ -8404,10 +8409,16 @@ document.addEventListener("click", e => { const a = e.target.closest("[data-lp]"
 // The first thing a new visitor sees: the night sky, the wordmark rising out of a glowing eclipse, and what BeyondERP
 // does, section by section as they scroll. Pure CSS animation (transform / opacity only) so it stays smooth on phones and
 // light on slow connections; respects "reduce motion". People who have signed in on this device go straight to sign-in.
-function renderLanding() {
-  const ar = S.lang === "ar", setup = S.boot && S.boot.needs_setup;
+function renderLanding(opt = {}) {
+  const ar = S.lang === "ar", setup = S.boot && S.boot.needs_setup, inApp = !!opt.inApp;
+  const me = inApp && S.boot.user;
   document.documentElement.setAttribute("data-theme", "dark");
-  const word = "BEYONDERP".split("").map((c, i) => `<span style="--d:${(i * 0.07).toFixed(2)}s" class="${i >= 6 ? "erp" : ""}">${c}</span>`).join("");
+  // the title assembles like the film: the middle letter first as a blurred smear, then outwards — the outer letters
+  // sweep in from the edges of the screen, stretched and blurred, and sharpen as they land on the ring
+  const LETTERS = "BEYONDERP".split(""), mid = (LETTERS.length - 1) / 2;
+  const word = LETTERS.map((c, i) => { const off = i - mid, dist = Math.abs(off), dir = Math.sign(off);
+    const x = dist >= mid ? dir * 46 : dir * (dist * 9 + 5), dl = 1.0 + [0, .22, .4, .55, .68][Math.round(dist)];
+    return `<span style="--x:${x}vw;--y:${dist ? -1.5 : 0}vh;--s:${dist ? 1.9 : 2.6};--dl:${dl.toFixed(2)}s" class="${i >= 6 ? "erp" : ""}">${c}</span>`; }).join("");
   const chips = [L2("General Accounting", "المحاسبة العامة"), L2("Accounts Receivable", "حسابات العملاء"), L2("Accounts Payable", "حسابات الموردين"),
     L2("Inventory Management", "إدارة المخزون"), L2("Procurement", "المشتريات"), L2("Project Costing", "تكاليف المشروعات"), L2("Contracts & Progress Billing", "العقود والمستخلصات"),
     L2("Payroll & HR", "الرواتب وشؤون الموظفين"), L2("Fixed Assets", "الأصول الثابتة"), L2("Treasury & Banking", "الخزينة والبنوك"), L2("Budgeting", "الموازنات"),
@@ -8415,7 +8426,7 @@ function renderLanding() {
     L2("Partners & Equity", "الشركاء وحقوق الملكية"), L2("Financial Reports", "التقارير المالية"), L2("Team Chat", "دردشة الفريق"), L2("AI Assistant", "المساعد الذكي")];
   const tiles = [["scale", L2("General ledger", "الأستاذ العام")], ["box", L2("Inventory", "المخزون")], ["users", L2("Payroll", "الرواتب")],
     ["receipt", L2("Tax & e-invoicing", "الضرائب والفاتورة")], ["file", L2("Offers & BOQs", "العروض والمقايسات")], ["brief", L2("Projects", "المشروعات")]];
-  const go = L2(setup ? "Get started" : "Sign in", setup ? "ابدأ الآن" : "تسجيل الدخول");
+  const go = inApp ? L2("Back to BeyondERP", "العودة إلى BeyondERP") : L2(setup ? "Get started" : "Sign in", setup ? "ابدأ الآن" : "تسجيل الدخول");
   const bars = [38, 52, 44, 63, 58, 72, 66, 84].map((h, i) => `<i style="--h:${h}%;--i:${i}"></i>`).join("");
   const appMock = cls => `<div class="lp-app ${cls}" aria-hidden="true"><div class="lp-app-top"><span class="wordmark">BEYOND<i>ERP</i></span><b class="lp-dot"></b></div>
       <small>${esc(L2("Net profit this year", "صافي الربح هذا العام"))}</small><div class="lp-app-num" data-count="1284500">0</div>
@@ -8425,7 +8436,7 @@ function renderLanding() {
       <small class="lp-demo">${esc(L2("Demo company", "شركة تجريبية"))}</small></div>`;
   $("#root").innerHTML = `<div class="lp" dir="${ar ? "rtl" : "ltr"}">
     <header class="lp-nav"><span class="wordmark lp-mini">BEYOND<i>ERP</i></span><span class="spacer"></span>
-      <button type="button" class="lp-lang" data-l="1">${ar ? "EN" : "ع"}</button><button type="button" class="lp-pill sm" data-go="1">${esc(go)}</button></header>
+      <button type="button" class="lp-lang" data-l="1">${ar ? "EN" : "ع"}</button>${me ? `<span class="lp-me" title="${esc(L2("Signed in", "مسجّل الدخول"))}"><b>${esc(((me.full_name || me.username || "?").trim()[0] || "?").toUpperCase())}</b>${esc(me.full_name || me.username)}</span>` : ""}<button type="button" class="lp-pill sm" data-go="1">${esc(inApp ? L2("Back to the app", "العودة للتطبيق") : go)}</button></header>
     <div class="lp-story"><div class="lp-stage">
       <section class="lp-sc lp-s0 lp-hero"><div class="lp-ring" aria-hidden="true"><i></i></div>
         <h1 class="lp-word wordmark" aria-label="BeyondERP">${word}</h1>
@@ -8461,8 +8472,10 @@ function renderLanding() {
     <footer class="lp-foot"><span class="wordmark">BEYOND<i>ERP</i></span></footer></div>`;
   const root = $(".lp");
   root.addEventListener("click", e => {
-    if (e.target.closest("[data-go]")) { store.set("landingSeen", true); S.landingOk = true; applyLook(); renderAuth(); }
-    else if (e.target.closest("[data-l]")) { store.set("lang", S.lang === "ar" ? "en" : "ar"); S.lang = store.get("lang"); renderLanding(); }
+    if (e.target.closest("[data-go]")) {
+      if (inApp) { scrollTo(0, 0); location.hash = S.lastPage && !/discover/.test(S.lastPage) ? S.lastPage : "#/dashboard"; return; }   // back into the app, still signed in
+      store.set("landingSeen", true); S.landingOk = true; applyLook(); renderAuth(); }
+    else if (e.target.closest("[data-l]")) { store.set("lang", S.lang === "ar" ? "en" : "ar"); S.lang = store.get("lang"); renderLanding(opt); }
   });
   lpStory(root);
 }

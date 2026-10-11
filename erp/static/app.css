@@ -1283,3 +1283,20 @@ html:has(.lp),html:has(.lp) body{overflow-x:clip}
 .lp-ring,.lp-word,.lp-panel,.lp-orb2,.lp-comet,.lp-minis,.lp-ecl-light,.lp-tiles,.lp-globe,.lp-rise,.lp-grid,.lp-floor{will-change:transform}
 .lp-app-bars i{height:var(--h);transform-origin:bottom;scale:1 calc(1 - min(var(--a), 1));will-change:transform}
 .lp-tile{will-change:auto}
+/* the title sequence of the film: a thin arc opens into the ring, then the letters fly in centre-out, smeared and sharpening */
+.lp-ring{animation:lpArc 1.5s cubic-bezier(.3,.7,.2,1) both}
+@keyframes lpArc{0%{opacity:0;transform:translateX(-50%) translateY(44vmin) scale(.32,.07)}
+  15%{opacity:1;transform:translateX(-50%) translateY(44vmin) scale(.36,.08)}
+  55%{transform:translateX(-50%) translateY(16vmin) scale(.72,.5)}100%{opacity:1;transform:translateX(-50%)}}
+.lp-word span{opacity:0;transform:none;animation:lpFly 1.05s cubic-bezier(.16,.9,.25,1) forwards;animation-delay:var(--dl)}
+@keyframes lpFly{0%{opacity:0;transform:translate(var(--x),var(--y)) scale(var(--s),.72);filter:blur(16px)}
+  30%{opacity:1}70%{filter:blur(1.5px)}100%{opacity:1;transform:none;filter:none}}
+.lp-tag{animation-delay:2.05s}.lp-sub{animation-delay:2.2s}.lp-hero .lp-pill{animation-delay:2.35s}.lp-note{animation-delay:2.5s}
+@media (prefers-reduced-motion:reduce){.lp-word span{animation:none;opacity:1;filter:none}}
+/* the ring starts as only its lower arc, like the film, then opens to the full ring */
+@keyframes lpArc{0%{opacity:0;transform:translateX(-50%) translateY(44vmin) scale(.32,.07);clip-path:inset(55% 0 0 0)}
+  15%{opacity:1;transform:translateX(-50%) translateY(44vmin) scale(.36,.08);clip-path:inset(55% 0 0 0)}
+  55%{transform:translateX(-50%) translateY(16vmin) scale(.72,.5);clip-path:inset(30% 0 0 0)}100%{opacity:1;transform:translateX(-50%);clip-path:inset(-20% -20% -20% -20%)}}
+.lp-me{display:inline-flex;align-items:center;gap:8px;color:#d9dbff;font-size:.85em;max-width:180px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lp-me b{width:28px;height:28px;flex:none;border-radius:50%;display:grid;place-items:center;font-size:.85em;color:#fff;background:linear-gradient(135deg,#6c5cff,#2f3cff)}
+@media (max-width:520px){.lp-me{font-size:0;gap:0}}
