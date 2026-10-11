@@ -752,6 +752,9 @@ def approval_approve(ctx, aid):
                 meta.update(approved_by=ctx.user["username"], entered_by=r["created_by"])
                 ctx.db.x("UPDATE journal_entries SET meta=? WHERE id=?", (json.dumps(meta, ensure_ascii=False), eid))
         approvals.decide(ctx.db, aid, ctx.user, "approved", ctx.body.get("note") or "", eid if isinstance(eid, int) else None)
+        if isinstance(eid, int):            # the bills attached to the draft now belong to the entry
+            from . import attachments
+            attachments.move(ctx.db, "approval", int(aid), "entry", eid)
     ctx.log("approval.approve", f"#{aid} -> {eid}")
     return ok({"id": eid})
 
@@ -1528,6 +1531,14 @@ def _att_access(ctx, owner, oid, edit=False):
         mod = KIND_MODULE.get(e["kind"], "accounting.journal")
         ok_ = (ctx.can("accounting.journal", "edit") or ctx.can(mod, "add")) if edit else \
             (ctx.can("accounting.journal") or ctx.can(mod) or (e["bu_id"] and ctx.can("business_units.units")))
+    elif owner == "approval":           # the maker adds files while it waits; the maker and its approvers see them
+        from . import approvals
+        r = ctx.db.one("SELECT * FROM approvals WHERE id=?", (int(oid) if str(oid).isdigit() else -1,))
+        if not r:
+            raise acc.ValidationError("Record not found")
+        mine = r["created_by"] == ctx.user["username"]
+        ok_ = (mine and r["status"] in ("pending", "rejected")) if edit else \
+            (mine or approvals.can_approve(ctx.user, ctx.can, r) or approvals.may_see(ctx.user, ctx.can, r))
     else:
         perms = attachments.OWNERS[owner][2]
         ok_ = any(ctx.can(p, "add") if edit else ctx.can(p) for p in perms)
@@ -3394,6 +3405,9 @@ def report(ctx, name):
 def export_workbook(ctx):
     from . import workbook
     lang = "ar" if ctx.q.get("lang") == "ar" else "en"
+    if ctx.q.get("files") == "1":     # the workbook plus every attached file, in month folders, as one .zip
+        return download(interchange.workbook_zip(ctx.db, lang), f"BEYOND_ERP_{acc.today()}{'_AR' if lang == 'ar' else ''}_with_files.zip",
+                        "application/zip")
     data = workbook.build_workbook(ctx.db, template=False, lang=lang)
     return download(data, f"BEYOND_ERP_{acc.today()}{'_AR' if lang == 'ar' else ''}.xlsx", XLSX)
 
@@ -3609,6 +3623,8 @@ def do_import(ctx):
         data = interchange.read_json(raw)
     elif fmt == "csv":
         data = interchange.read_csv(ctx.q.get("sheet"), raw)
+    elif fmt in ("xlsx", "legacy", "zip") and interchange.is_files_zip(raw):   # a workbook with its files (export "with files")
+        data = interchange.read_files_zip(raw, interchange.read_xlsx)
     elif fmt in ("xlsx", "legacy"):
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
             f.write(raw)

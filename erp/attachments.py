@@ -12,7 +12,13 @@ OWNERS = {"entry": ("journal_entries", None, None), "party": ("parties", "name",
           "sale": ("sales_orders", "code", ("shop.orders",)), "loan": ("loans", "code", ("accounting.loans",)),
           "custody": ("custodies", "code", ("purchasing.custody",)), "asset": ("fixed_assets", "code", ("assets.register",)),
           "offer": ("offers", "number", ("sales.offers",)), "po": ("purchase_orders", "code", ("purchasing.orders",)),
-          "sub": ("subscriptions", "code", ("shop.subscriptions",))}
+          "sub": ("subscriptions", "code", ("shop.subscriptions",)),
+          "approval": ("approvals", None, None)}   # a draft waiting for approval: its files move to the entry once posted
+
+
+def move(db, owner, oid, to_owner, to_id):
+    """Hand a record's files to another record (an approved draft's files to the entry it became)."""
+    db.conn.execute("UPDATE attachments SET owner=?, owner_id=? WHERE owner=? AND owner_id=?", (to_owner, int(to_id), owner, int(oid)))
 
 
 def _owner(db, owner, oid):
@@ -103,6 +109,8 @@ def export_rows(db):
             continue
         if a["owner"] == "entry":
             k = _fp(db, a["owner_id"])
+        elif not key:               # files of a draft waiting for approval stay with that device's draft
+            continue
         else:
             r = db.one(f"SELECT {key} AS k FROM {table} WHERE id=?", (a["owner_id"],))
             k = r["k"] if r else None
@@ -127,6 +135,9 @@ def import_rows(db, rows):
         else:
             x = db.one(f"SELECT id FROM {table} WHERE {key}=?", (r.get("key"),))
             oid = x["id"] if x else None
+        if oid and db.one("SELECT 1 FROM attachments WHERE owner=? AND owner_id=? AND title=? AND size=? AND url=?",
+                          (r["owner"], oid, r.get("title") or "", int(r.get("size") or 0), r.get("url") or "")):
+            continue                  # already there (the same file imported again)
         if oid:
             db.conn.execute("INSERT INTO attachments(owner,owner_id,title,mime,data,thumb,url,size,created_by,created_at) "
                             "VALUES (?,?,?,?,?,?,?,?,?,?)", (r["owner"], oid, r.get("title") or "", r.get("mime") or "", r.get("data") or "",

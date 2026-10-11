@@ -1170,7 +1170,7 @@ window.addEventListener("popstate", () => { if (drawerEntry !== null) { drawerEn
 function readForm(f) {
   const v = {};
   $$("[name]", f).forEach(el => {
-    if (el.dataset.skip) return;
+    if (el.dataset.skip || el.type === "file") return;      // files are sent on their own (attachments)
     if (el.type === "checkbox") v[el.name] = el.checked;
     else v[el.name] = el.value;
   });
@@ -1188,15 +1188,15 @@ function form(fields, cols = 2) {
   return `<div class="grid g${cols}">` + fields.map(f => {
     if (f.html) return `<div class="${f.span || ""}">${f.html}</div>`;
     if (f.hidden) return `<input type="hidden" name="${f.k}" value="${esc(f.v ?? "")}">`;
-    const attrs = `name="${f.k}" ${f.req ? "required" : ""} ${f.ph ? `placeholder="${esc(f.ph)}"` : ""} ${f.change ? `data-change="${f.change}"` : ""} ${f.input ? `data-input="${f.input}"` : ""} ${f.dis ? "disabled" : ""}`;
+    const attrs = `name="${f.k}" ${f.req ? "required" : ""} ${f.multiple ? "multiple" : ""} ${f.accept ? `accept="${esc(f.accept)}"` : ""} ${f.ph ? `placeholder="${esc(f.ph)}"` : ""} ${f.change ? `data-change="${f.change}"` : ""} ${f.input ? `data-input="${f.input}"` : ""} ${f.dis ? "disabled" : ""}`;
     let ctl;
     if (f.type === "select") ctl = `<select ${attrs}>${(f.opts || []).map(o => { const [v, l] = Array.isArray(o) ? o : [o, tl(o)]; return `<option value="${esc(v)}" ${String(v) === String(f.v ?? "") ? "selected" : ""}>${esc(l)}</option>`; }).join("")}</select>`;
     else if (f.type === "textarea") ctl = `<textarea ${attrs} rows="3">${esc(f.v)}</textarea>`;
-    else if (f.type === "checkbox") return `<label class="f chk ${f.span || ""}"><input type="checkbox" ${attrs} ${f.v ? "checked" : ""}>${esc(f.l)}</label>`;
+    else if (f.type === "checkbox") return `<label class="f chk ${f.span || ""}"><input type="checkbox" ${attrs} ${f.v ? "checked" : ""}>${esc(f.l)}${f.req ? `<b class="req" aria-hidden="true">✱</b>` : ""}</label>`;
     // an on/off button: only the button itself switches (red = off, green = on)
     else if (f.type === "switch") return `<div class="f sw-field ${f.span || ""}"><span>${esc(f.l)}</span><label class="tgl"><input type="checkbox" role="switch" ${attrs} ${f.v ? "checked" : ""}><span class="sw-ui" aria-hidden="true"><i></i><b class="sw-on">${esc(f.on || L2("On", "مفعّل"))}</b><b class="sw-off">${esc(f.off || L2("Off", "متوقف"))}</b></span></label></div>`;
     else ctl = `<input type="${f.type || "text"}" ${attrs} value="${esc(f.v ?? "")}" ${f.list ? `list="${f.list}"` : ""} ${f.type === "number" ? `step="${f.step || "any"}" inputmode="decimal" class="num"` : ""}>`;
-    return `<label class="f ${f.span || ""}">${esc(f.l)}${ctl}${f.help ? `<span class="muted" style="font-weight:400">${esc(f.help)}</span>` : ""}</label>`;
+    return `<label class="f ${f.span || ""}">${esc(f.l)}${f.req ? `<b class="req" title="${esc(L2("Required", "إلزامي"))}" aria-hidden="true">✱</b>` : ""}${ctl}${f.help ? `<span class="muted" style="font-weight:400">${esc(f.help)}</span>` : ""}</label>`;
   }).join("") + `</div>`;
 }
 const datalist = (id, values) => `<datalist id="${id}">${[...new Set(values)].map(v => `<option value="${esc(v)}">`).join("")}</datalist>`;
@@ -1692,9 +1692,9 @@ async function openDoc(type, pre, edit, copyVals, via) {
   const items = S.boot.items.map(i => i.name);
   const vals = (via && via.vals) || (edit && edit.form) || copyVals;
   const nc = [];
-  drawer(t(d.title) + " — " + (via ? `${L2("Draft", "مسودة")} #${via.aid}` : edit ? `${t("edit")} #${edit.id}` : t("new")), form(d.fields(pre)) + unitsList() + partyList("parties", names) + datalist("items", items),
-    async v => { if (edit) await sendEntry("PUT", `/api/docs/${type}/${edit.id}`, v, via, t("saved")); else await sendEntry("POST", "/api/docs/" + type, v, via, t("posted"));
-      await saveNewContacts(nc); },
+  drawer(t(d.title) + " — " + (via ? `${L2("Draft", "مسودة")} #${via.aid}` : edit ? `${t("edit")} #${edit.id}` : t("new")), form([...d.fields(pre), ...(via ? [] : [ATTACH_FIELD()])]) + unitsList() + partyList("parties", names) + datalist("items", items),
+    async (v, f) => { delete v._files; const r = edit ? await sendEntry("PUT", `/api/docs/${type}/${edit.id}`, v, via, t("saved")) : await sendEntry("POST", "/api/docs/" + type, v, via, t("posted"));
+      await attachFrom(f, r, edit && edit.id); await saveNewContacts(nc); },
     { submitLabel: via ? (via.mode === "approve" ? L2("Approve & post", "اعتماد وترحيل") : L2("Send for approval", "إرسال للاعتماد")) : undefined,
       onOpen: f => { if (d.open) d.open(f, !!edit); if (vals) fillForm(f, vals); if (d.calc) { S.H.calc = () => d.calc(f); d.calc(f); }
       [["vendor", "supplier"], ["party", type === "receipt" ? "customer" : "supplier"], ["worker", "employee"]].forEach(([k, c]) => { if ($(`[name=${k}]`, f) && $(`[name=${k}]`, f).getAttribute("list") === "parties") nc.push(offerContact(f, k, c)); }); } });
@@ -1769,14 +1769,16 @@ function journalForm(e, copy, via) {
     { k: "ref", l: t("ref"), v: e ? e.ref : "" },
     ...(e && (e.kind === "Direct Cost" || e.kind === "Supplier Discount" || (e.meta && e.meta.deal_ref)) ? [{ k: "deal_ref", l: t("deal_ref"), v: e.meta.deal_ref || "" },
       { k: "deal_status", l: t("deal_status"), type: "select", opts: [["", "—"], "Open", "Settled"], v: e.meta.deal_status || "" }] : []),
-    { k: "memo", l: t("memo"), v: e ? e.memo : "", span: "spanall" }]) + (e && !copy ? "" : jItemsEditor(copy && e && e.meta && e.meta.items)) + `<div style="margin-top:12px">${journalLinesEditor(lines)}</div>`;
+    { k: "memo", l: t("memo"), v: e ? e.memo : "", span: "spanall" }]) + (e && !copy ? "" : jItemsEditor(copy && e && e.meta && e.meta.items)) + `<div style="margin-top:12px">${journalLinesEditor(lines)}</div>`
+    + (via ? "" : `<div style="margin-top:12px">${form([ATTACH_FIELD()], 1)}</div>`);
   const collect = f => $$("#jl tbody tr", f).map(tr => ({ account: $(".ja", tr).value, debit: $(".jd", tr).value, credit: $(".jc", tr).value, party: $(".jp", tr).value }));
   const items = f => $$("#ji tbody tr", f).map(tr => ({ item: $(".ji-n", tr).value.trim(), unit: $(".ji-u", tr).value.trim(), qty: $(".ji-q", tr).value, rate: $(".ji-p", tr).value, warehouse_id: $(".ji-w", tr).value }))
     .filter(x => x.item && +x.qty && +x.rate);
   drawer((via ? `${L2("Draft", "مسودة")} #${via.aid}` : e && !copy ? t("edit") : t("new")) + " — " + t("m_journal"), html, async (v, f) => {
+    delete v._files;
     const body = { ...v, lines: collect(f).filter(l => l.account && (+l.debit || +l.credit)), ...(items(f).length ? { items: items(f) } : {}) };
-    if (e && !copy) await sendEntry("PUT", "/api/journal/" + e.id, body, via, t("saved"));
-    else await sendEntry("POST", "/api/journal", { ...body, kind: via ? e.kind || "Journal Voucher" : copy ? (Object.values(tpl).some(x => x.kind === e.kind) ? e.kind : "Journal Voucher") : v.template && tpl[v.template] ? tpl[v.template].kind : "Journal Voucher" }, via, t("saved"));
+    if (e && !copy) await attachFrom(f, await sendEntry("PUT", "/api/journal/" + e.id, body, via, t("saved")) || { id: e.id }, e.id);
+    else await attachFrom(f, await sendEntry("POST", "/api/journal", { ...body, kind: via ? e.kind || "Journal Voucher" : copy ? (Object.values(tpl).some(x => x.kind === e.kind) ? e.kind : "Journal Voucher") : v.template && tpl[v.template] ? tpl[v.template].kind : "Journal Voucher" }, via, t("saved")));
   }, { submitLabel: via ? (via.mode === "approve" ? L2("Approve & post", "اعتماد وترحيل") : L2("Send for approval", "إرسال للاعتماد")) : undefined, onOpen: f => {
     const bal = () => { const L = collect(f); const it = $("#ji", f) ? jItemsTotal(f) : 0; const d = it + L.reduce((s, l) => s + (+l.debit || 0), 0), c = L.reduce((s, l) => s + (+l.credit || 0), 0);
       $("#jbal", f).innerHTML = `${t("debit")} ${money(d)} · ${t("credit")} ${money(c)} — <span class="${Math.abs(d - c) < 0.005 && d > 0 ? "bal-ok" : "bal-bad"}">${Math.abs(d - c) < 0.005 && d > 0 ? t("balanced") : t("unbalanced")}</span>`; };
@@ -1839,7 +1841,7 @@ function countUp(root) {
 // widgets — and figures — the person may see.
 const DASH = { edit: null };
 // who may design the dashboards (and their groups): super administrators, and whoever they allow
-const canDesign = () => !!(S.boot.user.is_super || can("settings.dashboards", "edit"));
+const canDesign = () => !!(S.boot.user.is_super || (!S.boot.user.is_admin && can("settings.dashboards", "edit")));
 PAGES.dashboard = async (view, parts, q) => {
   const sup = canDesign();
   const group = sup ? (q.group || store.get("dashGroup", "")) : "";
@@ -2916,7 +2918,8 @@ async function openApproval(id) {
   const btns = (r.can_approve ? `<button type="button" class="btn danger" data-a="apprback">${esc(L2("Send back", "إعادة للتعديل"))}</button><button type="button" class="btn" data-a="appredit">${esc(L2("Correct, then approve", "تصحيح ثم اعتماد"))}</button><button type="button" class="btn pri" data-a="approk">${esc(L2("Approve & post", "اعتماد وترحيل"))}</button>` : "")
     + (r.mine && open ? `<button type="button" class="btn danger" data-a="apprwd">${esc(L2("Withdraw", "سحب"))}</button><button type="button" class="btn pri" data-a="apprfix">${esc(r.status === "rejected" ? L2("Fix and send again", "تعديل وإرسال مرة أخرى") : t("edit"))}</button>` : "")
     + (r.entry_id ? `<button type="button" class="btn" data-a="apprentry">${esc(L2(`Open entry #${r.entry_id}`, `فتح القيد رقم ${r.entry_id}`))}</button>` : "");
-  drawer(`${L2("Draft", "مسودة")} #${r.id} — ${dtypeLabel(r.dtype)}`, head + body, null, { readOnly: true, extraButtons: btns, wide: r.dtype === "journal" });
+  drawer(`${L2("Draft", "مسودة")} #${r.id} — ${dtypeLabel(r.dtype)}`, head + body + attBox("approval", r.id, r.mine && open), null, { readOnly: true, extraButtons: btns, wide: r.dtype === "journal",
+    onOpen: f => mountAttach($(".attbox", f.closest(".drawer"))) });
 }
 PAGES.ledger = async (view, parts, q) => reportPage(view, "general_ledger", q, ["dates", "account", "bu", "party", "lang"]);
 PAGES.coa = async (view, parts, q) => {
@@ -3182,14 +3185,16 @@ PAGES.data = async (view) => {
   const ed = can("import_export.import", "edit");
   view.innerHTML = (STATIC ? `<div class="banner info">${S.lang === "ar" ? "هذه نسخة المتصفح: البيانات محفوظة في هذا المتصفح فقط. نزّل نسخة JSON أو Excel بانتظام كنسخة احتياطية، واستخدمها لنقل البيانات لجهاز آخر." : "Browser edition: your data is stored in this browser only. Download a JSON or Excel copy regularly as your backup — it is also how you move data to another device."}</div>` : "") +
     `<div class="grid g2"><div class="card"><h2>${t("exp_title")}</h2><div class="grid">
-      <a class="btn" href="/api/export/workbook?lang=${S.lang}">⬇ ${t("full_wb")}</a><a class="btn" href="/api/templates/workbook?lang=${S.lang}">⬇ ${t("empty_tpl")}</a>
+      <a class="btn" href="/api/export/workbook?lang=${S.lang}">⬇ ${t("full_wb")}</a>
+      <a class="btn pri" href="/api/export/workbook?files=1&lang=${S.lang}" title="${esc(L2("The workbook plus every attached bill, receipt and contract, in a folder per month (2026-03 March 2026…). Import the .zip back to restore the files too.", "الملف مع كل الفواتير والإيصالات والعقود المرفقة، في مجلد لكل شهر. استورد ملف الـ zip لاستعادة الملفات أيضاً."))}">⬇ ${esc(L2("Excel + attached files (.zip, a folder per month)", "Excel + الملفات المرفقة (zip، مجلد لكل شهر)"))}</a>
+      <a class="btn" href="/api/templates/workbook?lang=${S.lang}">⬇ ${t("empty_tpl")}</a>
       <a class="btn" href="/api/demo/workbook">⬇ ${L2("Import template filled with demo data (Excel)", "قالب الاستيراد مملوء ببيانات تجريبية (Excel)")}</a>
       <a class="btn" href="/api/export/json">⬇ ${t("json_backup")}</a>${can("settings.system", "edit") ? `<a class="btn" href="/api/backup">⬇ ${t("db_backup")}</a>` : ""}
       <div class="row"><select id="csvs">${sheets.map(s => `<option value="${esc(s.name)}">${esc(S.lang === "ar" ? s.ar : s.name)}</option>`).join("")}</select>
         <button class="btn" data-a="csv">${t("csv_sheet")}</button><button class="btn" data-a="csvt">${t("csv_tpl")}</button></div></div>
       <p class="muted" style="font-size:.85em">${S.lang === "ar" ? "المصنف الكامل هو نفسه قالب الاستيراد: نفس أسماء الأوراق والأعمدة، مع قوائم مالية وتسعير سريع وحاسبة سقالات تُحسب تلقائياً داخل Excel." : "The full workbook is also the import template: same sheet and column names, with statements, a quick estimator and a scaffold calculator that calculate inside Excel."}</p></div>
     <div class="card"><h2>${t("imp_title")}</h2>${ed ? `<div class="grid">
-      <div class="f">${t("file")}<input type="file" id="impf" accept=".xlsx,.json,.csv"></div>
+      <div class="f">${t("file")}<input type="file" id="impf" accept=".xlsx,.json,.csv,.zip"></div>
       <label class="f spanall">${L2("…or a Google Sheets link", "…أو رابط Google Sheets")}<input id="impurl" type="url" placeholder="https://docs.google.com/spreadsheets/d/…" dir="ltr"></label>
       <label class="f">${t("format")}<select id="impfmt"><option value="xlsx">Excel (.xlsx)</option><option value="json">JSON</option><option value="csv">CSV</option></select></label>
       <label class="f" id="impsheetl" style="display:none">CSV → <select id="impsheet">${sheets.map(s => `<option value="${esc(s.name)}">${esc(s.name)}</option>`).join("")}</select></label>
@@ -5532,23 +5537,33 @@ async function mountAttach(box) {
     const files = [...inp.files], prog = $(".attprog", box); let done = 0;
     for (const f of files) {
       prog.textContent = `${L2("Uploading", "جارٍ الرفع")} ${f.name}… (${done + 1}/${files.length})`;
-      try {
-        let data, thumb = "", mime = f.type, name = f.name;
-        if (/^image\/(jpeg|png|webp|heic|heif)/i.test(f.type) || (/^image\//.test(f.type) && f.size > 1.5 * 1048576)) {
-          try { data = await shrinkImage(f, 2000, 0.85); mime = "image/jpeg"; if (!/\.jpe?g$/i.test(name)) name = name.replace(/\.\w+$/, "") + ".jpg"; } catch { data = await readDataUrl(f); }
-        } else data = await readDataUrl(f);
-        if (/^image\//.test(mime)) { try { thumb = await shrinkImage(f, 240, 0.7); } catch { /* no preview */ } }
-        if (data.length * 0.75 > MAX_UP) throw new Error(`${name}: ${kb(data.length * 0.75)} — ${L2("too large", "حجم كبير")} (max ${d.max_mb} MB)`);
-        await api("POST", "/api/attachments", { owner, id, data, mime, thumb, title: name });
-        done++;
-      } catch (e) { fail(e); }
+      try { await uploadFile(owner, id, f); done++; } catch (e) { fail(e); }
     }
     prog.textContent = ""; reload();
   });
 }
 const readDataUrl = file => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(r.error); r.readAsDataURL(file); });
 const MAX_UP = 8 * 1024 * 1024;
-
+// one file onto a record (photos shrunk, with a small preview)
+async function uploadFile(owner, id, f) {
+  let data, thumb = "", mime = f.type, name = f.name;
+  if (/^image\/(jpeg|png|webp|heic|heif)/i.test(f.type) || (/^image\//.test(f.type) && f.size > 1.5 * 1048576)) {
+    try { data = await shrinkImage(f, 2000, 0.85); mime = "image/jpeg"; if (!/\.jpe?g$/i.test(name)) name = name.replace(/\.\w+$/, "") + ".jpg"; } catch { data = await readDataUrl(f); }
+  } else data = await readDataUrl(f);
+  if (/^image\//.test(mime)) { try { thumb = await shrinkImage(f, 240, 0.7); } catch { /* no preview */ } }
+  if (data.length * 0.75 > MAX_UP) throw new Error(`${name}: ${kb(data.length * 0.75)} — ${L2("too large", "حجم كبير")} (max ${MAX_UP / 1048576} MB)`);
+  return api("POST", "/api/attachments", { owner, id, data, mime, thumb, title: name });
+}
+// the "Attach bills / receipts" field of entry forms, and sending its files once the entry (or its draft) exists
+const ATTACH_FIELD = () => ({ k: "_files", type: "file", span: "spanall", multiple: 1, accept: "image/*,application/pdf,.pdf,.xlsx,.xls,.docx,.doc,.csv",
+  l: L2("📎 Attach bills / receipts (PDF, photos…)", "📎 إرفاق الفواتير / الإيصالات (PDF، صور…)"),
+  help: L2("The supplier's invoice, a receipt photo, a delivery note — kept with the entry (and in backups).", "فاتورة المورد أو صورة الإيصال أو إذن التسليم — تُحفظ مع القيد (وفي النسخ الاحتياطية).") });
+async function attachFrom(f, r, entryId) {
+  const inp = f && $("[name=_files]", f), files = inp ? [...inp.files] : []; if (!files.length || !r) return;
+  const owner = r.pending ? "approval" : "entry", id = r.pending ? r.approval : (r.id || entryId); if (!id) return;
+  let ok = 0; for (const file of files) { try { await uploadFile(owner, id, file); ok++; } catch (e) { fail(e); } }
+  if (ok) toast(L2(`${ok} file(s) attached`, `تم إرفاق ${ok} ملف`));
+}
 // ------------------------------------------------------------------ showroom
 PAGES.products = async (view, parts, q) => {
   const d = await api("GET", "/api/products?" + qs(q));
@@ -8942,7 +8957,7 @@ function renderLanding(opt = {}) {
     </div></div>
     <section class="lp-band"><h2>${esc(L2("Every system a growing company runs on", "كل ما تحتاجه شركتك وهي تكبر"))}</h2>
       <div class="lp-chips">${chips.map(c => `<span>${esc(c)}</span>`).join("")}</div></section>
-    <footer class="lp-foot"><span class="wordmark">BEYOND<i>ERP</i></span><small class="lp-copy">© ${new Date().getFullYear()} BEYOND DESIGN. ${esc(L2("All rights reserved.", "جميع الحقوق محفوظة."))}</small></footer></div>`;
+    <footer class="lp-foot"><span class="wordmark">BEYOND<i>ERP</i></span><small class="lp-copy">© ${new Date().getFullYear()} BEYONDERP. ${esc(L2("All rights reserved.", "جميع الحقوق محفوظة."))}</small></footer></div>`;
   const root = $(".lp");
   root.addEventListener("click", e => {
     const home = e.target.closest(".lp-home");
@@ -9261,6 +9276,8 @@ function fieldMenu(lab) {
   out.push({ ic: "✎", label: L2("Rename this field…", "إعادة تسمية الحقل…"), act: async () => { const v = await uiPrompt(L2("New label (empty = the original)", "الاسم الجديد (فارغ = الأصلي)"), text); if (v === null) return;
       save(F => { F[k] = { ...(F[k] || {}) }; if (v.trim()) F[k].label = { ...(F[k].label || {}), [S.lang]: v.trim() }; else delete F[k].label; if (!Object.keys(F[k]).length) delete F[k]; }); } });
   if (!ctl.required) out.push({ ic: "◌", label: L2("Hide this field", "إخفاء هذا الحقل"), act: () => save(F => { F[k] = { ...(F[k] || {}), hide: 1, name: text }; }) });
+  if (S.boot.user.is_super && (!ctl.required || cur.req) && ctl.type !== "checkbox") out.push({ ic: "✱", label: cur.req ? L2("Make it optional again", "جعله اختيارياً") : L2("Make it required", "جعله إلزامياً"),
+    act: () => save(F => { F[k] = { ...(F[k] || {}) }; if (cur.req) delete F[k].req; else { F[k].req = 1; delete F[k].hide; F[k].name = text; } if (!Object.keys(F[k]).length) delete F[k]; }) });
   if (ctl.type !== "file" && ctl.type !== "hidden") out.push({ ic: "★", label: L2("Use the current value as the default", "استخدم القيمة الحالية كقيمة افتراضية"),
     hint: ctl.type === "checkbox" ? (ctl.checked ? "✓" : "✗") : String(ctl.value || "").slice(0, 18),
     act: () => save(F => { F[k] = { ...(F[k] || {}), def: ctl.type === "checkbox" ? ctl.checked : ctl.value }; }) });
@@ -9283,7 +9300,8 @@ function customFields(fields) {
   const out = fields.map(f => { const o = f.k && fc[f.k]; if (!o) return f;
     const g = { ...f }; if (o.label) g.l = lbl2(o.label) || g.l;
     if (o.def !== undefined && (g.v === undefined || g.v === null || g.v === "")) g.v = o.def;
-    if (o.hide && !g.req && !g.html) g.hidden = 1;
+    if (o.req && !g.html) { g.req = 1; delete g.hidden; }          // made mandatory by the super administrator
+    else if (o.hide && !g.req && !g.html) g.hidden = 1;
     return g; });
   if (fc.__extra && fields.some(f => NOTE_KEYS.includes(f.k))) out.push(...fc.__extra.map(x => ({ k: x.k, l: lbl2(x.label), type: x.type })));
   return out;
@@ -9463,7 +9481,8 @@ function formCustomise(drawerEl, on) {
     const k = ctl.name, o = fc[k] || {}, extra = /^x_/.test(k);
     const tools = document.createElement("span"); tools.className = "fc-tools";
     tools.innerHTML = `<button type="button" data-fc="ren" title="${esc(L2("Rename", "إعادة تسمية"))}">✎</button>` +
-      (ctl.required ? "" : `<button type="button" data-fc="hide" title="${esc(L2("Hide this field", "إخفاء الحقل"))}">${L2("hide", "إخفاء")}</button>`) +
+      (ctl.required && !o.req ? "" : `<button type="button" data-fc="hide" title="${esc(L2("Hide this field", "إخفاء الحقل"))}">${L2("hide", "إخفاء")}</button>`) +
+      (S.boot.user.is_super && (!ctl.required || o.req) && ctl.type !== "checkbox" ? `<button type="button" data-fc="req" class="${o.req ? "on" : ""}" title="${esc(L2("Mandatory: it must be filled in before saving (super administrator)", "إلزامي: يجب ملؤه قبل الحفظ (المسؤول الأعلى)"))}">✱ ${L2("required", "إلزامي")}</button>` : "") +
       (ctl.type === "file" ? "" : `<button type="button" data-fc="def" class="${o.def !== undefined ? "on" : ""}" title="${esc(L2("Use the value in it now as the default for new entries (press again to remove)", "استخدم قيمته الحالية كقيمة افتراضية (اضغط مرة أخرى للإزالة)"))}">★ ${L2("default", "افتراضي")}</button>`) +
       (extra ? `<button type="button" data-fc="del" title="${esc(L2("Remove this field", "حذف الحقل"))}">✕</button>` : "");
     const first = lab.childNodes[0];
@@ -9478,6 +9497,11 @@ function formCustomise(drawerEl, on) {
         else if (b.dataset.fc === "def") { const had = (FC()[fk] || {})[k] && FC()[fk][k].def !== undefined;
           await saveFormCustom(F => { F[k] = { ...(F[k] || {}) }; if (had) delete F[k].def; else F[k].def = ctl.type === "checkbox" ? ctl.checked : ctl.value; if (!Object.keys(F[k]).length) delete F[k]; });
           b.classList.toggle("on", !had); toast(had ? L2("Default removed", "أزيلت القيمة الافتراضية") : L2("Saved as the default for new entries", "حُفظت كقيمة افتراضية للقيود الجديدة")); }
+        else if (b.dataset.fc === "req") { const was = !!((FC()[fk] || {})[k] || {}).req;
+          await saveFormCustom(F => { F[k] = { ...(F[k] || {}) }; if (was) delete F[k].req; else { F[k].req = 1; delete F[k].hide; F[k].name = fieldName(lab); } if (!Object.keys(F[k]).length) delete F[k]; });
+          ctl.required = !was; b.classList.toggle("on", !was); const star = $(".req", lab);
+          if (!was && !star) ctl.insertAdjacentHTML("beforebegin", `<b class="req" aria-hidden="true">✱</b>`); else if (was && star) star.remove();
+          toast(was ? L2("No longer required", "لم يعد إلزامياً") : L2("Required for everyone from now on", "أصبح إلزامياً للجميع")); }
         else if (b.dataset.fc === "del") { await saveFormCustom(F => { F.__extra = (F.__extra || []).filter(x => x.k !== k); if (!F.__extra.length) delete F.__extra; }); lab.remove(); }
       } catch (x) { fail(x); }
     });

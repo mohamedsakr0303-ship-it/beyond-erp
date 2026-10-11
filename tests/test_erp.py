@@ -321,12 +321,19 @@ class Api(unittest.TestCase):
         self.assertEqual(self.call(maker, "GET", "/api/alerts")[1]["rows"][0]["kind"], "approvals_back")
         self.assertEqual(self.call(maker, "PUT", f"/api/approvals/{aid}", {"payload": dict(jv, date="2026-02-28")})[0], 200)
         self.assertEqual(self.call(maker, "GET", f"/api/approvals/{aid}")[1]["status"], "pending")
+        # the receipt goes with the draft: its maker adds it, the approver sees it, someone else's group does not
+        st, att = self.call(maker, "POST", "/api/attachments", {"owner": "approval", "id": aid, "title": "receipt.pdf", "data": "JVBERi0xLjQ="})
+        self.assertEqual(st, 200)
+        self.assertEqual(len(self.call(checker, "GET", f"/api/attachments?owner=approval&id={aid}")[1]["rows"]), 1)
+        self.assertEqual(self.call(outsider, "GET", f"/api/attachments?owner=approval&id={aid}")[0], 403)
+        self.assertEqual(self.call(checker, "POST", "/api/attachments", {"owner": "approval", "id": aid, "title": "x", "data": "eA=="})[0], 403)
         fixed = dict(jv, date="2026-02-28", memo="Office rent Feb")
         st, r = self.call(checker, "POST", f"/api/approvals/{aid}/approve", {"payload": fixed})
         self.assertEqual(st, 200)
         e = self.call(sup, "GET", f"/api/journal/{r['id']}")[1]
         self.assertEqual((e["date"], e["memo"], e["status"], e["created_by"]), ("2026-02-28", "Office rent Feb", "posted", "maker"))
         self.assertEqual((e["meta"]["approved_by"], e["meta"]["entered_by"]), ("checker", "maker"))
+        self.assertEqual([x["title"] for x in self.call(sup, "GET", f"/api/attachments?owner=entry&id={r['id']}")[1]["rows"]], ["receipt.pdf"])
         self.assertEqual(self.call(checker, "POST", f"/api/approvals/{aid}/approve", {})[0], 400)  # only once
         # the journal's filters: entered by, approved by, amounts
         ids = lambda q: [x["id"] for x in self.call(sup, "GET", "/api/journal?" + q)[1]["rows"]]
@@ -3732,8 +3739,48 @@ class DashboardDesign(unittest.TestCase):
         self.assertTrue(dsh.designer({"is_super": True}, lambda *a: False))
         self.assertTrue(dsh.designer({}, lambda m, lv="view": m == "settings.dashboards" and lv == "edit"))
         self.assertFalse(dsh.designer({"is_admin": True}, lambda *a: False))
+        self.assertFalse(dsh.designer({"is_admin": True}, lambda *a: True))     # an administrator: only when super
         key = dsh.save_group(db, dsh.new_key(db, "Site engineers"), {"name": "Site engineers", "copy_from": "finance"})
         self.assertEqual(json.loads(db.one("SELECT look FROM user_groups WHERE key=?", (key,))["look"])["accent"], "#123456")
+
+
+class FilesInBackups(unittest.TestCase):
+    """The Excel export 'with files' is a zip: the workbook plus a folder per month of the attached files; importing that
+    zip into empty books puts every file back on its entry."""
+
+    def test_zip_round_trip(self):
+        import base64
+        import io
+        import zipfile
+        from erp import attachments, demo
+        db = Database(":memory:")
+        demo.load(db)
+        e = db.one("SELECT id, date FROM journal_entries WHERE status='posted' AND date LIKE '2026-03%' ORDER BY id") or \
+            db.one("SELECT id, date FROM journal_entries WHERE status='posted' ORDER BY id")
+        pdf = b"%PDF-1.4 a supplier invoice"
+        attachments.add(db, "entry", e["id"], {"title": "bill.pdf", "mime": "application/pdf", "data": base64.b64encode(pdf).decode()}, "boss")
+        attachments.add(db, "entry", e["id"], {"title": "bill.pdf", "mime": "application/pdf", "data": base64.b64encode(b"second").decode()}, "boss")
+        attachments.add(db, "entry", e["id"], {"title": "Drive folder", "url": "https://example.com/f"}, "boss")
+        raw = interchange.workbook_zip(db)
+        self.assertTrue(interchange.is_files_zip(raw))
+        z = zipfile.ZipFile(io.BytesIO(raw))
+        names = z.namelist()
+        y, m = int(e["date"][:4]), int(e["date"][5:7])
+        folder = f"Attachments/{y}-{m:02d} {interchange.MONTHS_EN[m - 1]} {y}/"
+        files = [n for n in names if n.startswith(folder)]
+        self.assertEqual(len(files), 2)                       # two files with the same name both kept
+        self.assertIn(pdf, [z.read(n) for n in files])
+        self.assertIn("Attachments/links.csv", names)
+        self.assertTrue(any(n.endswith(".xlsx") for n in names))
+        # the workbook inside no longer carries the files itself (they are in the folders)
+        db2 = Database(":memory:")
+        data = interchange.read_files_zip(raw, interchange.read_xlsx)
+        self.assertEqual(len(data["_extras"]["attachments"]), 3)
+        interchange.import_data(db2, data, mode="replace")
+        got = db2.q("SELECT title, size, url FROM attachments WHERE owner='entry' ORDER BY id")
+        self.assertEqual(sorted((g["title"], g["size"]) for g in got), [("Drive folder", 0), ("bill.pdf", 6), ("bill.pdf", len(pdf))])
+        interchange.import_data(db2, data, mode="new")       # the same zip again: no file twice
+        self.assertEqual(db2.one("SELECT COUNT(*) n FROM attachments")["n"], 3)
 
 
 class Support(unittest.TestCase):

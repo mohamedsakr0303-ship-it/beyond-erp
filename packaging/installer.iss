@@ -19,8 +19,8 @@
 AppId={#Id}
 AppName={#Name}
 AppVersion={#AppVersion}
-AppPublisher=BEYOND DESIGN
-AppCopyright=Copyright (c) 2026 BEYOND DESIGN. All rights reserved.
+AppPublisher=BEYONDERP
+AppCopyright=Copyright (c) 2026 BEYONDERP. All rights reserved.
 LicenseFile=EULA.txt
 DefaultDirName={localappdata}\Programs\{#Name}
 DefaultGroupName={#Name}

@@ -90,7 +90,7 @@ PWA_FILES = ("manifest.webmanifest", "manifest-beyond.webmanifest", "manifest-ri
              "manifest-original.webmanifest", "sw.js", "icon-192.png", "icon-512.png", "icon-maskable-512.png", "apple-touch-icon.png", "favicon.png")
 
 
-COPYRIGHT = "BeyondERP — © {year} BEYOND DESIGN. All rights reserved. Proprietary and confidential: copying, modifying, " \
+COPYRIGHT = "BeyondERP — © {year} BEYONDERP. All rights reserved. Proprietary and confidential: copying, modifying, " \
             "reverse-engineering or redistributing this software, in whole or in part, without written permission is prohibited."
 ESBUILD = "esbuild@0.24.0"
 

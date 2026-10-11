@@ -1508,3 +1508,6 @@ html.dnd-on,html.dnd-on *{cursor:grabbing!important;user-select:none!important;-
 .mchart .ln{fill:none;stroke-width:3;stroke-linecap:round}.mchart .ln.r{stroke:#34c77b}.mchart .ln.c{stroke:#ff5a5f}
 .mchart .ar{opacity:.18}.mchart .ar.r{fill:#34c77b}.mchart .ar.c{fill:#ff5a5f}
 .mchart .pt{stroke:var(--panel);stroke-width:1.5}.mchart .pt.r{fill:#34c77b}.mchart .pt.c{fill:#ff5a5f}
+/* a mandatory field */
+label.f .req{color:var(--bad,#e5484d);font-weight:800;margin-inline-start:3px;font-size:.85em}
+.fc-tools [data-fc=req].on{background:color-mix(in srgb,var(--bad,#e5484d) 18%,transparent);color:var(--bad,#e5484d)}

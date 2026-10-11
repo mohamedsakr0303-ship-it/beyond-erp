@@ -123,7 +123,12 @@ def clean_page(lk):
 def designer(user, can):
     """Who may design dashboards and their groups: super administrators, and whoever they allow
     (Settings → "Design dashboards & groups")."""
-    return bool((user or {}).get("is_super")) or bool(can and can("settings.dashboards", "edit"))
+    u = user or {}
+    if u.get("is_super"):
+        return True
+    # administrators hold every permission implicitly — designing stays the super administrator's unless given on
+    # purpose, so it counts only when set for a (non-administrator) person in the permission matrix
+    return not u.get("is_admin") and bool(can and can("settings.dashboards", "edit"))
 
 
 def _clean_layout(raw):

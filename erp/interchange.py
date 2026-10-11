@@ -926,15 +926,16 @@ def site_extras_import(db, ex, counts):
         from . import labour
         labour.import_rows(db, ex["attendance"], counts)
 
-def export_extras(db):
-    """What the sheets cannot hold: letterhead images, offer types and offers (JSON backups only)."""
+def export_extras(db, files=True):
+    """What the sheets cannot hold: letterhead images, offer types and offers (JSON backups only). files=False: the
+    attached files are left out (a zipped export carries them in its Attachments folders instead)."""
     return {"assets": db.q("SELECT key, mime, w, h, data FROM assets ORDER BY key"),
             "offer_types": db.q("SELECT id, name, content FROM offer_types ORDER BY id"),
             "offers": db.q("SELECT o.*, u.code AS bu_code FROM offers o LEFT JOIN business_units u ON u.id=o.bu_id ORDER BY o.id"),
             "ownership_changes": _ownership_export(db), "loans": loans.export_rows(db),
             "custodies": custody.export_rows(db), "rentals": rentals.export_rows(db), "payroll": payroll.export_rows(db),
             "sales": sales.export_rows(db), "bank": bankrec.export_rows(db), "recurring": recurring.export_rows(db),
-            "entry_meta": _entry_meta_export(db), "attachments": _attachments_export(db),
+            "entry_meta": _entry_meta_export(db), "attachments": _attachments_export(db) if files else [],
             "purchase_orders": _po_export(db), "services": _svc_export(db), "chat": _chat_export(db),
             "dashboard_groups": db.q("SELECT key, name, name_ar, layout, sort, look FROM user_groups ORDER BY sort, id"),
             "line_styles": _line_styles_export(db), "site": site_extras(db)}
@@ -985,6 +986,118 @@ def _svc_export(db):
 def _po_export(db):
     from . import purchasing
     return purchasing.export_rows(db)
+
+
+MONTHS_EN = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+MONTHS_AR = ["يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو", "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"]
+
+
+def _safe(name, n=90):
+    return (re.sub(r'[\\/:*?"<>|\x00-\x1f]+', " ", str(name or "")).strip() or "file")[:n].rstrip(" .")
+
+
+def workbook_zip(db, lang="en"):
+    """The whole books as an Excel workbook plus every attached file, in one .zip:
+      BEYOND_ERP_<date>.xlsx
+      Attachments/2026-03 March 2026/<record> — <file name>      (by the month of the entry, or when the file was added)
+      Attachments/links.csv                                      (files kept as links)
+      Attachments/manifest.json                                  (which record each file belongs to — importing the
+                                                                   zip back puts every file back on its record)"""
+    import base64
+    import zipfile
+    from . import attachments, workbook
+    names = MONTHS_AR if lang == "ar" else MONTHS_EN
+    buf = io.BytesIO()
+    rows, used, links = attachments.export_rows(db), set(), []
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr(f"BEYOND_ERP_{acc.today()}{'_AR' if lang == 'ar' else ''}.xlsx", workbook.build_workbook(db, template=False, lang=lang, files=False))
+        manifest = []
+        for r in rows:
+            day = (r["key"][0] if r["owner"] == "entry" and isinstance(r.get("key"), list) else "") or str(r.get("created_at") or "")[:10] or acc.today()
+            try:
+                y, m = int(day[:4]), int(day[5:7])
+                folder = f"{y}-{m:02d} {names[m - 1]} {y}"
+            except (ValueError, IndexError):
+                folder = "Undated"
+            what = (f"{r['key'][1]} {r['key'][2]}".strip() if r["owner"] == "entry" else f"{r['owner']} {r['key']}")
+            item = {k: r.get(k) for k in ("owner", "key", "title", "mime", "thumb", "url", "size", "created_by", "created_at")}
+            if r.get("url") and not r.get("data"):
+                links.append([folder, what, r.get("title") or "", r["url"]])
+                manifest.append(item)
+                continue
+            title = _safe(r.get("title") or "file")
+            path = f"Attachments/{folder}/{_safe(day + ' ' + what, 70)} — {title}"
+            base, k = path, 2
+            while path.lower() in used:
+                stem, dot, ext = base.rpartition(".")
+                path = f"{stem} ({k}).{ext}" if dot and "/" not in ext else f"{base} ({k})"
+                k += 1
+            used.add(path.lower())
+            try:
+                z.writestr(path, base64.b64decode(r.get("data") or ""))
+            except (ValueError, TypeError):
+                continue
+            manifest.append({**item, "path": path})
+        if links:
+            out = io.StringIO()
+            w = csv.writer(out)
+            w.writerow(["month", "record", "title", "link"])
+            w.writerows(links)
+            z.writestr("Attachments/links.csv", "\ufeff" + out.getvalue())
+        z.writestr("Attachments/manifest.json", json.dumps({"format": "beyond-erp-files-1", "files": manifest}, ensure_ascii=False, indent=1))
+    return buf.getvalue()
+
+
+def is_files_zip(raw):
+    """A zip made by workbook_zip (and not an .xlsx, which is a zip too)."""
+    import zipfile
+    try:
+        with zipfile.ZipFile(io.BytesIO(raw)) as z:
+            n = z.namelist()
+            return "[Content_Types].xml" not in n and any(x.lower().endswith(".xlsx") for x in n)
+    except zipfile.BadZipFile:
+        return False
+
+
+def read_files_zip(raw, reader):
+    """(the workbook's data, with the files from the Attachments folders put back in its extras). reader(path) reads
+    the workbook found inside."""
+    import base64
+    import tempfile
+    import zipfile
+    from pathlib import Path
+    with zipfile.ZipFile(io.BytesIO(raw)) as z:
+        books = [x for x in z.namelist() if x.lower().endswith(".xlsx") and "/" not in x.strip("/") and not Path(x).name.startswith("~$")]
+        if not books:
+            raise acc.ValidationError("The zip has no Excel workbook in it")
+        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+            f.write(z.read(books[0]))
+            tmp = f.name
+        try:
+            data = reader(tmp)
+        finally:
+            Path(tmp).unlink(missing_ok=True)
+        try:
+            man = json.loads(z.read("Attachments/manifest.json").decode("utf-8"))
+        except (KeyError, ValueError):
+            man = {}
+        files = []
+        for it in man.get("files") or []:
+            if not isinstance(it, dict):
+                continue
+            row = {k: it.get(k) for k in ("owner", "key", "title", "mime", "thumb", "url", "size", "created_by", "created_at")}
+            if it.get("path"):
+                try:
+                    row["data"] = base64.b64encode(z.read(it["path"])).decode("ascii")
+                except KeyError:
+                    continue
+            files.append(row)
+    if files:
+        data.setdefault("_extras", {})
+        if not isinstance(data["_extras"], dict):
+            data["_extras"] = {}
+        data["_extras"]["attachments"] = files
+    return data
 
 
 def _attachments_export(db):
