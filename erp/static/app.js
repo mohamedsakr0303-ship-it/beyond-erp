@@ -251,18 +251,22 @@ const THEME_SWATCHES = ["#ffffff", "#f5f6f8", "#e9ecef", "#adb5bd", "#6c757d", "
   "#fde2e4", "#e03a4b", "#9b1c31", "#ffe8cc", "#ff7f11", "#b45309", "#fff3bf", "#ffc107", "#c9a227",
   "#d3f9d8", "#52b52d", "#3b7d4f", "#1f4d2e", "#c3fae8", "#20c997", "#0f766e", "#d0ebff", "#17a2b8", "#4a85f0", "#1e3a8a",
   "#e5dbff", "#6c1cf5", "#4c0fb0", "#4b45f0", "#f3d9fa", "#956194", "#be4bdb", "#5c3d2e", "#a47148"];
+// ready-made looks (colours only — pictures are each person's own choice); light ones set the text colour too so it sits well on the page
 const THEME_PRESETS = [
-  { id: "default", en: "Default", ar: "الافتراضي", mode: "auto", primary: "", nav: "", header: "", sidebar: "" },
-  { id: "evergreen", en: "Evergreen", ar: "أخضر دائم", mode: "light", primary: "#3b7d4f", nav: "#3b7d4f", header: "", sidebar: "#3b7d4f" },
-  { id: "graphite", en: "Graphite", ar: "جرافيت", mode: "light", primary: "#3b7d4f", nav: "#343a40", header: "#3b7d4f", sidebar: "" },
-  { id: "violet", en: "Violet", ar: "بنفسجي", mode: "light", primary: "#6c1cf5", nav: "#6c1cf5", header: "", sidebar: "" },
-  { id: "mint", en: "Mint", ar: "نعناعي", mode: "light", primary: "#20c997", nav: "", header: "", sidebar: "#20c997" },
-  { id: "night", en: "Night forest", ar: "غابة ليلية", mode: "dark", primary: "#3e9a64", nav: "#3b7d4f", header: "", sidebar: "#3b7d4f" },
-  { id: "crimson", en: "Crimson", ar: "قرمزي", mode: "light", primary: "#e03a4b", nav: "#e03a4b", header: "", sidebar: "" },
-  { id: "ocean", en: "Ocean", ar: "محيط", mode: "light", primary: "#4a85f0", nav: "#1e3a8a", header: "", sidebar: "#1e3a8a" },
-  { id: "midnight", en: "Midnight", ar: "منتصف الليل", mode: "dark", primary: "#5b9dff", nav: "#111827", header: "", sidebar: "#111827" },
-  { id: "sunset", en: "Sunset", ar: "غروب", mode: "light", primary: "#ff7f11", nav: "#262626", header: "", sidebar: "#262626" },
-  { id: "plum", en: "Plum", ar: "برقوقي", mode: "light", primary: "#956194", nav: "#956194", header: "#956194", sidebar: "" },
+  { id: "default", en: "BeyondERP Night", ar: "ليل BeyondERP", mode: "auto" },
+  { id: "daylight", en: "Daylight", ar: "نهار", mode: "light", primary: "#4b45f0", button: "#4b45f0", button2: "#eef0ff", menu: "#4b45f0", page: "#f6f6fb", sidebar: "#ffffff", nav: "#ffffff", card: "#ffffff", text: "#15163a" },
+  { id: "aurora", en: "Aurora", ar: "شفق", mode: "dark", primary: "#a78bfa", button: "#8b7bff", menu: "#c4b5fd", sidebar: "#0b0a2e", nav: "#0b0a2e", page: "#05061f" },
+  { id: "blossom", en: "Blossom", ar: "زهر", mode: "light", primary: "#d6336c", button: "#e64980", button2: "#ffe3ec", menu: "#f06595", page: "#fff5f8", sidebar: "#fff0f5", nav: "#ffdeeb", card: "#ffffff", text: "#4a1d33" },
+  { id: "lavender", en: "Lavender", ar: "خزامى", mode: "light", primary: "#7950f2", button: "#845ef7", button2: "#f3f0ff", menu: "#9775fa", page: "#faf8ff", sidebar: "#f3f0ff", nav: "#e5dbff", card: "#ffffff", text: "#2f2550" },
+  { id: "rosegold", en: "Rose gold", ar: "ذهب وردي", mode: "light", primary: "#b76e79", button: "#b76e79", button2: "#f8e9e6", menu: "#d4a5a5", page: "#fdf8f6", sidebar: "#3d2c2e", nav: "#33252a", card: "#ffffff", text: "#3d2c2e" },
+  { id: "forest", en: "Forest", ar: "غابة", mode: "light", primary: "#2f7d4f", button: "#2f7d4f", button2: "#e6f2ea", menu: "#52b788", page: "#f4f8f3", sidebar: "#1b4332", nav: "#14352a", card: "#ffffff", text: "#1b2e24" },
+  { id: "sage", en: "Sage", ar: "مريمية", mode: "light", primary: "#5f7f64", button: "#5f7f64", button2: "#eef3ec", menu: "#8fae8b", page: "#f7f9f4", sidebar: "#e9efe4", nav: "#dfe8d8", card: "#fffffb", text: "#2d3a2e" },
+  { id: "ocean", en: "Ocean breeze", ar: "نسيم البحر", mode: "light", primary: "#0b7285", button: "#0c8599", button2: "#e3fafc", menu: "#22b8cf", page: "#f3fbfd", sidebar: "#0b3c49", nav: "#082f38", card: "#ffffff", text: "#0b2830" },
+  { id: "sunset", en: "Sunset glow", ar: "وهج الغروب", mode: "light", primary: "#e8590c", button: "#f76707", button2: "#fff4e6", menu: "#ff922b", page: "#fffaf3", sidebar: "#2b1a12", nav: "#24150e", card: "#ffffff", text: "#3b2314" },
+  { id: "sand", en: "Sand & stone", ar: "رمل وحجر", mode: "light", primary: "#8d6e4f", button: "#7a5c3e", button2: "#f1ebe3", menu: "#b08968", page: "#faf7f2", sidebar: "#f3ede4", nav: "#e9dfd2", card: "#fffdf9", text: "#3b2f25" },
+  { id: "deepforest", en: "Deep forest", ar: "غابة ليلية", mode: "dark", primary: "#74c69d", button: "#40916c", menu: "#74c69d", sidebar: "#0f2a20", nav: "#0b2018", page: "#0a1712" },
+  { id: "midgold", en: "Midnight gold", ar: "ذهب الليل", mode: "dark", primary: "#d4af37", button: "#d4af37", menu: "#d4af37", sidebar: "#0d0d12", nav: "#0d0d12", page: "#0a0a0f" },
+  { id: "graphite", en: "Graphite", ar: "جرافيت", mode: "dark", primary: "#9aa4b2", button: "#e5e7eb", menu: "#9aa4b2", sidebar: "#16181d", nav: "#16181d", page: "#0f1115" },
 ];
 const hexOk = c => /^#[0-9a-fA-F]{6}$/.test(c || "");
 // text that stays readable on a colour: dark ink on light colours, white on dark ones

@@ -1553,7 +1553,7 @@ label.f .req{color:var(--bad,#e5484d);font-weight:800;margin-inline-start:3px;fo
 :root[data-menu="custom"] .nav a.on::before,:root[data-menu="custom"] .grp-items a.on .dash,:root[data-menu="custom"] .grp-items a:hover .dash{background:var(--menu-c);box-shadow:none}
 :root[data-btn="custom"] .btn.pri,:root[data-theme="dark"][data-btn="custom"] .btn.pri,:root[data-btn="custom"] .newbtn{background:var(--btn-bg);color:var(--btn-ink);border-color:var(--btn-bg);
   box-shadow:0 4px 14px color-mix(in srgb,var(--btn-bg) 35%,transparent)}
-:root[data-btn2="custom"] .btn:not(.pri):not(.danger),:root[data-theme="dark"][data-btn2="custom"] .btn:not(.pri):not(.danger){background:var(--btn2-bg);color:var(--btn2-ink);border-color:transparent}
+:root[data-btn2="custom"] .btn:not(.pri):not(.danger):not(.side *),:root[data-theme="dark"][data-btn2="custom"] .btn:not(.pri):not(.danger):not(.side *){background:var(--btn2-bg);color:var(--btn2-ink);border-color:transparent}
 :root[data-page="custom"] body{background:var(--bg)}
 :root[data-page="custom"] body::before{display:none}
 :root[data-page="custom"] .content{color:var(--page-ink)}
