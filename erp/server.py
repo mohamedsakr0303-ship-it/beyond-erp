@@ -205,7 +205,10 @@ def setup(ctx):
     ctx.db.log(user["username"], "setup", "first administrator created")
     if b.get("demo") in (True, 1, "1", "true", "on"):     # a new, unshared company can start with the demo company
         from . import demo
-        demo.load(ctx.db, user["username"])
+        kind = b.get("business_type") if b.get("business_type") in demo.INDUSTRY_KEYS else None
+        if kind:
+            industries.apply(ctx.db, kind, True)
+        demo.load(ctx.db, user["username"], industry=kind)
     return ctx.with_session(ok({"user": user}), token)
 
 
@@ -3302,7 +3305,8 @@ def template_sheet(ctx):
     if ctx.q.get("demo") == "1":       # the layout filled with the demo company, ready to import
         from . import demo
         from .db import Database
-        demo_rows = (demo.all_sheets(lambda: Database(":memory:")) if name == "Bank Statement Lines" else demo.sheets()).get(name) or []
+        ind = ctx.q.get("industry") if ctx.q.get("industry") in demo.INDUSTRY_KEYS else None
+        demo_rows = (demo.all_sheets(lambda: Database(":memory:")) if name == "Bank Statement Lines" else demo.sheets(ind)).get(name) or []
     fname = re.sub(r"\W+", "_", name).strip("_") + ("_demo" if demo_rows is not None else "_template")
     if (ctx.q.get("format") or "xlsx") == "csv":
         return download(importkit.template_csv(name, demo_rows), fname + ".csv", "text/csv; charset=utf-8")
@@ -3324,7 +3328,8 @@ def onboarding_done(ctx):
 @route("GET", "/api/demo")
 def demo_info(ctx):
     from . import demo
-    return ok({"empty": demo.is_empty(ctx.db), "loaded": ctx.db.setting(demo.TAG) or ""})
+    return ok({"empty": demo.is_empty(ctx.db), "loaded": ctx.db.setting(demo.TAG) or "", "industries": demo.INDUSTRY_KEYS,
+               "names": {k: p["name"] for k, p in demo.PROFILES.items()}, "current": ctx.db.setting("business_type") or ""})
 
 
 @route("POST", "/api/demo")
@@ -3344,7 +3349,11 @@ def demo_load(ctx):
         for k, v in keep.items():
             if v:
                 ctx.db.set_setting(k, v)
-    r = demo.load(ctx.db, ctx.user["username"])
+    # with a business type: that type is set up first (its accounts, menus, payroll lists), then only its kind of data
+    kind = ctx.body.get("industry") if ctx.body.get("industry") in demo.INDUSTRY_KEYS else None
+    if kind:
+        industries.apply(ctx.db, kind, True)
+    r = demo.load(ctx.db, ctx.user["username"], industry=kind)
     ctx.db.set_setting("onboarding", "done")
     ctx.log("demo.load", json.dumps(r["counts"])[:300])
     return ok(r)

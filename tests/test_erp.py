@@ -1149,6 +1149,22 @@ class LegacyJournalWorkbook(unittest.TestCase):
 class DemoCompany(unittest.TestCase):
     """The demo company loads in one go through the import sheets and touches every module; its workbook re-imports."""
 
+    def test_demo_per_business_type(self):
+        """Each business type gets only its own kind of data, under its own name, and its books pass the audit."""
+        from erp import demo, industries
+        seen = {}
+        for k in demo.INDUSTRY_KEYS:
+            db = Database(":memory:")
+            industries.apply(db, k)
+            demo.load(db, "admin", industry=k)
+            self.assertEqual([c["check"] for c in a.audit(db) if not c["ok"]], [], k)
+            self.assertEqual(db.setting("company_name"), demo.PROFILES[k]["name"])
+            seen[k] = {t: db.one(f"SELECT COUNT(*) n FROM {t}")["n"] for t in ("rentals", "sales_orders", "boqs", "business_units")}
+        self.assertTrue(seen["scaffolding"]["rentals"] and not seen["scaffolding"]["sales_orders"] and not seen["scaffolding"]["boqs"])
+        self.assertTrue(seen["development"]["sales_orders"] and not seen["development"]["rentals"] and not seen["development"]["boqs"])
+        self.assertTrue(seen["interior"]["boqs"] and not seen["interior"]["rentals"] and not seen["interior"]["sales_orders"])
+        self.assertFalse(seen["investment"]["rentals"] or seen["investment"]["sales_orders"] or seen["investment"]["boqs"])
+
     def test_demo(self):
         from erp import demo, interchange, sales, bankrec, recurring, loans, custody, rentals
         db = Database(":memory:")

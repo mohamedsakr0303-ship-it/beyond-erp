@@ -973,7 +973,7 @@ async function renderOnboarding() {
         <option value="clean">${ar ? "دفاتر فارغة" : "A clean slate (empty books)"}</option>
         <option value="demo">${ar ? "الشركة التجريبية (بيانات وهمية للتجربة)" : "The demo company (sample data to try things)"}</option>
         <option value="import">${ar ? "بياناتي (استيراد)" : "My own data (import)"}</option></select></label>
-      <label class="f" data-ob="clean import">${ar ? "نوع النشاط" : "Business type"}<select id="obtype"><option value="">${ar ? "عام / لاحقاً" : "General / decide later"}</option>
+      <label class="f" data-ob="clean demo import">${ar ? "نوع النشاط" : "Business type"}<select id="obtype"><option value="">${ar ? "عام / لاحقاً" : "General / decide later"}</option>
         ${types.map(x => `<option value="${esc(x.key)}">${esc(ar ? x.name_ar : x.name)}</option>`).join("")}</select></label>
       <div class="f" data-ob="import">${ar ? "من" : "From"}<div class="row" style="gap:6px"><select id="obsrc" style="flex:none;width:auto">
           <option value="file">${ar ? "ملف (Excel / JSON / CSV)" : "A file (Excel / JSON / CSV)"}</option><option value="link">${ar ? "رابط Google Sheets" : "A Google Sheets link"}</option></select>
@@ -1017,7 +1017,7 @@ async function renderOnboarding() {
       $("#lerr").innerHTML = "";
       try {
         if (kind() === "clean") { busy(true); return await finish(); }
-        if (kind() === "demo") { busy(true, ar ? "جارٍ تجهيز الشركة التجريبية…" : "Setting up the demo company…"); await api("POST", "/api/demo", {}); return await finish(); }
+        if (kind() === "demo") { busy(true, ar ? "جارٍ تجهيز الشركة التجريبية…" : "Setting up the demo company…"); await api("POST", "/api/demo", { industry: $("#obtype").value }); return await finish(); }
         if (checked) { busy(true, ar ? "جارٍ الاستيراد…" : "Importing…"); const { r } = await upload(false); checked = null;
           toast(Object.entries(r.counts).map(([k, v]) => `${k}: ${v}`).slice(0, 4).join(" · ")); return await finish(); }
         busy(true, ar ? "جارٍ الفحص…" : "Checking…");
@@ -2779,14 +2779,17 @@ PAGES.data = async (view) => {
   demoCard.innerHTML = `<h2>${L2("Demo company", "الشركة التجريبية")}</h2>
     <p class="muted" style="margin-top:0">${L2("“Nile Demo Co.” — about six months of an invented business on every screen: projects (cost-plus, fixed price, flexible) with costs, negotiation discounts, payroll, VAT & withholding, a BOQ and invoices, stock, fixed assets, loans, cash custody, equipment rentals with a signed handover and deposit, unit sales on installments with cheques, recurring entries and bank statements (one reconciled, one to do). Use it to test every function or to train people.", "«شركة النيل التجريبية» — حوالي ستة أشهر من نشاط وهمي على كل الشاشات: مشروعات بتكاليفها وخصومات التفاوض والرواتب والضرائب والمقايسة والفواتير والمخزون والأصول والقروض والعهد وتأجير المعدات بمحضر تسليم وتأمين وبيع وحدات بالتقسيط بشيكات وقيود متكررة وكشوف بنك (واحد مسوّى وواحد للتجربة). استخدمها لتجربة كل الوظائف أو للتدريب.")}</p>
     <div class="row" style="gap:6px;flex-wrap:wrap"><a class="btn" href="/api/demo/workbook">⬇ ${L2("Demo company — Excel workbook (every sheet filled)", "الشركة التجريبية — ملف Excel (كل الأوراق مملوءة)")}</a>
+    ${S.boot.user.is_admin && (dm.empty || S.boot.user.is_super) ? `<select id="demoind" style="width:auto">${(dm.industries || []).map(k => `<option value="${k}"${k === dm.current ? " selected" : ""}>${esc(L2("Demo", "تجريبي") + ": " + indName(k))}</option>`).join("")}
+      <option value=""${dm.current ? "" : " selected"}>${esc(L2("Everything (every screen filled)", "كل شيء (كل الشاشات مملوءة)"))}</option></select>` : ""}
+    ${S.boot.user.is_admin ? `<p class="muted" style="flex-basis:100%;margin:4px 0 0">${L2("Each business type gets its own demo: only what that kind of business does, under its own name.", "لكل نوع نشاط بياناته التجريبية الخاصة: فقط ما يقوم به هذا النشاط وباسم مناسب له.")}</p>` : ""}
     ${S.boot.user.is_admin ? (dm.empty ? `<button class="btn pri" data-a="demoload">▶ ${L2("Load the demo company into these books", "تحميل الشركة التجريبية في هذه الدفاتر")}</button>`
       : S.boot.user.is_super ? `<button class="btn danger" data-a="demorepl">${L2("Replace everything with the demo company…", "استبدال كل البيانات بالشركة التجريبية…")}</button>` : "") : ""}</div>
     ${dm.loaded ? `<p class="muted">${L2("Demo data loaded on", "تم تحميل البيانات التجريبية في")} ${fd(dm.loaded)} — ${L2("erase it from Settings → System when you are done.", "امسحها من الإعدادات ← النظام عند الانتهاء.")}</p>` : ""}`;
   view.appendChild(demoCard);
   S.H.demoload = async el => { el.disabled = true; el.textContent = L2("Loading…", "جارٍ التحميل…");
-    try { await api("POST", "/api/demo", {}); await refreshBoot(); toast(L2("Demo company loaded", "تم تحميل الشركة التجريبية")); location.hash = "#/dashboard"; } catch (e) { fail(e); el.disabled = false; } };
+    try { await api("POST", "/api/demo", { industry: ($("#demoind") || {}).value || "" }); await refreshBoot(); toast(L2("Demo company loaded", "تم تحميل الشركة التجريبية")); location.hash = "#/dashboard"; } catch (e) { fail(e); el.disabled = false; } };
   S.H.demorepl = async () => { const c = await uiPrompt(L2("This ERASES all data in these books (a backup is made first) and loads the demo company. Type DEMO to continue.", "سيتم مسح كل البيانات (بعد عمل نسخة احتياطية) وتحميل الشركة التجريبية. اكتب DEMO للمتابعة."), "");
-    if (c == null) return; try { await api("POST", "/api/demo", { replace: true, confirm: c }); await refreshBoot(); toast(L2("Demo company loaded", "تم تحميل الشركة التجريبية")); location.hash = "#/dashboard"; } catch (e) { fail(e); } };
+    if (c == null) return; try { await api("POST", "/api/demo", { replace: true, confirm: c, industry: ($("#demoind") || {}).value || "" }); await refreshBoot(); toast(L2("Demo company loaded", "تم تحميل الشركة التجريبية")); location.hash = "#/dashboard"; } catch (e) { fail(e); } };
   S.H.impopen = el => importWizard(el.dataset.sheet);
   S.H.csv = () => openApi("/api/export/csv?" + qs({ sheet: $("#csvs").value }));
   S.H.csvt = () => openApi("/api/export/csv?" + qs({ sheet: $("#csvs").value, template: 1 }));
@@ -6257,7 +6260,7 @@ const SCREEN_SHEETS = { costs: ["Direct Costs"], expenses: ["Operating Expenses"
   payables: ["Direct Costs", "Payment Vouchers"] };
 const sheetLabel = n => { const s = (S.cache.impSheets || []).find(x => x.name === n); return s && S.lang === "ar" && s.ar ? s.ar : n; };
 const canImportSheet = n => { const s = (S.cache.impSheets || []).find(x => x.name === n); return can("import_export.import", "edit") || (s && s.perm && can(s.perm, "add")); };
-const tplUrl = (n, fmt, demo) => "/api/templates/sheet?" + qs({ sheet: n, format: fmt, lang: S.lang, demo: demo ? 1 : "" });
+const tplUrl = (n, fmt, demo) => "/api/templates/sheet?" + qs({ sheet: n, format: fmt, lang: S.lang, demo: demo ? 1 : "", industry: demo ? (S.boot.settings || {}).business_type || "" : "" });
 async function impSheets() { if (!S.cache.impSheets) { try { S.cache.impSheets = await api("GET", "/api/import-sheets"); } catch { S.cache.impSheets = []; } } return S.cache.impSheets; }
 // adds "⇅ Import" to the screen's toolbar: templates (Excel / CSV) and an import that accepts your own layout
 async function addImportMenu(view, screen) {
@@ -6681,8 +6684,21 @@ function crewPay(C) {
 }
 
 // ---------------------------------------------------------------- business type & templates
+const IND_NAMES = { general: ["General business", "نشاط عام"], interior: ["Interior design & finishing", "التصميم الداخلي والتشطيبات"],
+  contracting: ["Contracting & construction", "المقاولات والإنشاءات"], development: ["Real-estate development", "التطوير العقاري"],
+  sales: ["Trading & sales", "التجارة والمبيعات"], investment: ["Investment & holding", "الاستثمار والقابضة"],
+  scaffolding: ["Scaffolding & equipment rental", "تأجير السقالات والمعدات"] };
+function indName(k) { const n = IND_NAMES[k]; return n ? L2(n[0], n[1]) : k; }
 PAGES.industry = async (view) => {
   const d = await api("GET", "/api/industries");
+  let dm = { empty: false }; try { dm = await api("GET", "/api/demo"); } catch { /* no permission */ }
+  S.H.inddemo = async el => { const k = el.dataset.k;
+    if (dm.empty) { if (!await uiConfirm(L2(`Set up this company as “${indName(k)}” and fill it with that business's demo data (invented names and numbers)? Erase it from Settings → System when you are done.`, `ضبط الشركة كـ «${indName(k)}» وملؤها ببيانات تجريبية لهذا النشاط (أسماء وأرقام وهمية)؟ امسحها من الإعدادات ← النظام عند الانتهاء.`))) return; }
+    else { const c = await uiPrompt(L2("These books already hold data. This ERASES everything (a backup is made first), sets up this business type and loads its demo. Type DEMO to continue.", "هذه الدفاتر بها بيانات. سيتم مسح كل شيء (بعد نسخة احتياطية) وضبط نوع النشاط وتحميل بياناته التجريبية. اكتب DEMO للمتابعة."), "");
+      if (c == null) return; el.dataset.c = c; }
+    el.disabled = true; el.textContent = L2("Loading…", "جارٍ التحميل…");
+    try { await api("POST", "/api/demo", dm.empty ? { industry: k } : { industry: k, replace: true, confirm: el.dataset.c }); await refreshBoot(); toast(L2("Demo loaded", "تم تحميل البيانات التجريبية")); location.hash = "#/dashboard"; }
+    catch (e) { fail(e); el.disabled = false; } };
   const ed = can("settings.menus", "edit");
   S.H.indapply = async el => { const k = el.dataset.k, ty = d.types.find(x => x.key === k);
     if (!await uiConfirm(L2(`Set up this company as “${ty.name}”? Missing accounts are added, the sections it does not use are hidden (not deleted — Settings → Menus brings them back), and payroll gets its departments and pay items. Nothing is deleted.`, `ضبط الشركة كـ «${ty.name_ar}»؟ تُضاف الحسابات الناقصة وتُخفى الأقسام غير المستخدمة (لا تُحذف — الإعدادات ← القوائم تعيدها) وتُضبط أقسام الرواتب وبنودها. لا يُحذف شيء.`))) return;
@@ -6691,7 +6707,7 @@ PAGES.industry = async (view) => {
     <div class="grid g2">${d.types.map(ty => `<div class="card"><h2>${esc(S.lang === "ar" ? ty.name_ar : ty.name)} ${d.current === ty.key ? `<span class="chip ok">${L2("current", "الحالي")}</span>` : ""}</h2>
       <ul>${ty.guide.map(g => `<li>${esc(g)}</li>`).join("")}</ul>
       <p class="muted">${L2("Business units are", "وحدات الأعمال")}: ${esc(ty.bu)} · ${L2("hidden", "مخفي")}: ${esc(ty.hide.join(", "))}${ty.accounts.length ? `<br>${L2("adds", "يضيف")}: ${ty.accounts.map(a => esc(a.code + " " + (S.lang === "ar" ? a.name_ar : a.name))).join(" · ")}` : ""}<br>${L2("crew work items", "بنود الأطقم")}: ${ty.work_items.map(w => esc(w.item + " (" + w.unit + ")")).join(" · ")}</p>
-      <div class="row">${ed ? `<button class="btn ${d.current === ty.key ? "" : "pri"}" data-a="indapply" data-k="${ty.key}">${L2("Use for this company", "استخدم لهذه الشركة")}</button>` : ""}<a class="btn" href="/api/templates/workbook?type=${ty.key}&lang=${S.lang}">⇩ ${L2("Excel template", "قالب إكسل")}</a></div></div>`).join("")}</div>`;
+      <div class="row">${ed ? `<button class="btn ${d.current === ty.key ? "" : "pri"}" data-a="indapply" data-k="${ty.key}">${L2("Use for this company", "استخدم لهذه الشركة")}</button>` : ""}${S.boot.user.is_admin && (dm.empty || S.boot.user.is_super) ? `<button class="btn" data-a="inddemo" data-k="${ty.key}">▶ ${L2("Try its demo", "جرّب بياناته التجريبية")}</button>` : ""}<a class="btn" href="/api/templates/workbook?type=${ty.key}&lang=${S.lang}">⇩ ${L2("Excel template", "قالب إكسل")}</a></div></div>`).join("")}</div>`;
 };
 
 // files on the record pages (business unit, offer, loan, custody, rental, sale): appended under the page

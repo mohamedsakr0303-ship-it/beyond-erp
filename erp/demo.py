@@ -47,8 +47,9 @@ def _png(rgb, w=96, h=64):
     return "data:image/png;base64," + base64.b64encode(png).decode()
 
 
-def sheets():
-    """Every import layout filled with the demo company (dates end today)."""
+def sheets(industry=None):
+    """Every import layout filled with the demo company (dates end today); with a business type, only what that kind of
+    business does (see PROFILES)."""
     a0, today = _anchor()
 
     def d(month, day):
@@ -474,7 +475,188 @@ def sheets():
         {"number": "R-D000003", "date": d(5, 5), "time": "09:05", "kind": "return", "ref_number": "R-D000001", "buyer_type": "P",
          "payment_method": "C", "description": "Grout 5 kg", "code": "EG-999888777-GR05", "unit": "EA", "qty": 1, "price": 95, "vat_code": "VAT14",
          "issue": "Yes"}]
+    if industry in PROFILES:
+        S = _trim(S, industry, d, eom)
     return S
+
+
+# ---------------------------------------------------------------- one demo per business type
+# The full demo touches every screen; a company that picked a business type sees only what that kind of business does:
+# its own projects / contracts / units / rentals / shop, plus what every company has (partners, bank, payroll, expenses,
+# loans, taxes). Rows are trimmed by business unit and by code, and whatever pointed at a trimmed row goes with it.
+_GROUP = {"Contracts": "code", "Purchase Requests": "code", "Purchase Orders": "code", "Sales Contracts": "code",
+          "Rental Contracts": "ref", "BOQ Lines": "title", "Journal Vouchers": "voucher", "E-Receipts": "number"}
+_REFS = [("Invoice Lines", "number", "Sales Invoices", "number"), ("Sales Invoices", "boq_title", "BOQ Lines", "title"),
+         ("Loan Transactions", "loan", "Loans", "code"), ("Custody Expenses", "custody", "Cash Custody", "code"),
+         ("Variation Orders", "contract", "Contracts", "code"), ("Subcontractor Certificates", "contract", "Contracts", "code"),
+         ("Subcontract Payments", "contract", "Contracts", "code"), ("Supplier Quotes", "request", "Purchase Requests", "code"),
+         ("Maintenance Plans", "equipment", "Equipment", "code"), ("Equipment Usage", "equipment", "Equipment", "code"),
+         ("Maintenance Log", "equipment", "Equipment", "code"), ("Attendance", "employee", "Employees", "code"),
+         ("Service Subscriptions", "plan", "Service Plans", "code"), ("Service Subscriptions", "parent", "Service Subscriptions", "code"),
+         ("Rental Stock Lots", "item", "Rental Equipment", "code"), ("Sales Contracts", "product", "Products", "code"),
+         ("Project Tasks", "phase", "Project Phases", "name")]
+_PROJECT_SHEETS = ["BOQ Lines", "Sales Invoices", "Invoice Lines", "Price List", "Contracts", "Variation Orders",
+                   "Subcontractor Certificates", "Subcontract Payments", "Project Phases", "Project Tasks", "Purchase Requests",
+                   "Supplier Quotes", "Purchase Orders"]
+_RENTAL_SHEETS = ["Rental Equipment", "Rental Stock Lots", "Rental Contracts"]
+_SHOP_SHEETS = ["Products", "Sales Contracts", "Service Plans", "Service Subscriptions", "E-Receipts"]
+_SITE_SHEETS = ["Equipment", "Maintenance Plans", "Equipment Usage", "Maintenance Log", "Employees", "Attendance"]
+_STOCK_SHEETS = ["Warehouses", "Stock Items", "Stock Moves"]
+
+PROFILES = {
+    "interior": {"name": "Nile Interiors (demo)", "tagline": "Interior design · Fit-out · Finishing",
+                 "bus": {"PRJ-D01", "PRJ-D02", "PRJ-D03"}, "drop": _RENTAL_SHEETS + _SHOP_SHEETS + ["Equipment", "Maintenance Plans",
+                                                                                                   "Equipment Usage", "Maintenance Log"],
+                 "codes": {"Journal Vouchers": {"JV-D0C", "JV-D01", "JV-D02"}},
+                 "budget": {"4010", "5010", "6010", "6020", "6040", "6030"}},
+    "contracting": {"name": "Nile Contracting (demo)", "tagline": "General contracting · Construction",
+                    "bus": {"PRJ-D01", "PRJ-D02", "PRJ-D03"}, "drop": _RENTAL_SHEETS + _SHOP_SHEETS,
+                    "codes": {"Journal Vouchers": {"JV-D0C", "JV-D01", "JV-D02"}},
+                    "budget": {"4010", "5010", "6010", "6020", "6040", "6030"}},
+    "development": {"name": "Nile Developments (demo)", "tagline": "Real-estate development · Units for sale",
+                    "bus": {"SALES-01"}, "drop": _PROJECT_SHEETS + _RENTAL_SHEETS + _SITE_SHEETS + _STOCK_SHEETS + ["E-Receipts"],
+                    "codes": {"Products": {"U-A101", "U-A204", "U-V01", "U-S03"}, "Service Plans": {"SP-D01", "SP-D02", "SP-D03"},
+                              "Journal Vouchers": {"JV-D00", "JV-D0C", "JV-D01"}, "Fixed Assets": {"FA-D01", "FA-D03"}},
+                    "budget": {"4025", "6010", "6020", "6040", "6030"}},
+    "sales": {"name": "Nile Trading (demo)", "tagline": "Building materials · Showroom & retail",
+              "bus": {"SALES-01"}, "drop": _PROJECT_SHEETS[:-3] + ["Supplier Quotes"] + _RENTAL_SHEETS + _SITE_SHEETS,
+              "codes": {"Products": {"G-TILE", "G-SAN", "S-DES"}, "Service Plans": {"SP-D03"}, "Purchase Requests": {"PR-D002"},
+                        "Warehouses": set(), "Journal Vouchers": {"JV-D0C", "JV-D01"},
+                        "Fixed Assets": {"FA-D01", "FA-D03"}},
+              "rename": {"SALES-01": ("Showroom — Nasr City", "Branch")},
+              "budget": {"4025", "6010", "6020", "6040", "6030"}},
+    "scaffolding": {"name": "Nile Scaffolding (demo)", "tagline": "Scaffolding · Hoists · Cradles — rental",
+                    "bus": set(), "drop": _PROJECT_SHEETS + _SHOP_SHEETS + _STOCK_SHEETS + ["Employees", "Attendance"],
+                    "codes": {"Equipment": {"EQ-D02", "EQ-D03"}, "Fixed Assets": {"FA-D01", "FA-D03"},
+                              "Journal Vouchers": {"JV-D0C", "JV-D01", "JV-S01", "JV-S02", "JV-S03"}},
+                    "budget": {"6010", "6020", "6040", "6030"}},
+    "investment": {"name": "Nile Holdings (demo)", "tagline": "Investments · Holdings",
+                   "bus": set(), "drop": _PROJECT_SHEETS + _RENTAL_SHEETS + _SHOP_SHEETS + _SITE_SHEETS + _STOCK_SHEETS +
+                   ["Cash Custody", "Custody Expenses"],
+                   "codes": {"Fixed Assets": {"FA-D03"}, "Journal Vouchers": {"JV-D01", "JV-I01", "JV-I02", "JV-I03", "JV-I04", "JV-I05", "JV-I06"}},
+                   "budget": {"6010", "6040"}},
+    "general": {"name": "Nile Services (demo)", "tagline": "Services · Trading",
+                "bus": {"PRJ-D03"}, "drop": _RENTAL_SHEETS + _SHOP_SHEETS + _SITE_SHEETS + ["BOQ Lines", "Price List", "Contracts",
+                                                                                           "Variation Orders", "Project Phases", "Project Tasks"],
+                "codes": {"Journal Vouchers": {"JV-D0C", "JV-D01"}},
+                "rename": {"PRJ-D03": ("Client work — Delta Tech", "Client account")},
+                "budget": {"6010", "6020", "6040", "6030"}},
+}
+INDUSTRY_KEYS = list(PROFILES)
+
+
+def _extra(S, key, d, eom):
+    """What only that business does, added to the shared rows."""
+    if key == "investment":
+        S["Journal Vouchers"] += [
+            {"voucher": "JV-I01", "date": d(0, 10), "kind": "Journal Voucher", "memo": "Treasury bills — 182 days", "account": "1720", "debit": 1200000},
+            {"voucher": "JV-I01", "date": d(0, 10), "kind": "Journal Voucher", "memo": "Treasury bills — 182 days", "account": "1020", "credit": 1200000},
+            {"voucher": "JV-I02", "date": d(1, 6), "kind": "Journal Voucher", "memo": "Listed shares — 20,000 × 32.50", "account": "1705", "debit": 650000},
+            {"voucher": "JV-I02", "date": d(1, 6), "kind": "Journal Voucher", "memo": "Listed shares — 20,000 × 32.50", "account": "1020", "credit": 650000},
+            {"voucher": "JV-I03", "date": d(3, 20), "kind": "Journal Voucher", "memo": "Dividend received", "account": "1020", "debit": 36000},
+            {"voucher": "JV-I03", "date": d(3, 20), "kind": "Journal Voucher", "memo": "Dividend received", "account": "4091", "credit": 36000},
+            {"voucher": "JV-I04", "date": eom(4), "kind": "Journal Voucher", "memo": "Shares revalued to market (34.10)", "account": "1705", "debit": 32000},
+            {"voucher": "JV-I04", "date": eom(4), "kind": "Journal Voucher", "memo": "Shares revalued to market (34.10)", "account": "4093", "credit": 32000}]
+    if key == "investment":
+        S["Journal Vouchers"] += [
+            {"voucher": "JV-I05", "date": eom(4), "kind": "Journal Voucher", "memo": "Treasury-bill interest earned to date", "account": "1720", "debit": 118000},
+            {"voucher": "JV-I05", "date": eom(4), "kind": "Journal Voucher", "memo": "Treasury-bill interest earned to date", "account": "4095", "credit": 118000},
+            {"voucher": "JV-I06", "date": d(4, 9), "kind": "Journal Voucher", "memo": "Sold 5,000 shares × 36.00", "account": "1020", "debit": 180000},
+            {"voucher": "JV-I06", "date": d(4, 9), "kind": "Journal Voucher", "memo": "Sold 5,000 shares × 36.00 — cost", "account": "1705", "credit": 162500},
+            {"voucher": "JV-I06", "date": d(4, 9), "kind": "Journal Voucher", "memo": "Sold 5,000 shares × 36.00 — gain", "account": "4092", "credit": 17500}]
+        for r in S["Operating Expenses"] + S["Recurring Entries"]:
+            if r.get("account") == "6010":
+                r.update(amount=8000)
+    if key == "sales":
+        buyers = ["Atlas Builders", "Mona Adel", "Tamer Nabil", "Karim Fahmy", "Delta Tech Solutions"]
+        for m in range(1, 6):
+            S["Stock Moves"] += [
+                {"date": d(m, 2), "type": "Receipt", "warehouse": "Main Store", "item": "Ceramic tiles 60x60", "unit": "m2", "qty": 600,
+                 "rate": 300, "vendor": "Cleopatra Tiles Trading", "paid": 180000},
+                {"date": d(m, 2), "type": "Receipt", "warehouse": "Main Store", "item": "Bathroom set (basin + WC)", "unit": "set", "qty": 8,
+                 "rate": 6200, "vendor": "Cleopatra Tiles Trading", "paid": 49600}]
+            for j in range(2):
+                b = buyers[(m * 2 + j) % len(buyers)]
+                code = f"SO-T{m}{j}"
+                tiles, sets = 230 + 30 * m - 40 * j, 2 + j
+                S["Sales Contracts"] += [      # paid in full, except the last order of each month (on account)
+                    {"code": code, "date": d(m, 8 + j * 10), "customer": b, "bu_code": "SALES-01", "product": "G-TILE", "qty": tiles,
+                     "vat_code": "VAT14", "plan": "full", "confirm": "Yes",
+                     "collected": 0 if j else round((tiles * 420 + sets * 9500) * 1.14, 2)},
+                    {"code": code, "date": d(m, 8 + j * 10), "customer": b, "bu_code": "SALES-01", "product": "G-SAN", "qty": sets}]
+        for r in S["Operating Expenses"] + S["Recurring Entries"]:      # a showroom, not a design office
+            if r.get("account") == "6010":
+                r.update(amount=15000, description=r["description"].replace("Office rent", "Showroom rent"))
+    if key == "scaffolding":
+        for r in S["Rental Contracts"]:      # the hoist + cradle contract went ahead: ordered and signed
+            if r["ref"] == "R2" and r.get("site"):
+                r.update(start_date=d(1, 15), quote_date=d(1, 5), duration_months=6, po_number="PO-DT-310",
+                         signed_client="Eng. Samy (Delta Tech)", signed_us="Hossam Adel")
+        S["Rental Contracts"] += (
+            [{"ref": "R3", "client": "Atlas Builders", "site": "Villas cluster C", "site_location": "Sheikh Zayed", "quote_date": d(0, 5),
+              "start_date": d(0, 12), "duration_months": 8, "min_days": 30, "line_kind": "item", "item": it, "qty": q, "rate": rt,
+              "po_number": "PO-ATL-52", "signed_client": "Eng. Hany (Atlas)", "signed_us": "Hossam Adel"}
+             for it, q, rt in (("SC-FRM2", 150, 60), ("SC-BRD36", 60, 25), ("SC-CLF", 250, 5), ("SC-CLS", 250, 5), ("SC-TUB6", 100, 30))] +
+            [{"ref": "R4", "client": "Delta Tech Solutions", "site": "Branch façade", "site_location": "Maadi", "quote_date": d(0, 15),
+              "start_date": d(0, 20), "duration_months": 6, "line_kind": "item", "item": "CR-MOT", "qty": 1, "rate": 12000,
+              "po_number": "PO-DT-288", "signed_client": "Eng. Samy (Delta Tech)", "signed_us": "Hossam Adel"}])
+        for r in S["Operating Expenses"] + S["Recurring Entries"]:      # a yard, not a design office
+            if r.get("account") == "6010":
+                r.update(amount=12000, description=r["description"].replace("Office rent", "Yard & office rent"))
+        S["Journal Vouchers"] += [r for v, day, acct, memo, amt in (
+            ("JV-S01", d(3, 2), "5065", "Installation crew — Atlas Tower B", 9000),
+            ("JV-S02", d(3, 2), "5067", "Transport to Tower B — 2 trips", 4000),
+            ("JV-S03", d(4, 12), "5066", "Frames repaired & painted", 3500))
+            for r in ({"voucher": v, "date": day, "kind": "Journal Voucher", "memo": memo, "account": acct, "debit": amt},
+                      {"voucher": v, "date": day, "kind": "Journal Voucher", "memo": memo, "account": "1010", "credit": amt})]
+
+
+def _trim(S, key, d, eom):
+    p = PROFILES[key]
+    _extra(S, key, d, eom)
+    for name in p["drop"]:
+        S.pop(name, None)
+    for name, keep in p.get("codes", {}).items():
+        if name in S:
+            field = _GROUP.get(name, "code")
+            S[name] = [r for r in S[name] if r.get(field, r.get("code")) in keep]
+    # by business unit — a row (or a group of rows sharing a code) for a unit this business does not have goes
+    bus = p["bus"]
+    for name, rows in list(S.items()):
+        if name == "Business Units":
+            S[name] = [r for r in rows if r["code"] in bus]
+            continue
+        g = _GROUP.get(name)
+        bad = {r.get(g) for r in rows if g and r.get("bu_code") and r["bu_code"] not in bus}
+        S[name] = [r for r in rows if not (r.get("bu_code") and r["bu_code"] not in bus) and not (g and r.get(g) in bad)]
+    S["Stock Moves"] = [r for r in S.get("Stock Moves", []) if r.get("type") != "Transfer" or r.get("to_warehouse") in
+                        {w["name"] for w in S.get("Warehouses", [])}] if "Stock Moves" in S else None
+    if S["Stock Moves"] is None:
+        S.pop("Stock Moves")
+    # whatever pointed at a removed row goes with it (twice: chains such as quotes → requests → units)
+    for _ in range(2):
+        for child, field, parent, pfield in _REFS:
+            if child not in S:
+                continue
+            have = {r.get(pfield) for r in S.get(parent, [])}
+            S[child] = [r for r in S[child] if not r.get(field) or r[field] in have]
+    for code, (name, typ) in p.get("rename", {}).items():
+        for r in S.get("Business Units", []):
+            if r["code"] == code:
+                r.update(name=name, type=typ)
+    # paying a supplier only makes sense if something was bought from them
+    bought = {r.get("vendor") or r.get("supplier") for n in ("Direct Costs", "Stock Moves", "Operating Expenses", "Rental Stock Lots",
+                                                              "Purchase Orders") for r in S.get(n, [])}
+    if "Payment Vouchers" in S:
+        S["Payment Vouchers"] = [r for r in S["Payment Vouchers"] if r["party"] in bought]
+    used = {str(v) for name, rows in S.items() if name not in ("Parties",) for r in rows for v in r.values() if isinstance(v, str)}
+    S["Parties"] = [r for r in S.get("Parties", []) if r["name"] in used]
+    S["Budgets"] = [r for r in S.get("Budgets", []) if r["account"] in p["budget"]]
+    S["Settings"] = [{**r, "value": p["name"]} if r["key"] == "default:company_name" else
+                     {**r, "value": p["tagline"]} if r["key"] == "default:company_tagline" else
+                     {**r, "value": p["name"].replace(" (demo)", "") + " (fictitious)"} if r["key"] == "default:company_legal_name" else r
+                     for r in S["Settings"]]
+    return {k: v for k, v in S.items() if v}
 
 
 def is_empty(db):
@@ -497,34 +679,41 @@ def _bank_lines(db, account, date_from, date_to, skip_last=True):
     return out
 
 
-def load(db, user="", replace=False):
-    """Fill the books with the demo company. Refuses on books that already hold data unless replace (wipes first)."""
+def load(db, user="", replace=False, industry=None):
+    """Fill the books with the demo company — the whole of it, or what one business type does (industry, after
+    industries.apply). Refuses on books that already hold data unless replace (wipes first)."""
     from . import (assets, bankrec, documents, interchange, recurring, rentals, sales)
     if not is_empty(db) and not replace:
         raise ValidationError("These books already hold data — load the demo into an empty company, or choose to replace everything")
     a0, today = _anchor()
-    S = sheets()
+    S = sheets(industry)
+    bu_has = lambda code: bool(db.one("SELECT 1 FROM business_units WHERE code=?", (code,)))
+    sale_has = lambda code: bool(db.one("SELECT 1 FROM sales_orders WHERE code=?", (code,)))
+    prod_has = lambda code: bool(db.one("SELECT 1 FROM products WHERE code=?", (code,)))
+    sub_has = lambda code: bool(db.one("SELECT 1 FROM subscriptions WHERE code=?", (code,)))
     with db.tx():
         res = interchange.import_data(db, S, mode="replace" if replace else "append", user=user)
         # ---- steps that only exist on screens
-        # a negotiation: keep the discount as earnings on the cost-plus villa
-        db.conn.execute("UPDATE business_units SET negotiation='keep' WHERE code='PRJ-D01'")
-        acc.record_project_cost(db, {"date": S["Direct Costs"][7]["date"], "bu_code": "PRJ-D01", "account": "5010",
-                                     "description": "Sanitary ware (negotiated)", "vendor": "Cleopatra Tiles Trading", "qty": 1,
-                                     "rate": 58000, "savings": 6000, "paid": 52000, "negotiation": "keep",
-                                     "deal_ref": "CLEO-02", "deal_status": "Settled"}, user)
-        # a supplier deal settled for less than owed
-        acc.record_supplier_discount(db, {"date": S["Direct Costs"][6]["date"], "party": "Hassan Aluminium", "amount": 2000,
-                                          "bu_code": "PRJ-D01", "deal_ref": "HASSAN-01", "memo": "Final account discount"}, user)
+        if bu_has("PRJ-D01"):
+            # a negotiation: keep the discount as earnings on the cost-plus villa
+            db.conn.execute("UPDATE business_units SET negotiation='keep' WHERE code='PRJ-D01'")
+            acc.record_project_cost(db, {"date": S["Direct Costs"][7]["date"], "bu_code": "PRJ-D01", "account": "5010",
+                                       "description": "Sanitary ware (negotiated)", "vendor": "Cleopatra Tiles Trading", "qty": 1,
+                                       "rate": 58000, "savings": 6000, "paid": 52000, "negotiation": "keep",
+                                       "deal_ref": "CLEO-02", "deal_status": "Settled"}, user)
+            # a supplier deal settled for less than owed
+            acc.record_supplier_discount(db, {"date": S["Direct Costs"][6]["date"], "party": "Hassan Aluminium", "amount": 2000,
+                                            "bu_code": "PRJ-D01", "deal_ref": "HASSAN-01", "memo": "Final account discount"}, user)
         # partner equity events: a partner loan, part repaid, a share transfer
         from . import equity
-        equity.post(db, "loan", {"partner": "Omar Fouad", "amount": 100000, "rate": 10, "date": S["Payroll"][2]["date"],
+        pay_dates = [r["date"] for r in S["Payroll"]]
+        equity.post(db, "loan", {"partner": "Omar Fouad", "amount": 100000, "rate": 10, "date": pay_dates[2],
                                  "method": "Bank Transfer"}, user)
-        equity.post(db, "repay", {"partner": "Omar Fouad", "amount": 20000, "date": S["Payroll"][3]["date"],
+        equity.post(db, "repay", {"partner": "Omar Fouad", "amount": 20000, "date": pay_dates[3],
                                   "method": "Bank Transfer"}, user)
-        equity.post(db, "transfer", {"seller": "Hossam Adel", "buyer": "Sara Kamal", "share": 5, "date": S["Payroll"][3]["date"]}, user)
+        equity.post(db, "transfer", {"seller": "Hossam Adel", "buyer": "Sara Kamal", "share": 5, "date": pay_dates[3]}, user)
         # an asset bought for cash, one sold
-        assets.save(db, {"name": "Laser level & tools", "account": "1410", "acquired": S["Payroll"][1]["date"], "cost": 42000,
+        assets.save(db, {"name": "Laser level & tools", "account": "1410", "acquired": pay_dates[1], "cost": 42000,
                          "life_months": 36, "pay": "cash", "method": "Bank Transfer"}, user=user)
         last_month = (today.replace(day=1) - _dt.timedelta(days=1)).isoformat()[:7]
         assets.run_depreciation(db, last_month, user=user)
@@ -532,79 +721,109 @@ def load(db, user="", replace=False):
             rentals.run_depreciation(db, last_month, user=user)
         except ValidationError:
             pass
-        rentals.starter(db)  # the remaining handover-form pieces, the frame set and the scaffold calculator
-        # rental: deliver contract R1 on a signed handover, take the deposit, invoice the first month
-        r1 = db.one("SELECT id FROM rentals WHERE client='Atlas Builders' ORDER BY id LIMIT 1")["id"]
-        rr = rentals.get(db, r1)
-        rentals.deposit(db, rr, {"type": "receive", "amount": 20000, "date": rr["start_date"] or acc.today(), "method": "Bank Transfer"}, user)
-        t = rentals.handover_template(db, r1, "delivery")
-        t.update(signed=1, decision="safe", date=rr["start_date"], checklist=[dict(c, ok="yes") for c in t["checklist"]])
-        rentals.confirm_handover(db, rentals.save_handover(db, r1, t))
-        first = rr["start_date"]
-        end = (_dt.date.fromisoformat(first).replace(day=1) + _dt.timedelta(days=40)).replace(day=1) - _dt.timedelta(days=1)
-        xid = rentals.create_invoice(db, r1, {"from": first, "to": min(end.isoformat(), acc.today())}, user)
-        acc.post_extract(db, xid if isinstance(xid, int) else xid["id"], user=user)
+        if S.get("Rental Contracts"):
+            rentals.starter(db)  # the remaining handover-form pieces, the frame set and the scaffold calculator
+            # rental: deliver contract R1 on a signed handover, take the deposit, invoice the first month
+            r1 = db.one("SELECT id FROM rentals WHERE client='Atlas Builders' ORDER BY id LIMIT 1")["id"]
+            rr = rentals.get(db, r1)
+            rentals.deposit(db, rr, {"type": "receive", "amount": 20000, "date": rr["start_date"] or acc.today(), "method": "Bank Transfer"}, user)
+            t = rentals.handover_template(db, r1, "delivery")
+            t.update(signed=1, decision="safe", date=rr["start_date"], checklist=[dict(c, ok="yes") for c in t["checklist"]])
+            rentals.confirm_handover(db, rentals.save_handover(db, r1, t))
+            first = rr["start_date"]
+            end = (_dt.date.fromisoformat(first).replace(day=1) + _dt.timedelta(days=40)).replace(day=1) - _dt.timedelta(days=1)
+            xid = rentals.create_invoice(db, r1, {"from": first, "to": min(end.isoformat(), acc.today())}, user)
+            acc.post_extract(db, xid if isinstance(xid, int) else xid["id"], user=user)
+            if industry == "scaffolding":
+                # a rental yard's demo: R1 billed every month to date, and the hoist + cradle contract delivered and billed too
+                def bill_to_date(rid, start):
+                    frm = _dt.date.fromisoformat(start)
+                    while True:
+                        to = (frm.replace(day=1) + _dt.timedelta(days=40)).replace(day=1) - _dt.timedelta(days=1)
+                        if to >= today:
+                            break
+                        try:
+                            x = rentals.create_invoice(db, rid, {"from": frm.isoformat(), "to": to.isoformat()}, user)
+                            acc.post_extract(db, x if isinstance(x, int) else x["id"], user=user)
+                        except ValidationError:
+                            break
+                        frm = to + _dt.timedelta(days=1)
+                bill_to_date(r1, (end + _dt.timedelta(days=1)).isoformat())
+                for r2 in db.q("SELECT id, start_date FROM rentals WHERE id<>? AND po_number<>'' ORDER BY start_date", (r1,)):
+                    t2 = rentals.handover_template(db, r2["id"], "delivery")
+                    t2.update(signed=1, decision="safe", date=r2["start_date"], checklist=[dict(c, ok="yes") for c in t2["checklist"]])
+                    rentals.confirm_handover(db, rentals.save_handover(db, r2["id"], t2))
+                    bill_to_date(r2["id"], r2["start_date"])
         # sales: cheques for the apartment (one cleared, one bounced), deliver the goods sale, a design offer
-        s1 = sales.get(db, "SO-D001")
-        det = sales.detail(db, s1["id"])
-        inst = [r for r in det["schedule"] if r["kind"] == "installment"][:3]
-        sales.collect(db, s1["id"], {"date": s1["date"], "method": "Cheque",
-                                     "cheques": [{"number": f"30{i}", "bank": "Demo Bank", "due": r["due"], "amount": r["amount"]}
-                                                 for i, r in enumerate(inst, 1)]}, user)
-        ch = db.q("SELECT id, due FROM sale_cheques WHERE sale_id=? ORDER BY due", (s1["id"],))
-        if ch and ch[0]["due"] <= acc.today():
-            sales.cheque(db, ch[0]["id"], "clear", {"date": ch[0]["due"]}, user)
-        if len(ch) > 1 and ch[1]["due"] <= acc.today():
-            sales.cheque(db, ch[1]["id"], "bounce", {"date": ch[1]["due"]}, user)
-        s2 = sales.get(db, "SO-D002")
-        sales.deliver(db, s2["id"], {"date": s2["date"]}, user)
-        p = sales.get_product(db, "U-A101")
-        for col, title in (((180, 140, 100), "Front view"), ((90, 120, 160), "Living room")):
-            sales.add_media(db, p["id"], {"kind": "photo", "title": title, "data": _png(col), "thumb": _png(col, 48, 32)})
-        sales.add_media(db, p["id"], {"kind": "video", "title": "Walkthrough (link)", "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"})
-        sales.add_media(db, p["id"], {"kind": "model", "title": "3D model (link)", "url": "https://modelviewer.dev/shared-assets/models/Astronaut.glb"})
+        if sale_has("SO-D001"):
+            s1 = sales.get(db, "SO-D001")
+            det = sales.detail(db, s1["id"])
+            inst = [r for r in det["schedule"] if r["kind"] == "installment"][:3]
+            sales.collect(db, s1["id"], {"date": s1["date"], "method": "Cheque",
+                                         "cheques": [{"number": f"30{i}", "bank": "Demo Bank", "due": r["due"], "amount": r["amount"]}
+                                                     for i, r in enumerate(inst, 1)]}, user)
+            ch = db.q("SELECT id, due FROM sale_cheques WHERE sale_id=? ORDER BY due", (s1["id"],))
+            if ch and ch[0]["due"] <= acc.today():
+                sales.cheque(db, ch[0]["id"], "clear", {"date": ch[0]["due"]}, user)
+            if len(ch) > 1 and ch[1]["due"] <= acc.today():
+                sales.cheque(db, ch[1]["id"], "bounce", {"date": ch[1]["due"]}, user)
+        for so in (db.q("SELECT code FROM sales_orders WHERE code LIKE 'SO-T%' ORDER BY date") if industry == "sales" else []):
+            o = sales.get(db, so["code"])
+            sales.deliver(db, o["id"], {"date": o["date"]}, user)
+        if sale_has("SO-D002"):
+            s2 = sales.get(db, "SO-D002")
+            sales.deliver(db, s2["id"], {"date": s2["date"]}, user)
+        if prod_has("U-A101"):
+            p = sales.get_product(db, "U-A101")
+            for col, title in (((180, 140, 100), "Front view"), ((90, 120, 160), "Living room")):
+                sales.add_media(db, p["id"], {"kind": "photo", "title": title, "data": _png(col), "thumb": _png(col, 48, 32)})
+            sales.add_media(db, p["id"], {"kind": "video", "title": "Walkthrough (link)", "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"})
+            sales.add_media(db, p["id"], {"kind": "model", "title": "3D model (link)", "url": "https://modelviewer.dev/shared-assets/models/Astronaut.glb"})
         for code, col in (("U-A204", (120, 160, 120)), ("U-V01", (200, 170, 90)), ("G-TILE", (170, 170, 170)), ("G-SAN", (230, 230, 240))):
-            sales.add_media(db, sales.get_product(db, code)["id"], {"kind": "photo", "data": _png(col), "thumb": _png(col, 48, 32)})
-        types = documents.list_offer_types(db)
+            if prod_has(code):
+                sales.add_media(db, sales.get_product(db, code)["id"], {"kind": "photo", "data": _png(col), "thumb": _png(col, 48, 32)})
+        types = documents.list_offer_types(db) if bu_has("PRJ-D02") else []
         if types:
             ty = types[0]
             documents.save_offer(db, {**{k: v for k, v in ty.items() if k not in ("id", "name")}, "type_id": ty["id"],
                                       "client": "Laila Samir", "project": "Apartment 14 — design package", "date": S["BOQ Lines"][0]["date"],
                                       "status": "Sent"})
-        # purchase orders: one part received (vouchers posted on credit), one approved and waiting, one draft to approve
-        from . import purchasing
-        bu = db.one("SELECT code FROM business_units ORDER BY id LIMIT 1")["code"]
-        wh = db.one("SELECT name FROM warehouses ORDER BY id LIMIT 1")["name"]
-        mid = (today.replace(day=1) - _dt.timedelta(days=20)).isoformat()
-        p1 = purchasing.save(db, {"supplier": "El-Nour Building Materials", "date": mid, "bu_code": bu, "warehouse": wh, "vat_code": "VAT14",
-                                  "expected": mid, "terms": "Delivery to site within 7 days. Payment 30 days from invoice.",
-                                  "lines": [{"kind": "cost", "description": "Cement 50 kg bags", "qty": 200, "unit": "bag", "rate": 115, "account": "5010"},
-                                            {"kind": "cost", "description": "Steel rebar 12 mm", "qty": 2, "unit": "ton", "rate": 38500, "account": "5010"},
-                                            {"kind": "stock", "description": "Tile adhesive", "qty": 40, "unit": "bag", "rate": 95}]}, "Sara Kamal")
-        purchasing.approve(db, p1, "admin")
-        l1 = purchasing.get(db, p1)["lines"]
-        purchasing.receive(db, p1, {"date": mid, "supplier_ref": "DN-4471", "lines": [{"line_id": l1[0]["id"], "qty": 120},
-                                                                                     {"line_id": l1[2]["id"], "qty": 40}]}, "Sara Kamal")
-        p2 = purchasing.save(db, {"supplier": "Hassan Aluminium", "date": acc.today(), "bu_code": bu,
-                                  "expected": (today + _dt.timedelta(days=14)).isoformat(),
-                                  "lines": [{"kind": "cost", "description": "Aluminium windows — supply & install", "qty": 18, "unit": "m2",
-                                             "rate": 3200, "account": "5020"}]}, "Sara Kamal")
-        purchasing.approve(db, p2, "admin")
-        purchasing.save(db, {"supplier": "Spark Electric", "date": acc.today(), "terms": "Quotation SE-221",
-                             "lines": [{"kind": "expense", "description": "Office UPS replacement", "qty": 1, "rate": 14500, "account": "6090"}]},
-                        "Sara Kamal")
+        if bu_has("PRJ-D01"):
+            # purchase orders: one part received (vouchers posted on credit), one approved and waiting, one draft to approve
+            from . import purchasing
+            bu = db.one("SELECT code FROM business_units ORDER BY id LIMIT 1")["code"]
+            wh = db.one("SELECT name FROM warehouses ORDER BY id LIMIT 1")["name"]
+            mid = (today.replace(day=1) - _dt.timedelta(days=20)).isoformat()
+            p1 = purchasing.save(db, {"supplier": "El-Nour Building Materials", "date": mid, "bu_code": bu, "warehouse": wh, "vat_code": "VAT14",
+                                      "expected": mid, "terms": "Delivery to site within 7 days. Payment 30 days from invoice.",
+                                      "lines": [{"kind": "cost", "description": "Cement 50 kg bags", "qty": 200, "unit": "bag", "rate": 115, "account": "5010"},
+                                                {"kind": "cost", "description": "Steel rebar 12 mm", "qty": 2, "unit": "ton", "rate": 38500, "account": "5010"},
+                                                {"kind": "stock", "description": "Tile adhesive", "qty": 40, "unit": "bag", "rate": 95}]}, "Sara Kamal")
+            purchasing.approve(db, p1, "admin")
+            l1 = purchasing.get(db, p1)["lines"]
+            purchasing.receive(db, p1, {"date": mid, "supplier_ref": "DN-4471", "lines": [{"line_id": l1[0]["id"], "qty": 120},
+                                                                                         {"line_id": l1[2]["id"], "qty": 40}]}, "Sara Kamal")
+            p2 = purchasing.save(db, {"supplier": "Hassan Aluminium", "date": acc.today(), "bu_code": bu,
+                                      "expected": (today + _dt.timedelta(days=14)).isoformat(),
+                                      "lines": [{"kind": "cost", "description": "Aluminium windows — supply & install", "qty": 18, "unit": "m2",
+                                                 "rate": 3200, "account": "5020"}]}, "Sara Kamal")
+            purchasing.approve(db, p2, "admin")
+            purchasing.save(db, {"supplier": "Spark Electric", "date": acc.today(), "terms": "Quotation SE-221",
+                                 "lines": [{"kind": "expense", "description": "Office UPS replacement", "qty": 1, "rate": 14500, "account": "6090"}]},
+                            "Sara Kamal")
         # subscriptions: a maintenance visit (one extra beyond the plan), then bill every period started by today
         from . import services
-        sub = services.get(db, "SUB-D02")
+        if sub_has("SUB-D02") and sub_has("SUB-D01"):
+            sub = services.get(db, "SUB-D02")
 
-        def d(month, day):
-            y, m = a0.year + (a0.month - 1 + month) // 12, (a0.month - 1 + month) % 12 + 1
-            return min(_dt.date(y, m, min(day, calendar.monthrange(y, m)[1])), today).isoformat()
-        for k, txt in ((2, "Monthly check — water heater"), (3, "Monthly check"), (3, "Emergency: kitchen leak")):
-            services.save_visit(db, sub["id"], {"date": d(k, 20 if "Emergency" in txt else 10), "technician": "Eng. Fathy Plumbing",
-                                                "description": txt, "cost": 350})
-        services.save_visit(db, services.get(db, "SUB-D01")["id"], {"date": acc.today(), "status": "scheduled",
-                                                                     "technician": "Spark Electric", "description": "Quarterly preventive visit"})
+            def d(month, day):
+                y, m = a0.year + (a0.month - 1 + month) // 12, (a0.month - 1 + month) % 12 + 1
+                return min(_dt.date(y, m, min(day, calendar.monthrange(y, m)[1])), today).isoformat()
+            for k, txt in ((2, "Monthly check — water heater"), (3, "Monthly check"), (3, "Emergency: kitchen leak")):
+                services.save_visit(db, sub["id"], {"date": d(k, 20 if "Emergency" in txt else 10), "technician": "Eng. Fathy Plumbing",
+                                                    "description": txt, "cost": 350})
+            services.save_visit(db, services.get(db, "SUB-D01")["id"], {"date": acc.today(), "status": "scheduled",
+                                                                         "technician": "Spark Electric", "description": "Quarterly preventive visit"})
         services.run(db, acc.today(), user)
         # recurring entries due by now
         recurring.run(db, acc.today(), user)
@@ -638,7 +857,7 @@ def load(db, user="", replace=False):
         # a stocktake of the main store: two tiles broken, one bathroom set missing — posted as adjustments
         from . import stocktake
         main = db.one("SELECT id FROM warehouses WHERE name='Main Store'")
-        if main:
+        if main and db.one("SELECT 1 FROM stock_moves LIMIT 1"):
             cid = stocktake.start(db, {"warehouse_id": main["id"], "date": acc.today(), "counted_by": "Mahmoud Saber",
                                        "notes": "Quarterly count"}, user)
             short = {"Ceramic tiles 60x60": 2, "Bathroom set (basin + WC)": 1}
