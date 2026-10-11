@@ -731,24 +731,27 @@ function renderNav(active) {
   const open = new Set(store.get("navOpen", "").split(",").filter(Boolean));
   const parent = { bu: "bus", invoice: "invoices", boq: "boqs", offer: "offers", offertypes: "offers", loan: "loans", cust: "custody",
     rental: "rentals", product: "products", sale: "sales", bankstmt: "bankrec", extract: "extracts" }[active.split("/")[0]];
-  for (const [g, items] of window.MENU) {
+  const em = effectiveMenu(), full = location.hash.replace(/^#\//, "");
+  const exactCopy = em.some(([, items]) => items.some(i => i[4] && i[1] === full));   // a copy with these exact filters is the one lit
+  for (const [g, items] of em) {
     const vis = items.filter(i => can(i[2]) && shown(i[2]));
     if (!vis.length) continue;
     let links = "", has = false;
-    for (const [k, r] of vis) {
-      const on = active === r || active.startsWith(r + "/") || parent === r;
-      if (on) { title = t(k); group = t(g); has = true; }
-      links += g === "g_home" ? `<a href="#/${r}" class="${on ? "on" : ""}" title="${esc(t(k))}">${svg(ROUTE_IC[r] || GROUP_IC[g])}<span>${esc(t(k))}</span></a>`
-        : `<a href="#/${r}" class="${on ? "on" : ""}"><i class="dash"></i><span>${esc(t(k))}</span></a>`;
+    for (const it of vis) {
+      const [k, r] = it, base = r.split("?")[0], name = itemLabel(it);
+      const on = it[4] ? r === full : !exactCopy && (active === base || active.startsWith(base + "/") || parent === base);
+      if (on) { title = name; group = groupLabel(g); has = true; }
+      links += g === "g_home" ? `<a href="#/${r}" data-k="${esc(k)}" class="${on ? "on" : ""}" title="${esc(name)}">${svg(ROUTE_IC[base] || GROUP_IC[g])}<span>${esc(name)}</span></a>`
+        : `<a href="#/${r}" data-k="${esc(k)}" class="${on ? "on" : ""}"><i class="dash"></i><span>${esc(name)}</span></a>`;
     }
     if (g === "g_home") { html += `<div class="grp-solo">${links}</div>`; continue; }
-    html += `<div class="grp-wrap ${!hoverNav() && (has || open.has(g)) ? "open" : ""} ${has ? "has" : ""}"><button class="grp" data-a="grp" data-g="${g}" title="${esc(t(g))}">${svg(GROUP_IC[g] || "grid")}<span>${esc(t(g))}</span>${svg("chev", "chev")}</button><div class="grp-items"><div class="grp-in"><div class="fly-t">${esc(t(g))}</div>${links}</div></div></div>`;
+    html += `<div class="grp-wrap ${!hoverNav() && (has || open.has(g)) ? "open" : ""} ${has ? "has" : ""}"><button class="grp" data-a="grp" data-g="${g}" title="${esc(groupLabel(g))}">${svg(GROUP_IC[g] || "grid")}<span>${esc(groupLabel(g))}</span>${svg("chev", "chev")}</button><div class="grp-items"><div class="grp-in"><div class="fly-t">${esc(t(g))}</div>${links}</div></div></div>`;
   }
   nav.innerHTML = html;
   $("#ttl").textContent = title || t("m_dashboard");
   $("#crumb").textContent = group;
   // detail pages (a business unit, an invoice, a quotation, an offer…) get a back arrow to the list they came from
-  const inMenu = window.MENU.some(([, items]) => items.some(i => i[1] === active));
+  const inMenu = effectiveMenu().some(([, items]) => items.some(i => i[1].split("?")[0] === active));
   const back = $(".top-back"); if (back) back.style.display = inMenu ? "none" : "";
   $$(".bottombar .bb-home").forEach(a => a.classList.toggle("on", active === "dashboard"));
   loadAlerts();
@@ -1149,7 +1152,7 @@ function readForm(f) {
   });
   // a field shown only in the user's language: when the main (English) value is empty, use the Arabic one
   Object.keys(v).forEach(k => { const base = k.endsWith("_ar") ? k.slice(0, -3) : null; if (base && base in v && !String(v[base]).trim() && String(v[k]).trim()) v[base] = v[k]; });
-  return v;
+  return foldExtras(v);
 }
 // a text kept in two languages (name / name_ar …): only the user's language is shown; the other value is kept as it is
 const inLang = (en, ar, l, extra = {}) => S.lang === "ar"
@@ -1157,6 +1160,7 @@ const inLang = (en, ar, l, extra = {}) => S.lang === "ar"
   : [{ ...extra, k: en[0], l, v: en[1] }, { k: ar[0], v: ar[1], hidden: 1 }];
 // field: {k,l,type,opts:[[v,label]],v,span,req,list,step,ph,help,change,input}
 function form(fields, cols = 2) {
+  fields = customFields(fields);
   return `<div class="grid g${cols}">` + fields.map(f => {
     if (f.html) return `<div class="${f.span || ""}">${f.html}</div>`;
     if (f.hidden) return `<input type="hidden" name="${f.k}" value="${esc(f.v ?? "")}">`;
@@ -6376,7 +6380,8 @@ function entryOptionCards() {
   const ed = can("settings.menus", "edit"), hid = S.boot.settings.hidden_modules || [];
   const subs = S.boot.enums.submodules;
   const secs = S.boot.enums.modules.filter(m => !["settings", "users", "dashboard"].includes(m));
-  const hideCard = `<div class="card"><h2>${L2("Show or hide sections and screens", "إظهار أو إخفاء الأقسام والشاشات")}</h2><p class="muted">${t("hidden_note")}</p><div class="grid g4">
+  const hideCard = `<div class="banner info">${L2("Tip: right-click (long-press on a phone) any screen or section in the menu to rename, move, duplicate or hide it; any field in a form to rename, hide, give it a default or add your own detail fields; any row for its actions; any column heading to hide or sort it.", "تلميح: اضغط بالزر الأيمن (أو اضغط مطولاً على الهاتف) على أي شاشة أو قسم في القائمة لإعادة تسميته أو نقله أو تكراره أو إخفائه، وعلى أي حقل في نموذج لإعادة تسميته أو إخفائه أو وضع قيمة افتراضية أو إضافة حقول تفاصيل، وعلى أي سطر لإجراءاته، وعلى عنوان أي عمود لإخفائه أو ترتيبه.")}</div>
+    <div class="card"><h2>${L2("Show or hide sections and screens", "إظهار أو إخفاء الأقسام والشاشات")}</h2><p class="muted">${t("hidden_note")}</p><div class="grid g4">
     ${secs.map(m => `<div><label class="f chk"><input type="checkbox" class="hidmod" value="${m}" ${hid.includes(m) ? "" : "checked"} ${ed ? "" : "disabled"}><b>${t("mod_" + m)}</b></label>
       ${(subs[m] || []).map(sc => `<label class="f chk" style="margin-inline-start:22px"><input type="checkbox" class="hidmod" value="${m}.${sc}" ${hid.includes(m + "." + sc) ? "" : "checked"} ${ed ? "" : "disabled"}>${esc(t(window.SUBPERM[m + "." + sc] || sc))}</label>`).join("")}</div>`).join("")}</div>
     ${ed ? `<div class="row" style="margin-top:10px"><select id="hidpreset" class="in" style="max-width:280px"><option value="">${L2("Start from a business type…", "ابدأ من نوع النشاط…")}</option>
@@ -8663,6 +8668,271 @@ new MutationObserver(muts => {
     for (const n of nodes) { if (!n.isConnected) continue; if (n.tagName === "SELECT") enhanceSelect(n); else if (n.tagName === "INPUT") { if (n.hasAttribute("list")) enhanceList(n); } else enhancePickers(n); }
   });
 }).observe(document.documentElement, { childList: true, subtree: true });
+
+// ================================================== right-click (and long-press) everywhere
+// One menu for whatever is under the pointer: a menu screen or section (rename, move to another section, reorder,
+// duplicate with the screen's current filters, hide / restore, new sections), a form field (rename, hide, default value,
+// extra detail fields), a list row (its own actions: open, edit, duplicate, void… and copy), a column heading (hide /
+// show, sort). Menu and form changes are company-wide and need Settings → Menus "edit"; columns are per person.
+// Shift + right-click keeps the browser's own menu.
+const ML = () => (S.boot && S.boot.settings && S.boot.settings.menu_layout) || {};
+const FC = () => (S.boot && S.boot.settings && S.boot.settings.form_custom) || {};
+const canMenus = () => can("settings.menus", "edit");
+const clone = o => JSON.parse(JSON.stringify(o || {}));
+const lbl2 = o => (o && (o[S.lang] || o.en || o.ar)) || "";
+// the menu as this company arranged it: items moved between sections, copies, order, hidden items, new sections
+function effectiveMenu() {
+  const L = ML(), move = L.move || {}, order = L.order || {}, hide = new Set(L.hide || []);
+  const groups = window.MENU.map(([g]) => [g, []]).concat((L.groups || []).map(cg => [cg.k, []]));
+  const gi = Object.fromEntries(groups);
+  for (const [g, items] of window.MENU) for (const it of items) (gi[move[it[0]]] || gi[g]).push(it);
+  const src = Object.fromEntries(window.MENU.flatMap(([, it]) => it).map(i => [i[0], i]));
+  for (const c of L.copies || []) if (src[c.of] && gi[c.g]) gi[c.g].push([c.k, c.route, src[c.of][2], src[c.of][3], c]);
+  for (const [g, items] of groups) { const o = order[g]; if (o) { const pos = k => { const i = o.indexOf(k); return i < 0 ? 1e6 : i; };
+    items.sort((a, b) => pos(a[0]) - pos(b[0])); } }
+  let res = groups.map(([g, items]) => [g, items.filter(i => !hide.has(i[0]))]);
+  if (L.gorder) { const pos = g => { const i = L.gorder.indexOf(g); return g === "g_home" ? -1 : i < 0 ? 1e6 : i; }; res = res.sort((a, b) => pos(a[0]) - pos(b[0])); }
+  return res.filter(([g]) => !(L.ghide || []).includes(g));
+}
+const groupLabel = g => { const cg = (ML().groups || []).find(x => x.k === g); return cg && !(S.boot.settings.menu_labels || {})[g] ? lbl2(cg.label) : t(g); };
+const itemLabel = it => it[4] && !(S.boot.settings.menu_labels || {})[it[0]] ? lbl2(it[4].label) : t(it[0]);
+async function saveLayout(mut) {
+  const L = clone(ML()); mut(L);
+  try { await api("PUT", "/api/settings", { menu_layout: L }); S.boot.settings.menu_layout = L; renderNav(parseHash().parts.join("/")); toast(t("saved")); }
+  catch (e) { fail(e); }
+}
+async function saveMenuLabel(k, text) {
+  const labels = clone(S.boot.settings.menu_labels); labels[k] = { ...(labels[k] || {}) };
+  if (text) labels[k][S.lang] = text; else delete labels[k][S.lang];
+  if (!Object.keys(labels[k]).length) delete labels[k];
+  try { await api("PUT", "/api/settings", { menu_labels: labels }); S.boot.settings.menu_labels = labels; renderNav(parseHash().parts.join("/")); toast(t("saved")); }
+  catch (e) { fail(e); }
+}
+// ---- the menu itself (a submenu replaces the list, with a way back: works the same with a mouse and a finger)
+let ctxEl = null, ctxAt = 0;
+function ctxClose() { if (ctxEl) { ctxEl.remove(); ctxEl = null; } }
+function ctxOpen(x, y, title, items) {
+  ctxClose(); ctxAt = performance.now();
+  const m = ctxEl = document.createElement("div"); m.className = "ctx"; m.setAttribute("role", "menu");
+  const stack = [];
+  const draw = (head, list) => {
+    m.innerHTML = `${head ? `<div class="ctx-h">${stack.length ? `<button type="button" class="ctx-back" aria-label="${esc(L2("Back", "رجوع"))}">‹</button>` : ""}<span>${esc(head)}</span></div>` : ""}` +
+      list.map((it, i) => it.sep ? `<div class="ctx-sep"></div>` : it.note ? `<div class="ctx-note">${esc(it.note)}</div>`
+        : `<button type="button" role="menuitem" class="ctx-i${it.danger ? " danger" : ""}${it.on ? " on" : ""}" data-i="${i}" ${it.dis ? "disabled" : ""}><span class="ctx-ic">${it.ic || ""}</span><span>${esc(it.label)}</span>${it.sub ? `<span class="ctx-more">›</span>` : it.hint ? `<span class="ctx-hint">${esc(it.hint)}</span>` : ""}</button>`).join("");
+    m.onclick = async e => {
+      e.stopPropagation();
+      if (e.target.closest(".ctx-back")) { const prev = stack.pop(); draw(prev.head, prev.list); return; }
+      const b = e.target.closest("[data-i]"); if (!b) return;
+      const it = list[+b.dataset.i];
+      if (it.sub) { stack.push({ head, list }); draw(it.label, typeof it.sub === "function" ? it.sub() : it.sub); return; }
+      ctxClose(); if (it.act) await it.act();
+    };
+    place();
+    const first = $(".ctx-i:not([disabled])", m); if (first) first.focus({ preventScroll: true });
+  };
+  const place = () => { const r = m.getBoundingClientRect(), W = innerWidth, H = innerHeight;
+    m.style.left = Math.max(6, Math.min(x, W - r.width - 6)) + "px"; m.style.top = Math.max(6, Math.min(y, H - r.height - 6)) + "px"; };
+  document.body.appendChild(m); draw(title, items);
+  m.addEventListener("keydown", e => {
+    const all = $$(".ctx-i:not([disabled])", m), i = all.indexOf(document.activeElement);
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); const n = all.length; if (n) all[(i + (e.key === "ArrowDown" ? 1 : n - 1) + n) % n].focus(); }
+    else if (e.key === "Escape") { e.preventDefault(); ctxClose(); }
+    else if (e.key === "ArrowLeft" || e.key === "Backspace") { const bk = $(".ctx-back", m); if (bk) { e.preventDefault(); bk.click(); } }
+  });
+}
+document.addEventListener("pointerdown", e => { if (ctxEl && !ctxEl.contains(e.target)) ctxClose(); }, true);
+addEventListener("resize", ctxClose); addEventListener("hashchange", ctxClose);
+document.addEventListener("scroll", e => { if (ctxEl && !ctxEl.contains(e.target) && performance.now() - ctxAt > 250) ctxClose(); }, true);   // not a scroll already on its way
+const copyText = async txt => { try { await navigator.clipboard.writeText(txt); toast(L2("Copied", "تم النسخ")); } catch { uiPrompt(L2("Copy:", "انسخ:"), txt); } };
+
+// ---- menu screens and sections
+function navItemMenu(a) {
+  const k = a.dataset.k, route = a.getAttribute("href").replace(/^#\//, ""), em = effectiveMenu();
+  const g = (em.find(([, items]) => items.some(i => i[0] === k)) || [])[0];
+  const items = (em.find(([gg]) => gg === g) || [, []])[1], idx = items.findIndex(i => i[0] === k), it = items[idx] || [];
+  const copy = it[4], here = parseHash(), hereRoute = here.parts.join("/"), withFilters = location.hash.replace(/^#\//, "");
+  const out = [{ ic: "↗", label: L2("Open", "فتح"), act: () => { location.hash = "#/" + route; } },
+    { ic: "⧉", label: L2("Open in a new tab", "فتح في تبويب جديد"), act: () => open(location.pathname + "#/" + route, "_blank") },
+    { ic: "🔗", label: L2("Copy link", "نسخ الرابط"), act: () => copyText(location.origin + location.pathname + "#/" + route) }];
+  if (!canMenus()) return out.concat({ note: L2("Renaming and arranging the menu needs Settings → Menus (edit).", "إعادة التسمية وترتيب القائمة تحتاج صلاحية تعديل القوائم.") });
+  const moveTo = gg => saveLayout(L => { if (copy) { const c = (L.copies || []).find(x => x.k === k); if (c) c.g = gg; } else { L.move = L.move || {}; L.move[k] = gg; } });
+  const reorder = d => saveLayout(L => { L.order = L.order || {}; const keys = items.map(i => i[0]); const j = idx + d; if (j < 0 || j >= keys.length) return;
+    [keys[idx], keys[j]] = [keys[j], keys[idx]]; L.order[g] = keys; });
+  const dup = (r, name) => saveLayout(L => { L.copies = L.copies || []; const ck = "c_" + Date.now().toString(36);
+    L.copies.push({ k: ck, of: copy ? copy.of : k, route: r, g, label: { [S.lang]: name } });
+    L.order = L.order || {}; const keys = items.map(i => i[0]); keys.splice(idx + 1, 0, ck); L.order[g] = keys; });
+  out.push({ sep: 1 },
+    { ic: "✎", label: L2("Rename…", "إعادة تسمية…"), act: async () => { const v = await uiPrompt(L2("New name (empty = the original)", "الاسم الجديد (فارغ = الأصلي)"), itemLabel(it)); if (v === null) return;
+      if (copy) saveLayout(L => { const c = (L.copies || []).find(x => x.k === k); if (c) c.label = { ...c.label, [S.lang]: v.trim() || c.label[S.lang] }; }); else saveMenuLabel(k, v.trim()); } },
+    { ic: "⇄", label: L2("Move to section", "نقل إلى قسم"), sub: () => em.filter(([gg]) => gg !== "g_home").map(([gg]) => ({ label: groupLabel(gg), on: gg === g, act: () => gg !== g && moveTo(gg) }))
+      .concat({ sep: 1 }, { ic: "＋", label: L2("New section…", "قسم جديد…"), act: async () => { const name = await uiPrompt(L2("Name of the new section", "اسم القسم الجديد"), ""); if (!name || !name.trim()) return;
+        const gk = "cg_" + Date.now().toString(36); await saveLayout(L => { L.groups = L.groups || []; L.groups.push({ k: gk, label: { [S.lang]: name.trim() } });
+          if (copy) { const c = (L.copies || []).find(x => x.k === k); if (c) c.g = gk; } else { L.move = L.move || {}; L.move[k] = gk; } }); } }) },
+    { ic: "↑", label: L2("Move up", "تحريك لأعلى"), dis: idx <= 0, act: () => reorder(-1) },
+    { ic: "↓", label: L2("Move down", "تحريك لأسفل"), dis: idx >= items.length - 1, act: () => reorder(1) },
+    { ic: "⧉", label: L2("Duplicate", "تكرار"), act: async () => { const v = await uiPrompt(L2("Name of the copy", "اسم النسخة"), itemLabel(it) + " 2"); if (v && v.trim()) dup(route, v.trim()); } });
+  if (hereRoute === route.split("?")[0] && withFilters !== route && withFilters.includes("?"))
+    out.push({ ic: "⚲", label: L2("Duplicate with the filters on screen", "تكرار بالفلاتر الظاهرة"), act: async () => {
+      const v = await uiPrompt(L2("Name of the copy (it opens with today's filters)", "اسم النسخة (تفتح بنفس الفلاتر)"), itemLabel(it) + " — " + L2("filtered", "مفلتر")); if (v && v.trim()) dup(withFilters, v.trim()); } });
+  if (copy && hereRoute === route.split("?")[0] && withFilters !== route)
+    out.push({ ic: "⚲", label: L2("Save the filters on screen into this copy", "حفظ الفلاتر الظاهرة في هذه النسخة"), act: () => saveLayout(L => { const c = (L.copies || []).find(x => x.k === k); if (c) c.route = withFilters; }) });
+  out.push({ sep: 1 }, { ic: "◌", label: L2("Hide from the menu", "إخفاء من القائمة"), act: () => saveLayout(L => { L.hide = [...new Set([...(L.hide || []), k])]; }) });
+  if (copy) out.push({ ic: "✕", danger: 1, label: L2("Delete this copy", "حذف هذه النسخة"), act: async () => { if (await uiConfirm(L2("Delete this menu copy? The screen and its data stay.", "حذف نسخة القائمة؟ الشاشة وبياناتها تبقى."))) saveLayout(L => { L.copies = (L.copies || []).filter(x => x.k !== k); }); } });
+  else if ((ML().move || {})[k] || (S.boot.settings.menu_labels || {})[k]) out.push({ ic: "↺", label: L2("Back to its original name and section", "إرجاع الاسم والقسم الأصليين"),
+    act: async () => { await saveLayout(L => { if (L.move) delete L.move[k]; }); if ((S.boot.settings.menu_labels || {})[k]) saveMenuLabel(k, ""); } });
+  return out;
+}
+function navGroupMenu(btn) {
+  const g = btn.dataset.g, em = effectiveMenu(), gs = em.map(([gg]) => gg).filter(gg => gg !== "g_home"), i = gs.indexOf(g), L0 = ML();
+  const custom = (L0.groups || []).find(x => x.k === g);
+  const out = [{ ic: "▾", label: btn.closest(".grp-wrap").classList.contains("open") ? L2("Collapse", "طي") : L2("Expand", "فتح"), act: () => btn.click() }];
+  if (!canMenus()) return out.concat({ note: L2("Arranging the menu needs Settings → Menus (edit).", "ترتيب القائمة يحتاج صلاحية تعديل القوائم.") });
+  const hidden = [...(L0.hide || [])].map(k => { const it = window.MENU.flatMap(([, x]) => x).find(x => x[0] === k); const c = (L0.copies || []).find(x => x.k === k);
+    return it ? [k, t(k)] : c ? [k, lbl2(c.label)] : null; }).filter(Boolean);
+  const greorder = d => saveLayout(L => { const arr = gs.slice(); const j = i + d; if (j < 0 || j >= arr.length) return; [arr[i], arr[j]] = [arr[j], arr[i]]; L.gorder = arr; });
+  out.push({ sep: 1 },
+    { ic: "✎", label: L2("Rename section…", "إعادة تسمية القسم…"), act: async () => { const v = await uiPrompt(L2("New name (empty = the original)", "الاسم الجديد (فارغ = الأصلي)"), groupLabel(g)); if (v === null) return;
+      if (custom) saveLayout(L => { const c = (L.groups || []).find(x => x.k === g); if (c && v.trim()) c.label = { ...c.label, [S.lang]: v.trim() }; }); else saveMenuLabel(g, v.trim()); } },
+    { ic: "↑", label: L2("Move section up", "تحريك القسم لأعلى"), dis: i <= 0, act: () => greorder(-1) },
+    { ic: "↓", label: L2("Move section down", "تحريك القسم لأسفل"), dis: i >= gs.length - 1, act: () => greorder(1) },
+    { ic: "＋", label: L2("New section below…", "قسم جديد أسفله…"), act: async () => { const name = await uiPrompt(L2("Name of the new section", "اسم القسم الجديد"), ""); if (!name || !name.trim()) return;
+      const gk = "cg_" + Date.now().toString(36); saveLayout(L => { L.groups = L.groups || []; L.groups.push({ k: gk, label: { [S.lang]: name.trim() } }); const arr = gs.slice(); arr.splice(i + 1, 0, gk); L.gorder = arr; }); } },
+    { ic: "◎", label: L2("Show hidden screens", "إظهار الشاشات المخفية") + (hidden.length ? ` (${hidden.length})` : ""), dis: !hidden.length,
+      sub: () => hidden.map(([k, name]) => ({ label: name, act: () => saveLayout(L => { L.hide = (L.hide || []).filter(x => x !== k); }) })) },
+    { ic: "◌", label: L2("Hide this section", "إخفاء هذا القسم"), act: () => saveLayout(L => { L.ghide = [...new Set([...(L.ghide || []), g])]; }) });
+  if ((L0.ghide || []).length) out.push({ ic: "◎", label: L2("Show hidden sections", "إظهار الأقسام المخفية"), sub: () => L0.ghide.map(gg => ({ label: groupLabel(gg), act: () => saveLayout(L => { L.ghide = (L.ghide || []).filter(x => x !== gg); }) })) });
+  if (custom && !em.find(([gg]) => gg === g)[1].length) out.push({ ic: "✕", danger: 1, label: L2("Delete this (empty) section", "حذف هذا القسم (الفارغ)"), act: () => saveLayout(L => { L.groups = (L.groups || []).filter(x => x.k !== g); }) });
+  out.push({ sep: 1 }, { ic: "↺", danger: 1, label: L2("Reset the whole menu…", "إعادة القائمة كلها للأصل…"), act: async () => {
+    if (await uiConfirm(L2("Put every screen back in its original section and order, show everything hidden here and remove copies and new sections? Renamed labels stay (Settings → Menus).", "إرجاع كل الشاشات لأقسامها وترتيبها الأصلي وإظهار المخفي هنا وحذف النسخ والأقسام الجديدة؟ الأسماء المعدلة تبقى (الإعدادات ← القوائم)."), { danger: true }))
+      saveLayout(L => { Object.keys(L).forEach(x => delete L[x]); }); } });
+  return out;
+}
+
+// ---- form fields: rename, hide, a default value, extra detail fields (kept in the record's notes)
+const formKey = () => parseHash().parts[0] || "dashboard";
+const NOTE_KEYS = ["memo", "notes", "description", "note"];
+function fieldMenu(lab) {
+  const ctl = $("[name]", lab), k = ctl && ctl.name; if (!k) return null;
+  const fk = formKey(), fc = FC()[fk] || {}, cur = fc[k] || {}, extra = (fc.__extra || []).find(x => x.k === k);
+  const text = (lab.childNodes[0] && lab.childNodes[0].textContent || "").trim() || k;
+  const save = mut => { const all = clone(FC()); all[fk] = all[fk] || {}; mut(all[fk]); if (!Object.keys(all[fk]).length) delete all[fk];
+    return api("PUT", "/api/settings", { form_custom: all }).then(() => { S.boot.settings.form_custom = all; toast(L2("Saved — reopen the form to see it", "تم الحفظ — أعد فتح النموذج لرؤيته")); }).catch(fail); };
+  const out = [];
+  if (!canMenus()) return [{ ic: "⧉", label: L2("Copy the value", "نسخ القيمة"), act: () => copyText(ctl.value || "") },
+    { note: L2("Renaming and hiding fields needs Settings → Menus (edit).", "تعديل الحقول يحتاج صلاحية تعديل القوائم.") }];
+  out.push({ ic: "✎", label: L2("Rename this field…", "إعادة تسمية الحقل…"), act: async () => { const v = await uiPrompt(L2("New label (empty = the original)", "الاسم الجديد (فارغ = الأصلي)"), text); if (v === null) return;
+      save(F => { F[k] = { ...(F[k] || {}) }; if (v.trim()) F[k].label = { ...(F[k].label || {}), [S.lang]: v.trim() }; else delete F[k].label; if (!Object.keys(F[k]).length) delete F[k]; }); } });
+  if (!ctl.required) out.push({ ic: "◌", label: L2("Hide this field", "إخفاء هذا الحقل"), act: () => save(F => { F[k] = { ...(F[k] || {}), hide: 1 }; }) });
+  if (ctl.type !== "file" && ctl.type !== "hidden") out.push({ ic: "★", label: L2("Use the current value as the default", "استخدم القيمة الحالية كقيمة افتراضية"),
+    hint: ctl.type === "checkbox" ? (ctl.checked ? "✓" : "✗") : String(ctl.value || "").slice(0, 18),
+    act: () => save(F => { F[k] = { ...(F[k] || {}), def: ctl.type === "checkbox" ? ctl.checked : ctl.value }; }) });
+  if (cur.def !== undefined) out.push({ ic: "☆", label: L2("Remove the default", "إزالة القيمة الافتراضية"), act: () => save(F => { delete F[k].def; if (!Object.keys(F[k]).length) delete F[k]; }) });
+  const form = lab.closest("form"), hasNote = form && NOTE_KEYS.some(n => $(`[name="${n}"]`, form));
+  if (hasNote) out.push({ ic: "＋", label: L2("Add a detail field…", "إضافة حقل تفاصيل…"), sub: [["text", L2("Text", "نص")], ["number", L2("Number", "رقم")], ["date", L2("Date", "تاريخ")]].map(([ty, nm]) => ({ label: nm,
+    act: async () => { const name = await uiPrompt(L2("Name of the new field (its value is saved in the notes of each record)", "اسم الحقل الجديد (قيمته تُحفظ في ملاحظات كل سجل)"), ""); if (!name || !name.trim()) return;
+      save(F => { F.__extra = [...(F.__extra || []), { k: "x_" + Date.now().toString(36), type: ty, label: { [S.lang]: name.trim() } }]; }); } })) });
+  if (extra) out.push({ ic: "✕", danger: 1, label: L2("Remove this detail field", "حذف حقل التفاصيل"), act: () => save(F => { F.__extra = (F.__extra || []).filter(x => x.k !== k); if (!F.__extra.length) delete F.__extra; }) });
+  const hidden = Object.entries(fc).filter(([x, o]) => x !== "__extra" && o.hide);
+  if (hidden.length) out.push({ ic: "◎", label: L2("Show hidden fields", "إظهار الحقول المخفية") + ` (${hidden.length})`, sub: () => hidden.map(([x, o]) => ({ label: lbl2(o.label) || x,
+    act: () => save(F => { delete F[x].hide; if (!Object.keys(F[x]).length) delete F[x]; }) })) });
+  if (Object.keys(fc).length) out.push({ sep: 1 }, { ic: "↺", danger: 1, label: L2("Reset this form", "إعادة هذا النموذج للأصل"), act: async () => {
+    if (await uiConfirm(L2("Undo every rename, hidden field, default and added field on this screen's forms?", "إلغاء كل تعديلات الحقول على نماذج هذه الشاشة؟"), { danger: true })) save(F => { Object.keys(F).forEach(x => delete F[x]); }); } });
+  return out;
+}
+// form(): what the field menu set up is applied as the form is drawn
+function customFields(fields) {
+  const fc = FC()[formKey()]; if (!fc) return fields;
+  const out = fields.map(f => { const o = f.k && fc[f.k]; if (!o) return f;
+    const g = { ...f }; if (o.label) g.l = lbl2(o.label) || g.l;
+    if (o.def !== undefined && (g.v === undefined || g.v === null || g.v === "")) g.v = o.def;
+    if (o.hide && !g.req && !g.html) g.hidden = 1;
+    return g; });
+  if (fc.__extra && fields.some(f => NOTE_KEYS.includes(f.k))) out.push(...fc.__extra.map(x => ({ k: x.k, l: lbl2(x.label), type: x.type })));
+  return out;
+}
+// readForm(): added detail fields go into the record's notes as "Name: value" lines
+function foldExtras(v) {
+  const xs = Object.keys(v).filter(k => /^x_[a-z0-9]+$/.test(k)); if (!xs.length) return v;
+  const defs = (FC()[formKey()] || {}).__extra || [], note = NOTE_KEYS.find(n => n in v);
+  const lines = xs.map(k => { const d = defs.find(x => x.k === k); return String(v[k] || "").trim() ? `${d ? lbl2(d.label) : k}: ${v[k]}` : ""; }).filter(Boolean);
+  xs.forEach(k => delete v[k]);
+  if (note && lines.length) v[note] = [String(v[note] || "").trim(), ...lines].filter(Boolean).join(note === "memo" ? " · " : "\n");
+  return v;
+}
+
+// ---- list rows: the row's own actions, entries' voucher actions, copy
+function rowMenu(tr) {
+  const out = [], id = tr.dataset.a === "openv" ? tr.dataset.id : null;
+  const cells = [...tr.children].map(td => td.innerText.trim()).filter(Boolean);
+  if (id) {
+    const viaDrawer = sel => async () => { await openVoucher(id); const b = $(`.drawer ${sel}`); if (b) b.click(); else toast(L2("Not available for this entry", "غير متاح لهذا القيد"), true); };
+    out.push({ ic: "↗", label: L2("Open", "فتح"), act: () => openVoucher(id) },
+      { ic: "✎", label: L2("Edit (details, lines, title)…", "تعديل (التفاصيل والبنود والعنوان)…"), act: async () => { await openVoucher(id); const b = $(".drawer [data-a=vform]") || $(".drawer [data-a=vedit]"); if (b) b.click(); else toast(L2("This entry cannot be edited (void, reversed or locked)", "لا يمكن تعديل هذا القيد"), true); } },
+      { ic: "⧉", label: t("duplicate"), act: viaDrawer("[data-a=vdup]") },
+      { ic: "↻", label: L2("Make recurring", "اجعله متكرراً"), act: viaDrawer("[data-a=vrc]") },
+      { ic: "⇆", label: t("reverse"), act: viaDrawer("[data-a=vrev]") },
+      { ic: "⊘", danger: 1, label: t("void"), act: viaDrawer("[data-a=vvoid]") },
+      { sep: 1 }, { ic: "#", label: L2("Copy the entry number", "نسخ رقم القيد"), act: () => copyText(String(id)) });
+  } else {
+    if (tr.classList.contains("click") || tr.dataset.a || tr.dataset.href) out.push({ ic: "↗", label: L2("Open", "فتح"), act: () => tr.click() });
+    const acts = $$("button, a.btn, a[href]", tr).filter(b => b.innerText.trim() && !b.closest(".ctx"));
+    acts.slice(0, 10).forEach(b => out.push({ ic: b.classList.contains("danger") ? "⊘" : "•", danger: b.classList.contains("danger"), label: b.innerText.trim().slice(0, 40),
+      act: () => b.click() }));
+  }
+  const box = $("input[type=checkbox]", tr);
+  if (box) out.push({ ic: "☑", label: box.checked ? L2("Unselect", "إلغاء التحديد") : L2("Select (for bulk actions)", "تحديد (للإجراءات الجماعية)"), act: () => box.click() });
+  out.push({ ic: "⧉", label: L2("Copy the row", "نسخ السطر"), act: () => copyText(cells.join("\t")) });
+  const tbl = tr.closest(".tbl"); if (tbl && isPhone()) out.push({ ic: "⤢", label: L2("Full view", "عرض كامل"), act: () => wideView(tbl) });
+  return out;
+}
+// ---- column headings: hide / show (per person, per screen), sort the rows on screen
+const colKey = () => "cols:" + formKey();
+const hiddenCols = () => store.get(colKey(), []) || [];
+function applyCols(root) {
+  const hid = hiddenCols(); if (!hid.length && !root.querySelector(".col-off")) return;
+  $$(".tbl table", root).forEach(tb => { const hs = $$("thead th", tb);
+    hs.forEach((th, i) => { const off = hid.includes(th.textContent.trim()); if (th.classList.contains("col-off") === off) return;
+      $$(`tr > :nth-child(${i + 1})`, tb).forEach(c => c.classList.toggle("col-off", off)); }); });
+}
+function colMenu(th) {
+  const name = th.textContent.trim(), tb = th.closest("table"), i = [...th.parentNode.children].indexOf(th), hid = hiddenCols();
+  const sort = dir => { const body = tb.tBodies[0]; if (!body) return; const rows = [...body.rows].filter(r => !r.classList.contains("total"));
+    const val = r => { const c = r.children[i]; const s = c ? c.innerText.trim() : ""; const n = parseFloat(s.replace(/[^\d.\-()]/g, "").replace(/^\((.*)\)$/, "-$1")); return /\d/.test(s) && !isNaN(n) && !/[a-z؀-ۿ]{3,}/i.test(s) ? n : s.toLowerCase(); };
+    rows.sort((a, b) => { const x = val(a), y = val(b); return (x > y ? 1 : x < y ? -1 : 0) * dir; });
+    const tot = [...body.rows].filter(r => r.classList.contains("total")); rows.concat(tot).forEach(r => body.appendChild(r)); };
+  const out = [{ ic: "↑", label: L2("Sort A → Z / smallest first", "ترتيب تصاعدي"), act: () => sort(1) }, { ic: "↓", label: L2("Sort Z → A / largest first", "ترتيب تنازلي"), act: () => sort(-1) }];
+  if (name) out.push({ ic: "◌", label: L2(`Hide “${name}”`, `إخفاء «${name}»`), act: () => { store.set(colKey(), [...new Set([...hid, name])]); applyCols($("#view")); } });
+  if (hid.length) out.push({ ic: "◎", label: L2("Show hidden columns", "إظهار الأعمدة المخفية") + ` (${hid.length})`, sub: () => hid.map(h => ({ label: h,
+    act: () => { store.set(colKey(), hid.filter(x => x !== h)); applyCols($("#view")); } })).concat({ sep: 1 }, { label: L2("Show all", "إظهار الكل"), act: () => { store.set(colKey(), []); applyCols($("#view")); } }) });
+  out.push({ note: L2("Columns you hide are hidden only for you, on this screen.", "الأعمدة المخفية تخفى لك أنت فقط في هذه الشاشة.") });
+  return out;
+}
+new MutationObserver(() => { const v = $("#view"); if (v && hiddenCols().length) applyCols(v); }).observe(document.documentElement, { childList: true, subtree: true });
+
+// ---- what is under the pointer
+function ctxFor(target) {
+  if (!S.boot || !S.boot.user || target.closest(".ctx, .lp")) return null;
+  const a = target.closest("#nav a[data-k]"); if (a) return [itemLabelByKey(a.dataset.k), navItemMenu(a)];
+  const g = target.closest("#nav .grp[data-g]"); if (g) return [groupLabel(g.dataset.g), navGroupMenu(g)];
+  if (target.closest("input, textarea, select, [contenteditable]")) return null;      // the browser's own copy / paste menu
+  const lab = target.closest(".drawer label.f, .drawer .sw-field, #view form label.f"); if (lab) { const m = fieldMenu(lab); return m && [L2("Field", "حقل"), m]; }
+  const th = target.closest("#view .tbl thead th, .drawer .tbl thead th"); if (th) return [th.textContent.trim() || L2("Column", "عمود"), colMenu(th)];
+  const tr = target.closest("#view .tbl tbody tr, .drawer .tbl tbody tr"); if (tr && !tr.classList.contains("total")) return [L2("Row", "سطر"), rowMenu(tr)];
+  return null;
+}
+const itemLabelByKey = k => { for (const [, items] of effectiveMenu()) { const it = items.find(i => i[0] === k); if (it) return itemLabel(it); } return t(k); };
+document.addEventListener("contextmenu", e => {
+  if (e.shiftKey) return;
+  const r = ctxFor(e.target); if (!r || !r[1] || !r[1].length) return;
+  e.preventDefault(); ctxOpen(e.clientX, e.clientY, r[0], r[1]);
+});
+// a long press on a phone does the same
+{ let timer = 0, sx = 0, sy = 0, fired = false;
+  document.addEventListener("touchstart", e => { if (e.touches.length !== 1) return; const tch = e.touches[0]; sx = tch.clientX; sy = tch.clientY; fired = false;
+    const r0 = e.target; clearTimeout(timer);
+    timer = setTimeout(() => { if (ctxEl) return; const r = ctxFor(r0); if (!r || !r[1] || !r[1].length) return; fired = true; if (navigator.vibrate) navigator.vibrate(12); ctxOpen(sx, sy, r[0], r[1]); }, 550); }, { passive: true });
+  document.addEventListener("touchmove", e => { const tch = e.touches[0]; if (Math.hypot(tch.clientX - sx, tch.clientY - sy) > 10) clearTimeout(timer); }, { passive: true });
+  document.addEventListener("touchend", e => { clearTimeout(timer); if (fired) { e.preventDefault(); fired = false; } }); }
 
 // ================================================== full view & landscape (phones)
 // Every wide table gets "⤢ Full view" on phones: the real grid (not the stacked cards), pinch or −/+ to zoom, "Fit" to

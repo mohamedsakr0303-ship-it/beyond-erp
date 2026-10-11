@@ -84,8 +84,9 @@ COMPANY_KEYS = ("company_name", "company_tagline", "company_address", "company_t
                 "bank_holder", "bank_swift", "bank_iban", "offer_validity_days", "offer_prefix", "offer_digits", "regional",
                 "banks", "bank_default")
 PUBLIC_SETTINGS = COMPANY_KEYS + ("demo_loaded", "menu_labels", "reserve_pct", "legal_reserve_pct", "legal_reserve_cap", "funding_partner", "funding_limit", "report_from", "report_to", "lock_date", "hidden_modules",
-                                  "appearance", "po_self_approve_limit")
-JSON_SETTINGS = {"menu_labels": {}, "units": [], "hidden_modules": [], "appearance": {}, "regional": {}, "banks": []}
+                                  "appearance", "po_self_approve_limit", "menu_layout", "form_custom")
+JSON_SETTINGS = {"menu_labels": {}, "units": [], "hidden_modules": [], "appearance": {}, "regional": {}, "banks": [],
+                 "menu_layout": {}, "form_custom": {}}
 
 
 def settings_dict(db):
@@ -260,7 +261,7 @@ def logout(ctx):
 @route("PUT", "/api/settings")
 def put_settings(ctx):
     keys = set(ctx.body)
-    if "menu_labels" in keys:
+    if keys & {"menu_labels", "menu_layout", "form_custom"}:     # the menu and the forms, as set up from right-click
         ctx.require("settings.menus", "edit")
     if keys & set(COMPANY_KEYS):
         ctx.require("settings.company", "edit")
@@ -303,6 +304,8 @@ def put_settings(ctx):
             if not isinstance(v, type(JSON_SETTINGS[k])):
                 raise acc.ValidationError(f"{k} has the wrong shape")
             v = json.dumps(v, ensure_ascii=False)
+            if len(v) > 200_000:
+                raise acc.ValidationError(f"{k} is too large")
         if k == "lock_date" and v:
             v = acc.clean_date(v, "lock date")
         if k == "font_size":
