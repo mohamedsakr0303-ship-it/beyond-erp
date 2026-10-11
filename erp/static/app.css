@@ -1577,3 +1577,4 @@ label.f .req{color:var(--bad,#e5484d);font-weight:800;margin-inline-start:3px;fo
 .picprev.empty{background:repeating-linear-gradient(45deg,var(--chip),var(--chip) 6px,transparent 6px,transparent 12px)}
 .picbody{flex:1;min-width:0}
 .picbody input[type=range]{width:100%}
+.etab-x.nudge{color:var(--bad);animation:tabNudge .4s ease 3}@keyframes tabNudge{50%{transform:scale(1.35)}}

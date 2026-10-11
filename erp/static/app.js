@@ -1609,7 +1609,7 @@ async function openVoucher(id) {
 }
 S.GLOBAL_H.openv = el => openVoucher(el.dataset.id);
 // ⧉: this screen stays in its tab; a new tab opens (a copy of it) and the screen finder pops up to go anywhere from there
-S.GLOBAL_H.newtab = () => { tabOpen(location.hash || "#/dashboard"); setTimeout(openPalette, 250); };
+S.GLOBAL_H.newtab = () => { if (tabOpen(location.hash || "#/dashboard") !== false) setTimeout(openPalette, 250); };
 // ------------------------------------------------------------ bulk selection (select rows → edit / void / delete together)
 // Every selected record is done on the server with the same permission and rules as by hand; anything that cannot be
 // done is listed with the reason. The selection belongs to the page on screen (choose up to 100 rows per page).
@@ -9920,11 +9920,12 @@ new MutationObserver(() => {
 // ---- tabs inside the app: several screens open at once (kept per person, on this device); each keeps its address
 // and where it was scrolled to. ⧉ in the top bar (or right-click a menu item) opens one; the strip shows from two tabs.
 const TABS = { list: [], on: 0, uid: null };
+const TAB_MAX = 10;      // tabs open at once inside the app
 const tabKey = () => "erpTabs:" + ((S.boot && S.boot.user && S.boot.user.id) || 0);
 function tabsLoad() {
   TABS.uid = S.boot && S.boot.user && S.boot.user.id;
   const saved = store.get(tabKey(), null);
-  if (saved && Array.isArray(saved.list) && saved.list.length) { TABS.list = saved.list.slice(0, 12); TABS.on = Math.min(+saved.on || 0, TABS.list.length - 1); }
+  if (saved && Array.isArray(saved.list) && saved.list.length) { TABS.list = saved.list.slice(0, TAB_MAX); TABS.on = Math.min(+saved.on || 0, TABS.list.length - 1); }
   else { TABS.list = [{ hash: location.hash || "#/dashboard", title: "" }]; TABS.on = 0; }
 }
 const tabsSave = () => store.set(tabKey(), { list: TABS.list, on: TABS.on });
@@ -9938,7 +9939,8 @@ function tabsDraw() {
 }
 function tabOpen(hash) {
   if (TABS.uid !== (S.boot && S.boot.user && S.boot.user.id)) tabsLoad();
-  if (TABS.list.length >= 12) { toast(L2("Up to 12 tabs — close one first", "حتى 12 تبويباً — أغلق أحدها أولاً"), true); return; }
+  if (TABS.list.length >= TAB_MAX) { tabsDraw(); $$("#etabs .etab-x").forEach(x => { x.classList.add("nudge"); setTimeout(() => x.classList.remove("nudge"), 1600); });
+    uiAlert(L2(`You already have ${TAB_MAX} tabs open, the most at once. Close a tab (its ×) to open another.`, `لديك ${TAB_MAX} تبويبات مفتوحة، وهذا هو الحد الأقصى. أغلق تبويباً (من علامة ×) لتفتح غيره.`)); return false; }
   TABS.list[TABS.on].scroll = scrollY;
   TABS.list.push({ hash: hash || "#/dashboard", title: "" }); TABS.on = TABS.list.length - 1; tabsSave(); tabsDraw();
   if (location.hash === hash) route(); else location.hash = hash || "#/dashboard";
