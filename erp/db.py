@@ -938,6 +938,99 @@ CREATE TABLE IF NOT EXISTS approvals (     -- entries waiting for approval (make
 CREATE INDEX IF NOT EXISTS approvals_status ON approvals(status, id);
 -- Customers & deals (erp/crm.py): a pipeline of deals, a timeline of what was said and done with each contact, follow-ups
 -- Healthcare (clinics, medical centres, labs, home healthcare) — see care.py
+-- API keys (auth.py): outside tools act as one person, read-only unless chosen otherwise; only the key's hash is kept
+CREATE TABLE IF NOT EXISTS api_keys (
+    id          INTEGER PRIMARY KEY,
+    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name        TEXT NOT NULL,
+    key_hash    TEXT NOT NULL UNIQUE,
+    prefix      TEXT NOT NULL DEFAULT '',
+    read_only   INTEGER NOT NULL DEFAULT 1,
+    created_by  TEXT NOT NULL DEFAULT '',
+    created_at  TEXT NOT NULL DEFAULT '',
+    last_used   TEXT,
+    revoked_at  TEXT
+);
+-- Knowledge base (kb.py): the company's own articles
+CREATE TABLE IF NOT EXISTS kb_pages (
+    id          INTEGER PRIMARY KEY,
+    title       TEXT NOT NULL,
+    body        TEXT NOT NULL DEFAULT '',
+    category    TEXT NOT NULL DEFAULT '',
+    pinned      INTEGER NOT NULL DEFAULT 0,
+    created_by  TEXT NOT NULL DEFAULT '',
+    created_at  TEXT NOT NULL DEFAULT '',
+    updated_by  TEXT NOT NULL DEFAULT '',
+    updated_at  TEXT NOT NULL DEFAULT ''
+);
+-- My day (workdays.py): field staff start / end their day (optional place) and close it with a short report
+CREATE TABLE IF NOT EXISTS workdays (
+    id         INTEGER PRIMARY KEY,
+    username   TEXT NOT NULL,
+    date       TEXT NOT NULL,
+    start_at   TEXT NOT NULL,
+    start_lat  REAL, start_lng REAL, start_acc REAL,
+    end_at     TEXT,
+    end_lat    REAL, end_lng REAL, end_acc REAL,
+    note       TEXT NOT NULL DEFAULT '',
+    report     TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS workdays_user_date ON workdays(username, date);
+-- Automations (automations.py): "when this happens, do that" rules, and what each already acted on (once per item)
+CREATE TABLE IF NOT EXISTS automations (
+    id          INTEGER PRIMARY KEY,
+    name        TEXT NOT NULL,
+    trigger     TEXT NOT NULL,
+    settings    TEXT NOT NULL DEFAULT '{}',
+    action      TEXT NOT NULL,
+    params      TEXT NOT NULL DEFAULT '{}',
+    repeat_days INTEGER NOT NULL DEFAULT 0,
+    active      INTEGER NOT NULL DEFAULT 1,
+    last_run    TEXT NOT NULL DEFAULT '',
+    last_error  TEXT NOT NULL DEFAULT '',
+    created_by  TEXT NOT NULL DEFAULT '',
+    created_at  TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS automation_log (
+    id            INTEGER PRIMARY KEY,
+    automation_id INTEGER NOT NULL REFERENCES automations(id) ON DELETE CASCADE,
+    ref           TEXT NOT NULL,
+    at            TEXT NOT NULL,
+    result        TEXT NOT NULL DEFAULT '',
+    target        TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS automation_log_ref ON automation_log(automation_id, ref);
+-- The public desk (desk.py): what came in through the company's public pages, once imported into the books
+CREATE TABLE IF NOT EXISTS desk_rows (
+    id          INTEGER PRIMARY KEY,                 -- the cloud row id (public_inbox.id): each is imported once
+    page_id     TEXT NOT NULL DEFAULT '',
+    page_kind   TEXT NOT NULL DEFAULT '',
+    page_title  TEXT NOT NULL DEFAULT '',
+    kind        TEXT NOT NULL,                       -- booking, reschedule, cancel, lead, signature, message
+    ref         TEXT NOT NULL DEFAULT '',
+    slot        TEXT NOT NULL DEFAULT '',
+    payload     TEXT NOT NULL DEFAULT '{}',
+    at          TEXT NOT NULL DEFAULT '',
+    state       TEXT NOT NULL DEFAULT 'new',         -- new, done, error
+    error       TEXT NOT NULL DEFAULT '',
+    target      TEXT NOT NULL DEFAULT '',            -- care_visit, crm_followup, offer, thread
+    target_id   INTEGER,
+    confirmed   TEXT NOT NULL DEFAULT '',            -- confirmed / declined (bookings answered from the desk)
+    created_at  TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS desk_rows_ref ON desk_rows(page_id, ref);
+CREATE TABLE IF NOT EXISTS desk_threads (
+    id          INTEGER PRIMARY KEY,
+    ref         TEXT NOT NULL,
+    page_id     TEXT NOT NULL DEFAULT '',
+    page_title  TEXT NOT NULL DEFAULT '',
+    name        TEXT NOT NULL DEFAULT '',
+    phone       TEXT NOT NULL DEFAULT '',
+    last_at     TEXT NOT NULL DEFAULT '',
+    last_body   TEXT NOT NULL DEFAULT '',
+    unread      INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(page_id, ref)
+);
 CREATE TABLE IF NOT EXISTS care_patients (
     id           INTEGER PRIMARY KEY,
     code         TEXT UNIQUE NOT NULL,
@@ -1713,7 +1806,7 @@ MODULES = ["dashboard", "crm", "care", "business_units", "projects", "contracts"
 # Second-level permissions: each screen can have its own level, or inherit its section's.
 SUBMODULES = {
     "dashboard": [],
-    "crm": ["deals", "contacts", "followups"],
+    "crm": ["deals", "contacts", "followups", "desk"],
     "care": ["visits", "patients", "services", "packages", "claims", "reports"],
     "business_units": ["units", "allocation", "profitability"],
     "sales": ["offers", "receipts", "invoices", "extracts", "receivables", "parties"],
@@ -1725,14 +1818,14 @@ SUBMODULES = {
     "shop": ["products", "orders", "installments", "subscriptions"],
     "stock": ["balances", "moves", "warehouses", "counts"],
     "rentals": ["contracts", "fleet", "calculator"],
-    "payroll": ["employees", "attendance", "runs", "entries", "crew", "settings"],
+    "payroll": ["employees", "attendance", "runs", "entries", "crew", "settings", "workdays"],
     "assets": ["overview", "cash", "register", "depreciation"],
     "accounting": ["journal", "ledger", "coa", "loans", "bankrec", "recurring", "budgets", "approvals"],
     "partners": ["equity", "transactions", "ownership"],
     "reports": ["partner_pack", "income_statement", "balance_sheet", "cash_flow", "trial_balance", "budget", "aging", "statement", "forecast"],
     "tax": ["codes", "report", "einvoice", "ereceipt"],
     "import_export": ["export", "import"],
-    "settings": ["company", "branding", "menus", "layout", "system", "dashboards", "workspace"],
+    "settings": ["company", "branding", "menus", "layout", "system", "dashboards", "workspace", "automations"],
     "users": ["users", "audit"],
 }
 

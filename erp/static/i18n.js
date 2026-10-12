@@ -7,7 +7,7 @@ window.I18N = {
   g_care: ["Healthcare", "الرعاية الصحية"], mod_care: ["Healthcare", "الرعاية الصحية"], m_care_visits: ["Appointments & Visits", "المواعيد والزيارات"],
   m_care_patients: ["Patients", "المرضى"], m_care_services: ["Medical Services & Prices", "الخدمات الطبية والأسعار"], m_care_packages: ["Care Packages", "باقات الرعاية"],
   m_care_claims: ["Insurance Claims", "مطالبات التأمين"], m_care_reports: ["Healthcare Reports", "تقارير الرعاية الصحية"],
-  m_deals: ["Deals Pipeline", "مسار الصفقات"], m_crm_contacts: ["Contacts & Timeline", "جهات الاتصال والسجل"], m_followups: ["Follow-ups", "المتابعات"],
+  m_deals: ["Deals Pipeline", "مسار الصفقات"], m_crm_contacts: ["Contacts & Timeline", "جهات الاتصال والسجل"], m_followups: ["Follow-ups", "المتابعات"], m_desk: ["Online Booking & Forms", "الحجز والنماذج الإلكترونية"], m_automations: ["Automations", "القواعد التلقائية"], m_kb: ["Knowledge Base", "قاعدة المعرفة"], m_api: ["API Keys & Integrations", "مفاتيح الربط البرمجي"], m_workdays: ["Team Days & Field Reports", "أيام العمل والتقارير الميدانية"],
   mod_crm: ["Customers & deals (CRM)", "العملاء والصفقات (CRM)"], g_bu: ["Business Units", "وحدات الأعمال"], g_sales: ["Sales & Receivables", "المبيعات والمدينون"],
   g_est: ["Estimating & Tendering", "التسعير والعطاءات"], g_buy: ["Procurement & Payables", "المشتريات والدائنون"],
   g_stock: ["Inventory", "المخزون"], g_hr: ["Human Resources & Payroll", "الموارد البشرية والرواتب"], g_equity: ["Owners' Equity", "حقوق الملكية"],
@@ -210,11 +210,11 @@ window.SUBTYPE_LABELS = {
 };
 // sidebar: [group, [ [menuKey, route, module, icon], ... ]]
 window.MENU = [
-  ["g_home", [["m_dashboard", "dashboard", "dashboard", "◧"], ["m_chat", "chat", "chat", "💬"], ["m_assistant", "assistant", "chat.ai", "✦"], ["m_calcs", "calculators", "dashboard", "🧮"]]],
+  ["g_home", [["m_dashboard", "dashboard", "dashboard", "◧"], ["m_chat", "chat", "chat", "💬"], ["m_kb", "kb", "chat", "📖"], ["m_assistant", "assistant", "chat.ai", "✦"], ["m_calcs", "calculators", "dashboard", "🧮"]]],
   ["g_bu", [["m_bus", "bus", "business_units.units", "▦"]]],
   ["g_care", [["m_care_visits", "care-visits", "care.visits", "✚"], ["m_care_patients", "care-patients", "care.patients", "☺"], ["m_care_services", "care-services", "care.services", "₤"],
              ["m_care_packages", "care-packages", "care.packages", "▦"], ["m_care_claims", "care-claims", "care.claims", "⇲"], ["m_care_reports", "care-reports", "care.reports", "◔"]]],
-  ["g_crm", [["m_deals", "deals", "crm.deals", "◎"], ["m_crm_contacts", "crm-contacts", "crm.contacts", "☎"], ["m_followups", "followups", "crm.followups", "⏰"]]],
+  ["g_crm", [["m_deals", "deals", "crm.deals", "◎"], ["m_crm_contacts", "crm-contacts", "crm.contacts", "☎"], ["m_followups", "followups", "crm.followups", "⏰"], ["m_desk", "desk", "crm.desk", "◍"]]],
   ["g_prj", [["m_projects", "projects", "projects.overview", "◔"], ["m_tasks", "tasks", "projects.tasks", "☑"], ["m_materials", "materials", "projects.overview", "▤"], ["m_contracts", "contracts", "contracts.contracts", "✍"],
              ["m_variations", "variations", "contracts.variations", "±"], ["m_certs", "certificates", "contracts.certificates", "▤"]]],
   ["g_sales", [["m_offers", "offers", "sales.offers", "✉"], ["m_receipts", "receipts", "sales.receipts", "↘"], ["m_invoices", "invoices", "sales.invoices", "▤"], ["m_extracts", "extracts", "sales.extracts", "▦"], ["m_receivables", "receivables", "sales.receivables", "⇲"]]],
@@ -224,7 +224,7 @@ window.MENU = [
   ["g_stock", [["m_stock", "stock", "stock.balances", "▣"], ["m_moves", "moves", "stock.moves", "⇄"], ["m_warehouses", "warehouses", "stock.warehouses", "⌂"], ["m_counts", "stock-counts", "stock.counts", "✓"]]],
   ["g_eq", [["m_equipment", "equipment", "equipment.register", "⚙"], ["m_equsage", "equipment-usage", "equipment.usage", "⏱"], ["m_maint", "maintenance", "equipment.maintenance", "🔧"]]],
   ["g_rent", [["m_rentals", "rentals", "rentals.contracts", "⌸"], ["m_rentfleet", "rentfleet", "rentals.fleet", "▤"], ["m_rentcalc", "rentcalc", "rentals.calculator", "⊞"]]],
-  ["g_hr", [["m_attendance", "attendance", "payroll.attendance", "☑"], ["m_payruns", "payruns", "payroll.runs", "▤"], ["m_employees", "employees", "payroll.employees", "☺"], ["m_crew", "crew", "payroll.crew", "⊞"], ["m_payroll", "payroll", "payroll.entries", "✎"], ["m_payset", "payset", "payroll.settings", "⚙"]]],
+  ["g_hr", [["m_attendance", "attendance", "payroll.attendance", "☑"], ["m_workdays", "workdays", "payroll.workdays", "⏱"], ["m_payruns", "payruns", "payroll.runs", "▤"], ["m_employees", "employees", "payroll.employees", "☺"], ["m_crew", "crew", "payroll.crew", "⊞"], ["m_payroll", "payroll", "payroll.entries", "✎"], ["m_payset", "payset", "payroll.settings", "⚙"]]],
   ["g_assets", [["m_assetsum", "assets-overview", "assets.overview", "◩"], ["m_cash", "cash", "assets.cash", "⛁"], ["m_assets", "assets", "assets.register", "▥"], ["m_depr", "depreciation", "assets.depreciation", "↘"]]],
   ["g_fin", [["m_loans", "loans", "accounting.loans", "⇋"], ["m_custody", "custody", "purchasing.custody", "◈"]]],
   ["g_equity", [["m_partners", "partners", "partners", "◑"], ["m_pexit", "partner-exit", "partners.equity", "⇥"]]],
@@ -233,7 +233,7 @@ window.MENU = [
   ["g_rep", [["m_ppack", "report/partner_pack", "reports.partner_pack", "▣"], ["m_forecast", "forecast", "reports.forecast", "◷"], ["m_is", "report/income_statement", "reports.income_statement", "◰"], ["m_bs", "report/balance_sheet", "reports.balance_sheet", "◱"], ["m_cf", "report/cash_flow", "reports.cash_flow", "◲"],
              ["m_tb", "report/trial_balance", "reports.trial_balance", "◳"], ["m_bup", "report/bu_pnl", "business_units.profitability", "◴"],
              ["m_budget_rep", "budget-report", "reports.budget", "◎"], ["m_aging", "aging", "reports.aging", "⏳"], ["m_statement", "statement", "reports.statement", "☰"]]],
-  ["g_sys", [["m_data", "data", "import_export", "⇅"], ["m_settings", "settings", "settings", "⚙"], ["m_industry", "industry", "settings", "◎"], ["m_users", "users", "users.users", "☷"], ["m_audit", "audit", "users.audit", "⌚"]]],
+  ["g_sys", [["m_data", "data", "import_export", "⇅"], ["m_settings", "settings", "settings", "⚙"], ["m_automations", "automations", "settings.automations", "↻"], ["m_api", "api-keys", "settings.system", "⌘"], ["m_industry", "industry", "settings", "◎"], ["m_users", "users", "users.users", "☷"], ["m_audit", "audit", "users.audit", "⌚"]]],
 ];
 // labels for screen-level permissions (section.screen)
 window.SUBPERM = {
@@ -244,7 +244,7 @@ window.SUBPERM = {
   "estimating.boqs": "m_boqs", "estimating.prices": "m_prices",
   "purchasing.orders": "m_pos", "purchasing.costs": "m_costs", "purchasing.expenses": "m_expenses", "purchasing.payments": "m_payments", "purchasing.payables": "m_payables", "purchasing.contacts": "m_contacts", "purchasing.negotiations": "m_nego", "rentals.contracts": "m_rentals", "rentals.fleet": "m_rentfleet", "rentals.calculator": "m_rentcalc", "purchasing.custody": "m_custody", "accounting.loans": "m_loans", "accounting.bankrec": "m_bankrec", "accounting.recurring": "m_recurring", "accounting.budgets": "m_budgets",
   "stock.balances": "m_stock", "stock.moves": "m_moves", "stock.warehouses": "m_warehouses",
-  "crm.deals": "m_deals", "crm.contacts": "m_crm_contacts", "crm.followups": "m_followups", "accounting.journal": "m_journal", "accounting.approvals": "p_approvals", "accounting.ledger": "m_ledger", "accounting.coa": "m_coa",
+  "crm.deals": "m_deals", "crm.contacts": "m_crm_contacts", "crm.followups": "m_followups", "crm.desk": "m_desk", "settings.automations": "m_automations", "payroll.workdays": "m_workdays", "accounting.journal": "m_journal", "accounting.approvals": "p_approvals", "accounting.ledger": "m_ledger", "accounting.coa": "m_coa",
   "partners.equity": "p_equity", "partners.transactions": "p_ptx", "partners.ownership": "p_ownership",
   "assets.overview": "m_assetsum", "assets.cash": "m_cash", "assets.register": "m_assets", "assets.depreciation": "m_depr",
   "reports.partner_pack": "m_ppack", "reports.budget": "m_budget_rep", "reports.aging": "m_aging", "reports.statement": "m_statement", "reports.income_statement": "m_is", "reports.balance_sheet": "m_bs", "reports.cash_flow": "m_cf", "reports.trial_balance": "m_tb",

@@ -4510,3 +4510,257 @@ class Healthcare(unittest.TestCase):
             interchange.import_data(fresh, interchange.read_json(interchange.to_json(db).encode()), mode="replace")
             for t in self.care.TABLES:
                 self.assertEqual(fresh.one(f"SELECT COUNT(*) n FROM {t}")["n"], db.one(f"SELECT COUNT(*) n FROM {t}")["n"], t)
+
+
+class PublicDesk(unittest.TestCase):
+    """Online booking, web forms, offers signed online and guest chat: a visitor without a sign-in uses the company's
+    public pages (stand-in Supabase), the app claims what they sent and adds it to the books."""
+
+    @classmethod
+    def setUpClass(cls):
+        from erp.server import ERPServer
+        sys.path.insert(0, str(Path(__file__).parent))
+        import mock_supabase
+        cls.sb = mock_supabase.start()
+        cls.sb_url = f"http://127.0.0.1:{cls.sb.server_address[1]}"
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.db = Database(Path(cls.tmp.name) / "d.sqlite3")
+        cls.srv = ERPServer(("127.0.0.1", 0), cls.db, Path(cls.tmp.name) / "bk")
+        threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
+        cls.base = f"http://127.0.0.1:{cls.srv.server_address[1]}"
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.cloud.stop()
+        cls.srv.shutdown()
+        cls.srv.server_close()
+        cls.db.close()
+        cls.sb.shutdown()
+        cls.tmp.cleanup()
+
+    call = Api.call
+    client = Api.client
+
+    def visitor(self, fn, body):
+        req = urllib.request.Request(f"{self.sb_url}/rest/v1/rpc/{fn}", data=json.dumps(body).encode(),
+                                     headers={"Content-Type": "application/json", "apikey": "anon"}, method="POST")
+        try:
+            with urllib.request.urlopen(req) as r:
+                return r.status, json.loads(r.read() or b"null")
+        except urllib.error.HTTPError as e:
+            return e.code, json.loads(e.read() or b"null")
+
+    def cloud(self, op, name, params=None):
+        st, r = self.call(op, "POST", "/api/cloud/call", {"kind": "rpc", "name": name, "params": params or {}})
+        self.assertEqual(st, 200, r)
+        return r["result"]
+
+    def pull(self, op):
+        rows = self.cloud(op, "desk_claim")
+        st, r = self.call(op, "POST", "/api/desk/import", {"rows": rows})
+        self.assertEqual(st, 200, r)
+        return r["rows"]
+
+    def test_full_cycle(self):
+        from erp import care, industries
+        op = self.client()
+        self.assertEqual(self.call(op, "POST", "/api/setup", {"username": "admin", "password": "secret123"})[0], 200)
+        industries.apply(self.db, "healthcare")
+        sid = care.save_service(self.db, {"name": "GP consultation", "price": 400, "duration_min": 30})
+        self.assertEqual(self.call(op, "PUT", "/api/cloud/config", {"url": self.sb_url, "key": "anon"})[0], 200)
+        self.assertEqual(self.call(op, "POST", "/api/cloud/signin", {"email": "boss@x.com", "password": "pw123456", "create": True})[0], 200)
+        self.assertEqual(self.call(op, "POST", "/api/cloud/claim", {})[0], 200)
+        # the company publishes a booking page; a visitor books, the slot is held, a second visitor cannot take it
+        st, d = self.call(op, "GET", "/api/desk")
+        self.assertEqual([s["name"] for s in d["services"]], ["GP consultation"])
+        page = self.cloud(op, "desk_page_save", {"p_id": None, "p_kind": "booking", "p_title": "Book a visit",
+                                                  "p_config": {"services": d["services"], "per_slot": 1}})
+        tok = page["token"]
+        st, pg = self.visitor("public_page", {"p_token": tok})
+        self.assertEqual((st, pg["kind"], pg["title"]), (200, "booking", "Book a visit"))
+        st, b = self.visitor("public_send", {"p_token": tok, "p_kind": "booking", "p_payload": {
+            "slot": "2031-03-04 10:30", "name": "Mona Adel", "phone": "01001234567", "service": "GP consultation", "service_id": sid}})
+        self.assertEqual(st, 200, b)
+        self.assertEqual(self.visitor("public_send", {"p_token": tok, "p_kind": "booking", "p_payload": {"slot": "2031-03-04 10:30", "name": "X"}})[0], 409)
+        self.assertEqual(self.visitor("public_send", {"p_token": tok, "p_kind": "lead", "p_payload": {"name": "X"}})[0], 400)
+        # the app brings it in: a booked visit for a new patient
+        res = self.pull(op)
+        self.assertEqual([r["state"] for r in res], ["done"])
+        v = self.db.one("SELECT v.*, p.name, p.phone FROM care_visits v JOIN care_patients p ON p.id=v.patient_id")
+        self.assertEqual((v["date"], v["time"], v["status"], v["name"], v["phone"]), ("2031-03-04", "10:30", "booked", "Mona Adel", "01001234567"))
+        self.assertEqual(self.pull(op), [])                                  # each row once
+        # the visitor moves it, then cancels; the visit follows
+        self.assertEqual(self.visitor("public_manage", {"p_token": tok, "p_ref": b["ref"], "p_manage": "wrong", "p_action": "view"})[0], 403)
+        self.assertEqual(self.visitor("public_manage", {"p_token": tok, "p_ref": b["ref"], "p_manage": b["manage"], "p_action": "move",
+                                                        "p_slot": "2031-03-05 11:00"})[0], 200)
+        self.pull(op)
+        v = self.db.one("SELECT * FROM care_visits")
+        self.assertEqual((v["date"], v["time"]), ("2031-03-05", "11:00"))
+        # the team confirms; the visitor sees it
+        st, dd = self.call(op, "GET", "/api/desk?from=2030-01-01")
+        bk = dd["bookings"][0]
+        self.assertEqual((bk["slot"], bk["name"]), ("2031-03-05 11:00", "Mona Adel"))
+        self.cloud(op, "desk_reply", {"p_page": bk["page_id"], "p_ref": bk["ref"], "p_kind": "confirm", "p_body": "See you then"})
+        self.assertEqual(self.call(op, "POST", f"/api/desk/rows/{bk['id']}/answer", {"how": "confirmed"})[0], 200)
+        st, mine = self.visitor("public_manage", {"p_token": tok, "p_ref": b["ref"], "p_manage": b["manage"]})
+        self.assertEqual(mine["messages"][-1]["body"], "See you then")
+        self.visitor("public_manage", {"p_token": tok, "p_ref": b["ref"], "p_manage": b["manage"], "p_action": "cancel"})
+        self.pull(op)
+        self.assertEqual(self.db.one("SELECT status FROM care_visits")["status"], "cancelled")
+        # a web form becomes a lead with a call-back
+        form = self.cloud(op, "desk_page_save", {"p_id": None, "p_kind": "form", "p_title": "Contact us", "p_config": {}})
+        self.visitor("public_send", {"p_token": form["token"], "p_kind": "lead", "p_payload": {"name": "Karim Nabil", "phone": "01112223334",
+                                                                                              "fields": {"Full name": "Karim Nabil", "Message": "Need a quote"}}})
+        self.pull(op)
+        self.assertEqual(self.db.one("SELECT phone FROM parties WHERE name='Karim Nabil'")["phone"], "01112223334")
+        self.assertIn("Need a quote", self.db.one("SELECT body FROM crm_activities WHERE party='Karim Nabil'")["body"])
+        self.assertTrue(self.db.one("SELECT 1 FROM crm_followups WHERE party='Karim Nabil' AND done=0"))
+        # a guest chat: the team answers, the guest reads it
+        guest = self.cloud(op, "desk_page_save", {"p_id": None, "p_kind": "guest", "p_title": "Chat with us", "p_config": {}})
+        st, g = self.visitor("public_send", {"p_token": guest["token"], "p_kind": "message", "p_payload": {"name": "Ali", "body": "Do you do home visits?"}})
+        self.pull(op)
+        st, dd = self.call(op, "GET", "/api/desk")
+        th = dd["threads"][0]
+        self.assertEqual((th["name"], th["unread"], dd["unread"]["messages"]), ("Ali", 1, 1))
+        st, al = self.call(op, "GET", "/api/alerts")
+        self.assertIn("desk", [r.get("kind") for r in al["rows"]])
+        self.cloud(op, "desk_reply", {"p_page": th["page_id"], "p_ref": th["ref"], "p_kind": "reply", "p_body": "Yes, every day"})
+        st, mine = self.visitor("public_manage", {"p_token": guest["token"], "p_ref": g["ref"], "p_manage": g["manage"]})
+        self.assertEqual([m["body"] for m in mine["messages"]], ["Do you do home visits?", "Yes, every day"])
+        # an offer signed online: accepted, signature kept with it
+        st, o = self.call(op, "POST", "/api/offers", {"client": "Mona Adel", "project": "Home care plan", "status": "Sent",
+                                                      "sections": [{"kind": "pricing", "heading": "Fees", "items": [{"desc": "Monthly nursing", "amount": 9000}]}]})
+        self.assertEqual(st, 200, o)
+        st, summ = self.call(op, "GET", f"/api/desk/offer/{o['id']}")
+        self.assertEqual((summ["net"], summ["sections"][0]["items"][0]["desc"]), (9000, "Monthly nursing"))
+        sign = self.cloud(op, "desk_page_save", {"p_id": None, "p_kind": "sign", "p_title": "Offer", "p_config": summ})
+        png = "data:image/png;base64," + __import__("base64").b64encode(b"\x89PNG\r\n\x1a\n" + b"0" * 40).decode()
+        self.visitor("public_send", {"p_token": sign["token"], "p_kind": "signature", "p_payload": {"offer_id": o["id"], "name": "Mona Adel", "image": png}})
+        self.pull(op)
+        self.assertEqual(self.db.one("SELECT status FROM offers WHERE id=?", (o["id"],))["status"], "Accepted")
+        self.assertTrue(self.db.one("SELECT 1 FROM attachments WHERE owner='offer' AND owner_id=? AND title LIKE 'Signed by Mona Adel%'", (o["id"],)))
+        # a switched-off page stops answering
+        self.cloud(op, "desk_page_save", {"p_id": page["id"], "p_kind": "booking", "p_title": "Book a visit", "p_config": None, "p_active": False})
+        self.assertEqual(self.visitor("public_page", {"p_token": tok})[0], 404)
+
+
+class Automations(unittest.TestCase):
+    """Rules that act by themselves: once per item, a follow-up for someone or a message in a team room."""
+
+    def test_rules(self):
+        from erp import automations, demo
+        db = Database(":memory:")
+        auth.create_user(db, {"username": "boss", "password": "secret123"}, first=True)
+        demo.load(db, "boss")
+        boss = db.one("SELECT * FROM users WHERE username='boss'")
+        late = automations.preview(db, {"trigger": "receivable_overdue", "settings": {"days": 0}})
+        self.assertTrue(late)
+        with self.assertRaises(a.ValidationError):
+            automations.save(db, {"name": "x", "trigger": "nope", "action": "followup"}, boss)
+        with self.assertRaises(a.ValidationError):
+            automations.save(db, {"name": "x", "trigger": "stock_low", "action": "chat", "params": {"room": "No such room"}}, boss)
+        rid = automations.save(db, {"name": "Chase late payers", "trigger": "receivable_overdue", "settings": {"days": 0},
+                                    "action": "followup", "params": {"assign": "boss", "title": "Collect"}}, boss)
+        before = db.one("SELECT COUNT(*) n FROM crm_followups")["n"]
+        done = automations.run(db, owner="boss")
+        made = db.one("SELECT COUNT(*) n FROM crm_followups")["n"] - before
+        self.assertEqual((done[0]["acted"], made), (len(late), len(late)))
+        self.assertTrue(db.one("SELECT 1 FROM crm_followups WHERE title LIKE 'Collect: %' AND assigned_to='boss'"))
+        self.assertEqual(automations.run(db, owner="boss"), [])            # once per item
+        self.assertEqual(automations.run(db, owner="someone-else"), [])     # each person's app runs their own rules
+        # a rule that posts in a team room
+        room = db.one("SELECT name FROM chat_rooms WHERE kind<>'dm' ORDER BY id")["name"]
+        automations.save(db, {"name": "Stalled deals", "trigger": "deal_stalled", "settings": {"days": 0}, "action": "chat",
+                              "params": {"room": room, "message": "@boss have a look"}}, boss)
+        automations.run(db, owner="boss")
+        self.assertTrue(db.one("SELECT 1 FROM chat_messages WHERE body LIKE '%Stalled deals:%'") or
+                        not automations.preview(db, {"trigger": "deal_stalled", "settings": {"days": 0}}))
+        rows = automations.listing(db)
+        self.assertEqual(rows[0]["fired"], len(late))
+        cat = automations.catalog()
+        self.assertIn("receivable_overdue", [x["key"] for x in cat["triggers"]])
+        self.assertEqual(cat["example"]["action"], "followup")
+        automations.delete(db, rid)
+        self.assertFalse(db.one("SELECT 1 FROM automation_log WHERE automation_id=?", (rid,)))
+
+
+class MyDay(unittest.TestCase):
+    def test_start_end_report(self):
+        from erp import crm, workdays
+        db = Database(":memory:")
+        auth.create_user(db, {"username": "nurse", "password": "secret123"}, first=True)
+        u = db.one("SELECT * FROM users WHERE username='nurse'")
+        self.assertIsNone(workdays.mine(db, u)["today"])
+        with self.assertRaises(a.ValidationError):
+            workdays.finish(db, u, {})                               # not started
+        workdays.start(db, u, {"lat": 30.0444, "lng": 31.2357, "accuracy": 12})
+        with self.assertRaises(a.ValidationError):
+            workdays.start(db, u, {})                                # already started
+        crm.add_activity(db, {"party": "Mona", "kind": "visit", "subject": "Wound dressing"}, "nurse")
+        draft = workdays.mine(db, u)["draft"]
+        self.assertIn("Wound dressing", draft)
+        db.set_setting("workday_location", "required")
+        with self.assertRaises(a.ValidationError):
+            workdays.finish(db, u, {"report": "x"})                  # location required
+        workdays.finish(db, u, {"report": draft, "lat": 30.05, "lng": 31.24})
+        t = workdays.team(db)
+        self.assertEqual((t["rows"][0]["username"], t["rows"][0]["start_lat"], t["rows"][0]["report"]), ("nurse", 30.0444, draft))
+        self.assertIsNotNone(t["rows"][0]["hours"])
+
+
+class KnowledgeBaseAndApiKeys(unittest.TestCase):
+    def test_kb(self):
+        from erp import kb
+        db = Database(":memory:")
+        auth.create_user(db, {"username": "boss", "password": "secret123"}, first=True)
+        auth.create_user(db, {"username": "sam", "password": "secret123", "perms": {}})
+        boss, sam = (auth.public_user(db.one("SELECT * FROM users WHERE username=?", (u,))) for u in ("boss", "sam"))
+        kid = kb.save(db, {"title": "Return policy", "body": "# Returns\n- 14 days with receipt", "category": "Sales"}, sam)
+        self.assertEqual([r["title"] for r in kb.listing(db, "receipt")["rows"]], ["Return policy"])
+        self.assertEqual(kb.listing(db)["categories"], ["Sales"])
+        other = kb.save(db, {"title": "Pricing", "body": "x"}, boss)
+        with self.assertRaises(PermissionError):
+            kb.save(db, {"title": "Hacked"}, sam, other)                 # someone else's article
+        kb.save(db, {"title": "Return policy (2026)", "body": "30 days"}, boss, kid)   # administrators may
+        self.assertEqual(kb.get(db, kid)["updated_by"], "boss")
+
+    def test_api_keys(self):
+        from erp.server import ERPServer
+        tmp = tempfile.TemporaryDirectory()
+        db = Database(Path(tmp.name) / "k.sqlite3")
+        srv = ERPServer(("127.0.0.1", 0), db, Path(tmp.name) / "bk")
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        base = f"http://127.0.0.1:{srv.server_address[1]}"
+        try:
+            auth.create_user(db, {"username": "boss", "password": "secret123"}, first=True)
+            auth.create_user(db, {"username": "viewer", "password": "secret123", "perms": {"crm": "view"}})
+            ro = auth.create_api_key(db, db.one("SELECT id FROM users WHERE username='boss'")["id"], "reports", True)[1]
+            rw = auth.create_api_key(db, db.one("SELECT id FROM users WHERE username='boss'")["id"], "writer", False)[1]
+            lim = auth.create_api_key(db, db.one("SELECT id FROM users WHERE username='viewer'")["id"], "crm only", True)[1]
+
+            def call(method, path, key, body=None):
+                req = urllib.request.Request(base + path, data=json.dumps(body).encode() if body is not None else None, method=method,
+                                             headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"})
+                try:
+                    with urllib.request.urlopen(req) as r:
+                        return r.status, json.loads(r.read())
+                except urllib.error.HTTPError as e:
+                    return e.code, json.loads(e.read())
+            self.assertEqual(call("GET", "/api/kb", ro)[0], 200)
+            self.assertEqual(call("POST", "/api/kb", ro, {"title": "x"})[0], 403)          # read-only
+            self.assertEqual(call("POST", "/api/kb", rw, {"title": "From a script"})[0], 200)
+            self.assertEqual(call("GET", "/api/users", rw)[0], 403)                         # never people / keys / passwords
+            self.assertEqual(call("POST", "/api/api-keys", rw, {"name": "more"})[0], 403)
+            self.assertEqual(call("GET", "/api/crm/contacts", lim)[0], 200)                # the person's own permissions
+            self.assertEqual(call("GET", "/api/journal", lim)[0], 403)
+            self.assertEqual(call("GET", "/api/kb", "berp_nope")[0], 401)
+            docs = call("GET", "/api/api-docs?q=contacts", lim)[1]
+            self.assertTrue(any("/api/crm/contacts" in r["path"] for r in docs["routes"]))
+            auth.revoke_api_key(db, db.one("SELECT id FROM api_keys WHERE name='reports'")["id"])
+            self.assertEqual(call("GET", "/api/kb", ro)[0], 401)
+            self.assertTrue(db.one("SELECT last_used FROM api_keys WHERE name='writer'")["last_used"])
+        finally:
+            srv.shutdown()
+            srv.server_close()
+            db.close()
+            tmp.cleanup()

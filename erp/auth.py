@@ -267,6 +267,43 @@ def user_for_token(db, token):
     return public_user(u)
 
 
+# ------------------------------------------------------------------ API keys (outside tools, scripts, AI coding tools)
+API_PREFIX = "berp_"
+
+
+def create_api_key(db, user_id, name, read_only=True, by=""):
+    """A key for one person: it acts with that person's permissions (read-only unless chosen otherwise). The full key is
+    shown once; only its hash is kept."""
+    name = text(name, "name", required=True, maxlen=80)
+    if db.one("SELECT COUNT(*) n FROM api_keys WHERE user_id=? AND revoked_at IS NULL", (int(user_id),))["n"] >= 20:
+        raise ValidationError("This person already has 20 keys — revoke some first")
+    key = API_PREFIX + secrets.token_urlsafe(30)
+    kid = db.x("INSERT INTO api_keys(user_id, name, key_hash, prefix, read_only, created_by, created_at) VALUES (?,?,?,?,?,?,datetime('now'))",
+               (int(user_id), name, hashlib.sha256(key.encode()).hexdigest(), key[:12], 1 if read_only else 0, by)).lastrowid
+    return kid, key
+
+
+def user_for_api_key(db, key):
+    if not key or not str(key).startswith(API_PREFIX):
+        return None, None
+    r = db.one("SELECT k.id kid, k.read_only, u.* FROM api_keys k JOIN users u ON u.id=k.user_id WHERE k.key_hash=? AND k.revoked_at IS NULL AND u.active=1",
+               (hashlib.sha256(str(key).encode()).hexdigest(),))
+    if not r:
+        return None, None
+    db.conn.execute("UPDATE api_keys SET last_used=datetime('now') WHERE id=?", (r["kid"],))
+    return public_user({k: v for k, v in r.items() if k not in ("kid", "read_only")}), {"id": r["kid"], "read_only": bool(r["read_only"])}
+
+
+def api_keys(db, user_id=None):
+    w, p = ("WHERE k.user_id=?", [int(user_id)]) if user_id else ("", [])
+    return db.q(f"SELECT k.id, k.name, k.prefix, k.read_only, k.created_at, k.created_by, k.last_used, k.revoked_at, u.username FROM api_keys k "
+                f"JOIN users u ON u.id=k.user_id {w} ORDER BY k.revoked_at IS NOT NULL, k.id DESC", p)
+
+
+def revoke_api_key(db, kid):
+    db.x("UPDATE api_keys SET revoked_at=datetime('now') WHERE id=? AND revoked_at IS NULL", (int(kid),))
+
+
 def level_of(user, key):
     """Effective level for 'section' or 'section.screen'. A section counts as granted when the section itself
     or any of its screens is granted (used for showing menus); screens fall back to their section."""

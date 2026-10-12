@@ -251,7 +251,7 @@ const ROUTE_IC = { deals: "target", "crm-contacts": "phone", followups: "clock",
   settings: "gear", industry: "store", users: "users", audit: "history",
   projects: "target", tasks: "check", contracts: "pen", variations: "swap", certificates: "clip", "purchase-requests": "list", "stock-counts": "check",
   equipment: "truck", "equipment-usage": "hour", maintenance: "gear", attendance: "users", ereceipts: "receipt",
-  "care-visits": "steth", "care-patients": "user", "care-services": "tag", "care-packages": "pack", "care-claims": "send", "care-reports": "chart" };
+  desk: "send", kb: "book", "api-keys": "pen", automations: "repeat", workdays: "clock", "my-day": "clock", "care-visits": "steth", "care-patients": "user", "care-services": "tag", "care-packages": "pack", "care-claims": "send", "care-reports": "chart" };
 const GROUP_IC = { g_home: "home", g_care: "heart", g_crm: "users", g_bu: "brief", g_sales: "in", g_shop: "cart", g_est: "list", g_buy: "out", g_stock: "boxes", g_rent: "building",
   g_prj: "target", g_eq: "truck", g_hr: "users", g_assets: "pie", g_fin: "bank", g_equity: "hands", g_tax: "pct", g_acc: "book", g_rep: "chart", g_sys: "gear" };
 const svg = (name, cls = "") => `<svg class="i ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${IC[name] || IC.grid}</svg>`;
@@ -3523,6 +3523,327 @@ PAGES["care-reports"] = async (view, parts, q) => {
       ${tbl(L2("Insurers — balance owed", "شركات التأمين — الأرصدة المستحقة"), [[L2("Insurer / TPA", "شركة التأمين / الإدارة"), "party"], [t("balance"), "balance", "m"]], d.insurers_due)}
       ${tbl(L2("Unclaimed insurer shares", "حصص تأمين لم يُطالب بها"), [[L2("Insurer / TPA", "شركة التأمين / الإدارة"), "insurer"], [L2("Visits", "الزيارات"), "visits", 1], [t("amount"), "amount", "m"]], d.unclaimed)}</div>`;
 };
+// ---------------------------------------------------------- the online desk (desk.py + supabase *_public_desk.sql): public pages people use
+// without signing in — online booking, web forms, signing an offer, chatting as a guest — and what they send, brought into the books
+const DESK_KIND = () => ({ booking: [L2("Booking page", "صفحة حجز"), "📅"], form: [L2("Web form", "نموذج ويب"), "📝"], sign: [L2("Offer to sign", "عرض للتوقيع"), "✍"], guest: [L2("Guest chat", "دردشة الزوار"), "💬"] });
+const WEEKDAYS = () => [L2("Sun", "الأحد"), L2("Mon", "الاثنين"), L2("Tue", "الثلاثاء"), L2("Wed", "الأربعاء"), L2("Thu", "الخميس"), L2("Fri", "الجمعة"), L2("Sat", "السبت")];
+const deskBase = () => STATIC ? location.origin + location.pathname.replace(/[^/]*$/, "") : String(S.boot.settings.desk_site || "").replace(/\/?$/, "/");
+const deskLink = tok => deskBase() + "p.html#t=" + encodeURIComponent(tok);
+const deskRpc = (name, params) => CloudAPI.call("rpc", name, params || {});
+// claim what visitors sent and add it to the books — every minute while the app is open (one device takes each row)
+let deskBusy = false, deskLast = 0;
+async function deskPull(force) {
+  if (deskBusy || !cloudOn() || !S.boot || !(can("crm.desk") || can("care.visits") || can("crm.followups"))) return 0;
+  if (!force && Date.now() - deskLast < 55e3) return 0;
+  deskBusy = true; deskLast = Date.now();
+  try {
+    const rows = await deskRpc("desk_claim", {});
+    if (!rows || !rows.length) return 0;
+    const r = await api("POST", "/api/desk/import", { rows });
+    const n = r.rows.filter(x => x.state === "done").length, bad = r.rows.filter(x => x.state === "error").length;
+    if (n) toast(L2(`${n} new from your online pages`, `${n} جديد من صفحاتك الإلكترونية`));
+    if (bad) toast(L2(`${bad} item(s) from your online pages need a look (Online Booking & Forms)`, `${bad} طلب من صفحاتك يحتاج مراجعة`));
+    loadAlerts(true); if (/^#\/(desk|care-visits|followups)/.test(location.hash) && !$(".drawer-bg")) route();
+    return n;
+  } catch { return 0; } finally { deskBusy = false; }
+}
+setInterval(() => { if (document.visibilityState === "visible") deskPull(); }, 15e3);
+function deskShare(link, title) {
+  const wa = `https://wa.me/?text=${encodeURIComponent((title ? title + "\n" : "") + link)}`;
+  S.H.dkcopy = () => copyText(link);
+  drawer(L2("Share this link", "شارك هذا الرابط"), `<div class="f">${esc(L2("Link", "الرابط"))}<input readonly value="${esc(link)}" dir="ltr" onclick="this.select()"></div>
+    <div class="row" style="gap:8px;margin:10px 0"><button type="button" class="btn pri" data-a="dkcopy">⧉ ${esc(L2("Copy link", "نسخ الرابط"))}</button>
+      <a class="btn" href="${esc(wa)}" target="_blank" rel="noopener">💬 WhatsApp</a><a class="btn" href="${esc(link)}" target="_blank" rel="noopener">↗ ${esc(L2("Open", "فتح"))}</a></div>
+    <div class="f">${esc(L2("Put it on your website (copy this code)", "ضعه على موقعك الإلكتروني (انسخ هذا الكود)"))}<textarea readonly rows="3" dir="ltr" onclick="this.select()">${esc(`<iframe src="${link}" style="width:100%;height:760px;border:0" title="${title || "BeyondERP"}"></iframe>`)}</textarea></div>
+    <p class="muted">${esc(L2("Anyone with the link can use the page — no sign-in. Switch the page off to stop it.", "يمكن لأي شخص لديه الرابط استخدام الصفحة دون تسجيل دخول. أوقف الصفحة لإيقافه."))}</p>`, null, { readOnly: true });
+}
+async function deskPageForm(kind, pg, d) {
+  pg = pg || { config: {} };
+  const c = pg.config || {}, svcs = d.services || [];
+  const fields = [{ k: "title", l: L2("Page title", "عنوان الصفحة"), v: pg.title || { booking: "Book an appointment", form: "Contact us", guest: "Chat with us" }[kind] || "", req: 1 },
+    { k: "title_ar", l: L2("Title in Arabic", "العنوان بالعربية"), v: c.title_ar || (pg.id ? "" : { booking: "احجز موعداً", form: "تواصل معنا", guest: "تحدث معنا" }[kind] || ""), dir: "rtl" }];
+  if (kind === "booking") {
+    const days = c.days || [0, 1, 2, 3, 4, 6], wd = WEEKDAYS();
+    fields.push({ k: "note", l: L2("A short note for visitors", "ملاحظة قصيرة للزوار"), type: "textarea", v: c.note || "", span: "spanall" });
+    if (svcs.length) fields.push({ html: `<div class="f">${esc(L2("Services people can book (from Healthcare → Services)", "الخدمات المتاحة للحجز (من الرعاية الصحية ← الخدمات)"))}<div class="row" style="flex-wrap:wrap;gap:6px 14px">${svcs.map(s =>
+      `<label class="chk"><input type="checkbox" data-skip="1" class="dk-svc" value="${s.id}" ${!c.services || c.services.some(x => String(x.id) === String(s.id)) ? "checked" : ""}> ${esc(careSvcName(s))}</label>`).join("")}</div></div>`, span: "spanall" });
+    else fields.push({ k: "svc_text", l: L2("Services (one per line: name | minutes | price)", "الخدمات (سطر لكل خدمة: الاسم | الدقائق | السعر)"), type: "textarea", span: "spanall",
+      v: (c.services || []).map(s => [s.name, s.minutes || "", s.price || ""].join(" | ")).join("\n"), ph: L2("Consultation | 30 | 400", "استشارة | 30 | 400") });
+    fields.push({ html: `<div class="f">${esc(L2("Open days", "أيام العمل"))}<div class="row" style="gap:6px 14px;flex-wrap:wrap">${wd.map((n, i) => `<label class="chk"><input type="checkbox" data-skip="1" class="dk-day" value="${i}" ${days.includes(i) ? "checked" : ""}> ${esc(n)}</label>`).join("")}</div></div>`, span: "spanall" },
+      { k: "from", l: L2("Opens at", "يبدأ من"), type: "time", v: c.from || "09:00" }, { k: "to", l: L2("Closes at", "حتى"), type: "time", v: c.to || "17:00" },
+      { k: "slot", l: L2("Minutes between times", "الدقائق بين المواعيد"), type: "number", v: c.slot || 30 }, { k: "per_slot", l: L2("Bookings per time", "عدد الحجوزات لكل موعد"), type: "number", v: c.per_slot || 1 },
+      { k: "ahead", l: L2("Days ahead people can book", "أيام الحجز المتاحة مقدماً"), type: "number", v: c.ahead || 30 }, { k: "notice_hours", l: L2("Hours' notice needed", "ساعات التنبيه المسبق"), type: "number", v: c.notice_hours || 2 },
+      { k: "place", l: L2("Where", "المكان"), type: "select", v: c.place || (S.boot.settings.business_type === "homecare" ? "home" : "clinic"), opts: [["clinic", L2("At our place", "في مقرنا")], ["home", L2("At the customer's home", "في منزل العميل")], ["both", L2("Customer chooses", "يختار العميل")]] },
+      { k: "closed", l: L2("Closed dates (YYYY-MM-DD, comma-separated)", "أيام الإغلاق (YYYY-MM-DD مفصولة بفاصلة)"), v: (c.closed || []).join(", "), span: "spanall" },
+      { k: "show_prices", l: L2("Show prices", "إظهار الأسعار"), type: "switch", v: !!c.show_prices });
+  }
+  if (kind === "form") fields.push({ k: "intro", l: L2("Text above the form", "نص أعلى النموذج"), type: "textarea", v: c.intro || "", span: "spanall" },
+    { k: "fields_text", l: L2("Questions (one per line: label | type | required) — types: text, tel, email, textarea, select:A/B/C", "الأسئلة (سطر لكل سؤال: العنوان | النوع | إلزامي)"), type: "textarea", span: "spanall",
+      v: (c.fields || [{ k: "name", label: "Full name", required: true }, { k: "phone", label: "Mobile", type: "tel", required: true }, { k: "email", label: "Email", type: "email" }, { k: "message", label: "How can we help?", type: "textarea" }])
+        .map(f => [f.label, f.type === "select" ? "select:" + (f.options || []).join("/") : f.type || "text", f.required ? "required" : ""].join(" | ")).join("\n") },
+    { k: "thanks", l: L2("Thank-you message", "رسالة الشكر"), v: c.thanks || "", span: "spanall" });
+  if (kind === "guest") fields.push({ k: "intro", l: L2("Welcome text", "نص الترحيب"), type: "textarea", v: c.intro || "", span: "spanall" });
+  fields.push({ k: "lang", l: L2("Page language for new visitors", "لغة الصفحة للزوار الجدد"), type: "select", v: c.lang || S.lang, opts: [["en", "English"], ["ar", "العربية"]] },
+    { k: "color", l: L2("Colour", "اللون"), type: "color", v: c.color || "#4f46e5" });
+  if (!STATIC) fields.push({ k: "desk_site", l: L2("Your BeyondERP website address (where the page is shown)", "عنوان موقع BeyondERP الخاص بك"), v: S.boot.settings.desk_site || "", span: "spanall", ph: "https://…pages.dev/" });
+  drawer(`${DESK_KIND()[kind][1]} ${pg.id ? pg.title : DESK_KIND()[kind][0]}`, form(fields), async (v, f) => {
+    const cfg = { ...c, lang: v.lang, color: v.color, title_ar: v.title_ar };
+    if (kind === "booking") {
+      cfg.note = v.note; cfg.from = v.from; cfg.to = v.to; cfg.slot = +v.slot || 30; cfg.per_slot = +v.per_slot || 1; cfg.ahead = +v.ahead || 30; cfg.notice_hours = +v.notice_hours || 0; cfg.place = v.place; cfg.show_prices = !!v.show_prices;
+      cfg.days = $$(".dk-day", f).filter(x => x.checked).map(x => +x.value);
+      cfg.closed = String(v.closed || "").split(/[,\s]+/).filter(x => /^\d{4}-\d{2}-\d{2}$/.test(x));
+      cfg.services = svcs.length ? svcs.filter(s => $$(".dk-svc", f).some(x => x.checked && x.value === String(s.id))).map(s => ({ id: s.id, name: s.name, name_ar: s.name_ar, minutes: s.minutes, price: s.price }))
+        : String(v.svc_text || "").split("\n").map(x => x.split("|").map(y => y.trim())).filter(x => x[0]).map(([name, m, p]) => ({ name, minutes: +m || 0, price: +p || 0 }));
+      cfg.busy = d.busy || [];
+      if (!cfg.days.length) throw new Error(L2("Choose at least one open day", "اختر يوم عمل واحداً على الأقل"));
+    }
+    if (kind === "form") { cfg.intro = v.intro; cfg.thanks = v.thanks;
+      cfg.fields = String(v.fields_text || "").split("\n").map(x => x.split("|").map(y => y.trim())).filter(x => x[0]).map(([label, ty, rq], i) => {
+        const sel = /^select:/.test(ty || ""), k = /name|الاسم/i.test(label) && i === 0 ? "name" : /mobile|phone|موبايل|هاتف/i.test(label) ? "phone" : /mail|بريد/i.test(label) ? "email" : "f" + i;
+        return { k, label, type: sel ? "select" : (["tel", "email", "textarea", "text"].includes(ty) ? ty : "text"), options: sel ? ty.slice(7).split("/").map(o => o.trim()).filter(Boolean) : undefined, required: /req|yes|إلزامي|نعم/i.test(rq || "") }; });
+      if (!cfg.fields.some(x => x.k === "name")) cfg.fields.unshift({ k: "name", label: L2("Full name", "الاسم بالكامل"), required: true }); }
+    if (kind === "guest") cfg.intro = v.intro;
+    if (!STATIC && v.desk_site !== undefined) { await api("PUT", "/api/settings", { desk_site: v.desk_site }); S.boot.settings.desk_site = v.desk_site; }
+    const r = await deskRpc("desk_page_save", { p_id: pg.id || null, p_kind: kind, p_title: v.title, p_config: cfg, p_active: pg.id ? pg.active : true });
+    toast(t("saved")); if (!pg.id) setTimeout(() => deskShare(deskLink(r.token), v.title), 300);
+  }, { wide: true });
+}
+PAGES.desk = async (view, parts, q) => {
+  if (!cloudOn()) { view.innerHTML = `<div class="card"><h2>${esc(t("m_desk"))}</h2><p>${esc(L2("Online booking, web forms, signing offers and guest chat work through your company's shared workspace. Connect it first (Settings → Workspace), then come back here.",
+    "الحجز الإلكتروني والنماذج وتوقيع العروض ودردشة الزوار تعمل من خلال مساحة العمل المشتركة لشركتك. اربطها أولاً (الإعدادات ← مساحة العمل) ثم عد إلى هنا."))}</p></div>`; return; }
+  await deskPull(true);
+  const tab = q.tab || "pages";
+  const [d, pages] = await Promise.all([api("GET", "/api/desk?" + qs({ from: today() })), deskRpc("desk_pages").catch(e => { fail(e); return []; })]);
+  const kinds = DESK_KIND(), adm = S.boot.user.is_admin;
+  Object.assign(S.H, {
+    dknew: el => deskPageForm(el.dataset.k, null, d),
+    dkedit: el => { const pg = pages.find(p => p.id === el.dataset.id); deskPageForm(pg.kind, pg, d); },
+    dkshare: el => { const pg = pages.find(p => p.id === el.dataset.id); deskShare(deskLink(pg.token), pg.title); },
+    dkactive: async el => { const pg = pages.find(p => p.id === el.dataset.id); try { await deskRpc("desk_page_save", { p_id: pg.id, p_kind: pg.kind, p_title: pg.title, p_config: pg.config, p_active: !pg.active }); route(); } catch (e) { fail(e); } },
+    dkpull: async () => { const n = await deskPull(true); toast(n ? L2(`${n} new`, `${n} جديد`) : L2("Nothing new", "لا جديد")); route(); },
+    dkretry: async el => { try { const r = await api("POST", `/api/desk/rows/${el.dataset.id}/retry`, {}); toast(r.state === "done" ? t("saved") : r.error); route(); } catch (e) { fail(e); } },
+    dkanswer: async el => { const b = d.bookings.find(x => String(x.id) === el.dataset.id), how = el.dataset.how;
+      const note = await uiPrompt(how === "confirmed" ? L2("Confirm the booking — a note for the customer (optional)", "تأكيد الحجز — ملاحظة للعميل (اختياري)") : L2("Decline the booking — tell the customer why", "رفض الحجز — اذكر السبب للعميل"), ""); if (note === null) return;
+      try { await deskRpc("desk_reply", { p_page: b.page_id, p_ref: b.ref, p_kind: how === "confirmed" ? "confirm" : "decline", p_body: note || "" }); await api("POST", `/api/desk/rows/${b.id}/answer`, { how }); toast(t("saved")); route(); } catch (e) { fail(e); } },
+    dkopen: el => { const b = d.bookings.find(x => String(x.id) === el.dataset.id); if (b.target === "care_visit") careVisitView(b.target_id).catch(fail); else location.hash = "#/followups?status=all"; },
+    dkthread: el => deskThread(d.threads.find(x => String(x.id) === el.dataset.id)) });
+  const tabs = [["pages", L2("Pages", "الصفحات")], ["bookings", L2("Online bookings", "الحجوزات الإلكترونية")], ["chats", L2("Guest chats", "دردشات الزوار") + (d.unread.messages ? ` (${d.unread.messages})` : "")], ["other", L2("Forms & signatures", "النماذج والتوقيعات") + (d.unread.errors ? ` ⚠${d.unread.errors}` : "")]];
+  const wa = b => { const ph = waNumber(b.phone); if (!ph || !b.slot) return "";
+    const msg = L2(`Reminder: your appointment with ${d.company} on ${fd(b.slot.slice(0, 10))} at ${b.slot.slice(11)}${b.service ? ` (${b.service})` : ""}. Ref ${b.ref}. To change it, use the link you got when booking.`,
+      `تذكير: موعدك مع ${d.company} يوم ${fd(b.slot.slice(0, 10))} الساعة ${b.slot.slice(11)}${b.service ? ` (${b.service})` : ""}. رقم الحجز ${b.ref}. لتغييره استخدم الرابط الذي وصلك عند الحجز.`);
+    return `<a class="btn sm" href="https://wa.me/${ph}?text=${encodeURIComponent(msg)}" target="_blank" rel="noopener" title="${esc(L2("Send a reminder on WhatsApp", "إرسال تذكير على واتساب"))}">💬 ${esc(L2("Remind", "تذكير"))}</a>`; };
+  let body = "";
+  if (tab === "pages") body = `<div class="toolbar">${adm ? ["booking", "form", "guest"].map(k => `<button class="btn ${k === "booking" ? "pri" : ""}" data-a="dknew" data-k="${k}">+ ${kinds[k][1]} ${esc(kinds[k][0])}</button>`).join("") : `<span class="muted">${esc(L2("Administrators publish pages.", "المسؤولون فقط ينشرون الصفحات."))}</span>`}
+      <span class="spacer"></span><button class="btn" data-a="dkpull">⟳ ${esc(L2("Check for new", "تحقق من الجديد"))}</button></div>
+    <div class="card">${pages.length ? `<div class="tbl stack"><table><thead><tr><th>${esc(L2("Page", "الصفحة"))}</th><th>${t("kind")}</th><th>${t("status")}</th><th>${esc(L2("Updated", "آخر تعديل"))}</th><th></th></tr></thead><tbody>
+      ${pages.map(p => `<tr><td><b>${esc(p.title)}</b><div class="lines" dir="ltr">${esc(deskLink(p.token).replace(/^https?:\/\//, "").slice(0, 60))}…</div></td><td>${kinds[p.kind][1]} ${esc(kinds[p.kind][0])}</td>
+        <td><span class="chip ${p.active ? "ok" : ""}">${esc(p.active ? L2("Live", "مفعلة") : L2("Off", "متوقفة"))}</span></td><td>${fd(String(p.updated_at || p.created_at).slice(0, 10))}</td>
+        <td style="white-space:nowrap"><button class="btn sm pri" data-a="dkshare" data-id="${p.id}">🔗 ${esc(L2("Share", "مشاركة"))}</button>${adm && p.kind !== "sign" ? `<button class="btn sm" data-a="dkedit" data-id="${p.id}">${esc(t("edit"))}</button>` : ""}
+          ${adm ? `<button class="btn sm" data-a="dkactive" data-id="${p.id}">${esc(p.active ? L2("Switch off", "إيقاف") : L2("Switch on", "تفعيل"))}</button>` : ""}</td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="empty">${svg("calc")}<div>${esc(L2("No pages yet. Start with a booking page: customers pick a service, a day and a free time — it lands in your books by itself.", "لا توجد صفحات بعد. ابدأ بصفحة حجز: يختار العميل الخدمة واليوم والوقت المتاح — ويُضاف الحجز إلى دفاترك تلقائياً."))}</div></div>`}</div>
+    <div class="banner info">${esc(L2("To have a customer sign an offer online, open the offer and choose “Send for e-signature”.", "ليوقّع العميل عرضاً إلكترونياً، افتح العرض واختر «إرسال للتوقيع الإلكتروني»."))}</div>`;
+  if (tab === "bookings") body = `<div class="card">${d.bookings.length ? `<div class="tbl stack"><table><thead><tr><th>${esc(L2("When", "الموعد"))}</th><th>${esc(L2("Customer", "العميل"))}</th><th>${esc(L2("Service", "الخدمة"))}</th><th>${t("status")}</th><th></th></tr></thead><tbody>
+      ${d.bookings.map(b => `<tr><td>${b.slot ? `<b>${fd(b.slot.slice(0, 10))}</b> ${esc(b.slot.slice(11))}` : "—"}<div class="lines">${esc(b.ref)}</div></td><td><b>${esc(b.name)}</b><div class="lines" dir="ltr">${esc(b.phone)}</div></td>
+        <td>${esc(b.service || b.page_title)}${b.place === "home" ? " 🏠" : ""}${b.notes ? `<div class="lines">${esc(b.notes)}</div>` : ""}</td>
+        <td>${b.cancelled ? `<span class="chip bad">${esc(L2("Cancelled by customer", "ألغاه العميل"))}</span>` : b.confirmed === "declined" ? `<span class="chip bad">${esc(L2("Declined", "مرفوض"))}</span>` : b.confirmed === "confirmed" ? `<span class="chip ok">${esc(L2("Confirmed", "مؤكد"))}</span>` : `<span class="chip warn">${esc(L2("New — confirm it", "جديد — أكّده"))}</span>`}
+          ${b.state === "error" ? `<div class="neg">⚠ ${esc(b.error)}</div>` : ""}</td>
+        <td style="white-space:nowrap">${!b.cancelled && !b.confirmed && b.state === "done" ? `<button class="btn sm pri" data-a="dkanswer" data-how="confirmed" data-id="${b.id}">✓ ${esc(L2("Confirm", "تأكيد"))}</button><button class="btn sm" data-a="dkanswer" data-how="declined" data-id="${b.id}">✕</button>` : ""}
+          ${!b.cancelled && b.confirmed !== "declined" ? wa(b) : ""}${b.target_id ? `<button class="btn sm" data-a="dkopen" data-id="${b.id}">${esc(L2("Open", "فتح"))}</button>` : ""}${b.state === "error" ? `<button class="btn sm" data-a="dkretry" data-id="${b.id}">${esc(L2("Try again", "إعادة المحاولة"))}</button>` : ""}</td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="empty">${svg("clock")}<div>${esc(L2("No upcoming online bookings.", "لا توجد حجوزات إلكترونية قادمة."))}</div></div>`}</div>`;
+  if (tab === "chats") body = `<div class="card">${d.threads.length ? `<div class="tbl stack"><table><tbody>${d.threads.map(th => `<tr class="click" data-a="dkthread" data-id="${th.id}"><td><b>${esc(th.name)}</b>${th.unread ? ` <span class="chip warn">${th.unread}</span>` : ""}<div class="lines" dir="ltr">${esc(th.phone)}</div></td>
+      <td>${esc(String(th.last_body || "").slice(0, 120))}<div class="lines">${esc(th.page_title)}</div></td><td>${esc(String(th.last_at || "").slice(0, 16).replace("T", " "))}</td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="empty">${svg("chat")}<div>${esc(L2("No guest chats yet. Publish a “Guest chat” page and share its link (WhatsApp, your website, Instagram bio…).", "لا توجد دردشات بعد. انشر صفحة «دردشة الزوار» وشارك رابطها."))}</div></div>`}</div>`;
+  if (tab === "other") { const rows = d.rows.filter(r => !["booking", "reschedule", "message"].includes(r.kind) || r.state === "error");
+    body = `<div class="card">${rows.length ? `<div class="tbl stack"><table><thead><tr><th>${t("date")}</th><th>${t("kind")}</th><th>${esc(L2("From", "من"))}</th><th>${t("status")}</th><th></th></tr></thead><tbody>${rows.map(r => `<tr><td>${esc(String(r.at || r.created_at).slice(0, 16).replace("T", " "))}</td>
+      <td>${esc({ lead: L2("Web form", "نموذج ويب"), signature: L2("Offer signed", "توقيع عرض"), cancel: L2("Booking cancelled", "إلغاء حجز"), booking: L2("Booking", "حجز"), reschedule: L2("Booking moved", "نقل حجز"), message: L2("Message", "رسالة") }[r.kind] || r.kind)}<div class="lines">${esc(r.page_title)}</div></td>
+      <td>${esc(r.payload.name || "")}<div class="lines">${esc([r.payload.phone, r.payload.email].filter(Boolean).join(" · "))}</div></td>
+      <td>${r.state === "error" ? `<span class="chip bad">⚠ ${esc(r.error)}</span>` : `<span class="chip ok">${esc(L2("Added", "أُضيف"))}</span>`}</td>
+      <td>${r.state === "error" ? `<button class="btn sm" data-a="dkretry" data-id="${r.id}">${esc(L2("Try again", "إعادة المحاولة"))}</button>` : r.target === "offer" ? `<a class="btn sm" href="#/offer/${r.target_id}">${esc(L2("Open offer", "فتح العرض"))}</a>` : r.target === "crm_followup" && r.payload.name ? `<a class="btn sm" href="#/contact/${encodeURIComponent(r.payload.name)}">${esc(L2("Timeline", "السجل"))}</a>` : ""}</td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="empty">${svg("check")}<div>${esc(L2("Nothing here yet.", "لا شيء هنا بعد."))}</div></div>`}</div>`; }
+  view.innerHTML = `<div class="tabs" role="tablist">${tabs.map(([k, l]) => `<a class="tab ${k === tab ? "on" : ""}" href="#/desk?tab=${k}">${esc(l)}</a>`).join("")}</div>` + body;
+};
+async function deskThread(th) {
+  let msgs = [];
+  try { msgs = await deskRpc("desk_thread", { p_page: th.page_id, p_ref: th.ref }); await api("POST", `/api/desk/threads/${th.id}/read`, {}); loadAlerts(true); } catch (e) { return fail(e); }
+  const f = drawer(`💬 ${th.name}`, `<div class="ch-list" style="max-height:52vh;overflow:auto;display:flex;flex-direction:column;gap:8px">${msgs.filter(m => m.body).map(m => `<div class="ch-msg ${m.direction === "out" ? "mine" : ""}"><div class="ch-b"><div class="ch-bw"><div class="ch-bubble">${esc(m.body)}</div></div>
+      <div class="ch-meta"><span>${esc(String(m.at).slice(0, 16).replace("T", " "))}</span></div></div></div>`).join("")}</div>` +
+    (th.phone ? `<div class="row" style="margin:8px 0"><a class="btn sm" href="https://wa.me/${waNumber(th.phone)}" target="_blank" rel="noopener">💬 WhatsApp ${esc(th.phone)}</a><a class="btn sm" href="tel:${esc(th.phone)}">📞</a></div>` : "") +
+    form([{ k: "body", l: L2("Your answer", "ردك"), type: "textarea", req: 1, span: "spanall" }], 1),
+    async v => { await deskRpc("desk_reply", { p_page: th.page_id, p_ref: th.ref, p_kind: "reply", p_body: v.body }); toast(L2("Sent", "تم الإرسال")); deskThread(th); return false; },
+    { submitLabel: L2("Send", "إرسال"), noDraft: true });
+  const list = $(".ch-list", f); if (list) list.scrollTop = 1e9;
+}
+// ---------------------------------------------------------- automations (automations.py): "when this happens, do that"
+const AUTO_SET = () => ({ days: L2("Days", "الأيام"), min_amount: L2("Only from this amount", "ابتداءً من مبلغ"), days_before: L2("Days ahead", "قبلها بكم يوم") });
+const autoTrig = (d, k) => { const x = d.triggers.find(t => t.key === k) || {}; return S.lang === "ar" ? x.does_ar || x.does : x.does; };
+const autoAct = (d, k) => { const x = d.actions.find(t => t.key === k) || {}; return S.lang === "ar" ? x.does_ar || x.does : x.does; };
+function autoForm(d, r) {
+  r = r || { trigger: "receivable_overdue", action: "followup", settings: {}, params: {}, repeat_days: 0, active: 1 };
+  const setFields = trig => Object.entries((d.triggers.find(t => t.key === trig) || {}).settings || {}).map(([k, v]) => ({ k: "s_" + k, l: AUTO_SET()[k] || k, type: "number", v: r.trigger === trig && r.settings[k] !== undefined ? r.settings[k] : v }));
+  const f = drawer(r.id ? r.name : L2("New automation", "قاعدة تلقائية جديدة"), form([
+    { k: "name", l: t("name"), v: r.name || "", req: 1, span: "spanall", ph: L2("e.g. Chase late payers", "مثال: متابعة المتأخرين في السداد") },
+    { k: "trigger", l: L2("When…", "عندما…"), type: "select", v: r.trigger, span: "spanall", change: "autotrig", opts: d.triggers.map(x => [x.key, S.lang === "ar" ? x.does_ar : x.does]) },
+    { html: `<div id="autoset" class="grid g3"></div>`, span: "spanall" },
+    { k: "action", l: L2("…then", "…إذن"), type: "select", v: r.action, span: "spanall", change: "autoact", opts: d.actions.map(x => [x.key, S.lang === "ar" ? x.does_ar : x.does]) },
+    { k: "p_assign", l: L2("Who gets the follow-up", "لمن المتابعة"), v: r.params.assign || "", list: "autopeople", ph: L2("blank = the person it concerns, or you", "فارغ = المسؤول أو أنت") },
+    { k: "p_due_days", l: L2("Due in (days)", "تستحق بعد (أيام)"), type: "number", v: r.params.due_days || 0 },
+    { k: "p_title", l: L2("Title starts with", "يبدأ العنوان بـ"), v: r.params.title || "" },
+    { k: "p_room", l: L2("Chat room", "غرفة الدردشة"), type: "select", v: r.params.room || "", opts: [["", "—"], ...d.rooms.map(x => [x, x])] },
+    { k: "p_message", l: L2("Message (use @username to alert someone)", "الرسالة (استخدم @اسم_المستخدم للتنبيه)"), v: r.params.message || "", span: "spanall" },
+    { k: "repeat_days", l: L2("Act again on the same thing after (days, 0 = once)", "إعادة التنفيذ لنفس الحالة بعد (أيام، 0 = مرة واحدة)"), type: "number", v: r.repeat_days || 0 },
+    { k: "active", l: L2("On", "مفعّلة"), type: "switch", v: r.active !== 0 },
+    { html: `<button type="button" class="btn sm" data-a="autoprev">👁 ${esc(L2("What would it act on now?", "على ماذا ستعمل الآن؟"))}</button><div id="autoprevout" class="muted" style="margin-top:6px"></div>`, span: "spanall" }]) +
+    datalist("autopeople", d.people),
+  async v => { const settings = {}, params = {};
+    Object.keys(v).forEach(k => { if (k.startsWith("s_")) settings[k.slice(2)] = +v[k] || 0; if (k.startsWith("p_")) params[k.slice(2)] = v[k]; });
+    const body = { name: v.name, trigger: v.trigger, action: v.action, settings, params, repeat_days: +v.repeat_days || 0, active: !!v.active };
+    if (r.id) await api("PUT", "/api/automations/" + r.id, body); else await api("POST", "/api/automations", body); toast(t("saved")); }, { wide: true });
+  const drawSet = () => { $("#autoset", f).innerHTML = form(setFields($("[name=trigger]", f).value), 3).replace(/^<div class="grid g3">|<\/div>$/g, ""); };
+  const syncAct = () => { const a = $("[name=action]", f).value;
+    ["p_assign", "p_due_days", "p_title"].forEach(k => { $(`[name=${k}]`, f).closest("label").hidden = a !== "followup"; });
+    ["p_room", "p_message"].forEach(k => { $(`[name=${k}]`, f).closest("label").hidden = a !== "chat"; }); };
+  S.H.autotrig = drawSet; S.H.autoact = syncAct; drawSet(); syncAct();
+  S.H.autoprev = async () => { const settings = {}; $$("#autoset [name]", f).forEach(i => { settings[i.name.slice(2)] = +i.value || 0; });
+    try { const p = await api("POST", "/api/automations/preview", { trigger: $("[name=trigger]", f).value, settings });
+      $("#autoprevout", f).innerHTML = p.rows.length ? `<ul style="margin:4px 0;padding-inline-start:18px">${p.rows.slice(0, 15).map(x => `<li>${esc(x)}</li>`).join("")}</ul>${p.rows.length > 15 ? `<div>+${p.rows.length - 15}</div>` : ""}` : esc(L2("Nothing right now.", "لا شيء الآن.")); } catch (e) { fail(e); } };
+}
+PAGES.automations = async (view) => {
+  const d = await api("GET", "/api/automations"), ed = can("settings.automations", "edit"), add = can("settings.automations", "add");
+  if (!S.ai) { try { await loadAiPolicy(); } catch { /* no assistant */ } }
+  Object.assign(S.H, {
+    autonew: () => autoForm(d),
+    autoedit: el => ed && autoForm(d, d.rows.find(x => String(x.id) === el.dataset.id)),
+    autotoggle: async el => { const r = d.rows.find(x => String(x.id) === el.dataset.id); try { await api("PUT", "/api/automations/" + r.id, { ...r, active: !r.active }); route(); } catch (e) { fail(e); } },
+    autorun: async el => { try { const r = await api("POST", "/api/automations/run", { id: +el.dataset.id }); const x = r.done[0];
+      toast(x ? (x.error ? x.error : L2(`Done: ${x.acted}`, `تم: ${x.acted}`)) : L2("Nothing new to act on", "لا جديد للتنفيذ")); route(); } catch (e) { fail(e); } },
+    autodel: async el => { if (!await uiConfirm(L2("Delete this automation?", "حذف هذه القاعدة؟"))) return; try { await api("DELETE", "/api/automations/" + el.dataset.id); route(); } catch (e) { fail(e); } },
+    autoai: () => { const txt = ($("#autodesc").value || "").trim(); if (!txt) return;
+      try { sessionStorage.setItem("berp.aiPrefill", L2("Set up an automation in BeyondERP for this: ", "أنشئ قاعدة تلقائية في BeyondERP لهذا: ") + txt +
+        "\n\n(First read GET /api/automations/catalog for the triggers, actions and rule format; use real usernames and chat room names from GET /api/automations; then create it with POST /api/automations.)"); } catch { /* private window */ }
+      location.hash = "#/assistant/new"; } });
+  const setTxt = r => Object.entries(r.settings || {}).filter(([, v]) => v).map(([k, v]) => `${AUTO_SET()[k] || k}: ${v}`).join(" · ");
+  const parTxt = r => r.action === "followup" ? [r.params.assign && "→ " + r.params.assign, r.params.due_days ? `+${r.params.due_days}d` : ""].filter(Boolean).join(" ") : r.params.room ? "# " + r.params.room : "";
+  view.innerHTML = `<div class="banner info">${esc(L2("Rules that act by themselves: when something happens in the books (a customer pays late, stock runs low, a booking is tomorrow…), the app creates a follow-up for someone or posts in a team chat room. Each rule acts once per item, and runs from its creator's app every few minutes.",
+      "قواعد تعمل وحدها: عندما يحدث شيء في الدفاتر (تأخر عميل في السداد، نقص مخزون، حجز غداً…) ينشئ البرنامج متابعة لشخص أو يرسل رسالة في غرفة دردشة الفريق. تعمل كل قاعدة مرة واحدة لكل حالة، من برنامج من أنشأها كل بضع دقائق."))}</div>
+    ${add && S.ai && S.ai.allowed ? `<div class="card"><h2>✨ ${esc(L2("Describe it — the assistant sets it up", "صِفها — والمساعد ينشئها"))}</h2><div class="row" style="gap:8px;align-items:stretch">
+      <textarea id="autodesc" rows="2" style="flex:1" placeholder="${esc(L2("e.g. When a customer owes money for more than 30 days, give Sara a follow-up every two weeks", "مثال: عندما يتأخر عميل في السداد أكثر من 30 يوماً، أنشئ متابعة لسارة كل أسبوعين"))}"></textarea>
+      <button class="btn pri" data-a="autoai">${esc(L2("Set it up", "أنشئها"))}</button></div></div>` : ""}
+    <div class="toolbar">${add ? `<button class="btn pri" data-a="autonew">+ ${esc(L2("New automation", "قاعدة جديدة"))}</button>` : ""}</div>
+    <div class="card">${d.rows.length ? `<div class="tbl stack"><table><thead><tr><th>${t("name")}</th><th>${esc(L2("When", "عندما"))}</th><th>${esc(L2("Then", "إذن"))}</th><th class="num">${esc(L2("Acted", "نُفّذت"))}</th><th>${esc(L2("Last check", "آخر فحص"))}</th><th></th></tr></thead><tbody>
+      ${d.rows.map(r => `<tr class="click" data-a="autoedit" data-id="${r.id}"><td><b>${esc(r.name)}</b>${r.active ? "" : ` <span class="chip">${esc(L2("Off", "متوقفة"))}</span>`}${r.last_error ? `<div class="neg">⚠ ${esc(r.last_error)}</div>` : ""}<div class="lines">${esc(r.created_by)}</div></td>
+        <td>${esc(autoTrig(d, r.trigger))}<div class="lines">${esc(setTxt(r))}</div></td><td>${esc(autoAct(d, r.action))}<div class="lines">${esc(parTxt(r))}${r.repeat_days ? ` · ↻ ${r.repeat_days}d` : ""}</div></td>
+        <td class="num">${r.fired}</td><td>${r.last_run ? esc(r.last_run.slice(0, 16).replace("T", " ")) : "—"}</td>
+        <td style="white-space:nowrap" onclick="event.stopPropagation()">${ed ? `<button class="btn sm" data-a="autorun" data-id="${r.id}" title="${esc(L2("Run now", "تشغيل الآن"))}">▶</button><button class="btn sm" data-a="autotoggle" data-id="${r.id}">${esc(r.active ? L2("Switch off", "إيقاف") : L2("Switch on", "تفعيل"))}</button><button class="btn sm danger" data-a="autodel" data-id="${r.id}">✕</button>` : ""}</td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="empty">${svg("repeat")}<div>${esc(L2("No automations yet.", "لا توجد قواعد تلقائية بعد."))}</div></div>`}</div>
+    ${d.log.length ? `<div class="card"><h2>${esc(L2("What they did lately", "ما نفّذته مؤخراً"))}</h2>${d.log.slice(0, 40).map(l => `<div class="row"><small class="muted">${esc(l.at.slice(0, 16).replace("T", " "))}</small><b>${esc(l.name)}</b><span>${esc(l.result)}</span></div>`).join("")}</div>` : ""}`;
+};
+// run my own rules every few minutes while the app is open
+let autoLast = 0;
+setInterval(() => { if (document.visibilityState !== "visible" || !S.boot || !S.boot.user || Date.now() - autoLast < 4.5 * 60e3) return; autoLast = Date.now();
+  api("POST", "/api/automations/run", {}).then(r => { if ((r.done || []).some(x => x.acted)) loadAlerts(true); }).catch(() => {}); }, 30e3);
+// ---------------------------------------------------------- my day (workdays.py): start / end the working day, with the place and a short report
+const mapLink = (lat, lng) => lat != null && lng != null ? `<a href="https://maps.google.com/?q=${lat},${lng}" target="_blank" rel="noopener">📍 ${esc(L2("Map", "الخريطة"))}</a>` : "";
+const hhmm = iso => iso ? String(iso).slice(11, 16) : "—";
+function whereAmI(need) {
+  return new Promise((res, rej) => {
+    if (need === "off" || !navigator.geolocation) return need === "required" ? rej(new Error(L2("This device cannot share its location", "هذا الجهاز لا يستطيع مشاركة موقعه"))) : res({});
+    navigator.geolocation.getCurrentPosition(p => res({ lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy }),
+      () => need === "required" ? rej(new Error(L2("Allow location for this app to start or end your day (your browser or phone settings).", "اسمح لهذا التطبيق بالوصول إلى الموقع لبدء أو إنهاء يومك (من إعدادات المتصفح أو الهاتف)."))) : res({}),
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 });
+  });
+}
+PAGES["my-day"] = async (view) => {
+  const d = await api("GET", "/api/my-day"), cur = d.today;
+  S.H.daystart = async el => { el.disabled = true; try { const loc = await whereAmI(d.location); await api("POST", "/api/my-day/start", { ...loc, note: ($("#daynote") || {}).value || "" }); toast(L2("Your day started — good work!", "بدأ يومك — بالتوفيق!")); route(); } catch (e) { el.disabled = false; fail(e); } };
+  S.H.dayend = () => drawer(L2("End my day", "إنهاء يومي"), form([{ k: "report", l: L2("What I did today (edit freely)", "ما أنجزته اليوم (عدّل كما تشاء)"), type: "textarea", v: d.draft || "", span: "spanall" }], 1) +
+    `<style>.drawer textarea[name=report]{min-height:220px}</style>`,
+    async v => { const loc = await whereAmI(d.location); await api("POST", "/api/my-day/end", { ...loc, report: v.report }); toast(L2("Day ended — see you tomorrow", "انتهى يومك — إلى الغد")); },
+    { submitLabel: L2("End my day", "إنهاء يومي") });
+  const started = cur && !cur.end_at, ended = cur && cur.end_at;
+  view.innerHTML = `<div class="card" style="max-width:640px">
+    <h2>${esc(new Date().toLocaleDateString(S.lang === "ar" ? "ar-EG" : "en-GB", { weekday: "long", day: "numeric", month: "long" }))}</h2>
+    ${!cur ? `<p class="muted">${esc(L2("Tap Start when you begin work. " + (d.location === "off" ? "" : d.location === "required" ? "Your location is recorded with it." : "Your location is recorded with it if you allow it."),
+        "اضغط «ابدأ» عند بدء العمل. " + (d.location === "off" ? "" : d.location === "required" ? "يُسجّل موقعك معه." : "يُسجّل موقعك معه إذا سمحت بذلك.")))}</p>
+      <label class="f">${esc(L2("Note (optional) — e.g. first site visit", "ملاحظة (اختياري) — مثل أول زيارة"))}<input id="daynote"></label>
+      <button class="btn pri" style="width:100%;padding:16px;font-size:1.1em;margin-top:10px" data-a="daystart">▶ ${esc(L2("Start my day", "ابدأ يومي"))}</button>` : ""}
+    ${cur ? `<div class="kpis"><div class="kpi"><div class="l">${esc(L2("Started", "البداية"))}</div><div class="v">${hhmm(cur.start_at)}</div><div class="muted">${mapLink(cur.start_lat, cur.start_lng)}</div></div>
+      <div class="kpi"><div class="l">${esc(L2("Ended", "النهاية"))}</div><div class="v">${hhmm(cur.end_at)}</div><div class="muted">${mapLink(cur.end_lat, cur.end_lng)}</div></div></div>` : ""}
+    ${started ? `<button class="btn pri" style="width:100%;padding:16px;font-size:1.1em" data-a="dayend">■ ${esc(L2("End my day", "إنهاء يومي"))}</button>
+      ${d.draft ? `<h3>${esc(L2("So far today", "إنجازك حتى الآن"))}</h3><pre class="muted" style="white-space:pre-wrap;font:inherit">${esc(d.draft)}</pre>` : ""}` : ""}
+    ${ended ? `<h3>${esc(L2("My report", "تقريري"))}</h3><pre style="white-space:pre-wrap;font:inherit">${esc(cur.report || "—")}</pre>` : ""}</div>`;
+};
+PAGES.workdays = async (view, parts, q) => {
+  if (!q.date_from) q = { date_from: today(), date_to: today(), ...q };
+  const d = await api("GET", "/api/workdays?" + qs(q)), adm = S.boot.user.is_admin;
+  S.H.dayloc = async el => { try { await api("PUT", "/api/settings", { workday_location: el.value }); S.boot.settings.workday_location = el.value; toast(t("saved")); } catch (e) { fail(e); } };
+  S.H.dayrep = el => { const r = d.rows.find(x => String(x.id) === el.dataset.id); drawer(`${r.username} — ${fd(r.date)}`, `<pre style="white-space:pre-wrap;font:inherit">${esc(r.report || "—")}</pre>${r.note ? `<p class="muted">${esc(r.note)}</p>` : ""}`, null, { readOnly: true }); };
+  view.innerHTML = `<div class="toolbar"><a class="btn pri" href="#/my-day">▶ ${esc(L2("My day", "يومي"))}</a><span class="spacer"></span>
+      ${adm ? `<label class="f" style="flex-direction:row;align-items:center;gap:8px">${esc(L2("Location", "الموقع"))}<select data-change="dayloc">${[["off", L2("Not recorded", "لا يُسجّل")], ["ask", L2("Recorded when allowed", "يُسجّل إذا سمح الشخص")], ["required", L2("Required", "إلزامي")]].map(([k, l]) => `<option value="${k}" ${d.location === k ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>` : ""}</div>` +
+    filterBar(q, ["dates", "q"]) +
+    (d.not_started.length ? `<div class="banner warn">${esc(L2("Not started today: ", "لم يبدأ اليوم: "))}<b>${d.not_started.map(esc).join(", ")}</b></div>` : "") +
+    `<div class="card">${d.rows.length ? `<div class="tbl stack"><table><thead><tr><th>${esc(L2("Person", "الشخص"))}</th><th>${t("date")}</th><th>${esc(L2("Started", "البداية"))}</th><th>${esc(L2("Ended", "النهاية"))}</th><th class="num">${esc(L2("Hours", "الساعات"))}</th><th>${esc(L2("Report", "التقرير"))}</th></tr></thead><tbody>
+      ${d.rows.filter(r => !q.q || r.username.includes(q.q)).map(r => `<tr class="click" data-a="dayrep" data-id="${r.id}"><td><b>${esc(r.username)}</b></td><td>${fd(r.date)}</td><td>${hhmm(r.start_at)} ${mapLink(r.start_lat, r.start_lng)}</td>
+        <td>${r.end_at ? hhmm(r.end_at) + " " + mapLink(r.end_lat, r.end_lng) : `<span class="chip warn">${esc(L2("Working", "يعمل الآن"))}</span>`}</td><td class="num">${r.hours ?? ""}</td>
+        <td>${esc(String(r.report || "").split("\n")[0].slice(0, 90))}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${svg("clock")}<div>${esc(L2("No working days recorded for these dates.", "لا توجد أيام عمل مسجلة لهذه التواريخ."))}</div></div>`}</div>`;
+};
+// ---------------------------------------------------------- knowledge base (kb.py): the company's own how-tos, policies and answers
+function kbForm(a) {
+  a = a || {};
+  drawer(a.id ? a.title : L2("New article", "مقال جديد"), form([
+    { k: "title", l: L2("Title", "العنوان"), v: a.title || "", req: 1, span: "spanall" },
+    { k: "category", l: L2("Category", "التصنيف"), v: a.category || "", list: "kbcats", ph: L2("e.g. Sales, HR, Site work", "مثال: المبيعات، الموارد البشرية") },
+    { k: "pinned", l: L2("Pin to the top", "تثبيت في الأعلى"), type: "switch", v: !!a.pinned },
+    { k: "body", l: L2("Text — # heading, - list, **bold**, links", "النص — # عنوان، - قائمة، **عريض**، روابط"), type: "textarea", v: a.body || "", span: "spanall" }]) +
+    datalist("kbcats", S.cache.kbcats || []) + `<style>.drawer textarea[name=body]{min-height:320px;font-family:ui-monospace,monospace;font-size:.9em}</style>`,
+  async v => { const r = a.id ? await api("PUT", "/api/kb/" + a.id, v) : await api("POST", "/api/kb", v); toast(t("saved")); location.hash = "#/kb/" + r.id; }, { wide: true });
+}
+PAGES.kb = async (view, parts, q) => {
+  if (parts[1]) {
+    const a = await api("GET", "/api/kb/" + parts[1]), mine = a.created_by === S.boot.user.username || S.boot.user.is_admin;
+    $("#ttl").textContent = a.title;
+    S.H.kbedit = () => kbForm(a);
+    S.H.kbdel = async () => { if (!await uiConfirm(L2("Delete this article?", "حذف هذا المقال؟"))) return; try { await api("DELETE", "/api/kb/" + a.id); location.hash = "#/kb"; } catch (e) { fail(e); } };
+    view.innerHTML = `<div class="toolbar"><a class="btn" href="#/kb">← ${esc(t("m_kb"))}</a>${a.category ? `<span class="chip">${esc(a.category)}</span>` : ""}<span class="spacer"></span>
+        ${mine ? `<button class="btn" data-a="kbedit">${esc(t("edit"))}</button><button class="btn danger" data-a="kbdel">${esc(t("delete"))}</button>` : ""}</div>
+      <article class="card kb-art" dir="auto"><h1>${esc(a.title)}</h1><div class="ai-md">${md(a.body || "")}</div>
+      <p class="muted" style="margin-top:20px;font-size:.85em">${esc(L2("Last changed by", "آخر تعديل بواسطة"))} ${esc(a.updated_by)} · ${esc(String(a.updated_at).slice(0, 10))}</p></article>`;
+    return;
+  }
+  const d = await api("GET", "/api/kb?" + qs(q)); S.cache.kbcats = d.categories;
+  S.H.kbnew = () => kbForm({ category: q.category || "" });
+  view.innerHTML = `<div class="toolbar"><button class="btn pri" data-a="kbnew">+ ${esc(L2("New article", "مقال جديد"))}</button>
+      <span class="spacer"></span>${S.ai && S.ai.allowed ? `<span class="muted" style="font-size:.85em">✨ ${esc(L2("The assistant can answer from these articles.", "يستطيع المساعد الإجابة من هذه المقالات."))}</span>` : ""}</div>` +
+    filterBar(q, ["q"]) + (d.categories.length ? `<div class="row" style="gap:6px;margin-bottom:10px"><a class="chip ${!q.category ? "ok" : ""}" href="#/kb">${esc(t("all"))}</a>${d.categories.map(c => `<a class="chip ${q.category === c ? "ok" : ""}" href="#/kb?${qs({ category: c })}">${esc(c)}</a>`).join("")}</div>` : "") +
+    (d.rows.length ? `<div class="kb-grid">${d.rows.map(r => `<a class="card kb-card" href="#/kb/${r.id}" dir="auto"><div class="row">${r.pinned ? "📌" : ""}<b>${esc(r.title)}</b><span class="spacer"></span>${r.category ? `<span class="chip">${esc(r.category)}</span>` : ""}</div>
+        <p class="muted">${esc(String(r.excerpt || "").replace(/[#*_>`-]/g, "").slice(0, 200))}</p><small class="muted">${esc(r.updated_by)} · ${esc(String(r.updated_at).slice(0, 10))}</small></a>`).join("")}</div>`
+      : `<div class="card"><div class="empty">${svg("book")}<div>${esc(q.q ? L2("Nothing found.", "لم يُعثر على شيء.") : L2("No articles yet. Write down how your company does things — pricing rules, onboarding, the return policy, site safety — so everyone (and the assistant) can find the answer.", "لا توجد مقالات بعد. اكتب كيف تعمل شركتك — قواعد التسعير، استقبال الموظفين الجدد، سياسة الاسترجاع، السلامة في الموقع — ليجد الجميع (والمساعد) الإجابة."))}</div></div></div>`);
+};
+// ---------------------------------------------------------- API keys: scripts, other systems and AI coding tools (Claude Code, Cursor…) use the books as one person
+PAGES["api-keys"] = async (view) => {
+  const d = await api("GET", "/api/api-keys"), base = location.origin;
+  if (!d.server) { view.innerHTML = `<div class="card"><h2>${esc(t("m_api"))}</h2><p>${esc(L2("API keys work when BeyondERP runs as a server — the desktop app or your own server — because outside tools need an address to call. In this web version the books live inside each browser, so there is nothing to call from outside yet.",
+    "مفاتيح الواجهة البرمجية تعمل عندما يعمل BeyondERP كخادم — تطبيق سطح المكتب أو خادمك الخاص — لأن الأدوات الخارجية تحتاج عنواناً تتصل به. في نسخة الويب هذه تعيش الدفاتر داخل كل متصفح، فلا يوجد ما يُتصل به من الخارج بعد."))}</p></div>`; return; }
+  S.H.apinew = () => drawer(L2("New API key", "مفتاح جديد"), form([
+    { k: "name", l: L2("What it is for", "الغرض منه"), req: 1, span: "spanall", ph: L2("e.g. Claude Code — sales dashboard", "مثال: Claude Code — لوحة المبيعات") },
+    { k: "username", l: L2("Acts as (its permissions)", "يعمل بصلاحيات"), type: "select", v: S.boot.user.username, opts: d.people.map(p => [p, p]) },
+    { k: "read_only", l: L2("Read-only (recommended)", "للقراءة فقط (مُوصى به)"), type: "switch", v: true }]),
+    async v => { const r = await api("POST", "/api/api-keys", v); route();
+      const how = `Use the BeyondERP API at ${base}/api — send the header "Authorization: Bearer ${r.key}". GET ${base}/api/api-docs?q=<words> lists the paths you may use.${v.read_only ? " This key is read-only (GET only)." : ""}`;
+      S.H.apicopy = () => copyText(r.key); S.H.apihow = () => copyText(how);
+      drawer(L2("Your new key — copy it now", "مفتاحك الجديد — انسخه الآن"), `<div class="banner warn">${esc(L2("This is the only time the key is shown. Keep it like a password.", "هذه هي المرة الوحيدة التي يظهر فيها المفتاح. احفظه مثل كلمة المرور."))}</div>
+        <div class="f">${esc(L2("Key", "المفتاح"))}<input readonly dir="ltr" value="${esc(r.key)}" onclick="this.select()"></div><button type="button" class="btn pri" data-a="apicopy">⧉ ${esc(L2("Copy key", "نسخ المفتاح"))}</button>
+        <h3>${esc(L2("Give this to an AI coding tool", "أعطِ هذا لأداة برمجة ذكية"))}</h3><textarea readonly rows="5" dir="ltr" onclick="this.select()">${esc(how)}</textarea><button type="button" class="btn" data-a="apihow">⧉ ${esc(L2("Copy instructions", "نسخ التعليمات"))}</button>
+        <h3>${esc(L2("Try it", "جرّبه"))}</h3><pre dir="ltr" style="white-space:pre-wrap;font-size:.85em">curl -H "Authorization: Bearer ${esc(r.key)}" ${esc(base)}/api/reports/income_statement</pre>`, null, { readOnly: true }); return false; });
+  S.H.apirevoke = async el => { if (!await uiConfirm(L2("Revoke this key? Anything using it stops working at once.", "إلغاء هذا المفتاح؟ يتوقف كل ما يستخدمه فوراً."))) return; try { await api("DELETE", "/api/api-keys/" + el.dataset.id); route(); } catch (e) { fail(e); } };
+  view.innerHTML = `<div class="banner info">${esc(L2("An API key lets scripts, other systems and AI coding tools (Claude Code, Cursor, Codex…) read — or, if you allow it, change — the books as one person, with exactly that person's permissions. Keys can never manage people, keys or passwords, erase or restore the books.",
+      "يتيح مفتاح الواجهة البرمجية للبرامج والأنظمة الأخرى وأدوات البرمجة الذكية (Claude Code وCursor وCodex…) قراءة الدفاتر — أو تعديلها إن سمحت — كشخص واحد وبصلاحياته فقط. لا يمكن للمفاتيح إدارة المستخدمين أو المفاتيح أو كلمات المرور أو مسح الدفاتر أو استعادتها."))}</div>
+    <div class="toolbar"><button class="btn pri" data-a="apinew">+ ${esc(L2("New API key", "مفتاح جديد"))}</button><span class="spacer"></span><a class="btn" href="/api/api-docs" target="_blank" rel="noopener">${esc(L2("API paths (JSON)", "مسارات الواجهة (JSON)"))}</a></div>
+    <div class="card">${d.rows.length ? `<div class="tbl stack"><table><thead><tr><th>${t("name")}</th><th>${esc(L2("Acts as", "يعمل بصلاحيات"))}</th><th>${esc(L2("Key", "المفتاح"))}</th><th>${esc(L2("Access", "الوصول"))}</th><th>${esc(L2("Last used", "آخر استخدام"))}</th><th></th></tr></thead><tbody>
+      ${d.rows.map(k => `<tr><td><b>${esc(k.name)}</b><div class="lines">${esc(k.created_by)} · ${esc(String(k.created_at).slice(0, 10))}</div></td><td>${esc(k.username)}</td><td dir="ltr"><code>${esc(k.prefix)}…</code></td>
+        <td>${k.revoked_at ? `<span class="chip bad">${esc(L2("Revoked", "ملغى"))}</span>` : `<span class="chip ${k.read_only ? "ok" : "warn"}">${esc(k.read_only ? L2("Read-only", "قراءة فقط") : L2("Read & change", "قراءة وتعديل"))}</span>`}</td>
+        <td>${k.last_used ? esc(String(k.last_used).slice(0, 16)) : "—"}</td><td>${k.revoked_at ? "" : `<button class="btn sm danger" data-a="apirevoke" data-id="${k.id}">${esc(L2("Revoke", "إلغاء"))}</button>`}</td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="empty">${svg("pen")}<div>${esc(L2("No keys yet.", "لا توجد مفاتيح بعد."))}</div></div>`}</div>`;
+};
 // ---------------------------------------------------------- drafts waiting for approval (maker–checker)
 const APPR_ST = () => ({ pending: L2("Waiting for approval", "في انتظار الاعتماد"), rejected: L2("Sent back for changes", "أُعيد للتعديل"),
   approved: L2("Approved & posted", "اعتُمد ورُحّل"), withdrawn: L2("Withdrawn", "مسحوب") });
@@ -3792,12 +4113,17 @@ PAGES.offer = async (view, parts, q) => {
     try { const r = await api("POST", `/api/offers/${o.id}/convert`, {}); await refreshBoot();
       toast(r.existing ? L2("Already converted — opening its invoice", "تم تحويله من قبل — فتح فاتورته") : L2("Project and BOQ made", "تم إنشاء المشروع والمقايسة"));
       location.hash = can("sales.invoices", "add") ? `#/invoice/new?boq_id=${r.boq_id}` : `#/boq/${r.boq_id}`; } catch (e) { fail(e); } };
+  S.H.osign = async () => { try { const sum = await api("GET", "/api/desk/offer/" + o.id);
+    const pg = await CloudAPI.call("rpc", "desk_page_save", { p_id: null, p_kind: "sign", p_title: `${o.number} — ${o.type_name || t("offer")}`, p_config: { ...sum, lang: sum.lang || S.lang } });
+    if (o.status === "Draft") { await api("PUT", "/api/offers/" + o.id, { ...o, status: "Sent" }).catch(() => {}); }
+    deskShare(deskLink(pg.token), `${o.number} — ${o.client || ""}`); } catch (e) { fail(e); } };
   const r = await api("POST", "/api/offers-preview", o);
   view.innerHTML = `<div class="toolbar"><a class="btn" href="#/offers">← ${t("m_offers")}</a>${statusChip(o.status)}<span class="chip">${esc(o.type_name || "")}</span>${o.bu_code ? `<span class="chip">${esc(o.bu_code)}</span>` : ""}
       <span class="chip">${t("net_payable")} ${money(o.net)}</span><span class="spacer"></span>
       <a class="btn pri" href="/api/offers/${o.id}/file?format=docx">⬇ ${t("word_doc")}</a><a class="btn" href="/api/offers/${o.id}/file?format=pdf" target="_blank" rel="noopener">${t("pdf_print")}</a>
       ${ed ? `<a class="btn" href="#/offer/${o.id}/edit">${t("edit")}</a>` : ""}${can("sales.offers", "add") ? `<button class="btn" data-a="odup">${t("duplicate")}</button>` : ""}
       ${ed && !o.bu_id && can("business_units.units", "add") ? `<button class="btn" data-a="obu">${t("create_bu")}</button>` : ""}
+      ${ed && cloudOn() && o.status !== "Accepted" ? `<button class="btn" data-a="osign">✍ ${esc(L2("Send for e-signature", "إرسال للتوقيع الإلكتروني"))}</button>` : ""}
       ${ed && can("estimating.boqs", "add") ? `<button class="btn pri" data-a="oconvert" title="${esc(L2("Project + BOQ with the offer's prices + a new invoice, in one step", "مشروع + مقايسة بأسعار العرض + فاتورة جديدة، في خطوة واحدة"))}">⇢ ${esc(L2("BOQ & invoice", "مقايسة وفاتورة"))}</button>` : ""}${ed ? `<button class="btn danger" data-a="odel">${t("delete")}</button>` : ""}</div>
     <div class="card" style="padding:0"><iframe id="oview" title="offer" style="width:100%;height:calc(100vh - 170px);border:0;border-radius:var(--radius)"></iframe></div>`;
   $("#oview").srcdoc = r.html;
@@ -8304,7 +8630,7 @@ renderShell = function () {   // eslint-disable-line no-func-assign
   _renderShell();
   const p = S.boot.profile || {}, u = me();
   const av = $(".ucard .avatar"); if (av && p.avatar) av.outerHTML = `<img class="avatar av" src="${esc(p.avatar)}" alt="">`;
-  const um = $(".ucard .dd-menu"); if (um && !$('a[href="#/profile"]', um)) um.insertAdjacentHTML("afterbegin", `<a href="#/profile">${svg("user")} ${esc(L2("My profile", "ملفي الشخصي"))}</a><a href="#/notifications">${svg("bell")} ${esc(L2("Notifications", "الإشعارات"))}</a>`);
+  const um = $(".ucard .dd-menu"); if (um && !$('a[href="#/profile"]', um)) um.insertAdjacentHTML("afterbegin", `<a href="#/profile">${svg("user")} ${esc(L2("My profile", "ملفي الشخصي"))}</a><a href="#/my-day">${svg("clock")} ${esc(L2("My day (start / end)", "يومي (بداية / نهاية)"))}</a><a href="#/notifications">${svg("bell")} ${esc(L2("Notifications", "الإشعارات"))}</a>`);
   if (!C2.started) { C2.started = true; setTimeout(pollChat, 1200); setTimeout(notifyNudge, 6000); }
   void u;
 };
@@ -8312,6 +8638,7 @@ renderShell = function () {   // eslint-disable-line no-func-assign
 // ================================================================== chat
 const CH = { room: null, msgs: [], timer: null, pending: [], editing: null, link: null };
 PAGES.chat = async (view, parts, q) => {
+  if (!S.ai) { try { await loadAiPolicy(); } catch { /* no assistant */ } }
   clearInterval(CH.timer);
   await loadPeople();
   const isLink = parts[1] === "link", rid = isLink ? null : +parts[1] || null, lid = isLink ? parts[2] : null;
@@ -8389,7 +8716,7 @@ function msgHtml(m, prev, opts = {}) {
     ${mine ? "" : `<div class="ch-av">${grouped && !day ? "" : avatar(p, 34)}</div>`}
     <div class="ch-b">${grouped && !day ? "" : `<div class="ch-h"><b>${esc(mine ? L2("You", "أنت") : p.name)}</b><span>${esc(fmtTime(m.at))}</span></div>`}
       <div class="ch-bw"><div class="ch-bubble ${m.deleted ? "del" : ""}">${m.deleted ? `<i>${esc(L2("Message removed", "تم حذف الرسالة"))}</i>` : richText(m.body)}${files ? `<div class="ch-files">${files}</div>` : ""}</div>${rxBtn}</div>
-      ${rx}<div class="ch-meta">${grouped && !day ? `<span>${esc(fmtTime(m.at))}</span>` : ""}${m.edited ? `<span>${esc(L2("edited", "معدّلة"))}</span>` : ""}${seen}${tools}</div></div></div>`;
+      ${rx}<div class="ch-meta">${grouped && !day ? `<span>${esc(fmtTime(m.at))}</span>` : ""}${m.edited ? `<span>${esc(L2("edited", "معدّلة"))}</span>` : ""}${seen}${tools}${!opts.person && !m.deleted && m.body && can("crm.followups", "add") ? `<span class="ch-tools"><button class="lnk" data-a="chfu" data-id="${m.id}" title="${esc(L2("Make a follow-up from this message", "إنشاء متابعة من هذه الرسالة"))}">⏰ ${esc(L2("Follow-up", "متابعة"))}</button></span>` : ""}</div></div></div>`;
 }
 
 function composerHtml(canWrite, why) {
@@ -8455,6 +8782,7 @@ async function openRoom(room, rooms) {
       ${room.kind === "dm" ? avatar(title, 38) : `<span class="chl-ic big">${esc(room.icon || (room.kind === "general" ? "#" : "◆"))}</span>`}
       <div class="ch-tt"><b>${esc(room.name)}</b><small>${esc(room.kind === "dm" ? (title.job_title || "@" + title.username) : room.topic || `${members.length} ${L2("members", "أعضاء")}`)}</small></div>
       <div class="ch-mem">${members.slice(0, 5).map(p => avatar(p, 26)).join("")}${members.length > 5 ? `<span class="av more">+${members.length - 5}</span>` : ""}</div>
+      ${S.ai && S.ai.allowed ? `<button class="btn sm" data-a="chsum" title="${esc(L2("The assistant summarises this chat: decisions, open questions, who does what", "يلخّص المساعد هذه المحادثة: القرارات والأسئلة المفتوحة ومن يفعل ماذا"))}">✨ ${esc(L2("Summarise", "تلخيص"))}</button>` : ""}
       ${isSuper() && room.kind !== "dm" ? `<div class="dd"><button class="btn icbtn" aria-label="${esc(L2("Room options", "خيارات الغرفة"))}">⋯</button><div class="dd-menu">
         <button data-a="chroomset">${esc(L2("Room settings & members", "إعدادات الغرفة والأعضاء"))}</button>
         <button data-a="chexport">${esc(L2("Export history (zip with files)", "تصدير السجل (ملف مضغوط مع الملفات)"))}</button>
@@ -8491,6 +8819,13 @@ async function openRoom(room, rooms) {
   S.H.chmore = async () => { const r = await api("GET", `/api/chat/rooms/${room.id}/messages?before=${CH.msgs[0].id}&limit=60`); CH.msgs = [...r.messages, ...CH.msgs]; CH.more = r.more; draw("top"); };
   S.H.chfile = async el => { try { const u = await apiBlobUrl(el.dataset.k); if (/^image\//.test(el.dataset.mime)) openViewer(u, el.dataset.name); else { const a = document.createElement("a"); a.href = u; a.download = el.dataset.name; document.body.appendChild(a); a.click(); a.remove(); } } catch (e) { fail(e); } };
   S.H.chedit = el => { const m = CH.msgs.find(x => x.id === +el.dataset.id); if (m) CH.startEdit(m.id, m.body); };
+  S.H.chfu = el => { const m = CH.msgs.find(x => x.id === +el.dataset.id); if (!m) return; const who = personById(m.user_id).name;
+    followupForm({ title: m.body.replace(/\s+/g, " ").slice(0, 120), notes: `${m.body}\n— ${who}, ${CH.room ? CH.room.name : ""} ${String(m.at).slice(0, 16)}` }); };
+  S.H.chsum = () => { const lines = CH.msgs.filter(m => !m.deleted && m.body).slice(-150).map(m => `${personById(m.user_id).name} (${String(m.at).slice(5, 16)}): ${m.body}`).join("\n");
+    if (!lines) return toast(L2("Nothing to summarise yet", "لا يوجد ما يُلخّص بعد"));
+    try { sessionStorage.setItem("berp.aiPrefill", L2(`Summarise this team chat (room “${CH.room ? CH.room.name : ""}”) in short bullet points: decisions made, open questions, and who does what by when. Then suggest follow-ups I could create.\n\n`,
+      `لخّص محادثة الفريق هذه (غرفة «${CH.room ? CH.room.name : ""}») في نقاط قصيرة: القرارات، الأسئلة المفتوحة، ومن يفعل ماذا ومتى. ثم اقترح متابعات يمكنني إنشاؤها.\n\n`) + lines.slice(-60000)); } catch { /* private window */ }
+    location.hash = "#/assistant/new"; };
   S.H.chdel = async el => { if (!await uiConfirm(L2("Delete this message?", "حذف هذه الرسالة؟"))) return; try { await api("DELETE", "/api/chat/messages/" + el.dataset.id); await refresh(); } catch (e) { fail(e); } };
   const QUICK_RX = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
   const react = async (id, emoji) => {
@@ -8587,6 +8922,13 @@ async function openLink(l) {
     try { const f = await CloudAPI.call("rpc", "chat_link_file", { p_message: +mid, p_index: +i }); const blob = b64ToBlob(f.data, f.mime);
       if (/^image\//.test(f.mime)) openViewer(URL.createObjectURL(blob), f.name); else saveBlob(blob, f.name); } catch (e) { fail(e); } };
   S.H.chedit = el => { const m = CH.msgs.find(x => x.id === +el.dataset.id); if (m) CH.startEdit(m.id, m.body); };
+  S.H.chfu = el => { const m = CH.msgs.find(x => x.id === +el.dataset.id); if (!m) return; const who = personById(m.user_id).name;
+    followupForm({ title: m.body.replace(/\s+/g, " ").slice(0, 120), notes: `${m.body}\n— ${who}, ${CH.room ? CH.room.name : ""} ${String(m.at).slice(0, 16)}` }); };
+  S.H.chsum = () => { const lines = CH.msgs.filter(m => !m.deleted && m.body).slice(-150).map(m => `${personById(m.user_id).name} (${String(m.at).slice(5, 16)}): ${m.body}`).join("\n");
+    if (!lines) return toast(L2("Nothing to summarise yet", "لا يوجد ما يُلخّص بعد"));
+    try { sessionStorage.setItem("berp.aiPrefill", L2(`Summarise this team chat (room “${CH.room ? CH.room.name : ""}”) in short bullet points: decisions made, open questions, and who does what by when. Then suggest follow-ups I could create.\n\n`,
+      `لخّص محادثة الفريق هذه (غرفة «${CH.room ? CH.room.name : ""}») في نقاط قصيرة: القرارات، الأسئلة المفتوحة، ومن يفعل ماذا ومتى. ثم اقترح متابعات يمكنني إنشاؤها.\n\n`) + lines.slice(-60000)); } catch { /* private window */ }
+    location.hash = "#/assistant/new"; };
   S.H.chdel = async el => { if (!await uiConfirm(L2("Delete this message?", "حذف هذه الرسالة؟"))) return;
     try { await CloudAPI.call("rpc", "chat_link_edit", { p_message: +el.dataset.id, p_body: "", p_delete: true }); load(); } catch (e) { fail(e); } };
   S.H.lnkend = async () => { if (!await uiConfirm(l.status === "pending" ? L2("Withdraw this code?", "سحب هذا الرمز؟") : L2("End this connection? Nobody can write any more; both companies keep the history.", "إنهاء هذا الربط؟ لن يتمكن أحد من الكتابة، وتحتفظ الشركتان بالسجل."))) return;
@@ -8689,6 +9031,7 @@ PAGES.assistant = async (view, parts) => {
   ta.addEventListener("input", () => { ta.style.height = "auto"; ta.style.height = Math.min(ta.scrollHeight, 200) + "px"; });
   ta.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing && matchMedia("(pointer: fine)").matches) { e.preventDefault(); S.H.aisend(); } });
   S.H.aisend = () => aiSend(ta.value.trim(), ta);
+  try { const pre = sessionStorage.getItem("berp.aiPrefill"); if (pre) { sessionStorage.removeItem("berp.aiPrefill"); ta.value = pre; setTimeout(() => S.H.aisend(), 400); } } catch { /* private window */ }
   // attachments: pick, paste or drop — any kind of file
   AI.pending = [];
   const drawPend = () => { $("#aipend").innerHTML = AI.pending.map((f, i) => `<span class="chip">${f.thumb ? `<img src="${esc(f.thumb)}" alt="">` : svg("file")} ${esc(f.name)} · ${esc(sizeTxt(f.size))} <button class="lnk" data-a="aiunpend" data-i="${i}">×</button></span>`).join(""); };

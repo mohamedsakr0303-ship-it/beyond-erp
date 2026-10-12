@@ -1721,3 +1721,9 @@ input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 4px color
   .side{scrollbar-width:none}.side::-webkit-scrollbar{display:none}
   .ucard .dd-menu{position:static;inset:auto;width:auto;max-height:none;overflow:visible;margin-top:6px;box-shadow:none}
 }
+
+/* ---- knowledge base */
+.kb-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,320px),1fr));gap:12px}
+.kb-card{display:block;text-decoration:none;color:inherit;transition:transform .12s,border-color .12s}.kb-card:hover{transform:translateY(-2px);border-color:var(--brand)}
+.kb-card p{margin:8px 0;font-size:.9em}
+.kb-art{max-width:860px;line-height:1.7}.kb-art h1{margin-top:0}

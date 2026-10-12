@@ -37,6 +37,8 @@ class State:
         self.payments = []
         self.days_shift = 0
         self.paymob = False             # card checkout configured
+        self.pages = {}                 # public desk (supabase/migrations/*_public_desk.sql): id -> page
+        self.inbox = []                 # public_inbox rows
 
     def now(self):
         import datetime
@@ -245,6 +247,9 @@ class Handler(BaseHTTPRequestHandler):
                 st.days_shift = body.get("days_shift", st.days_shift)
                 st.paymob = body.get("paymob", st.paymob)
                 return self._send(200, {})
+            if url.path.startswith("/rest/v1/rpc/public_"):        # the public desk: visitors, no sign-in
+                status, out = self.public_rpc(url.path.rsplit("/", 1)[1], body)
+                return self._send(status, out)
             if url.path.startswith("/rest/v1/rpc/"):
                 email = self._email()
                 if not email:
@@ -330,6 +335,123 @@ class Handler(BaseHTTPRequestHandler):
         st.members[(cid, final)] = {**cur, "active": body.get("active", True) is not False, "pending": False}
         return 200, {"email": final, "username": u, "placeholder": not e and not shared, "shared": shared}
 
+    # ---------------------------------------------------------------- the public desk (mirror of *_public_desk.sql)
+    def public_rpc(self, fn, p):
+        import datetime
+        import hashlib
+        st = self.server.state
+        h = lambda x: hashlib.sha256(str(x or "").encode()).hexdigest()   # noqa: E731
+        now = datetime.datetime.now()
+        pg = next((x for x in st.pages.values() if x["token"] == p.get("p_token")), None)
+        if not pg or (fn != "public_manage" and not pg["active"]):
+            return _err("P0002", "This link is not available (it may have been switched off)", 404)
+        def held():
+            n = {}
+            for r in st.inbox:
+                if r["page_id"] == pg["id"] and r["slot"] and r["status"] != "rejected":
+                    n[r["slot"]] = n.get(r["slot"], 0) + 1
+            return [{"slot": k, "n": v} for k, v in n.items()]
+        def free(slot):
+            cap = max(1, int(pg["config"].get("per_slot") or 1))
+            return sum(1 for r in st.inbox if r["page_id"] == pg["id"] and r["slot"] == slot and r["status"] != "rejected") < cap \
+                and slot not in (pg["config"].get("busy") or [])
+        def add(**kw):
+            row = {"id": len(st.inbox) + 1, "page_id": pg["id"], "company_id": pg["company_id"], "direction": "in", "ref": None,
+                   "manage_hash": None, "slot": None, "payload": {}, "status": "new", "created_at": now.isoformat(), **kw}
+            st.inbox.append(row)
+            return row
+        if fn == "public_page":
+            return 200, {"kind": pg["kind"], "title": pg["title"], "config": pg["config"], "company": st.companies[pg["company_id"]]["name"],
+                         "held": held() if pg["kind"] == "booking" else None}
+        if fn == "public_send":
+            kind, pay, ref = p.get("p_kind"), p.get("p_payload") or {}, p.get("p_ref") or None
+            if (pg["kind"], kind) not in (("booking", "booking"), ("form", "lead"), ("sign", "signature"), ("guest", "message")):
+                return _err("22023", "not accepted here")
+            mng = None
+            if ref:
+                first = next((r for r in st.inbox if r["page_id"] == pg["id"] and r["ref"] == ref and r["manage_hash"]), None)
+                if not first or first["manage_hash"] != h(p.get("p_manage")):
+                    return _err("42501", "not allowed", 403)
+            else:
+                ref, mng = uuid.uuid4().hex[:8].upper(), uuid.uuid4().hex
+            slot = None
+            if kind == "booking":
+                slot = pay.get("slot") or ""
+                if not re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}", slot) or slot < now.strftime("%Y-%m-%d %H:%M"):
+                    return _err("22023", "Pick a time that is still ahead")
+                if not free(slot):
+                    return _err("23505", "That time was just taken — please pick another one", 409)
+            add(kind=kind, ref=ref, manage_hash=h(mng) if mng else None, slot=slot, payload=pay)
+            return 200, {"ref": ref, "manage": mng}
+        if fn == "public_manage":
+            first = next((r for r in st.inbox if r["page_id"] == pg["id"] and r["ref"] == p.get("p_ref") and r["manage_hash"]), None)
+            if not first or first["manage_hash"] != h(p.get("p_manage")):
+                return _err("42501", "not allowed", 403)
+            act = p.get("p_action") or "view"
+            if act in ("cancel", "move"):
+                if first["status"] == "rejected":
+                    return _err("22023", "This booking was declined")
+                if not first["slot"]:
+                    return _err("22023", "This booking is already cancelled")
+                cur = first["slot"]
+                if act == "move" and not free(p.get("p_slot")):
+                    return _err("23505", "That time was just taken — please pick another one", 409)
+                first["slot"] = p.get("p_slot") if act == "move" else None
+                add(kind="reschedule" if act == "move" else "cancel", ref=first["ref"], payload={"from": cur, "to": p.get("p_slot")})
+            return 200, {"kind": first["kind"], "ref": first["ref"], "slot": first["slot"], "status": first["status"], "payload": first["payload"],
+                         "created_at": first["created_at"],
+                         "messages": [{"id": r["id"], "kind": r["kind"], "direction": r["direction"], "body": r["payload"].get("body"), "at": r["created_at"]}
+                                      for r in st.inbox if r["page_id"] == pg["id"] and r["ref"] == first["ref"] and r["id"] > int(p.get("p_after") or 0)
+                                      and r["kind"] in ("message", "reply", "confirm", "reschedule", "cancel")]}
+        return _err("PGRST202", "unknown function", 404)
+
+    def desk_rpc(self, fn, p, m, admin):
+        import datetime
+        st, cid = self.server.state, p.get("p_company")
+        if not m:
+            return _err("42501", "not a member of this company", 403)
+        if fn == "desk_pages":
+            return 200, [{**x, "new": sum(1 for r in st.inbox if r["page_id"] == x["id"] and r["status"] == "new")}
+                         for x in st.pages.values() if x["company_id"] == cid]
+        if fn == "desk_page_save":
+            if not admin:
+                return _err("42501", "only administrators of this company can do this", 403)
+            if p.get("p_id"):
+                pg = st.pages.get(p["p_id"])
+                if not pg or pg["company_id"] != cid:
+                    return _err("P0002", "no such page", 404)
+                pg.update(title=p.get("p_title") if p.get("p_title") is not None else pg["title"], config=p.get("p_config") if p.get("p_config") is not None else pg["config"],
+                          active=pg["active"] if p.get("p_active") is None else bool(p.get("p_active")))
+            else:
+                pid = str(uuid.uuid4())
+                pg = st.pages[pid] = {"id": pid, "company_id": cid, "kind": p.get("p_kind"), "token": uuid.uuid4().hex[:24], "title": p.get("p_title") or "",
+                                      "config": p.get("p_config") or {}, "active": p.get("p_active", True) is not False,
+                                      "created_at": datetime.datetime.now().isoformat(), "updated_at": datetime.datetime.now().isoformat()}
+            return 200, {"id": pg["id"], "token": pg["token"], "kind": pg["kind"]}
+        if fn == "desk_claim":
+            out = []
+            for r in st.inbox:
+                if r["company_id"] == cid and r["status"] == "new" and r["direction"] == "in":
+                    r["status"] = "taken"
+                    pg = st.pages[r["page_id"]]
+                    out.append({"id": r["id"], "page_id": r["page_id"], "page_kind": pg["kind"], "page_title": pg["title"], "kind": r["kind"],
+                                "ref": r["ref"], "slot": r["slot"], "payload": r["payload"], "at": r["created_at"]})
+            return 200, out
+        if fn == "desk_reply":
+            first = next((r for r in st.inbox if r["page_id"] == p.get("p_page") and r["company_id"] == cid and r["ref"] == p.get("p_ref") and r["manage_hash"]), None)
+            if not first:
+                return _err("P0002", "no such booking or conversation", 404)
+            if p.get("p_kind") == "decline":
+                first["status"], first["slot"] = "rejected", None
+            row = {"id": len(st.inbox) + 1, "page_id": first["page_id"], "company_id": cid, "direction": "out", "ref": first["ref"], "manage_hash": None,
+                   "slot": None, "kind": "cancel" if p.get("p_kind") == "decline" else p.get("p_kind"), "payload": {"body": p.get("p_body") or ""},
+                   "status": "taken", "created_at": datetime.datetime.now().isoformat()}
+            st.inbox.append(row)
+            return 200, {"id": row["id"]}
+        if fn == "desk_thread":
+            return 200, [{"id": r["id"], "kind": r["kind"], "direction": r["direction"], "body": r["payload"].get("body"), "name": r["payload"].get("name"),
+                          "at": r["created_at"]} for r in st.inbox if r["company_id"] == cid and r["page_id"] == p.get("p_page") and r["ref"] == p.get("p_ref")]
+
     # ---------------------------------------------------------------- RPCs
     def rpc(self, fn, p, email):
         st = self.server.state
@@ -357,6 +479,8 @@ class Handler(BaseHTTPRequestHandler):
                     "is_admin": bool(admin()), "gateway": bool(m and m["gateway"]),
                     "last_seq": (ops[-1]["seq"] if ops else 0) if m else None,
                     "snapshot_seq": snap["seq"] if snap else None, "snapshot_version": snap["version"] if snap else None}
+        if fn.startswith("desk_"):
+            return self.desk_rpc(fn, p, m, admin())
         if fn == "billing_status":
             if not m:
                 return _err("42501", "not a member of this company", 403)

@@ -938,7 +938,7 @@ def export_extras(db, files=True):
             "entry_meta": _entry_meta_export(db), "attachments": _attachments_export(db) if files else [],
             "purchase_orders": _po_export(db), "services": _svc_export(db), "chat": _chat_export(db),
             "dashboard_groups": db.q("SELECT key, name, name_ar, layout, sort, look FROM user_groups ORDER BY sort, id"),
-            "line_styles": _line_styles_export(db), "crm": _crm_export(db), "care": _care_export(db), "entry_tags": _tags_export(db),
+            "line_styles": _line_styles_export(db), "crm": _crm_export(db), "care": _care_export(db), "desk": _desk_export(db), "automations": {t: db.q(f"SELECT * FROM {t} ORDER BY id") for t in ("automations", "automation_log")}, "workdays": db.q("SELECT * FROM workdays ORDER BY id"), "kb_pages": db.q("SELECT * FROM kb_pages ORDER BY id"), "entry_tags": _tags_export(db),
             "bu_groups": {r["code"]: r["grp"] for r in db.q("SELECT code, grp FROM business_units WHERE grp<>''")}, "site": site_extras(db)}
 
 
@@ -951,6 +951,11 @@ def _tags_export(db):
         if fp:
             out.setdefault(json.dumps(fp), []).append(r["tag"])
     return [{"key": json.loads(k), "tags": v} for k, v in out.items()]
+
+
+def _desk_export(db):
+    from . import desk
+    return desk.export_rows(db)
 
 
 def _care_export(db):
@@ -1266,6 +1271,34 @@ def _imp_extras(db, ex, mode, counts):
                                                                         and not db.one("SELECT 1 FROM crm_activities")):
         from . import crm
         counts["Customers & deals"] = crm.import_rows(db, ex["crm"], replace=mode == "replace")
+    if isinstance(ex.get("kb_pages"), list) and ex["kb_pages"] and (mode == "replace" or not db.one("SELECT 1 FROM kb_pages")):
+        db.conn.execute("DELETE FROM kb_pages")
+        cols = [r["name"] for r in db.q("PRAGMA table_info(kb_pages)")]
+        for row in ex["kb_pages"]:
+            keys = [k for k in cols if k in row]
+            db.conn.execute(f"INSERT INTO kb_pages({','.join(keys)}) VALUES ({','.join('?' * len(keys))})", [row[k] for k in keys])
+        counts["Knowledge base"] = len(ex["kb_pages"])
+    if isinstance(ex.get("workdays"), list) and ex["workdays"] and (mode == "replace" or not db.one("SELECT 1 FROM workdays")):
+        db.conn.execute("DELETE FROM workdays")
+        cols = [r["name"] for r in db.q("PRAGMA table_info(workdays)")]
+        for row in ex["workdays"]:
+            keys = [k for k in cols if k in row]
+            db.conn.execute(f"INSERT INTO workdays({','.join(keys)}) VALUES ({','.join('?' * len(keys))})", [row[k] for k in keys])
+        counts["Working days"] = len(ex["workdays"])
+    if isinstance(ex.get("automations"), dict) and ex["automations"].get("automations") and (mode == "replace" or not db.one("SELECT 1 FROM automations")):
+        db.conn.execute("DELETE FROM automation_log")
+        db.conn.execute("DELETE FROM automations")
+        for t in ("automations", "automation_log"):
+            cols = [r["name"] for r in db.q(f"PRAGMA table_info({t})")]
+            for row in ex["automations"].get(t) or []:
+                keys = [k for k in cols if k in row]
+                db.conn.execute(f"INSERT INTO {t}({','.join(keys)}) VALUES ({','.join('?' * len(keys))})", [row[k] for k in keys])
+        counts["Automations"] = len(ex["automations"]["automations"])
+    if isinstance(ex.get("desk"), dict) and any(ex["desk"].values()):
+        from . import desk
+        n = desk.import_backup(db, ex["desk"], mode)
+        if n:
+            counts["Online desk"] = n
     if isinstance(ex.get("care"), dict) and any(ex["care"].values()):
         from . import care
         n = care.import_rows(db, ex["care"], mode)
@@ -1335,7 +1368,7 @@ def to_csv(db, sheet_name, template=False):
     return ("﻿" + buf.getvalue()).encode("utf-8")
 
 
-WIPE_ORDER = ("entry_tags", "care_visit_lines", "care_visits", "care_claims", "care_packages", "care_services", "care_patients", "crm_followups", "crm_activities", "crm_deals", "sub_cert_lines", "sub_certificates", "variation_orders", "contract_lines", "contracts", "pr_quote_lines", "pr_quotes",
+WIPE_ORDER = ("entry_tags", "kb_pages", "workdays", "automation_log", "automations", "desk_rows", "desk_threads", "care_visit_lines", "care_visits", "care_claims", "care_packages", "care_services", "care_patients", "crm_followups", "crm_activities", "crm_deals", "sub_cert_lines", "sub_certificates", "variation_orders", "contract_lines", "contracts", "pr_quote_lines", "pr_quotes",
               "pr_lines", "purchase_requests", "stock_count_lines", "stock_counts", "equipment_usage", "maintenance_logs", "maintenance_plans",
               "equipment", "attendance", "ereceipts", "project_tasks", "project_phases", "payroll_lines", "payroll_runs", "crew_sheets", "employees", "sub_recognitions", "sub_visits", "sub_invoices", "subscriptions", "service_plans", "attachments", "po_receipts", "po_lines", "purchase_orders", "budgets", "bank_lines", "bank_statements", "bank_rules", "recurring_runs", "recurring", "sale_cheques", "sale_installments", "sale_lines", "sales_orders", "product_media", "products", "rent_moves", "rental_invoices", "rental_charges", "rental_handovers", "rental_lines", "rentals", "rent_lots",
               "rent_kit_lines", "rent_kits", "rent_models", "rent_items", "loans", "custodies", "parties", "ownership_changes", "fixed_assets", "stock_moves", "stock_levels", "stock_items", "extract_lines", "extracts", "boq_lines", "boqs",

@@ -101,7 +101,7 @@ COMPANY_KEYS = ("company_name", "company_tagline", "company_address", "company_t
                 "company_city", "company_phone", "company_email", "company_website", "bank_name", "bank_account",
                 "bank_holder", "bank_swift", "bank_iban", "offer_validity_days", "offer_prefix", "offer_digits", "regional",
                 "banks", "bank_default")
-PUBLIC_SETTINGS = COMPANY_KEYS + ("demo_loaded", "menu_labels", "reserve_pct", "legal_reserve_pct", "legal_reserve_cap", "funding_partner", "funding_limit", "report_from", "report_to", "lock_date", "hidden_modules",
+PUBLIC_SETTINGS = COMPANY_KEYS + ("demo_loaded", "desk_site", "workday_location", "menu_labels", "reserve_pct", "legal_reserve_pct", "legal_reserve_cap", "funding_partner", "funding_limit", "report_from", "report_to", "lock_date", "hidden_modules",
                                   "appearance", "po_self_approve_limit", "menu_layout", "form_custom")
 JSON_SETTINGS = {"menu_labels": {}, "units": [], "hidden_modules": [], "appearance": {}, "regional": {}, "banks": [],
                  "menu_layout": {}, "form_custom": {}}
@@ -882,6 +882,210 @@ def approval_withdraw(ctx, aid):
 
 
 # ---------------------------------------------------------------- customers & deals (erp/crm.py)
+# ================================================================= API keys
+@route("GET", "/api/api-keys", "settings.system", "edit")
+def api_keys_list(ctx):
+    return ok({"rows": auth.api_keys(ctx.db), "people": [r["username"] for r in ctx.db.q("SELECT username FROM users WHERE active=1 ORDER BY username")],
+               "server": getattr(ctx.app, "static", False) is not True})
+
+
+@route("POST", "/api/api-keys", "settings.system", "edit")
+def api_keys_add(ctx):
+    u = ctx.db.one("SELECT id FROM users WHERE username=? AND active=1", (ctx.body.get("username") or ctx.user["username"],))
+    if not u:
+        raise acc.ValidationError("Choose a person")
+    kid, key = auth.create_api_key(ctx.db, u["id"], ctx.body.get("name"), ctx.body.get("read_only", True) is not False, ctx.user["username"])
+    ctx.log("api_key.create", f"{kid} {ctx.body.get('name')}")
+    return ok({"id": kid, "key": key})
+
+
+@route("DELETE", "/api/api-keys/<kid>", "settings.system", "edit")
+def api_keys_revoke(ctx, kid):
+    auth.revoke_api_key(ctx.db, kid)
+    ctx.log("api_key.revoke", kid)
+    return ok()
+
+
+@route("GET", "/api/api-docs")
+def api_docs(ctx):
+    """Every API path the caller may use: method, path, section and what it does (for scripts and AI coding tools)."""
+    from . import ai
+    return ok({"routes": ai.catalog(ROUTES, ctx.user, ctx.q.get("q"), 120), "auth": "Authorization: Bearer <API key>",
+               "note": "Search with ?q=words (best 120 matches). Read-only keys may only GET."})
+
+
+# ================================================================= knowledge base (kb.py)
+@route("GET", "/api/kb")
+def kb_list(ctx):
+    """The company knowledge base: its own how-tos, policies and answers (search with q). Check it when asked how the company does something."""
+    from . import kb
+    return ok(kb.listing(ctx.db, ctx.q.get("q"), ctx.q.get("category")))
+
+
+@route("GET", "/api/kb/<kid>")
+def kb_get(ctx, kid):
+    """One knowledge base article with its full text."""
+    from . import kb
+    return ok(kb.get(ctx.db, kid))
+
+
+@route("POST", "/api/kb")
+def kb_add(ctx):
+    """Write a knowledge base article: {title, body, category, pinned}."""
+    from . import kb
+    return ok({"id": kb.save(ctx.db, ctx.body, ctx.user)})
+
+
+@route("PUT", "/api/kb/<kid>")
+def kb_edit(ctx, kid):
+    """Change a knowledge base article (its writer or an administrator)."""
+    from . import kb
+    return ok({"id": kb.save(ctx.db, ctx.body, ctx.user, kid)})
+
+
+@route("DELETE", "/api/kb/<kid>")
+def kb_delete(ctx, kid):
+    """Delete a knowledge base article (its writer or an administrator)."""
+    from . import kb
+    kb.delete(ctx.db, kid, ctx.user)
+    return ok()
+
+
+# ================================================================= my day (workdays.py)
+@route("GET", "/api/my-day")
+def my_day(ctx):
+    """The signed-in person's working day today (started? ended?) and a draft report of what they did."""
+    from . import workdays
+    return ok(workdays.mine(ctx.db, ctx.user))
+
+
+@route("POST", "/api/my-day/start")
+def my_day_start(ctx):
+    """Start my working day (with lat / lng when location is shared)."""
+    from . import workdays
+    return ok({"id": workdays.start(ctx.db, ctx.user, ctx.body)})
+
+
+@route("POST", "/api/my-day/end")
+def my_day_end(ctx):
+    """End my working day with a short report."""
+    from . import workdays
+    return ok({"id": workdays.finish(ctx.db, ctx.user, ctx.body)})
+
+
+@route("GET", "/api/workdays", "payroll.workdays")
+def workdays_team(ctx):
+    """The team's working days: who started when and where, hours and daily reports."""
+    from . import workdays
+    return ok({**workdays.team(ctx.db, ctx.q.get("date_from"), ctx.q.get("date_to"), ctx.q.get("username")),
+               "location": ctx.db.setting("workday_location") or "ask"})
+
+
+# ================================================================= automations (automations.py)
+@route("GET", "/api/automations/catalog", "settings.automations")
+def automations_catalog(ctx):
+    """What automations can do: every trigger and action with its settings, the rule format and an example — read before creating one."""
+    from . import automations
+    return ok(automations.catalog())
+
+
+@route("GET", "/api/automations", "settings.automations")
+def automations_list(ctx):
+    """The company's automation rules (when this happens, do that) and what they did lately."""
+    from . import automations
+    return ok({"rows": automations.listing(ctx.db), "log": automations.log(ctx.db, limit=100), **automations.catalog(),
+               "people": [r["username"] for r in ctx.db.q("SELECT username FROM users WHERE active=1 ORDER BY username")],
+               "rooms": [r["name"] for r in ctx.db.q("SELECT name FROM chat_rooms WHERE kind<>'dm' AND archived_at IS NULL AND name<>'' ORDER BY name")]})
+
+
+@route("POST", "/api/automations", "settings.automations", "add")
+def automations_add(ctx):
+    """Create an automation rule: {name, trigger, settings, action, params, repeat_days} (see /api/automations/catalog)."""
+    from . import automations
+    return ok({"id": automations.save(ctx.db, ctx.body, ctx.user)})
+
+
+@route("PUT", "/api/automations/<rid>", "settings.automations", "edit")
+def automations_edit(ctx, rid):
+    """Change an automation rule (or switch it on / off with active)."""
+    from . import automations
+    return ok({"id": automations.save(ctx.db, ctx.body, ctx.user, rid)})
+
+
+@route("DELETE", "/api/automations/<rid>", "settings.automations", "edit")
+def automations_delete(ctx, rid):
+    """Delete an automation rule."""
+    from . import automations
+    automations.delete(ctx.db, rid)
+    return ok()
+
+
+@route("POST", "/api/automations/preview", "settings.automations")
+def automations_preview(ctx):
+    """What a rule would act on right now, without acting: {trigger, settings}."""
+    from . import automations
+    return ok({"rows": automations.preview(ctx.db, ctx.body)})
+
+
+@route("POST", "/api/automations/run", "settings.automations|crm.followups|dashboard")
+def automations_run(ctx):
+    """Run the signed-in person's own rules now (the app calls this every few minutes)."""
+    from . import automations
+    only = ctx.body.get("id")
+    if only and not ctx.can("settings.automations", "edit"):
+        raise PermissionError()
+    return ok({"done": automations.run(ctx.db, only=only, owner=None if only else ctx.user["username"])})
+
+
+# ================================================================= the public desk (desk.py): online booking, web forms, e-signing, guests
+@route("POST", "/api/desk/import", "crm.desk|care.visits|crm.followups")
+def desk_import(ctx):
+    """Rows the app claimed from the cloud (desk_claim) go into the books here."""
+    from . import desk
+    return ok({"rows": desk.import_rows(ctx.db, ctx.body.get("rows") or [], ctx.user["username"])})
+
+
+@route("POST", "/api/desk/rows/<rid>/retry", "crm.desk", "add")
+def desk_retry(ctx, rid):
+    from . import desk
+    return ok(desk.process(ctx.db, rid, ctx.user["username"]))
+
+
+@route("GET", "/api/desk", "crm.desk")
+def desk_overview(ctx):
+    from . import desk
+    return ok({"bookings": desk.bookings(ctx.db, ctx.q.get("from")), "threads": desk.threads(ctx.db),
+               "rows": desk.rows(ctx.db, state=ctx.q.get("state") or None, kind=ctx.q.get("kind") or None),
+               "unread": desk.unread(ctx.db), "services": desk.booking_services(ctx.db), "busy": desk.busy_slots(ctx.db),
+               "company": ctx.db.setting("company_name") or ""})
+
+
+@route("GET", "/api/desk/unread", "crm.desk")
+def desk_unread(ctx):
+    from . import desk
+    return ok(desk.unread(ctx.db))
+
+
+@route("POST", "/api/desk/threads/<tid>/read", "crm.desk")
+def desk_thread_read(ctx, tid):
+    from . import desk
+    desk.thread_read(ctx.db, tid)
+    return ok()
+
+
+@route("POST", "/api/desk/rows/<rid>/answer", "crm.desk", "add")
+def desk_answer(ctx, rid):
+    from . import desk
+    desk.mark_confirmed(ctx.db, rid, ctx.body.get("how"), ctx.user["username"])
+    return ok()
+
+
+@route("GET", "/api/desk/offer/<oid>", "sales.offers")
+def desk_offer(ctx, oid):
+    from . import desk
+    return ok(desk.offer_summary(ctx.db, oid))
+
+
 # ================================================================= healthcare (care.py)
 @route("GET", "/api/care/patients", "care.patients|care.visits|care.packages")
 def care_patients(ctx):
@@ -2780,6 +2984,15 @@ def alerts(ctx):
             out.insert(0, {"level": "bad" if late else "warn", "en": f"Follow-ups due: {len(follow)}" + (f" ({late} overdue)" if late else ""),
                            "ar": f"متابعات مستحقة: {len(follow)}" + (f" ({late} متأخرة)" if late else ""), "href": "#/followups?status=due",
                            "count": len(follow), "kind": "followups"})
+    if ctx.can("crm.desk"):
+        from . import desk
+        u = desk.unread(ctx.db)
+        if u["messages"]:
+            out.insert(0, {"level": "warn", "en": f"Guest messages waiting on the online desk: {u['messages']}",
+                           "ar": f"رسائل زوار في انتظار الرد: {u['messages']}", "href": "#/desk?tab=chats", "count": u["messages"], "kind": "desk"})
+        if u["errors"]:
+            out.insert(0, {"level": "bad", "en": f"Online desk items that could not be added: {u['errors']}",
+                           "ar": f"طلبات من الصفحات العامة لم تُضف: {u['errors']}", "href": "#/desk?tab=other", "count": u["errors"], "kind": "desk_err"})
     return ok({"rows": out, "count": len(out), "approvals": [w["id"] for w in waiting], "followups": [f["id"] for f in follow]})
 
 
@@ -4595,11 +4808,11 @@ def offer_type_del(ctx, tid):
 
 
 # ============================================================ erase all data
-ERASE_TRANSACTIONS = ("entry_tags", "care_visit_lines", "care_visits", "care_claims", "care_packages", "crm_followups", "crm_activities", "crm_deals", "approvals", "sub_cert_lines", "sub_certificates", "pr_quote_lines", "pr_quotes", "pr_lines", "purchase_requests", "stock_count_lines",
+ERASE_TRANSACTIONS = ("entry_tags", "workdays", "desk_rows", "desk_threads", "care_visit_lines", "care_visits", "care_claims", "care_packages", "crm_followups", "crm_activities", "crm_deals", "approvals", "sub_cert_lines", "sub_certificates", "pr_quote_lines", "pr_quotes", "pr_lines", "purchase_requests", "stock_count_lines",
                       "stock_counts", "equipment_usage", "maintenance_logs", "attendance", "ereceipts", "sub_recognitions", "sub_visits", "sub_invoices", "subscriptions", "po_receipts", "po_lines", "purchase_orders", "bank_lines", "bank_statements", "recurring_runs", "sale_cheques", "sale_installments", "sale_lines", "sales_orders", "stock_moves", "stock_levels", "extract_lines", "extracts", "ownership_changes", "journal_lines",
                       "journal_entries", "offers", "loans", "custodies", "rent_moves", "rental_invoices", "rental_charges",
                       "rental_handovers", "rental_lines", "rentals", "rent_lots")
-ERASE_ALL = ERASE_TRANSACTIONS + ("care_services", "care_patients", "parties", "stock_items", "boq_lines", "boqs", "partner_shares", "partners", "rates",
+ERASE_ALL = ERASE_TRANSACTIONS + ("kb_pages", "automation_log", "automations", "care_services", "care_patients", "parties", "stock_items", "boq_lines", "boqs", "partner_shares", "partners", "rates",
                                   "fixed_assets", "business_units", "offer_types", "tax_codes", "assets", "rent_kit_lines", "rent_kits",
                                   "rent_items", "rent_models", "product_media", "products", "bank_rules", "recurring", "budgets", "attachments", "service_plans",
                                   "variation_orders", "contract_lines", "contracts", "maintenance_plans", "equipment", "project_tasks", "project_phases")
@@ -4846,7 +5059,7 @@ def cloud_member_set(ctx):
 # supabase/functions/ai): the same calls the browser edition makes from bridge.js
 CLOUD_RPCS = {"my_super", "set_member_super", "chat_link_list", "chat_link_create", "chat_link_accept", "chat_link_end",
               "chat_link_messages", "chat_link_file", "chat_link_send", "chat_link_edit", "chat_link_read",
-              "ai_settings_get", "ai_settings_set"}
+              "ai_settings_get", "ai_settings_set", "desk_pages", "desk_page_save", "desk_claim", "desk_reply", "desk_thread"}
 
 
 @route("POST", "/api/cloud/call")
@@ -4952,6 +5165,11 @@ class _DryRunApp:
         return []
 
 
+# what an API key may never do: keys, people, passwords, sessions, erasing / restoring the books, licences, the workspace
+API_KEY_BLOCKED = re.compile(r"^/api/(api-keys|users|me/password|me/sessions|login|logout|setup|erase|restore|import|backup|licence|cloud|"
+                             r"maintenance|settings$|ai/settings)")
+
+
 def handle(app, method, target, headers, raw=b"", as_user=None, dry=False):
     """Transport-independent request handler: used by the HTTP server and by the browser build.
 
@@ -4966,7 +5184,18 @@ def handle(app, method, target, headers, raw=b"", as_user=None, dry=False):
     try:
         if len(raw or b"") > MAX_BODY:
             return ok({"error": "Upload too large (max 25 MB)"}, 413)
-        if method != "GET" and headers.get("x-requested-with") != "BeyondERP":
+        api_key = None
+        bearer = (headers.get("authorization") or "")
+        if bearer.lower().startswith("bearer " + auth.API_PREFIX) and as_user is None and getattr(app, "static", False) is not True:
+            # an API key (outside tools): no cookie, so no cross-site risk; it acts as its person, read-only unless allowed
+            key_user, api_key = auth.user_for_api_key(db, bearer[7:].strip())
+            if not key_user:
+                return ok({"error": "Unknown or revoked API key"}, 401)
+            if method != "GET" and api_key["read_only"]:
+                return ok({"error": "This API key is read-only"}, 403)
+            if API_KEY_BLOCKED.match(url.path):
+                return ok({"error": "API keys cannot do this — sign in to the app"}, 403)
+        elif method != "GET" and headers.get("x-requested-with") != "BeyondERP":
             return ok({"error": "Missing X-Requested-With header"}, 403)
         body = {}
         if raw and "json" in (headers.get("content-type") or ""):
@@ -4982,6 +5211,8 @@ def handle(app, method, target, headers, raw=b"", as_user=None, dry=False):
             # workspace changes are recorded under the member's email; a gateway relays local usernames
             user = auth.public_user(db.one("SELECT * FROM users WHERE active=1 AND (username=? OR (email<>'' AND lower(email)=lower(?))) "
                                            "ORDER BY username=? DESC LIMIT 1", (as_user, as_user, as_user)))
+        elif api_key:
+            user, token = key_user, None
         else:
             user = auth.user_for_token(db, token)
         for m, rx, module, level, public, fn in ROUTES:
