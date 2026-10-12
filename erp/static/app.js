@@ -476,6 +476,16 @@ async function themeTab(view, head) {
   draw();
 }
 
+// a font the person uploaded: registered once in the browser under its own family name, then used like any other
+const OWN_FONTS = {};
+function loadOwnFont(data) {
+  const key = data.length + ":" + data.slice(-40);
+  if (OWN_FONTS[key]) return OWN_FONTS[key];
+  const name = "BerpOwnFont" + Object.keys(OWN_FONTS).length;
+  OWN_FONTS[key] = name;
+  try { const f = new FontFace(name, `url(${data})`); f.load().then(x => document.fonts.add(x)).catch(() => toast(L2("That font file could not be read — pick another one", "تعذرت قراءة ملف الخط — اختر ملفاً آخر"), true)); } catch { /* old browsers */ }
+  return name;
+}
 function applyLook() {
   const st = S.boot.settings || {};
   migrateLook();
@@ -484,7 +494,8 @@ function applyLook() {
   document.documentElement.dir = S.lang === "ar" ? "rtl" : "ltr";
   const font = lookVal("font") || st.font_family || "system";
   const size = lookVal("fontSize") || st.font_size || "15";
-  const fam = font === "system" ? '"Inter","Cairo",system-ui,-apple-system,"Segoe UI",Roboto,Tahoma,Arial,sans-serif' : `"${font}","Cairo",Tahoma,Arial,sans-serif`;
+  const own = font === "custom" && lookVal("fontData") ? loadOwnFont(lookVal("fontData")) : "";
+  const fam = own ? `"${own}","Cairo",Tahoma,Arial,sans-serif` : font === "system" || font === "custom" ? '"Inter","Cairo",system-ui,-apple-system,"Segoe UI",Roboto,Tahoma,Arial,sans-serif' : `"${font}","Cairo",Tahoma,Arial,sans-serif`;
   document.documentElement.style.setProperty("--font", fam);
   document.documentElement.style.setProperty("--fs", size + "px");
   const theme = modeNow();
@@ -3820,7 +3831,11 @@ PAGES.settings = async (view, parts, q) => {
     const isSup = !!S.boot.user.is_super, mine = myLook() || {};
     view.innerHTML = head + `<div class="card"><h2>${esc(L2("My view — only you see it, on every device you sign in on", "طريقة عرضي — تظهر لك وحدك على كل أجهزتك"))}</h2><div class="grid g4">
         <label class="f">${t("lang_label")}<select id="my_lang" data-change="mysave"><option value="en">English</option><option value="ar" ${S.lang === "ar" ? "selected" : ""}>العربية</option></select></label>
-        <label class="f">${t("font_family")}<select id="my_font" data-change="mysave"><option value="">${t("default")}</option>${FONTS.map(f => `<option ${mine.font === f ? "selected" : ""}>${f}</option>`).join("")}</select></label>
+        <label class="f">${t("font_family")}<select id="my_font" data-change="mysave"><option value="">${t("default")}</option>${lookVal("fontData") ? `<option value="custom" ${lookVal("font") === "custom" ? "selected" : ""}>★ ${esc(lookVal("fontName") || L2("My font", "خطي"))}</option>` : ""}${FONTS.map(f => `<option ${mine.font === f ? "selected" : ""}>${f}</option>`).join("")}</select>
+          <span class="row" style="gap:6px;margin-top:6px"><label class="btn sm" style="cursor:pointer">${svg("upload")} ${esc(mine.fontData ? L2("Replace my font", "استبدال خطي") : L2("Upload my own font", "رفع خط خاص"))}<input type="file" id="myfontf" accept=".woff2,.woff,.ttf,.otf,font/*" hidden></label>
+          ${mine.fontData ? `<button type="button" class="btn sm danger" data-a="myfontx">${esc(L2("Remove", "إزالة"))}</button>` : ""}</span></label>
+        <label class="f">${esc(L2("Text colour", "لون النص"))}<span class="row" style="gap:6px"><input type="color" id="my_ink" data-input="myink" value="${esc((activeTheme() || {}).text || (isDark() ? "#eef0ff" : "#15163a"))}" style="width:52px;height:38px;padding:2px">
+          <button type="button" class="btn sm" data-a="myinkx">${esc(L2("Automatic", "تلقائي"))}</button></span><small class="muted">${esc(L2("Automatic keeps text readable on every background", "التلقائي يبقي النص واضحاً على كل خلفية"))}</small></label>
         <label class="f">${t("font_size")} <input id="my_size" data-change="mysave" type="range" min="11" max="22" value="${lookVal("fontSize") || st.font_size || 15}"></label>
         <label class="f">${esc(L2("Light / dark", "فاتح / داكن"))}<select id="my_theme" data-change="mysave">${[["auto", L2("Follow this device", "حسب إعداد الجهاز")], ["light", L2("Light", "فاتح")], ["dark", L2("Dark", "داكن")]].map(([v, l]) => `<option value="${v}" ${modeNow() === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
         <label class="f">${t("density")}<select id="my_density" data-change="mysave">${[["", t("default")], ["comfortable", t("d_comfortable")], ["compact", t("d_compact")]].map(([v, l]) => `<option value="${v}" ${(mine.density || "") === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
@@ -3871,6 +3886,16 @@ PAGES.settings = async (view, parts, q) => {
     S.H.myreset = async () => { if (!await uiConfirm(L2("Clear your own colours, font, pictures and sizes and use the company look?", "مسح ألوانك وخطك وصورك وأحجامك واستخدام مظهر الشركة؟"))) return;
       setMyLook({ lang: S.lang }, { replace: true, quiet: true, now: true }); applyLook(); renderShell(); route(); };
     S.H.mycompany = () => companyLook();
+    const ownTheme = () => ({ ...(activeTheme() || {}) });
+    S.H.myink = el => { clearTimeout(S.inkT); S.inkT = setTimeout(() => { setMyLook({ theme: { ...ownTheme(), text: el.value } }); }, 120); };
+    S.H.myinkx = () => { const th = ownTheme(); delete th.text; setMyLook({ theme: Object.keys(th).length ? th : null }); route(); };
+    S.H.myfontx = () => { setMyLook({ fontData: null, fontName: null, font: mine.font === "custom" ? null : mine.font }); route(); };
+    const ff = $("#myfontf"); if (ff) ff.addEventListener("change", async e => { const f = e.target.files[0]; if (!f) return;
+      if (!/\.(woff2?|ttf|otf)$/i.test(f.name)) return fail(new Error(L2("Pick a WOFF2, WOFF, TTF or OTF font file", "اختر ملف خط WOFF2 أو WOFF أو TTF أو OTF")));
+      if (f.size > 650000) return fail(new Error(L2("That font file is too large — pick one under about 650 KB (WOFF2 files are the smallest)", "ملف الخط كبير جداً — اختر ملفاً أقل من ٦٥٠ كيلوبايت تقريباً (ملفات WOFF2 الأصغر)")));
+      const data = await new Promise((ok, bad) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = bad; r.readAsDataURL(f); });
+      const ext = f.name.split(".").pop().toLowerCase(), clean = data.replace(/^data:[^;]*;/, `data:font/${ext === "otf" ? "otf" : ext === "ttf" ? "ttf" : ext};`);
+      setMyLook({ fontData: clean, fontName: f.name.replace(/\.[^.]+$/, "").replace(/[-_]+/g, " ").slice(0, 60), font: "custom" }, { now: true }); toast(t("saved")); route(); });
     let noAccent = !ap.accent;
     S.H.apnoacc = () => { noAccent = true; toast(t("default")); };
     const ac = $("[name=accent]"); if (ac) ac.addEventListener("input", () => { noAccent = false; });

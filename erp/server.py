@@ -357,7 +357,7 @@ def put_settings(ctx):
             if not isinstance(v, type(JSON_SETTINGS[k])):
                 raise acc.ValidationError(f"{k} has the wrong shape")
             v = json.dumps(v, ensure_ascii=False)
-            if len(v) > (200_000 + looks.MAX_IMAGES if k == "appearance" else 200_000):   # the company look may carry background pictures
+            if len(v) > (200_000 + looks.MAX_IMAGES + looks.MAX_FONT if k == "appearance" else 200_000):   # the company look may carry background pictures
                 raise acc.ValidationError(f"{k} is too large")
         if k == "lock_date" and v:
             v = acc.clean_date(v, "lock date")
@@ -4942,7 +4942,7 @@ class Handler(BaseHTTPRequestHandler):
         # product media: photos / clips / 3D models are data, blob or https links; players (YouTube, Vimeo, Sketchfab,
         # Drive, virtual tours) are https frames. Scripts stay same-origin only.
         r.headers["Content-Security-Policy"] = ("default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval'; "
-                                                "img-src 'self' data: blob: https:; media-src 'self' data: blob: https:; "
+                                                "img-src 'self' data: blob: https:; font-src 'self' data: blob:; media-src 'self' data: blob: https:; "
                                                 "connect-src 'self' data: blob: https:; frame-src https:; worker-src 'self' blob:; "
                                                 "frame-ancestors 'self'")
         self.send(r)

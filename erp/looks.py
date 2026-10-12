@@ -12,6 +12,8 @@ FITS = ("cover", "contain", "tile")
 MAX_IMAGE = 900_000            # characters of a data: URL (the browser shrinks pictures before sending them)
 MAX_IMAGES = 2_400_000
 _HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
+MAX_FONT = 900_000             # an uploaded font file (data: URL); the browser checks the size before sending
+_FONT = re.compile(r"^data:(font/(woff2|woff|ttf|otf|sfnt)|application/(font-woff2?|x-font-ttf|x-font-otf|font-sfnt|octet-stream|vnd\.ms-opentype));base64,[A-Za-z0-9+/=]+$")
 _IMG = re.compile(r"^data:image/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$")
 
 
@@ -51,6 +53,13 @@ def clean_look(d):
             out["fontSize"] = str(max(11, min(22, int(float(d["fontSize"])))))
     except (TypeError, ValueError):
         pass
+    if d.get("fontData"):            # the person's own font file, used for the whole app
+        if not isinstance(d["fontData"], str) or not _FONT.match(d["fontData"]):
+            raise LookError("The font must be a WOFF2, WOFF, TTF or OTF file")
+        if len(d["fontData"]) > MAX_FONT:
+            raise LookError("That font file is too large — pick one under about 650 KB (WOFF2 files are the smallest)")
+        out["fontData"] = d["fontData"]
+        out["fontName"] = acc.text(d.get("fontName") or "My font")[:60]
     if d.get("density") in ("comfortable", "compact"):
         out["density"] = d["density"]
     if d.get("corners") in ("rounded", "square"):
