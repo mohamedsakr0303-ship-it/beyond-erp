@@ -1319,7 +1319,10 @@ function drawer(title, html, onSubmit, opts = {}) {
   f.addEventListener("submit", async e => {
     e.preventDefault();
     const btn = $("button[type=submit]", f); if (btn) btn.disabled = true;
-    try { const done = await onSubmit(readForm(f), f); Drafts.done(f); if (done !== false) { closeDrawer(); route(); } }
+    try { const miss = $$(".dz-in[data-req]", f).find(i => !i.files.length && i.closest(".dzf").style.display !== "none");
+      if (miss) { miss.closest(".dropzone").classList.add("over"); setTimeout(() => miss.closest(".dropzone").classList.remove("over"), 1500);
+        throw new Error(L2(`Attach a file: “${fieldName(miss.closest(".dzf"))}” is required`, `أرفق ملفاً: «${fieldName(miss.closest(".dzf"))}» إلزامي`)); }
+      const done = await onSubmit(readForm(f), f); Drafts.done(f); if (done !== false) { closeDrawer(); route(); } }
     catch (err) { $("#derr").innerHTML = `<div class="banner err">${esc(err.message)}</div>`; $("#derr").scrollIntoView({ block: "nearest", behavior: "smooth" }); }
     finally { if (btn) btn.disabled = false; }
   });
@@ -1376,7 +1379,7 @@ function dropZone({ name = "", id = "", accept = "", multiple = true, label = ""
   const touch = window.matchMedia && matchMedia("(pointer: coarse)").matches;
   return `<div class="f dzf ${cls}">${label ? `<span>${esc(label)}${req ? `<b class="req" aria-hidden="true">✱</b>` : ""}</span>` : ""}
     <div class="dropzone" data-dz="1">
-      <input type="file" class="dz-in" ${name ? `name="${esc(name)}"` : ""} ${id ? `id="${esc(id)}"` : ""} ${accept ? `accept="${esc(accept)}"` : ""} ${multiple ? "multiple" : ""} ${skip ? `data-skip="1"` : ""} tabindex="-1" aria-hidden="true">
+      <input type="file" class="dz-in" ${req ? `data-req="1"` : ""} ${name ? `name="${esc(name)}"` : ""} ${id ? `id="${esc(id)}"` : ""} ${accept ? `accept="${esc(accept)}"` : ""} ${multiple ? "multiple" : ""} ${skip ? `data-skip="1"` : ""} tabindex="-1" aria-hidden="true">
       <div class="dz-row"><span class="dz-ic">${svg("upload")}</span>
         <div class="dz-txt"><b>${esc(hint || (touch ? L2("Add files or photos", "أضف ملفات أو صوراً") : L2("Drag files here or paste them (Ctrl+V)", "اسحب الملفات هنا أو الصقها (Ctrl+V)")))}</b>
           <small class="muted">${esc(accept && /image/.test(accept) && /pdf/.test(accept) ? L2("PDF, photos, Excel, Word…", "PDF، صور، Excel، Word…") : accept === "image/*" ? L2("Pictures", "صور") : L2("Any file", "أي ملف"))}</small></div>
@@ -10210,7 +10213,7 @@ const NOTE_KEYS = ["memo", "notes", "description", "note"];
 function fieldMenu(lab) {
   const ctl = $("[name]", lab), k = ctl && ctl.name; if (!k) return null;
   const fk = formKey(), fc = FC()[fk] || {}, cur = fc[k] || {}, extra = (fc.__extra || []).find(x => x.k === k);
-  const text = (lab.childNodes[0] && lab.childNodes[0].textContent || "").trim() || k;
+  const text = fieldName(lab) || k;
   const save = mut => { const all = clone(FC()); all[fk] = all[fk] || {}; mut(all[fk]); if (!Object.keys(all[fk]).length) delete all[fk];
     return api("PUT", "/api/settings", { form_custom: all }).then(() => { S.boot.settings.form_custom = all; toast(L2("Saved — reopen the form to see it", "تم الحفظ — أعد فتح النموذج لرؤيته")); }).catch(fail); };
   const out = [];
@@ -10314,7 +10317,7 @@ function ctxFor(target) {
   const a = target.closest("#nav a[data-k]"); if (a) return [itemLabelByKey(a.dataset.k), navItemMenu(a)];
   const g = target.closest("#nav .grp[data-g]"); if (g) return [groupLabel(g.dataset.g), navGroupMenu(g)];
   if (target.closest("input, textarea, select, [contenteditable]")) return null;      // the browser's own copy / paste menu
-  const lab = target.closest(".drawer label.f, .drawer .sw-field, #view form label.f"); if (lab) { const m = fieldMenu(lab); return m && [L2("Field", "حقل"), m]; }
+  const lab = target.closest(".drawer label.f, .drawer .sw-field, .drawer .dzf, #view form label.f"); if (lab) { const m = fieldMenu(lab); return m && [L2("Field", "حقل"), m]; }
   const th = target.closest("#view .tbl thead th, .drawer .tbl thead th"); if (th) return [th.textContent.trim() || L2("Column", "عمود"), colMenu(th)];
   const tr = target.closest("#view .tbl tbody tr, .drawer .tbl tbody tr"); if (tr && !tr.classList.contains("total")) return [L2("Row", "سطر"), rowMenu(tr)];
   return null;
@@ -10412,14 +10415,14 @@ async function saveFormCustom(mut) {
   const fk = formKey(), all = clone(FC()); all[fk] = all[fk] || {}; mut(all[fk]); if (!Object.keys(all[fk]).length) delete all[fk];
   await api("PUT", "/api/settings", { form_custom: all }); S.boot.settings.form_custom = all;
 }
-const fieldName = lab => (lab.childNodes[0] && lab.childNodes[0].nodeType === 3 ? lab.childNodes[0].textContent : (lab.querySelector("span") || {}).textContent || "").trim();
+const fieldName = lab => (lab.childNodes[0] && lab.childNodes[0].nodeType === 3 ? lab.childNodes[0].textContent : (lab.querySelector("span") || {}).textContent || "").replace("✱", "").trim();
 function formCustomise(drawerEl, on) {
   drawerEl.classList.toggle("fc-edit", on);
   $$(".fc-tools, .fc-bar", drawerEl).forEach(x => x.remove());
   const btn = $(".fc-btn", drawerEl); if (btn) btn.textContent = on ? "✓ " + L2("Done", "تم") : "⚙ " + L2("Customise form", "تخصيص النموذج");
   if (!on) return;
   const fk = formKey(), fc = FC()[fk] || {}, form = $("form", drawerEl);
-  $$("label.f, .sw-field", form).forEach(lab => {
+  $$("label.f, .sw-field, .dzf", form).forEach(lab => {
     const ctl = $("[name]", lab); if (!ctl || ctl.type === "hidden") return;
     const k = ctl.name, o = fc[k] || {}, extra = /^x_/.test(k);
     const tools = document.createElement("span"); tools.className = "fc-tools";
