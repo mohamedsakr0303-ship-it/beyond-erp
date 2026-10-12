@@ -1064,6 +1064,15 @@ CREATE TABLE IF NOT EXISTS chat_files (
     thumb      TEXT DEFAULT '',               -- small preview for pictures (data: URL)
     data       TEXT NOT NULL DEFAULT ''       -- base64
 );
+-- one emoji reaction per person per message (as on WhatsApp: picking another replaces it, the same one again takes it back)
+CREATE TABLE IF NOT EXISTS chat_reactions (
+    id         INTEGER PRIMARY KEY,
+    message_id INTEGER NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    emoji      TEXT NOT NULL,
+    at         TEXT,
+    UNIQUE (message_id, user_id)
+);
 CREATE TABLE IF NOT EXISTS chat_reads (
     room_id   INTEGER NOT NULL REFERENCES chat_rooms(id) ON DELETE CASCADE,
     user_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,

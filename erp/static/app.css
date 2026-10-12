@@ -1603,3 +1603,65 @@ label.f .req{color:var(--bad,#e5484d);font-weight:800;margin-inline-start:3px;fo
 .banner.info{background:color-mix(in srgb,var(--accent) 8%,transparent);border-color:color-mix(in srgb,var(--accent) 55%,transparent);color:var(--accent)}
 tr.pending td{background:color-mix(in srgb,var(--accent) 7%,transparent)}
 .recon tr.bl.sel td{background:color-mix(in srgb,var(--accent) 12%,transparent)}
+
+/* ---- chat reactions (WhatsApp style) */
+.ch-bw{position:relative;display:flex;align-items:center;gap:4px;max-width:100%}
+.ch-msg.mine .ch-bw{flex-direction:row-reverse}
+.ch-rxadd{flex:none;width:28px;height:28px;border-radius:50%;border:0;background:transparent;color:var(--muted);cursor:pointer;display:grid;place-items:center;opacity:0;transition:opacity .15s,background .15s}
+.ch-rxadd svg.i{width:17px;height:17px}
+.ch-msg:hover .ch-rxadd,.ch-rxadd:focus-visible{opacity:1}
+.ch-rxadd:hover{background:var(--hover);color:var(--ink)}
+@media (hover:none){.ch-rxadd{opacity:.55}}
+.ch-rxs{display:flex;flex-wrap:wrap;gap:4px;margin:-6px 0 2px 10px;position:relative;z-index:1}
+.ch-msg.mine .ch-rxs{justify-content:flex-end;margin:-6px 10px 2px 0}
+.ch-rx{display:inline-flex;align-items:center;gap:3px;padding:1px 7px;border-radius:999px;border:1px solid var(--line);background:var(--panel);font-size:.95em;line-height:1.5;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,.12)}
+.ch-rx b{font-size:.78em;font-weight:600;color:var(--muted)}
+.ch-rx.on{border-color:var(--brand);background:color-mix(in srgb,var(--brand) 14%,var(--panel))}
+.ch-rx:disabled{cursor:default}
+.ch-rxbar{position:absolute;bottom:calc(100% + 4px);inset-inline-start:0;z-index:30;display:flex;flex-wrap:wrap;gap:2px;padding:5px;border-radius:999px;background:var(--sheet,var(--panel));border:1px solid var(--line);box-shadow:0 8px 26px rgba(0,0,0,.25);animation:dlgpop .15s}
+.ch-msg.mine .ch-rxbar,.ch-rxbar.flip{inset-inline-start:auto;inset-inline-end:0}
+.ch-rxbar>button{width:34px;height:34px;border:0;border-radius:50%;background:transparent;font-size:1.3em;cursor:pointer;transition:transform .12s,background .12s}
+.ch-rxbar>button:hover{transform:scale(1.22);background:var(--hover)}
+.ch-rxbar>button.on{background:color-mix(in srgb,var(--brand) 22%,transparent)}
+.ch-rxbar>button.more{font-size:1em;color:var(--muted)}
+.ch-rxall{flex-basis:100%;display:grid;grid-template-columns:repeat(8,32px);gap:2px;max-height:180px;overflow:auto;padding-top:4px;border-top:1px solid var(--line);margin-top:4px}
+.ch-rxbar:has(.ch-rxall:not([hidden])){border-radius:16px}
+.ch-rxall button{width:32px;height:32px;border:0;border-radius:8px;background:transparent;font-size:1.15em;cursor:pointer}
+.ch-rxall button:hover{background:var(--hover)}
+
+/* ---- "turn on notifications?" — asked inside the app */
+.nnudge{position:fixed;z-index:90;bottom:20px;inset-inline-end:20px;width:min(380px,calc(100vw - 32px));display:flex;gap:12px;padding:16px;border-radius:16px;
+  background:var(--sheet,var(--panel));color:var(--ink);border:1px solid var(--line);box-shadow:0 18px 50px rgba(0,0,0,.35);animation:dlgpop .25s}
+:root[data-theme="dark"]:not([data-surf]) .nnudge{background:rgba(12,13,46,.97)}
+.nn-ic{flex:none;width:40px;height:40px;border-radius:12px;display:grid;place-items:center;background:color-mix(in srgb,var(--brand) 16%,transparent);color:var(--brand)}
+.nn-b b{display:block;margin-bottom:4px}.nn-b p{margin:0 0 10px;color:var(--muted);font-size:.9em;line-height:1.45}
+.nn-b .row{gap:8px;align-items:center}
+@media (max-width:700px){.nnudge{inset-inline:16px;bottom:16px;width:auto}}
+
+/* ---- Settings → Notifications */
+.nt-grid{align-items:start}
+.nt-h{margin:16px 0 8px;font-size:.78em;text-transform:uppercase;letter-spacing:.7px;color:var(--muted)}
+.nt-perm{display:flex;gap:12px;align-items:flex-start;padding:12px;border-radius:12px;background:var(--chip)}
+.nt-perm>svg.i{flex:none;margin-top:2px}.nt-perm b{display:block}.nt-perm small{color:var(--muted)}
+.nt-perm.granted{background:color-mix(in srgb,var(--good) 12%,transparent)}.nt-perm.granted>svg.i{color:var(--good)}
+.nt-perm.denied{background:color-mix(in srgb,var(--bad) 10%,transparent)}.nt-perm.denied>svg.i{color:var(--bad)}
+.nt-presets{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px;margin-bottom:10px}
+.nt-pre{display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 6px;border-radius:12px;border:1px solid var(--line);background:transparent;color:inherit;cursor:pointer;font:inherit;font-size:.85em}
+.nt-pre span{font-size:1.3em}
+.nt-pre.on{border-color:var(--brand);background:color-mix(in srgb,var(--brand) 12%,transparent);font-weight:600}
+.nt-sw{display:flex;gap:12px;align-items:flex-start;padding:9px 0;border-top:1px solid var(--line);cursor:pointer}
+.nt-sw input{position:absolute;opacity:0;pointer-events:none}
+.nt-tg{flex:none;width:38px;height:22px;border-radius:999px;background:var(--line);position:relative;transition:background .15s;margin-top:1px}
+.nt-tg::after{content:"";position:absolute;top:3px;inset-inline-start:3px;width:16px;height:16px;border-radius:50%;background:#fff;transition:transform .15s;box-shadow:0 1px 3px rgba(0,0,0,.3)}
+.nt-sw input:checked+.nt-tg{background:var(--brand)}
+.nt-sw input:checked+.nt-tg::after{transform:translateX(16px)}
+[dir=rtl] .nt-sw input:checked+.nt-tg::after{transform:translateX(-16px)}
+.nt-sw input:focus-visible+.nt-tg{outline:2px solid var(--brand);outline-offset:2px}
+.nt-sw b{display:block;font-weight:600}.nt-sw small{color:var(--muted);font-size:.85em}
+.nt-sounds{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.nt-snd{display:flex;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.nt-snd.on{border-color:var(--brand);background:color-mix(in srgb,var(--brand) 12%,transparent)}
+.nt-snd button{border:0;background:transparent;color:inherit;font:inherit;cursor:pointer;padding:10px}
+.nt-pick{flex:1;text-align:start}.nt-snd.on .nt-pick{font-weight:600}
+.nt-play{border-inline-start:1px solid var(--line)!important;color:var(--brand)!important}
+.nt-own{margin-top:12px;gap:10px;align-items:center}

@@ -3912,6 +3912,63 @@ class CalculatorBuilder(unittest.TestCase):
         self.assertEqual((st, r["results"][0]["value"]), (200, 12))
 
 
+class ChatReactionsAndNotify(unittest.TestCase):
+    """WhatsApp-style reactions (one per person, same again takes it back) and each person's notification settings."""
+
+    def setUp(self):
+        from erp.server import handle
+        self.handle = handle
+        self.app = type("App", (), {"static": False})()
+        self.app.db = self.db = Database(":memory:")
+        auth.create_user(self.db, {"username": "boss", "password": "secret123"}, first=True)
+        auth.create_user(self.db, {"username": "sara", "password": "secret123"})
+        self.tok = {u: auth.login(self.db, u, "secret123")[0] for u in ("boss", "sara")}
+
+    def call(self, who, method, url, body=None):
+        h = {"x-requested-with": "BeyondERP", "x-session": self.tok[who], "content-type": "application/json"}
+        r = self.handle(self.app, method, url, h, json.dumps(body).encode() if body is not None else b"")
+        return r.status, json.loads(r.body)
+
+    def test_reactions(self):
+        rid = 1   # the general room
+        mid = self.call("boss", "POST", f"/api/chat/rooms/{rid}/messages", {"body": "Site visit at 10"})[1]["id"]
+        rs = self.call("sara", "GET", "/api/chat/updates?since=0&rsince=0")[1]["reactions_last"]
+        self.assertEqual(self.call("sara", "POST", f"/api/chat/messages/{mid}/react", {"emoji": "👍"}), (200, {"emoji": "👍"}))
+        self.assertEqual(self.call("boss", "POST", f"/api/chat/messages/{mid}/react", {"emoji": "👍"})[0], 200)
+        msg = self.call("boss", "GET", f"/api/chat/rooms/{rid}/messages")[1]["messages"][0]
+        self.assertEqual(msg["reactions"], [{"emoji": "👍", "count": 2, "users": [2, 1], "mine": True}])
+        # another emoji replaces mine; the same again takes it back
+        self.call("sara", "POST", f"/api/chat/messages/{mid}/react", {"emoji": "❤️"})
+        r = self.call("sara", "GET", f"/api/chat/rooms/{rid}/messages")[1]["messages"][0]["reactions"]
+        self.assertEqual([(x["emoji"], x["count"], x["mine"]) for x in r], [("👍", 1, False), ("❤️", 1, True)])
+        self.assertEqual(self.call("sara", "POST", f"/api/chat/messages/{mid}/react", {"emoji": "❤️"}), (200, {"emoji": None}))
+        # the author hears about reactions from others, never their own
+        self.call("sara", "POST", f"/api/chat/messages/{mid}/react", {"emoji": "🙏"})
+        up = self.call("boss", "GET", f"/api/chat/updates?since=0&rsince={rs}")[1]
+        self.assertEqual([(x["emoji"], x["user_id"]) for x in up["reactions"]], [("🙏", 2)])
+        # text or markup is not an emoji; a removed message takes its reactions with it
+        self.assertEqual(self.call("sara", "POST", f"/api/chat/messages/{mid}/react", {"emoji": "<b>x</b>"})[0], 400)
+        self.call("boss", "DELETE", f"/api/chat/messages/{mid}")
+        self.assertEqual(self.db.one("SELECT COUNT(*) n FROM chat_reactions")["n"], 0)
+        self.assertEqual(self.call("sara", "POST", f"/api/chat/messages/{mid}/react", {"emoji": "👍"})[0], 400)
+
+    def test_notify_settings(self):
+        import base64
+        st, p = self.call("sara", "PUT", "/api/me/profile", {"prefs": {"notify": {"sound": "marimba", "volume": 140, "vibrate": False, "vibe": "pulse",
+                                                                                 "quiet": True, "quiet_from": "23:30", "quiet_to": "7:00", "ask": "never", "sound2": "x"}}})
+        n = p["prefs"]["notify"]
+        self.assertEqual((n["sound"], n["volume"], n["vibrate"], n["vibe"], n["quiet"], n["quiet_from"], n["quiet_to"], n["ask"]),
+                         ("marimba", 100, False, "pulse", True, "23:30", "07:00", "never"))   # a bad time keeps the old one
+        self.assertNotIn("sound2", n)
+        clip = "data:audio/mpeg;base64," + base64.b64encode(b"ID3" + b"\0" * 1000).decode()
+        self.assertEqual(self.call("sara", "PUT", "/api/me/profile", {"prefs": {"notify_sound": clip}})[1]["prefs"]["notify_sound"], clip)
+        self.assertEqual(self.call("sara", "PUT", "/api/me/profile", {"prefs": {"notify_sound": "data:text/html;base64,AAAA"}})[0], 400)
+        big = "data:audio/mpeg;base64," + "A" * 500_000
+        self.assertEqual(self.call("sara", "PUT", "/api/me/profile", {"prefs": {"notify_sound": big}})[0], 400)
+        self.assertNotIn("notify_sound", self.call("sara", "PUT", "/api/me/profile", {"prefs": {"notify_sound": ""}})[1]["prefs"])
+        self.assertEqual(self.call("boss", "GET", "/api/me/profile")[1]["prefs"]["notify"]["sound"], "chime")   # only hers changed
+
+
 class PersonalLook(unittest.TestCase):
     """Colours, font, sizes and background pictures belong to each person (on their profile); only a super
     administrator sets the company look, and a large look is stored whole, never cut short."""

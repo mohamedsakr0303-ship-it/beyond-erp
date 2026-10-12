@@ -738,13 +738,13 @@ function approvalNotices(d) {
   const back = (d.rows.find(r => r.kind === "approvals_back") || {}).count || 0, backKey = "apprBack:" + uid, wasBack = store.get(backKey, 0);
   store.set(key, d.approvals || []); store.set(backKey, back);
   if (fresh.length && !first) alertPerson({ title: L2("Entries waiting for your approval", "قيود في انتظار اعتمادك"),
-    body: L2(`${fresh.length} new — review and post them`, `${fresh.length} جديد — راجعها ورحّلها`), href: "#/approvals", tag: "berp-approvals", force: true });
+    body: L2(`${fresh.length} new — review and post them`, `${fresh.length} جديد — راجعها ورحّلها`), href: "#/approvals", tag: "berp-approvals", force: true, kind: "alert" });
   const fkey = "fuSeen:" + uid, ffirst = store.get(fkey, null) === null, fseen = new Set(store.get(fkey, [])), fnew = (d.followups || []).filter(id => !fseen.has(id));
   store.set(fkey, d.followups || []);
   if (fnew.length && !ffirst) alertPerson({ title: L2("Follow-ups due", "متابعات مستحقة"), body: L2(`${fnew.length} to do today — open Follow-ups`, `${fnew.length} مطلوبة اليوم — افتح المتابعات`),
-    href: "#/followups?status=due", tag: "berp-followups", force: true });
+    href: "#/followups?status=due", tag: "berp-followups", force: true, kind: "alert" });
   if (back > wasBack) alertPerson({ title: L2("An entry was sent back to you", "أُعيد إليك قيد للتعديل"),
-    body: L2("See the reason, fix it and send it again", "اطّلع على السبب وعدّله وأرسله مرة أخرى"), href: "#/approvals?status=rejected", tag: "berp-approvals-back", force: true });
+    body: L2("See the reason, fix it and send it again", "اطّلع على السبب وعدّله وأرسله مرة أخرى"), href: "#/approvals?status=rejected", tag: "berp-approvals-back", force: true, kind: "alert" });
 }
 // Ctrl+K: jump to any screen or start any new entry by typing
 function openPalette() {
@@ -3751,7 +3751,7 @@ const FONTS = ["system", "Inter", "Nunito Sans", "Cairo", "Arial", "Tahoma", "Se
 const DOC_FONTS = ["Arial", "Calibri", "Tahoma", "Segoe UI", "Times New Roman", "Georgia", "Cairo", "Traditional Arabic", "Bodoni MT Black", "Bodoni MT", "Garamond", "Century Gothic"];
 
 PAGES.settings = async (view, parts, q) => {
-  const tabs = [["company", "tab_company", can("settings.company")], ["docs", "tab_docs", can("settings.branding")], ["look", "tab_look", true], ["theme", "tab_theme", true],
+  const tabs = [["company", "tab_company", can("settings.company")], ["docs", "tab_docs", can("settings.branding")], ["look", "tab_look", true], ["theme", "tab_theme", true], ["notify", "tab_notify", true],
     ["menus", "tab_menus", can("settings.menus")], ["system", "tab_system", can("settings.system") || S.boot.user.is_admin],
     ["workspace", "tab_workspace", S.boot.user.is_admin || cloudOn()], ["ai", "tab_ai", !!S.boot.user.is_super]].filter(x => x[2]);
   const tab = tabs.find(x => x[0] === q.tab) ? q.tab : tabs[0][0];
@@ -3867,6 +3867,7 @@ PAGES.settings = async (view, parts, q) => {
   }
   if (tab === "workspace") return workspaceTab(view, head);
   if (tab === "theme") return themeTab(view, head);
+  if (tab === "notify") return notifPage(view, head);
   if (tab === "ai") return aiSettingsTab(view, head);
   if (tab === "menus") {
     const menuKeys = window.MENU.flatMap(([g, items]) => [g, ...items.map(i => i[0])]);
@@ -7637,10 +7638,7 @@ const EMOJIS = "😀 😁 😂 🤣 😊 😍 😘 😎 🤔 😅 😇 🙂 😉
 // ================================================================== my profile
 PAGES.profile = async view => {
   const [prof] = await Promise.all([api("GET", "/api/me/profile"), loadPeople(true)]);
-  let rooms = []; try { rooms = (await api("GET", "/api/chat/rooms")).rooms; } catch { /* chat unavailable */ }
-  const u = me(), n = prof.prefs.notify, ar = S.lang === "ar";
-  const perm = typeof Notification === "undefined" ? "unsupported" : Notification.permission;
-  const canVibe = "vibrate" in navigator;
+  const u = me();
   view.innerHTML = `<div class="prof-grid">
     <div class="card prof-card">
       <div class="prof-av" id="pav">${avatar({ ...u, name: prof.display_name || u.full_name || u.username, avatar: prof.avatar }, 112)}</div>
@@ -7667,20 +7665,8 @@ PAGES.profile = async view => {
         <label class="f">${esc(L2("Light / dark", "فاتح / داكن"))}<select data-change="pmode">${[["auto", L2("Follow this device", "حسب إعداد الجهاز")], ["light", L2("Light", "فاتح")], ["dark", L2("Dark", "داكن")]].map(([v, l]) => `<option value="${v}" ${modeNow() === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label></div>
         <div class="muted" style="margin-top:6px">${esc(L2("Colours and saved themes: Settings → Theme.", "الألوان والسمات المحفوظة: الإعدادات ← السمات."))} <a href="#/settings?tab=theme">${esc(L2("Open", "فتح"))}</a></div></div>
       <div class="card" id="notifcard"><h2>${esc(L2("Notifications", "الإشعارات"))}</h2>
-        <div class="grid g2">
-          <label class="f">${esc(L2("Notify me about", "أبلغني عن"))}<select id="nlevel" data-change="nsave">${[["all", L2("Every new message", "كل رسالة جديدة")], ["mentions", L2("Only @mentions and direct messages", "الإشارات @ والرسائل المباشرة فقط")], ["rooms", L2("Only the rooms I pick (and @mentions)", "الغرف التي أختارها فقط (والإشارات @)")], ["none", L2("Nothing (badges only)", "لا شيء (العدّاد فقط)")]].map(([v, l]) => `<option value="${v}" ${n.level === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
-          <label class="f">${esc(L2("Alert", "التنبيه"))}<select id="nmode" data-change="nsave">${[["sound", L2("Sound", "صوت")], ["vibrate", L2("Vibrate only", "اهتزاز فقط") + (canVibe ? "" : L2(" (not on this device)", " (غير مدعوم على هذا الجهاز)"))], ["silent", L2("Silent", "صامت")]].map(([v, l]) => `<option value="${v}" ${n.mode === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
-        </div>
-        <div id="nrooms" ${n.level === "rooms" ? "" : "hidden"} style="margin-top:8px"><div class="muted">${esc(L2("Rooms that notify me:", "الغرف التي تنبهني:"))}</div>
-          <div class="chkgrid">${rooms.filter(r => r.kind !== "dm").map(r => `<label class="f chk"><input type="checkbox" class="nroom" value="${r.id}" data-change="nsave" ${n.rooms.includes(r.id) ? "checked" : ""}>${esc(r.name)}</label>`).join("") || `<span class="muted">—</span>`}</div></div>
-        <label class="f chk" style="margin-top:10px"><input type="checkbox" id="ndesk" data-change="nsave" ${n.desktop ? "checked" : ""}>${esc(L2("Pop-up notifications on this computer / phone", "إشعارات منبثقة على هذا الجهاز"))}</label>
-        <div class="row" style="margin-top:8px">${perm === "granted" ? `<span class="chip ok">${esc(L2("Allowed on this device", "مسموح على هذا الجهاز"))}</span>`
-          : perm === "unsupported" ? `<span class="chip">${esc(L2("This browser cannot show pop-up notifications", "هذا المتصفح لا يدعم الإشعارات المنبثقة"))}</span>`
-          : perm === "denied" ? `<span class="chip bad">${esc(L2("Blocked in the browser's site settings", "محظورة في إعدادات الموقع بالمتصفح"))}</span>`
-          : `<button class="btn" data-a="nallow">${esc(L2("Allow on this device", "السماح على هذا الجهاز"))}</button>`}
-          <button class="btn" data-a="ntest">${esc(L2("Test", "تجربة"))}</button></div>
-        <div class="muted" style="margin-top:8px;font-size:.88em">${esc(L2("Alerts arrive while the app is open (also in a background tab or the installed app). Phones: install the web app (Add to Home screen) for pop-ups; vibration works on Android, not on iPhone.",
-          "تصل التنبيهات أثناء فتح التطبيق (حتى في تبويب بالخلفية أو التطبيق المثبت). على الهاتف: ثبّت التطبيق (إضافة إلى الشاشة الرئيسية) للإشعارات المنبثقة؛ الاهتزاز يعمل على أندرويد وليس على آيفون."))}</div></div>
+        <p class="muted" style="margin-top:0">${esc(L2("What reaches you, the sound, vibration and pop-ups — all in one place.", "ما يصلك من تنبيهات، والصوت والاهتزاز والإشعارات المنبثقة — كلها في مكان واحد."))}</p>
+        <a class="btn" href="#/notifications">${svg("bell")} ${esc(L2("Notification settings", "إعدادات الإشعارات"))}</a></div>
     </div></div>`;
   $("#pform").addEventListener("submit", async e => { e.preventDefault();
     try { S.boot.profile = await api("PUT", "/api/me/profile", readForm(e.target)); C2.people = null; toast(t("saved")); route(); } catch (err) { fail(err); } });
@@ -7692,40 +7678,184 @@ PAGES.profile = async view => {
   S.H.pnav = el => { saveNavMode(el.value); setTimeout(() => { renderShell(); route(); }, 150); };
   S.H.ppm = el => { savePhoneMenu(el.value); setTimeout(() => { renderShell(); route(); }, 150); };
   S.H.pmode = el => { setMyLook({ mode: el.value }, { quiet: true }); applyLook(); renderShell(); route(); };
-  S.H.nsave = async () => {
-    const level = $("#nlevel").value; $("#nrooms").hidden = level !== "rooms";
-    const notify = { level, mode: $("#nmode").value, desktop: $("#ndesk").checked, rooms: $$(".nroom:checked").map(x => +x.value) };
-    try { S.boot.profile = await api("PUT", "/api/me/profile", { prefs: { notify } }); toast(t("saved")); } catch (err) { fail(err); }
-  };
-  S.H.nallow = async () => { try { await Notification.requestPermission(); } catch { /* ignored */ } route(); };
-  S.H.ntest = () => alertPerson({ title: L2("Test notification", "إشعار تجريبي"), body: L2("This is how new messages will reach you.", "هكذا ستصلك الرسائل الجديدة."), href: "#/chat", force: true });
 };
 
-// ================================================================== notifications (every screen)
-let beepCtx = null;
-function beep() {
-  try {
-    beepCtx = beepCtx || new (window.AudioContext || window.webkitAudioContext)();
-    const t0 = beepCtx.currentTime;
-    [[880, 0], [1320, .12]].forEach(([f, d]) => { const o = beepCtx.createOscillator(), g = beepCtx.createGain(); o.type = "sine"; o.frequency.value = f;
-      g.gain.setValueAtTime(.0001, t0 + d); g.gain.exponentialRampToValueAtTime(.18, t0 + d + .02); g.gain.exponentialRampToValueAtTime(.0001, t0 + d + .2);
-      o.connect(g); g.connect(beepCtx.destination); o.start(t0 + d); o.stop(t0 + d + .22); });
-  } catch { /* no audio */ }
+// ================================================================== notification settings (each person's own)
+PAGES.notifications = view => notifPage(view, "");
+async function notifPage(view, head) {
+  const ttl = $("#ttl"); if (ttl && !head) ttl.textContent = L2("Notifications", "الإشعارات");
+  let rooms = []; try { rooms = (await api("GET", "/api/chat/rooms")).rooms; } catch { /* chat unavailable */ }
+  const phone = /Android|iPhone|iPad/i.test(navigator.userAgent), canVibe = "vibrate" in navigator;
+  const draw = () => {
+    const p = notifyPrefs(), perm = notifPerm(), own = !!((S.boot.profile.prefs || {}).notify_sound);
+    const sndOn = p.sound !== "none" && p.mode !== "silent" && p.mode !== "vibrate", vibOn = !!p.vibrate && p.mode !== "silent";
+    const preset = !sndOn && !vibOn && !p.desktop ? "000" : `${+sndOn}${+vibOn}${+!!p.desktop}`;
+    const presets = [["111", L2("Everything", "الكل"), "🔔📳💬"], ["100", L2("Sound only", "صوت فقط"), "🔔"], ["010", L2("Vibration only", "اهتزاز فقط"), "📳"],
+      ["001", L2("Text only", "نص فقط"), "💬"], ["000", L2("Silent — badges only", "صامت — العدّاد فقط"), "🔕"]];
+    const sw = (k, label, help, on = p[k]) => `<label class="nt-sw"><input type="checkbox" data-change="ntog" data-k="${k}" ${on ? "checked" : ""}><span class="nt-tg"></span><span><b>${esc(label)}</b>${help ? `<small>${esc(help)}</small>` : ""}</span></label>`;
+    view.innerHTML = head + `<div class="grid g2 nt-grid">
+      <div class="card"><h2>${esc(L2("This device", "هذا الجهاز"))}</h2>
+        <div class="nt-perm ${perm}">${svg(perm === "granted" ? "check" : "bell")}<div><b>${esc(perm === "granted" ? L2("Pop-up notifications are on", "الإشعارات المنبثقة مفعّلة")
+            : perm === "denied" ? L2("Blocked on this device", "محظورة على هذا الجهاز") : perm === "unsupported" ? L2("Not available in this browser", "غير متاحة في هذا المتصفح") : L2("Not turned on yet", "لم تُفعّل بعد"))}</b>
+          <small>${esc(perm === "granted" ? L2("New messages and reminders can reach you while BeyondERP is in the background.", "تصلك الرسائل والتذكيرات والتطبيق في الخلفية.")
+            : perm === "denied" ? L2("Allow them from the lock icon next to the address (or the app's settings on a phone), then reload.", "اسمح بها من رمز القفل بجوار العنوان (أو إعدادات التطبيق على الهاتف) ثم أعد التحميل.")
+            : perm === "unsupported" ? L2("On a phone, install BeyondERP (Add to Home screen) and turn them on there.", "على الهاتف، ثبّت BeyondERP (إضافة إلى الشاشة الرئيسية) وفعّلها من هناك.")
+            : L2("Turn them on and confirm in the question your browser or phone shows next.", "فعّلها ثم أكّد في السؤال الذي يظهره المتصفح أو الهاتف بعدها."))}</small></div></div>
+        <div class="row" style="margin-top:10px">${perm === "granted" ? "" : `<button class="btn pri" data-a="ntask">${esc(L2("Turn on notifications", "تفعيل الإشعارات"))}</button>`}
+          <button class="btn" data-a="ntest">${svg("bell")} ${esc(L2("Send a test", "إرسال تجربة"))}</button></div>
+        <h3 class="nt-h">${esc(L2("How alerts reach me", "طريقة وصول التنبيهات"))}</h3>
+        <div class="nt-presets">${presets.map(([k, l, ic]) => `<button type="button" class="nt-pre ${preset === k ? "on" : ""}" data-a="ntpre" data-k="${k}"><span>${ic}</span>${esc(l)}</button>`).join("")}</div>
+        ${sw("sound_on", L2("Sound", "الصوت"), "", sndOn)}
+        ${sw("vibrate", L2("Vibration", "الاهتزاز"), (canVibe ? "" : phone ? L2("iPhones don't allow websites to vibrate", "أجهزة آيفون لا تسمح للمواقع بالاهتزاز") : L2("Works on Android phones", "يعمل على هواتف أندرويد")), vibOn)}
+        ${sw("desktop", L2("Pop-up on this computer / phone", "إشعار منبثق على الجهاز"), L2("Shown when BeyondERP is in the background", "يظهر والتطبيق في الخلفية"))}
+        ${sw("banner", L2("Banner inside BeyondERP", "شريط تنبيه داخل التطبيق"), L2("A short note at the bottom while you work", "ملاحظة قصيرة أسفل الشاشة أثناء العمل"))}
+        ${sw("preview", L2("Show the message text in pop-ups", "إظهار نص الرسالة في الإشعار"), L2("Off = just “new message”, for privacy on shared screens", "إيقافه = «رسالة جديدة» فقط، للخصوصية"))}</div>
+      <div class="card"><h2>${esc(L2("What notifies me", "ما ينبهني"))}</h2>
+        <label class="f">${esc(L2("Chat messages", "رسائل المحادثة"))}<select data-change="ntlevel">${[["all", L2("Every new message", "كل رسالة جديدة")], ["mentions", L2("Only @mentions and direct messages", "الإشارات @ والرسائل المباشرة فقط")], ["rooms", L2("Only the rooms I pick (and @mentions)", "الغرف التي أختارها فقط (والإشارات @)")], ["none", L2("No chat alerts (badges only)", "بدون تنبيهات للمحادثة (العدّاد فقط)")]].map(([v, l]) => `<option value="${v}" ${p.level === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
+        ${p.level === "rooms" ? `<div class="chkgrid" style="margin:6px 0 10px">${rooms.filter(r => r.kind !== "dm").map(r => `<label class="f chk"><input type="checkbox" class="ntroom" value="${r.id}" data-change="ntrooms" ${(p.rooms || []).includes(r.id) ? "checked" : ""}>${esc(r.name)}</label>`).join("") || `<span class="muted">—</span>`}</div>` : ""}
+        ${sw("reactions", L2("Reactions to my messages", "التفاعلات على رسائلي"), L2("When someone reacts with an emoji", "عندما يتفاعل أحد برمز تعبيري"))}
+        ${sw("alerts", L2("Approvals and follow-ups", "الاعتمادات والمتابعات"), L2("Entries waiting for me, entries sent back, follow-ups due", "قيود تنتظرني أو أُعيدت إليّ، ومتابعات مستحقة"))}
+        <h3 class="nt-h">${esc(L2("Quiet hours", "ساعات الهدوء"))}</h3>
+        ${sw("quiet", L2("No sound or vibration during quiet hours", "بدون صوت أو اهتزاز في ساعات الهدوء"), L2("Badges and pop-ups still arrive silently", "يستمر العدّاد والإشعارات بصمت"))}
+        <div class="row" style="gap:10px" ${p.quiet ? "" : "hidden"}><label class="f">${esc(L2("From", "من"))}<input type="time" value="${esc(p.quiet_from)}" data-change="nttime" data-k="quiet_from"></label>
+          <label class="f">${esc(L2("To", "إلى"))}<input type="time" value="${esc(p.quiet_to)}" data-change="nttime" data-k="quiet_to"></label></div></div>
+      <div class="card" style="grid-column:1/-1"><h2>${esc(L2("Sound", "الصوت"))}</h2>
+        <div class="nt-sounds">${[...SOUNDS(), ["custom", L2("My own", "صوتي الخاص")], ["none", L2("No sound", "بدون صوت")]].map(([k, l]) => `<div class="nt-snd ${p.sound === k ? "on" : ""}">
+            <button type="button" class="nt-pick" data-a="ntsound" data-k="${k}">${k === "none" ? "🔕" : k === "custom" ? "🎵" : "♪"} ${esc(l)}</button>
+            ${k === "none" || (k === "custom" && !own) ? "" : `<button type="button" class="nt-play" data-a="ntplay" data-k="${k}" title="${esc(L2("Play", "تشغيل"))}">▶</button>`}</div>`).join("")}</div>
+        <div class="row nt-own"><label class="btn">${svg("upload")} ${esc(own ? L2("Replace my sound", "استبدال صوتي") : L2("Upload my own sound", "رفع صوت خاص"))}<input type="file" id="ntfile" accept="audio/*" hidden></label>
+          ${own ? `<button class="btn danger" data-a="ntownx">${esc(L2("Remove my sound", "إزالة صوتي"))}</button>` : ""}
+          <span class="muted">${esc(L2("MP3, WAV, OGG or M4A, a few seconds (up to about 250 KB).", "MP3 أو WAV أو OGG أو M4A، بضع ثوانٍ (حتى ٢٥٠ كيلوبايت تقريباً)."))}</span></div>
+        <div class="grid g2" style="margin-top:10px"><label class="f">${esc(L2("Volume", "مستوى الصوت"))} <span class="muted" id="ntvolv">${p.volume}%</span><input type="range" min="0" max="100" value="${p.volume}" data-input="ntvol"></label>
+          <label class="f">${esc(L2("Vibration pattern", "نمط الاهتزاز"))}<div class="row" style="gap:6px"><select data-change="ntvibe">${[["short", L2("Short", "قصير")], ["double", L2("Double", "مزدوج")], ["long", L2("Long", "طويل")], ["pulse", L2("Pulse", "نبضات")]].map(([v, l]) => `<option value="${v}" ${p.vibe === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>
+            <button type="button" class="btn sm" data-a="ntvtest">📳</button></div></label></div>
+        <p class="muted" style="font-size:.85em;margin-bottom:0">${esc(L2("Settings follow you to every device you sign in on; whether pop-ups are allowed is decided per device. Sounds play while BeyondERP is open (also in a background tab or the installed app).",
+          "الإعدادات تتبعك على كل جهاز تدخل منه، أما السماح بالإشعارات المنبثقة فيُحدَّد لكل جهاز. يعمل الصوت أثناء فتح BeyondERP (حتى في تبويب بالخلفية أو التطبيق المثبّت)."))}</p></div></div>`;
+    const f = $("#ntfile", view); if (f) f.addEventListener("change", async e => { const file = e.target.files[0]; if (!file) return;
+      if (!/^audio\//.test(file.type)) return fail(new Error(L2("Pick a sound file", "اختر ملف صوت")));
+      if (file.size > 290000) return fail(new Error(L2("That sound is too long — pick a clip under about 250 KB (a few seconds)", "الصوت طويل جداً — اختر مقطعاً أقل من ٢٥٠ كيلوبايت تقريباً (بضع ثوانٍ)")));
+      try { let src = await new Promise((ok, bad) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = bad; r.readAsDataURL(file); });
+        src = src.replace(/^data:audio\/(x-)?mpeg3?;/, "data:audio/mpeg;").replace(/^data:audio\/x-m4a;/, "data:audio/mp4;");
+        S.boot.profile = await api("PUT", "/api/me/profile", { prefs: { notify_sound: src } }); await saveNotify({ sound: "custom" }); playSound("custom", notifyPrefs().volume); draw(); toast(t("saved")); } catch (err) { fail(err); } });
+  };
+  const set = async patch => { await saveNotify(patch); draw(); };
+  Object.assign(S.H, {
+    ntask: async () => { await askNotifications(true); draw(); },
+    ntest: () => alertPerson({ title: L2("Test notification", "إشعار تجريبي"), body: L2("This is how new messages will reach you.", "هكذا ستصلك الرسائل الجديدة."), href: "#/chat", force: true, test: true, tag: "berp-test" }),
+    ntpre: el => { const [snd, vib, pop] = el.dataset.k.split("").map(x => x === "1"), p = notifyPrefs();
+      if (pop && notifPerm() === "default") askNotifications(true);
+      set({ mode: snd ? "sound" : vib ? "vibrate" : "silent", sound: snd && p.sound === "none" ? "chime" : p.sound, vibrate: vib, desktop: pop, banner: snd || vib || pop }); },
+    ntog: el => { const k = el.dataset.k, on = el.checked, p = notifyPrefs();
+      if (k === "sound_on") return set({ mode: on ? "sound" : (p.vibrate ? "vibrate" : "silent"), sound: on && p.sound === "none" ? "chime" : p.sound });
+      if (k === "vibrate" && p.mode === "silent" && on) return set({ vibrate: true, mode: "vibrate" });
+      if (k === "vibrate" && !on && p.mode === "vibrate") return set({ vibrate: false, mode: "silent" });
+      if (k === "desktop" && on && notifPerm() === "default") askNotifications(true);
+      set({ [k]: on }); },
+    ntlevel: el => set({ level: el.value }),
+    ntrooms: () => set({ rooms: $$(".ntroom:checked", view).map(x => +x.value) }),
+    nttime: el => set({ [el.dataset.k]: el.value }),
+    ntsound: el => { const k = el.dataset.k; if (k === "custom" && !(S.boot.profile.prefs || {}).notify_sound) { $("#ntfile", view).click(); return; }
+      if (k !== "none") playSound(k, notifyPrefs().volume); set({ sound: k, mode: k === "none" ? (notifyPrefs().vibrate ? "vibrate" : "silent") : "sound" }); },
+    ntplay: el => playSound(el.dataset.k, notifyPrefs().volume),
+    ntvol: el => { $("#ntvolv", view).textContent = el.value + "%"; clearTimeout(S.ntVolT); S.ntVolT = setTimeout(() => { saveNotify({ volume: +el.value }); playSound(notifyPrefs().sound, +el.value); }, 350); },
+    ntvibe: el => { vibrateNow(el.value); set({ vibe: el.value }); },
+    ntvtest: () => vibrateNow(notifyPrefs().vibe),
+    ntownx: async () => { try { S.boot.profile = await api("PUT", "/api/me/profile", { prefs: { notify_sound: "" } }); await set({ sound: "chime" }); } catch (e) { fail(e); } },
+  });
+  draw();
 }
+
+// ================================================================== notifications (every screen)
+// each person's notification settings (Settings → Notifications); missing keys fall back to the defaults
+const NOTIFY_DEFAULTS = { level: "all", rooms: [], mode: "sound", desktop: true, sound: "chime", volume: 70, vibrate: true, vibe: "double", banner: true,
+  preview: true, reactions: true, alerts: true, quiet: false, quiet_from: "22:00", quiet_to: "07:00", ask: "" };
+const notifyPrefs = () => ({ ...NOTIFY_DEFAULTS, ...(((S.boot && S.boot.profile) || {}).prefs || {}).notify });
+const notifPerm = () => (typeof Notification === "undefined" ? "unsupported" : Notification.permission);
+// the alert sounds: short, soft tones made in the browser (nothing to download), plus the person's own clip
+const SOUNDS = () => [["chime", L2("Chime", "رنين")], ["glass", L2("Glass", "زجاج")], ["pop", L2("Pop", "فقاعة")], ["marimba", L2("Marimba", "ماريمبا")],
+  ["bell", L2("Bell", "جرس")], ["soft", L2("Soft", "هادئ")], ["pulse", L2("Pulse", "نبض")]];
+const TONES = {   // [frequency, start s, length s, type, level]
+  chime: [[880, 0, .22, "sine", 1], [1320, .12, .3, "sine", .9]],
+  glass: [[1568, 0, .5, "sine", .7], [2093, .06, .45, "sine", .45], [3136, .1, .3, "sine", .2]],
+  pop: [[620, 0, .07, "triangle", 1], [930, .05, .08, "triangle", .7]],
+  marimba: [[523, 0, .25, "sine", 1], [659, .11, .25, "sine", .9], [784, .22, .35, "sine", .9]],
+  bell: [[1046, 0, .9, "sine", .8], [2093, 0, .5, "sine", .25], [1568, .02, .6, "sine", .2]],
+  soft: [[440, 0, .4, "sine", .7], [554, .18, .45, "sine", .55]],
+  pulse: [[740, 0, .09, "square", .35], [740, .16, .09, "square", .35], [988, .32, .14, "square", .35]],
+};
+const VIBES = { short: [120], double: [140, 70, 140], long: [450], pulse: [80, 60, 80, 60, 80] };
+let beepCtx = null;
+const audioCtx = () => { try { beepCtx = beepCtx || new (window.AudioContext || window.webkitAudioContext)(); if (beepCtx.state === "suspended") beepCtx.resume(); } catch { beepCtx = null; } return beepCtx; };
+// browsers only allow sound after the person has touched the page once: wake the audio then, so later alerts can play
+["pointerdown", "keydown"].forEach(ev => window.addEventListener(ev, () => { if (!beepCtx) audioCtx(); }, { once: true, passive: true }));
+function playSound(name, volume) {
+  const vol = Math.max(0, Math.min(100, volume ?? 70)) / 100;
+  if (!vol || name === "none") return;
+  if (name === "custom") { const src = ((((S.boot || {}).profile || {}).prefs) || {}).notify_sound; if (src) { try { const a = new Audio(src); a.volume = vol; a.play().catch(() => {}); } catch { /* no audio */ } return; } name = "chime"; }
+  const c = audioCtx(), tones = TONES[name] || TONES.chime; if (!c) return;
+  const t0 = c.currentTime + .01;
+  tones.forEach(([f, d, len, type, lvl]) => { const o = c.createOscillator(), g = c.createGain(); o.type = type; o.frequency.value = f;
+    g.gain.setValueAtTime(.0001, t0 + d); g.gain.exponentialRampToValueAtTime(Math.max(.0002, .22 * vol * lvl), t0 + d + .015); g.gain.exponentialRampToValueAtTime(.0001, t0 + d + len);
+    o.connect(g); g.connect(c.destination); o.start(t0 + d); o.stop(t0 + d + len + .05); });
+}
+const beep = () => playSound("chime", 70);
+const vibrateNow = pattern => { try { navigator.vibrate && navigator.vibrate(VIBES[pattern] || VIBES.double); } catch { /* not supported */ } };
+const inQuiet = p => { if (!p.quiet) return false; const now = new Date(), m = now.getHours() * 60 + now.getMinutes(), hm = x => { const [h, mi] = String(x || "0:0").split(":").map(Number); return h * 60 + mi; };
+  const a = hm(p.quiet_from), b = hm(p.quiet_to); return a <= b ? m >= a && m < b : m >= a || m < b; };
+// one alert, every way this person asked for: sound, vibration, a pop-up on the device and a banner inside the app
 async function alertPerson(n) {
-  const prefs = ((S.boot.profile || {}).prefs || {}).notify || { mode: "sound", desktop: true };
-  if (prefs.mode === "sound") beep();
-  if (prefs.mode === "vibrate" || (prefs.mode === "sound" && /Android|iPhone|iPad/i.test(navigator.userAgent))) { try { navigator.vibrate && navigator.vibrate([140, 70, 140]); } catch { /* not supported */ } }
+  const p = notifyPrefs();
+  if ((n.kind === "reaction" && !p.reactions) || (n.kind === "alert" && !p.alerts)) return;
+  const quiet = inQuiet(p) && !n.test;
+  const soundOn = p.mode !== "silent" && p.mode !== "vibrate" && p.sound !== "none";
+  if (soundOn && !quiet) playSound(p.sound, p.volume);
+  if (p.vibrate && p.mode !== "silent" && !quiet) vibrateNow(p.vibe);
   const away = document.hidden || !location.hash.startsWith("#/chat");
-  if (prefs.desktop && (away || n.force) && typeof Notification !== "undefined" && Notification.permission === "granted") {
-    const opts = { body: n.body, icon: "icon-192.png", badge: "icon-192.png", tag: n.tag || "berp-chat", renotify: true, silent: prefs.mode !== "sound", data: { href: n.href } };
+  const body = p.preview || n.test ? n.body : L2("Open BeyondERP to read it", "افتح BeyondERP لقراءتها");
+  if (p.desktop && (away || n.force) && notifPerm() === "granted") {
+    const opts = { body, icon: "icon-192.png", badge: "icon-192.png", tag: n.tag || "berp-chat", renotify: true, silent: true, data: { href: n.href } };
     try {
       const reg = navigator.serviceWorker && await Promise.race([navigator.serviceWorker.getRegistration(), new Promise(r => setTimeout(() => r(null), 800))]);
       if (reg && reg.showNotification) await reg.showNotification(n.title, opts);
       else { const x = new Notification(n.title, opts); x.onclick = () => { window.focus(); if (n.href) location.hash = n.href; x.close(); }; }
     } catch { /* phones without the installed app */ }
   }
-  if (!document.hidden) toast(`${n.title}: ${n.body}`.slice(0, 160));
+  if (p.banner && !document.hidden) toast(`${n.title}: ${body}`.slice(0, 160));
+}
+// "Turn on notifications?" — asked inside the app (never a bare browser prompt); the browser's own Allow question only
+// follows a Yes. Not now = ask again in a few days on this device; Don't ask again = never, on any device.
+async function askNotifications(fromSettings) {
+  const perm = notifPerm();
+  if (perm === "granted") { if (fromSettings) toast(L2("Notifications are already on for this device", "الإشعارات مفعّلة بالفعل على هذا الجهاز")); return "granted"; }
+  if (perm === "unsupported") { uiAlert(L2("This browser can't show notifications. On a phone, install BeyondERP first (browser menu → Add to Home screen / Install app), then turn them on from the installed app.",
+    "هذا المتصفح لا يدعم الإشعارات. على الهاتف ثبّت BeyondERP أولاً (قائمة المتصفح ← إضافة إلى الشاشة الرئيسية / تثبيت التطبيق) ثم فعّلها من التطبيق المثبّت.")); return perm; }
+  if (perm === "denied") { uiAlert(L2("Notifications are blocked for BeyondERP on this device. To allow them: click the lock or settings icon next to the address (or the app's settings on a phone) → Notifications → Allow, then reload.",
+    "الإشعارات محظورة لـ BeyondERP على هذا الجهاز. للسماح بها: اضغط رمز القفل أو الإعدادات بجوار العنوان (أو إعدادات التطبيق على الهاتف) ← الإشعارات ← سماح، ثم أعد التحميل.")); return perm; }
+  let r = "default"; try { r = await Notification.requestPermission(); } catch { /* old browsers */ }
+  if (r === "granted") { saveNotify({ ask: "done" }); alertPerson({ title: L2("Notifications are on", "تم تفعيل الإشعارات"), body: L2("This is how new messages, approvals and follow-ups will reach you.", "هكذا ستصلك الرسائل والاعتمادات والمتابعات الجديدة."), force: true, test: true, tag: "berp-test" }); }
+  else if (r === "denied") toast(L2("Not allowed — you can turn them on later from Settings → Notifications", "لم يُسمح بها — يمكنك تفعيلها لاحقاً من الإعدادات ← الإشعارات"), true);
+  return r;
+}
+async function saveNotify(patch) {
+  const notify = { ...notifyPrefs(), ...patch }; delete notify.notify_sound;
+  const p = S.boot.profile || (S.boot.profile = { prefs: {} }); p.prefs = { ...(p.prefs || {}), notify };
+  try { S.boot.profile = await api("PUT", "/api/me/profile", { prefs: { notify } }); } catch (e) { fail(e); }
+}
+function notifyNudge() {
+  if (!S.boot || !S.boot.user || $("#nnudge") || notifPerm() !== "default") return;
+  const p = notifyPrefs(), snooze = store.get("notifSnooze:" + S.boot.user.id, 0);
+  if (p.ask === "never" || p.ask === "done" || Date.now() < snooze) return;
+  if ($(".dlg-bg, .drawer-bg, .tour-card, .onb")) { setTimeout(notifyNudge, 20000); return; }   // never on top of another question or the tour
+  const el = document.createElement("div"); el.id = "nnudge"; el.className = "nnudge"; el.setAttribute("role", "dialog");
+  el.innerHTML = `<div class="nn-ic">${svg("bell")}</div><div class="nn-b"><b>${esc(L2("Turn on notifications?", "تفعيل الإشعارات؟"))}</b>
+      <p>${esc(L2("Get a ping for new messages, entries waiting for your approval and follow-ups due — even when BeyondERP is in the background.", "تصلك تنبيهات بالرسائل الجديدة والقيود التي تنتظر اعتمادك والمتابعات المستحقة — حتى والتطبيق في الخلفية."))}</p>
+      <div class="row"><button type="button" class="btn pri sm" data-n="yes">${esc(L2("Yes, turn on", "نعم، فعّلها"))}</button><button type="button" class="btn sm" data-n="later">${esc(L2("Not now", "ليس الآن"))}</button>
+        <button type="button" class="lnk" data-n="never">${esc(L2("Don't ask again", "لا تسألني مرة أخرى"))}</button></div></div>`;
+  el.addEventListener("click", async e => { const b = e.target.closest("[data-n]"); if (!b) return; el.remove();
+    if (b.dataset.n === "yes") await askNotifications();
+    else if (b.dataset.n === "later") store.set("notifSnooze:" + S.boot.user.id, Date.now() + 3 * 86400000);
+    else saveNotify({ ask: "never" }); });
+  document.body.appendChild(el);
 }
 if (navigator.serviceWorker) navigator.serviceWorker.addEventListener("message", e => { if (e.data && e.data.href) location.hash = e.data.href; });
 
@@ -7733,8 +7863,12 @@ const notifyKey = () => "chatLast:" + ((S.boot && S.boot.user && S.boot.user.id)
 async function pollChat() {
   if (!S.boot || !S.boot.user) return;
   let d;
-  const since = store.get(notifyKey(), 0);
-  try { d = await api("GET", "/api/chat/updates?since=" + since); } catch { return; }
+  const since = store.get(notifyKey(), 0), rkey = notifyKey() + ":rx", rsince = store.get(rkey, null);
+  try { d = await api("GET", `/api/chat/updates?since=${since}&rsince=${rsince ?? 0}`); } catch { return; }
+  if (rsince === null || !since) store.set(rkey, d.reactions_last || 0);
+  else { for (const x of d.reactions || []) alertPerson({ title: `${personById(x.user_id).name} ${L2("reacted", "تفاعل")} ${x.emoji}`, body: x.text || L2("to your message", "على رسالتك"),
+      href: "#/chat/" + x.room_id, tag: "rx" + x.message_id, kind: "reaction" });
+    store.set(rkey, Math.max(d.reactions_last || 0, rsince)); }
   if (!since) { store.set(notifyKey(), d.last); return setChatBadge(d.unread, d.mentions); }   // first visit: nothing old pops up
   const prefs = ((S.boot.profile || {}).prefs || {}).notify || { level: "all", rooms: [] };
   await loadPeople();
@@ -7776,8 +7910,8 @@ renderShell = function () {   // eslint-disable-line no-func-assign
   _renderShell();
   const p = S.boot.profile || {}, u = me();
   const av = $(".ucard .avatar"); if (av && p.avatar) av.outerHTML = `<img class="avatar av" src="${esc(p.avatar)}" alt="">`;
-  const um = $(".ucard .dd-menu"); if (um && !$('a[href="#/profile"]', um)) um.insertAdjacentHTML("afterbegin", `<a href="#/profile">${svg("user")} ${esc(L2("My profile", "ملفي الشخصي"))}</a>`);
-  if (!C2.started) { C2.started = true; setTimeout(pollChat, 1200); }
+  const um = $(".ucard .dd-menu"); if (um && !$('a[href="#/profile"]', um)) um.insertAdjacentHTML("afterbegin", `<a href="#/profile">${svg("user")} ${esc(L2("My profile", "ملفي الشخصي"))}</a><a href="#/notifications">${svg("bell")} ${esc(L2("Notifications", "الإشعارات"))}</a>`);
+  if (!C2.started) { C2.started = true; setTimeout(pollChat, 1200); setTimeout(notifyNudge, 6000); }
   void u;
 };
 
@@ -7852,11 +7986,16 @@ function msgHtml(m, prev, opts = {}) {
   const seen = mine && !m.deleted ? (opts.seenTxt ? opts.seenTxt(m) : m.seen_by && m.seen_by.length ? `<span class="ch-seen" title="${esc(m.seen_by.map(id => personById(id).name).join(", "))}">✓✓ ${esc(L2("Seen", "شوهدت"))}${m.seen_by.length > 1 ? " · " + m.seen_by.length : ""}</span>` : `<span class="ch-seen">✓</span>`) : "";
   const tools = m.editable && !m.deleted ? `<span class="ch-tools"><button class="lnk" data-a="chedit" data-id="${m.id}">${esc(L2("Edit", "تعديل"))}</button><button class="lnk" data-a="chdel" data-id="${m.id}">${esc(L2("Delete", "حذف"))}</button></span>`
     : (isSuper() && !m.deleted && !opts.noSuperDelete ? `<span class="ch-tools"><button class="lnk" data-a="chdel" data-id="${m.id}">${esc(L2("Remove", "إزالة"))}</button></span>` : "");
+  // reactions (WhatsApp style): chips under the bubble, a small 😊+ button to add one; not on chats between companies
+  const canReact = !opts.person && !m.deleted && CH.room && !CH.room.archived;
+  const rx = (m.reactions || []).length ? `<div class="ch-rxs">${m.reactions.map(r => `<button type="button" class="ch-rx ${r.mine ? "on" : ""}" ${canReact ? `data-a="chreact" data-id="${m.id}" data-e="${esc(r.emoji)}"` : "disabled"}
+      title="${esc(r.users.map(id => id === me().id ? L2("You", "أنت") : personById(id).name).join(", "))}">${esc(r.emoji)}${r.count > 1 ? `<b>${r.count}</b>` : ""}</button>`).join("")}</div>` : "";
+  const rxBtn = canReact ? `<button type="button" class="ch-rxadd" data-a="chrxopen" data-id="${m.id}" aria-label="${esc(L2("React", "تفاعل"))}" title="${esc(L2("React", "تفاعل"))}">${svg("smile")}</button>` : "";
   return day + `<div class="ch-msg ${mine ? "mine" : ""} ${grouped && !day ? "grouped" : ""}" data-id="${m.id}">
     ${mine ? "" : `<div class="ch-av">${grouped && !day ? "" : avatar(p, 34)}</div>`}
     <div class="ch-b">${grouped && !day ? "" : `<div class="ch-h"><b>${esc(mine ? L2("You", "أنت") : p.name)}</b><span>${esc(fmtTime(m.at))}</span></div>`}
-      <div class="ch-bubble ${m.deleted ? "del" : ""}">${m.deleted ? `<i>${esc(L2("Message removed", "تم حذف الرسالة"))}</i>` : richText(m.body)}${files ? `<div class="ch-files">${files}</div>` : ""}</div>
-      <div class="ch-meta">${grouped && !day ? `<span>${esc(fmtTime(m.at))}</span>` : ""}${m.edited ? `<span>${esc(L2("edited", "معدّلة"))}</span>` : ""}${seen}${tools}</div></div></div>`;
+      <div class="ch-bw"><div class="ch-bubble ${m.deleted ? "del" : ""}">${m.deleted ? `<i>${esc(L2("Message removed", "تم حذف الرسالة"))}</i>` : richText(m.body)}${files ? `<div class="ch-files">${files}</div>` : ""}</div>${rxBtn}</div>
+      ${rx}<div class="ch-meta">${grouped && !day ? `<span>${esc(fmtTime(m.at))}</span>` : ""}${m.edited ? `<span>${esc(L2("edited", "معدّلة"))}</span>` : ""}${seen}${tools}</div></div></div>`;
 }
 
 function composerHtml(canWrite, why) {
@@ -7950,7 +8089,7 @@ async function openRoom(room, rooms) {
   const refresh = async () => {
     if (CH.room !== room || !document.body.contains(list)) return clearInterval(CH.timer);
     try { const r = await api("GET", `/api/chat/rooms/${room.id}/messages?limit=60`);   // edits, deletions and seen marks change older messages too
-      const sig = x => JSON.stringify(x.map(m => [m.id, m.body, m.edited, m.deleted, m.seen_by.length, m.editable]));
+      const sig = x => JSON.stringify(x.map(m => [m.id, m.body, m.edited, m.deleted, m.seen_by.length, m.editable, m.reactions]));
       const newer = r.messages.filter(m => !CH.msgs.some(x => x.id === m.id));
       if (sig(r.messages) !== sig(CH.msgs.slice(-r.messages.length)) || newer.length) {
         const older = CH.msgs.filter(m => m.id < (r.messages[0] || { id: 0 }).id); CH.msgs = [...older, ...r.messages]; draw(); markRead(); }
@@ -7962,6 +8101,34 @@ async function openRoom(room, rooms) {
   S.H.chfile = async el => { try { const u = await apiBlobUrl(el.dataset.k); if (/^image\//.test(el.dataset.mime)) openViewer(u, el.dataset.name); else { const a = document.createElement("a"); a.href = u; a.download = el.dataset.name; document.body.appendChild(a); a.click(); a.remove(); } } catch (e) { fail(e); } };
   S.H.chedit = el => { const m = CH.msgs.find(x => x.id === +el.dataset.id); if (m) CH.startEdit(m.id, m.body); };
   S.H.chdel = async el => { if (!await uiConfirm(L2("Delete this message?", "حذف هذه الرسالة؟"))) return; try { await api("DELETE", "/api/chat/messages/" + el.dataset.id); await refresh(); } catch (e) { fail(e); } };
+  const QUICK_RX = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
+  const react = async (id, emoji) => {
+    const m = CH.msgs.find(x => x.id === id); if (!m) return;
+    // show it at once, then take the server's word
+    const mineNow = (m.reactions || []).find(r => r.mine), list = (m.reactions || []).map(r => ({ ...r, users: [...r.users] }));
+    list.forEach(r => { if (r.mine) { r.count--; r.mine = false; r.users = r.users.filter(u => u !== me().id); } });
+    if (!mineNow || mineNow.emoji !== emoji) { const r = list.find(x => x.emoji === emoji); if (r) { r.count++; r.mine = true; r.users.push(me().id); } else list.push({ emoji, count: 1, users: [me().id], mine: true }); }
+    m.reactions = list.filter(r => r.count > 0); draw();
+    try { await api("POST", `/api/chat/messages/${id}/react`, { emoji }); } catch (e) { fail(e); }
+    refresh();
+  };
+  const closeRx = () => { $$(".ch-rxbar").forEach(x => x.remove()); };
+  S.H.chreact = el => { closeRx(); react(+el.dataset.id, el.dataset.e); };
+  S.H.chrxopen = el => {
+    const open = $(".ch-rxbar"); closeRx(); if (open && open.dataset.id === el.dataset.id) return;
+    const id = +el.dataset.id, mine = ((CH.msgs.find(x => x.id === id) || {}).reactions || []).find(r => r.mine);
+    const bar = document.createElement("div"); bar.className = "ch-rxbar"; bar.dataset.id = id;
+    bar.innerHTML = QUICK_RX.map(e => `<button type="button" class="${mine && mine.emoji === e ? "on" : ""}" data-a="chreact" data-id="${id}" data-e="${e}">${e}</button>`).join("")
+      + `<button type="button" class="more" data-a="chrxmore" aria-label="${esc(L2("More", "المزيد"))}">＋</button><div class="ch-rxall" hidden>${EMOJIS.map(e => `<button type="button" data-a="chreact" data-id="${id}" data-e="${e}">${e}</button>`).join("")}</div>`;
+    el.closest(".ch-bw").appendChild(bar);
+    const r = bar.getBoundingClientRect(); if (r.right > innerWidth - 8) bar.classList.add("flip");
+    setTimeout(() => document.addEventListener("click", function off(e) { if (!e.target.closest(".ch-rxbar, .ch-rxadd")) { closeRx(); document.removeEventListener("click", off); } }), 0);
+  };
+  S.H.chrxmore = el => { const all = el.parentElement.querySelector(".ch-rxall"); all.hidden = !all.hidden; };
+  // phones: hold a message to react
+  let hold = null;
+  list.addEventListener("touchstart", e => { const b = e.target.closest(".ch-bubble"); if (!b) return; hold = setTimeout(() => { const btn = b.parentElement.querySelector(".ch-rxadd"); if (btn) { navigator.vibrate && navigator.vibrate(10); S.H.chrxopen(btn); } }, 450); }, { passive: true });
+  ["touchend", "touchmove", "touchcancel"].forEach(ev => list.addEventListener(ev, () => clearTimeout(hold), { passive: true }));
   S.H.chroomset = () => roomDrawer(room);
   S.H.chexport = () => openApi(`/api/chat/rooms/${room.id}/export`);
   S.H.charch = async () => { try { await api("POST", `/api/chat/rooms/${room.id}/archive`, { archived: !room.archived }); route(); } catch (e) { fail(e); } };

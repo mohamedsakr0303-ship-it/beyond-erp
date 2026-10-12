@@ -36,7 +36,13 @@ class ChatError(acc.ValidationError):
 # ------------------------------------------------------------------ people
 PROFILE_FIELDS = ("display_name", "job_title", "department", "phone", "bio", "status")
 DEFAULT_PREFS = {"nav_mode": "click", "phone_menu": "overlay",
-                 "notify": {"level": "all", "rooms": [], "mode": "sound", "desktop": True}}
+                 "notify": {"level": "all", "rooms": [], "mode": "sound", "desktop": True, "sound": "chime", "volume": 70,
+                            "vibrate": True, "vibe": "double", "banner": True, "preview": True, "reactions": True,
+                            "alerts": True, "quiet": False, "quiet_from": "22:00", "quiet_to": "07:00", "ask": ""}}
+SOUNDS = ("chime", "glass", "pop", "marimba", "bell", "soft", "pulse", "none", "custom")
+VIBES = ("short", "double", "long", "pulse")
+MAX_SOUND = 400_000            # characters of an uploaded sound (data: URL)
+_HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
 
 def profile(db, uid):
@@ -88,6 +94,16 @@ def save_profile(db, uid, d):
                 prefs["look"] = lk
             else:
                 prefs.pop("look", None)
+        if "notify_sound" in new:   # this person's own alert sound (an uploaded clip)
+            snd = new["notify_sound"] or ""
+            if snd and not re.match(r"^data:audio/(mpeg|mp3|wav|x-wav|ogg|webm|aac|mp4|x-m4a);base64,[A-Za-z0-9+/=]+$", snd):
+                raise ChatError("The sound must be an MP3, WAV, OGG, WebM or M4A file")
+            if len(snd) > MAX_SOUND:
+                raise ChatError("That sound is too long — pick a clip under about 250 KB (a few seconds)")
+            if snd:
+                prefs["notify_sound"] = snd
+            else:
+                prefs.pop("notify_sound", None)
         if "themes" in new:       # themes this person saved for themselves
             prefs["themes"] = looks.clean_themes(new["themes"])
         tr = new.get("tour")      # the guided tour: where this person stopped, or that they never want it
@@ -102,6 +118,23 @@ def save_profile(db, uid, d):
                 prefs["notify"]["mode"] = n["mode"]
             if "desktop" in n:
                 prefs["notify"]["desktop"] = bool(n["desktop"])
+            for k in ("vibrate", "banner", "preview", "reactions", "alerts", "quiet"):
+                if k in n:
+                    prefs["notify"][k] = bool(n[k])
+            if n.get("sound") in SOUNDS:
+                prefs["notify"]["sound"] = n["sound"]
+            if n.get("vibe") in VIBES:
+                prefs["notify"]["vibe"] = n["vibe"]
+            if "volume" in n:
+                try:
+                    prefs["notify"]["volume"] = max(0, min(100, int(float(n["volume"]))))
+                except (TypeError, ValueError):
+                    pass
+            for k in ("quiet_from", "quiet_to"):
+                if isinstance(n.get(k), str) and _HHMM.match(n[k]):
+                    prefs["notify"][k] = n[k]
+            if n.get("ask") in ("", "never", "done"):      # the "turn on notifications?" question: never ask again / answered
+                prefs["notify"]["ask"] = n["ask"]
             if isinstance(n.get("rooms"), list):
                 prefs["notify"]["rooms"] = [int(x) for x in n["rooms"] if str(x).lstrip("-").isdigit()][:200]
     db.x("""INSERT INTO user_profiles(user_id, display_name, job_title, department, phone, bio, status, avatar, prefs, updated_at)
@@ -386,6 +419,7 @@ def remove(db, user, mid):
             raise ChatError("Someone has already seen this message — ask a super administrator to remove it")
     db.x("UPDATE chat_messages SET body='', mentions='[]', deleted_at=? WHERE id=?", (acc.now_iso(), m["id"]))
     db.x("DELETE FROM chat_files WHERE message_id=?", (m["id"],))
+    db.x("DELETE FROM chat_reactions WHERE message_id=?", (m["id"],))
 
 
 def mark_read(db, user, rid, last):
@@ -416,16 +450,61 @@ def messages(db, user, rid, after=0, before=0, limit=60):
                       f"({','.join('?' * len(ids))}) ORDER BY id", ids):
             files.setdefault(f["message_id"], []).append({k: f[k] for k in ("id", "name", "mime", "size", "thumb")})
     reads = {r["user_id"]: r["last_read"] for r in db.q("SELECT user_id, last_read FROM chat_reads WHERE room_id=?", (room["id"],))}
+    reacts = _reactions(db, ids, user["id"])
     out = []
     for r in rows:
         seen = [u for u, last in reads.items() if last >= r["id"] and u != r["user_id"]]
         out.append({"id": r["id"], "user_id": r["user_id"], "body": r["body"], "reply_to": r["reply_to"],
                     "mentions": json.loads(r["mentions"] or "[]"), "at": r["created_at"], "edited": r["edited_at"],
                     "deleted": bool(r["deleted_at"]), "files": files.get(r["id"], []), "seen_by": seen,
+                    "reactions": reacts.get(r["id"], []),
                     "editable": r["user_id"] == user["id"] and not seen and not r["deleted_at"] and not room["archived_at"]})
     return {"room": {"id": room["id"], "kind": room["kind"], "archived": bool(room["archived_at"]),
                      "can_write": can_write(db, user, room)},
             "messages": out, "more": bool(rows) and not after and len(rows) == limit}
+
+
+def _reactions(db, ids, me):
+    """Reactions per message: each emoji with how many, who, and whether one of them is mine (first used first)."""
+    out = {}
+    if not ids:
+        return out
+    for r in db.q(f"SELECT message_id, user_id, emoji FROM chat_reactions WHERE message_id IN ({','.join('?' * len(ids))}) ORDER BY id",
+                  list(ids)):
+        lst = out.setdefault(r["message_id"], [])
+        e = next((x for x in lst if x["emoji"] == r["emoji"]), None)
+        if not e:
+            e = {"emoji": r["emoji"], "count": 0, "users": [], "mine": False}
+            lst.append(e)
+        e["count"] += 1
+        e["users"].append(r["user_id"])
+        e["mine"] = e["mine"] or r["user_id"] == me
+    return out
+
+
+def _emoji_ok(e):
+    """A short emoji (with skin tone / joiner sequences), never text or markup."""
+    return 0 < len(e) <= 16 and not re.search(r"[A-Za-z0-9<>&\"'\s]", e) and any(ord(c) > 0x2000 for c in e)
+
+
+def react(db, user, mid, emoji):
+    """React to a message. The same emoji again takes it back; another one replaces it (one per person)."""
+    m = _msg(db, mid)
+    room = _room(db, m["room_id"])
+    _need_read(db, user, room["id"])
+    if m["deleted_at"]:
+        raise ChatError("This message was removed")
+    if room["archived_at"]:
+        raise ChatError("This room is archived")
+    emoji = str(emoji or "").strip()
+    cur = db.one("SELECT emoji FROM chat_reactions WHERE message_id=? AND user_id=?", (m["id"], user["id"]))
+    db.x("DELETE FROM chat_reactions WHERE message_id=? AND user_id=?", (m["id"], user["id"]))
+    if not emoji or (cur and cur["emoji"] == emoji):
+        return None
+    if not _emoji_ok(emoji):
+        raise ChatError("Pick an emoji to react with")
+    db.x("INSERT INTO chat_reactions(message_id, user_id, emoji, at) VALUES (?,?,?,?)", (m["id"], user["id"], emoji, acc.now_iso()))
+    return emoji
 
 
 def file(db, user, fid):
@@ -436,8 +515,9 @@ def file(db, user, fid):
     return f["name"], f["mime"], base64.b64decode(f["data"])
 
 
-def updates(db, user, since=0):
-    """New messages for this person since a message id (for notifications), and the unread total."""
+def updates(db, user, since=0, rsince=None):
+    """New messages for this person since a message id (for notifications), the unread total, and — when asked —
+    reactions others put on this person's messages since a reaction id."""
     since = int(since or 0)
     mine = rooms(db, user)
     visible = {r["id"]: r for r in mine if r["member"] or r["kind"] == "general"}
@@ -457,7 +537,17 @@ def updates(db, user, since=0):
         out.append({"id": r["id"], "room_id": r["room_id"], "room": room["name"], "kind": room["kind"],
                     "user_id": r["user_id"], "text": (r["body"] or "")[:200], "files": r["files"],
                     "mention": user["id"] in men or (-1 in men), "at": r["created_at"]})
-    return {"last": last, "messages": out,
+    res = {}
+    if rsince is not None:
+        rows = db.q("""SELECT r.id, r.user_id, r.emoji, m.id AS message_id, m.room_id, m.body FROM chat_reactions r
+                       JOIN chat_messages m ON m.id=r.message_id
+                       WHERE r.id>? AND m.user_id=? AND r.user_id<>? AND m.deleted_at IS NULL ORDER BY r.id LIMIT 30""",
+                    (int(rsince or 0), user["id"], user["id"]))
+        res = {"reactions_last": (db.one("SELECT MAX(id) m FROM chat_reactions")["m"] or 0),
+               "reactions": [{**{k: r[k] for k in ("id", "user_id", "emoji", "message_id", "room_id")},
+                              "room": (visible.get(r["room_id"]) or {}).get("name", ""), "text": (r["body"] or "")[:120]}
+                             for r in rows if r["room_id"] in visible]}
+    return {**res, "last": last, "messages": out,
             "unread": sum(r["unread"] for r in mine if r["member"] or r["kind"] == "general"),
             "mentions": sum(r["mentions"] for r in mine)}
 
@@ -534,7 +624,10 @@ def export_rows(db):
             "messages": [{"user": nm(m["user_id"]), "body": m["body"],
                           "mentions": [x if x == -1 else nm(x) for x in json.loads(m["mentions"] or "[]")],
                           "reply_to": pos.get(m["reply_to"]), "created_at": m["created_at"], "edited_at": m["edited_at"],
-                          "deleted_at": m["deleted_at"], "files": files.get(m["id"], [])} for m in msgs],
+                          "deleted_at": m["deleted_at"], "files": files.get(m["id"], []),
+                          "reactions": [{"user": nm(x["user_id"]), "emoji": x["emoji"], "at": x["at"]}
+                                        for x in db.q("SELECT * FROM chat_reactions WHERE message_id=? ORDER BY id", (m["id"],)) if nm(x["user_id"])]}
+                         for m in msgs],
             "reads": {nm(x["user_id"]): pos[x["last_read"]] for x in db.q("SELECT * FROM chat_reads WHERE room_id=?", (r["id"],))
                       if nm(x["user_id"]) and x["last_read"] in pos}})
     return {"profiles": profiles, "rooms": rooms_out}
@@ -556,7 +649,7 @@ def import_rows(db, data, mode, counts):
         return
     if mode != "replace" and db.one("SELECT 1 FROM chat_messages"):
         return   # adding to books that already have conversations: keep theirs
-    for t in ("chat_reads", "chat_files", "chat_messages", "chat_members"):
+    for t in ("chat_reactions", "chat_reads", "chat_files", "chat_messages", "chat_members"):
         db.conn.execute(f"DELETE FROM {t}")
     db.conn.execute("DELETE FROM chat_rooms WHERE id<>1")
     n = 0
@@ -584,6 +677,10 @@ def import_rows(db, data, mode, counts):
                                    new_ids[reply] if isinstance(reply, int) and 0 <= reply < len(new_ids) else None,
                                    m.get("created_at") or acc.now_iso(), m.get("edited_at"), m.get("deleted_at"))).lastrowid
             new_ids.append(mid)
+            for x in m.get("reactions") or []:
+                if isinstance(x, dict) and uid(x.get("user")) and _emoji_ok(str(x.get("emoji") or "")):
+                    db.conn.execute("INSERT OR IGNORE INTO chat_reactions(message_id,user_id,emoji,at) VALUES (?,?,?,?)",
+                                    (mid, uid(x["user"]), x["emoji"], x.get("at")))
             for f in m.get("files") or []:
                 db.conn.execute("INSERT INTO chat_files(message_id,name,mime,size,thumb,data) VALUES (?,?,?,?,?,?)",
                                 (mid, f.get("name") or "file", f.get("mime") or "application/octet-stream", int(f.get("size") or 0),

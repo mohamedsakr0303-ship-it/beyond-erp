@@ -267,7 +267,7 @@ Object.assign(window.I18N, {
   sum_100: ["Adds up to 100%.", "المجموع 100%."], sum_not_100: ["Adds up to", "المجموع"],
   download_doc: ["Download", "تنزيل"], documents: ["Documents", "المستندات"],
   p_branding: ["Documents & branding", "المستندات والهوية"], appearance: ["Appearance", "المظهر"], tab_company: ["Company", "الشركة"],
-  tab_docs: ["Documents & branding", "المستندات والهوية"], tab_look: ["Appearance", "المظهر"], tab_theme: ["Theme", "السمات والألوان"], p_layout: ["Arrange menus & forms (right-click, drag and drop)", "ترتيب القوائم والنماذج (الزر الأيمن والسحب والإفلات)"], tab_menus: ["Menus", "القوائم"], tab_system: ["System & data", "النظام والبيانات"],
+  tab_docs: ["Documents & branding", "المستندات والهوية"], tab_look: ["Appearance", "المظهر"], tab_theme: ["Theme", "السمات والألوان"], tab_notify: ["Notifications", "الإشعارات"], p_layout: ["Arrange menus & forms (right-click, drag and drop)", "ترتيب القوائم والنماذج (الزر الأيمن والسحب والإفلات)"], tab_menus: ["Menus", "القوائم"], tab_system: ["System & data", "النظام والبيانات"],
   legal_name: ["Legal name (2nd line on documents)", "الاسم القانوني (السطر الثاني في المستندات)"], cr_no: ["Commercial register no.", "رقم السجل التجاري"],
   city: ["City", "المدينة"], website: ["Website", "الموقع الإلكتروني"], bank_details: ["Bank details (printed on offers)", "بيانات البنك (تُطبع في العروض)"],
   bank_name: ["Bank & branch", "البنك والفرع"], bank_account: ["Account number", "رقم الحساب"], bank_holder: ["Account holder", "صاحب الحساب"],

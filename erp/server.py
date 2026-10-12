@@ -4078,6 +4078,12 @@ def chat_remove(ctx, mid):
     return ok()
 
 
+@route("POST", "/api/chat/messages/<mid>/react")
+def chat_react(ctx, mid):
+    from . import chat
+    return ok({"emoji": chat.react(ctx.db, ctx.user, mid, ctx.body.get("emoji"))})
+
+
 @route("GET", "/api/chat/files/<fid>")
 def chat_file(ctx, fid):
     from . import chat
@@ -4088,7 +4094,7 @@ def chat_file(ctx, fid):
 @route("GET", "/api/chat/updates")
 def chat_updates(ctx):
     from . import chat
-    return ok(chat.updates(ctx.db, ctx.user, ctx.q.get("since")))
+    return ok(chat.updates(ctx.db, ctx.user, ctx.q.get("since"), ctx.q.get("rsince")))
 
 
 @route("GET", "/api/chat/rooms/<rid>/export")
