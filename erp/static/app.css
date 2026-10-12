@@ -1713,3 +1713,11 @@ input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 4px color
 @media (max-width:560px){.dz-row{flex-wrap:wrap}.dz-pick{width:100%;justify-content:center}}
 .chv.drop::before,.attbox.drop::before{content:attr(data-droptext);position:absolute;z-index:6;left:50%;top:50%;transform:translate(-50%,-50%);padding:10px 18px;border-radius:12px;
   background:var(--brand);color:var(--brand-ink);font-weight:600;pointer-events:none;box-shadow:0 8px 30px rgba(0,0,0,.25)}
+
+/* ---- side menu collapsed on a computer: the pages use the whole width of the screen */
+@media (min-width:901px){.app.mini .content{max-width:none}}
+/* ---- phones: the profile menu opens inside the side menu (pushes the menu down, scrolls with it) — no bar painted over it */
+@media (max-width:900px){
+  .side{scrollbar-width:none}.side::-webkit-scrollbar{display:none}
+  .ucard .dd-menu{position:static;inset:auto;width:auto;max-height:none;overflow:visible;margin-top:6px;box-shadow:none}
+}

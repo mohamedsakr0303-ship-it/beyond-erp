@@ -551,6 +551,10 @@ document.addEventListener("click", e => {
 });
 document.addEventListener("change", e => { const el = e.target.closest("[data-change]"); if (el && S.H[el.dataset.change]) S.H[el.dataset.change](el, e); });
 document.addEventListener("input", e => { const el = e.target.closest("[data-input]"); if (el && S.H[el.dataset.input]) S.H[el.dataset.input](el, e); });
+// phones: closing the side menu (any way) also closes the profile menu inside it, so it opens closed next time
+new MutationObserver(ms => { for (const m of ms) { const el = m.target;
+  if (el.classList && el.classList.contains("app") && !el.classList.contains("menu") && innerWidth <= 900) $$(".ucard.dd.open", el).forEach(d => d.classList.remove("open")); } })
+  .observe(document.body, { attributes: true, attributeFilter: ["class"], subtree: true });
 document.addEventListener("keydown", e => { if (e.key === "Escape") { closeDrawer(); const app = $(".app"); if (app) app.classList.remove("menu"); } });
 window.addEventListener("hashchange", () => { S.navCount = (S.navCount || 0) + 1; route(); });
 
