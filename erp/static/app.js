@@ -1354,6 +1354,7 @@ function form(fields, cols = 2) {
   return `<div class="grid g${cols}">` + fields.map(f => {
     if (f.html) return `<div class="${f.span || ""}">${f.html}</div>`;
     if (f.hidden) return `<input type="hidden" name="${f.k}" value="${esc(f.v ?? "")}">`;
+    if (f.type === "file") return dropZone({ name: f.k, accept: f.accept, multiple: f.multiple, label: f.l, help: f.help, req: f.req, cls: f.span });
     const attrs = `name="${f.k}" ${f.req ? "required" : ""} ${f.multiple ? "multiple" : ""} ${f.accept ? `accept="${esc(f.accept)}"` : ""} ${f.ph ? `placeholder="${esc(f.ph)}"` : ""} ${f.change ? `data-change="${f.change}"` : ""} ${f.input ? `data-input="${f.input}"` : ""} ${f.dis ? "disabled" : ""}`;
     let ctl;
     if (f.type === "select") ctl = `<select ${attrs}>${(f.opts || []).map(o => { const [v, l] = Array.isArray(o) ? o : [o, tl(o)]; return `<option value="${esc(v)}" ${String(v) === String(f.v ?? "") ? "selected" : ""}>${esc(l)}</option>`; }).join("")}</select>`;
@@ -1365,6 +1366,82 @@ function form(fields, cols = 2) {
     return `<label class="f ${f.span || ""}">${esc(f.l)}${f.req ? `<b class="req" title="${esc(L2("Required", "إلزامي"))}" aria-hidden="true">✱</b>` : ""}${ctl}${f.help ? `<span class="muted" style="font-weight:400">${esc(f.help)}</span>` : ""}</label>`;
   }).join("") + `</div>`;
 }
+// ---------------------------------------------------------- file drop zones: drag & drop, paste (Ctrl+V) or the Choose files button
+// Only the button opens the file picker; the files chosen are listed (with a ✕ each) and stay on the input for the form to read.
+function dropZone({ name = "", id = "", accept = "", multiple = true, label = "", help = "", req = false, cls = "", skip = false, hint = "" }) {
+  const touch = window.matchMedia && matchMedia("(pointer: coarse)").matches;
+  return `<div class="f dzf ${cls}">${label ? `<span>${esc(label)}${req ? `<b class="req" aria-hidden="true">✱</b>` : ""}</span>` : ""}
+    <div class="dropzone" data-dz="1">
+      <input type="file" class="dz-in" ${name ? `name="${esc(name)}"` : ""} ${id ? `id="${esc(id)}"` : ""} ${accept ? `accept="${esc(accept)}"` : ""} ${multiple ? "multiple" : ""} ${skip ? `data-skip="1"` : ""} tabindex="-1" aria-hidden="true">
+      <div class="dz-row"><span class="dz-ic">${svg("upload")}</span>
+        <div class="dz-txt"><b>${esc(hint || (touch ? L2("Add files or photos", "أضف ملفات أو صوراً") : L2("Drag files here or paste them (Ctrl+V)", "اسحب الملفات هنا أو الصقها (Ctrl+V)")))}</b>
+          <small class="muted">${esc(accept && /image/.test(accept) && /pdf/.test(accept) ? L2("PDF, photos, Excel, Word…", "PDF، صور، Excel، Word…") : accept === "image/*" ? L2("Pictures", "صور") : L2("Any file", "أي ملف"))}</small></div>
+        <button type="button" class="btn sm dz-pick">${esc(multiple ? L2("Choose files", "اختر ملفات") : L2("Choose a file", "اختر ملفاً"))}</button></div>
+      <div class="dz-list"></div></div>${help ? `<span class="muted dz-help">${esc(help)}</span>` : ""}</div>`;
+}
+const dzAccepts = (accept, file) => !accept || accept.split(",").map(x => x.trim().toLowerCase()).filter(Boolean).some(a =>
+  a.startsWith(".") ? file.name.toLowerCase().endsWith(a) : a.endsWith("/*") ? (file.type || "").startsWith(a.slice(0, -1)) : (file.type || "") === a);
+function dzAdd(zone, files) {
+  const inp = $(".dz-in", zone); if (!inp || !files.length) return 0;
+  const ok = files.filter(f => dzAccepts(inp.accept, f)), skipped = files.length - ok.length;
+  if (skipped) toast(L2(`${skipped} file(s) of a type this field doesn't take were left out`, `تم تجاهل ${skipped} ملف من نوع غير مقبول هنا`));
+  if (!ok.length) return 0;
+  const dt = new DataTransfer();
+  if (inp.multiple) [...inp.files].forEach(f => dt.items.add(f));
+  (inp.multiple ? ok : ok.slice(0, 1)).forEach(f => dt.items.add(f));
+  inp.files = dt.files; dzDraw(zone);
+  inp._dzQuiet = true; try { inp.dispatchEvent(new Event("change", { bubbles: true })); } finally { inp._dzQuiet = false; }
+  return ok.length;
+}
+function dzDraw(zone) {
+  const inp = $(".dz-in", zone), list = $(".dz-list", zone); if (!inp || !list) return;
+  zone.classList.toggle("has", inp.files.length > 0);
+  list.innerHTML = [...inp.files].map((f, i) => `<span class="dz-file" data-i="${i}">${/^image\//.test(f.type) ? `<img alt="" data-dzimg="${i}">` : `<span class="dz-fi">${fileIcon(f.type)}</span>`}
+    <span class="dz-fn" dir="auto">${esc(f.name || L2("Pasted picture", "صورة ملصقة"))}</span><small class="muted">${kb(f.size)}</small>
+    <button type="button" class="dz-x" data-dzx="${i}" aria-label="${esc(t("delete"))}" title="${esc(L2("Remove", "إزالة"))}">✕</button></span>`).join("");
+  $$("img[data-dzimg]", list).forEach(img => { const f = inp.files[+img.dataset.dzimg]; const u = URL.createObjectURL(f); img.src = u; img.onload = () => URL.revokeObjectURL(u); });
+}
+// files dropped / pasted anywhere on a drop target: a drawer's zone, the chat, the assistant
+const hasFiles = e => e.dataTransfer && [...(e.dataTransfer.types || [])].includes("Files");
+function dropTarget(el, onFiles) {     // a whole panel that takes dropped files (chat, assistant, attachments box)
+  let depth = 0;
+  el.addEventListener("dragenter", e => { if (!hasFiles(e)) return; e.preventDefault(); depth++; el.classList.add("drop"); });
+  el.addEventListener("dragover", e => { if (!hasFiles(e)) return; e.preventDefault(); e.dataTransfer.dropEffect = "copy"; });
+  el.addEventListener("dragleave", () => { if (--depth <= 0) { depth = 0; el.classList.remove("drop"); } });
+  el.addEventListener("drop", e => { if (!hasFiles(e)) return; e.preventDefault(); e.stopPropagation(); depth = 0; el.classList.remove("drop"); el._dzPaste([...e.dataTransfer.files]); });
+  el._dzPaste = onFiles; el.dataset.droptext = L2("Drop files to attach", "أفلت الملفات لإرفاقها");
+}
+document.addEventListener("click", e => {
+  const pick = e.target.closest(".dz-pick"); if (pick) { e.preventDefault(); const z = pick.closest(".dropzone"); $(".dz-in", z).click(); return; }
+  const x = e.target.closest("[data-dzx]"); if (x) { e.preventDefault(); const z = x.closest(".dropzone"), inp = $(".dz-in", z), dt = new DataTransfer();
+    [...inp.files].forEach((f, i) => { if (i !== +x.dataset.dzx) dt.items.add(f); }); inp.files = dt.files; dzDraw(z); }
+});
+document.addEventListener("change", e => { const inp = e.target; if (inp.classList && inp.classList.contains("dz-in") && !inp._dzQuiet) {
+  // a new pick adds to what is already there (the picker alone would replace it)
+  const z = inp.closest(".dropzone"), now = [...inp.files], had = z._dzHad || [];
+  if (inp.multiple && had.length) { const dt = new DataTransfer(); [...had, ...now].forEach(f => dt.items.add(f)); inp.files = dt.files; }
+  dzDraw(z); } }, true);
+document.addEventListener("click", e => { const p = e.target.closest(".dz-pick"); if (p) { const z = p.closest(".dropzone"); z._dzHad = [...$(".dz-in", z).files]; } }, true);
+["dragenter", "dragover"].forEach(ev => document.addEventListener(ev, e => { const z = e.target.closest && e.target.closest(".dropzone"); if (!z || !hasFiles(e)) return;
+  e.preventDefault(); z.classList.add("over"); }));
+document.addEventListener("dragleave", e => { const z = e.target.closest && e.target.closest(".dropzone"); if (z && !z.contains(e.relatedTarget)) z.classList.remove("over"); });
+document.addEventListener("drop", e => { const z = e.target.closest && e.target.closest(".dropzone"); if (!z || !hasFiles(e)) return; e.preventDefault(); z.classList.remove("over"); dzAdd(z, [...e.dataTransfer.files]); });
+// a file dropped outside any target must not make the browser leave the app to open it
+window.addEventListener("dragover", e => { if (hasFiles(e)) e.preventDefault(); });
+window.addEventListener("drop", e => { if (hasFiles(e)) e.preventDefault(); });
+// paste: files on the clipboard (a screenshot, a copied picture or file) go to the open form's drop zone, else to the chat / assistant
+document.addEventListener("paste", e => {
+  const files = [...(e.clipboardData && e.clipboardData.files || [])]; if (!files.length) return;
+  const el = e.target, typing = el && (el.isContentEditable || /^(INPUT|TEXTAREA)$/.test(el.tagName) && !/^(file|checkbox|radio|button)$/.test(el.type));
+  // copying from Word / Excel also puts a picture of the text on the clipboard: when typing in a field, keep the text paste
+  if (typing && [...e.clipboardData.types].includes("text/plain") && !el.closest(".ch-inbox")) return;
+  const top = [...document.querySelectorAll(".drawer-bg")].pop();
+  const zone = top ? (el.closest && el.closest(".drawer") && el.closest(".dropzone")) || $(".dropzone", top) : null;
+  if (zone) { e.preventDefault(); const n = dzAdd(zone, files); if (n) toast(L2(`${n} file(s) added`, `تمت إضافة ${n} ملف`)); return; }
+  if (document.querySelector(".dlg-bg")) return;
+  const tgt = [...(top || document).querySelectorAll(top ? ".attbox" : ".chv, .attbox")].find(x => x._dzPaste && x.offsetParent);
+  if (tgt) { e.preventDefault(); tgt._dzPaste(files); }
+});
 const datalist = (id, values) => `<datalist id="${id}">${[...new Set(values)].map(v => `<option value="${esc(v)}">`).join("")}</datalist>`;
 // ---------------------------------------------------------- contacts directory helpers
 const CONTACT_CATS = { supplier: ["Supplier", "مورد"], subcontractor: ["Subcontractor", "مقاول باطن"], driver: ["Driver", "سائق"],
@@ -6213,7 +6290,7 @@ async function mountAttach(box) {
       <label class="btn sm">＋ ${L2("Add files", "إضافة ملفات")}<input type="file" multiple hidden data-k="files"></label>
       <label class="btn sm">📷 ${L2("Take a photo", "التقاط صورة")}<input type="file" accept="image/*" capture="environment" hidden data-k="files"></label>
       <button type="button" class="btn sm" data-k="link">🔗 ${L2("Add a link", "إضافة رابط")}</button>
-      <span class="muted" style="font-size:.8em">${L2(`Up to ${d.max_mb} MB each; photos are shrunk automatically.`, `حتى ${d.max_mb} ميجا للملف؛ الصور تُصغّر تلقائياً.`)}</span></div><div class="attprog muted" style="font-size:.85em"></div>` : ""}`;
+      <span class="muted" style="font-size:.8em">${L2(`Or drag files here / paste them (Ctrl+V). Up to ${d.max_mb} MB each; photos are shrunk automatically.`, `أو اسحب الملفات هنا / الصقها (Ctrl+V). حتى ${d.max_mb} ميجا للملف؛ الصور تُصغّر تلقائياً.`)}</span></div><div class="attprog muted" style="font-size:.85em"></div>` : ""}`;
   const reload = () => mountAttach(box);
   box.onclick = async ev => {
     const b = ev.target.closest("[data-k]"); if (!b || b.tagName === "INPUT") return;
@@ -6228,14 +6305,14 @@ async function mountAttach(box) {
         const n = await uiPrompt(L2("Name", "الاسم"), u.replace(/^https?:\/\//, "").slice(0, 60)); await api("POST", "/api/attachments", { owner, id, url: u.trim(), title: n || "" }); reload(); }
     } catch (e) { fail(e); }
   };
-  $$("input[data-k=files]", box).forEach(inp => inp.onchange = async () => {
-    const files = [...inp.files], prog = $(".attprog", box); let done = 0;
+  const upload = async files => { const prog = $(".attprog", box); let done = 0; if (!prog || !files.length) return;
     for (const f of files) {
-      prog.textContent = `${L2("Uploading", "جارٍ الرفع")} ${f.name}… (${done + 1}/${files.length})`;
+      prog.textContent = `${L2("Uploading", "جارٍ الرفع")} ${f.name || L2("pasted picture", "صورة ملصقة")}… (${done + 1}/${files.length})`;
       try { await uploadFile(owner, id, f); done++; } catch (e) { fail(e); }
     }
-    prog.textContent = ""; reload();
-  });
+    prog.textContent = ""; reload(); };
+  $$("input[data-k=files]", box).forEach(inp => inp.onchange = () => upload([...inp.files]));
+  if (edit) { box.classList.add("attbox"); if (!box._dzPaste) dropTarget(box, upload); box._dzPaste = upload; }
 }
 const readDataUrl = file => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(r.error); r.readAsDataURL(file); });
 const MAX_UP = 8 * 1024 * 1024;
@@ -6375,7 +6452,7 @@ function mediaForm(p) {
   drawer(L2("Add photos, clips & 3D models", "إضافة صور وفيديو ونماذج 3D") + " — " + p.code, form([
     { k: "kind", l: L2("What", "النوع"), type: "select", span: "spanall", change: "pmk", opts: [["photo", L2("Photos (several at once)", "صور (أكثر من صورة)")], ["video", L2("Video clip", "فيديو")], ["model", L2("3D model", "نموذج ثلاثي الأبعاد")], ["tour", L2("360° / virtual tour (link)", "جولة افتراضية 360° (رابط)")], ["file", L2("Other file (PDF plan, brochure…)", "ملف آخر (مخطط PDF، بروشور…)")]] },
     { k: "title", l: L2("Title (optional)", "العنوان (اختياري)"), span: "spanall" },
-    { html: `<label class="f" id="pmfile">${L2("Upload from this device", "رفع من الجهاز")}<input type="file" data-skip="1" id="pmin" multiple></label>`, span: "spanall" },
+    { html: `<div id="pmfile">${dropZone({ id: "pmin", skip: true, multiple: true, label: L2("Upload from this device", "رفع من الجهاز") })}</div>`, span: "spanall" },
     { k: "url", l: L2("…or paste a link", "…أو الصق رابطاً"), span: "spanall", ph: "https://" },
     { html: `<div class="muted" id="pmhelp" style="font-size:.88em"></div><div id="pmprog"></div>`, span: "spanall" }]),
   async v => { const files = [...$("#pmin").files]; const prog = $("#pmprog");
@@ -8313,7 +8390,7 @@ function composerHtml(canWrite, why) {
   return `<div class="ch-pending" id="chpend"></div>
     <div class="ch-comp"><div class="dd ch-emo"><button class="btn icbtn" type="button" aria-label="Emoji">${svg("smile")}</button><div class="dd-menu emo-grid">${EMOJIS.map(e => `<button type="button" data-a="chemo" data-e="${e}">${e}</button>`).join("")}</div></div>
       <label class="icbtn" title="${esc(L2("Attach files", "إرفاق ملفات"))}">${svg("attach")}<input type="file" id="chfiles" multiple hidden></label>
-      <div class="ch-inbox"><textarea id="chtext" rows="1" placeholder="${esc(L2("Write a message… (@ to mention, paste pictures)", "اكتب رسالة… (@ للإشارة، الصق الصور)"))}"></textarea><div class="ch-at" id="chat" hidden></div></div>
+      <div class="ch-inbox"><textarea id="chtext" rows="1" placeholder="${esc(L2("Write a message… (@ to mention, drop or paste files)", "اكتب رسالة… (@ للإشارة، اسحب الملفات أو الصقها)"))}"></textarea><div class="ch-at" id="chat" hidden></div></div>
       <button class="btn pri icbtn ch-send" data-a="chsend" aria-label="${esc(L2("Send", "إرسال"))}">${svg("send")}</button></div>`;
 }
 
@@ -8326,10 +8403,7 @@ function wireComposer(send, people) {
     `<span class="chip">${f.thumb ? `<img src="${esc(f.thumb)}" alt="">` : svg("file")} ${esc(f.name)} · ${esc(sizeTxt(f.size))} <button class="lnk" data-a="chunpend" data-i="${i}">×</button></span>`).join(""); };
   const add = async files => { for (const f of files) { try { CH.pending.push(await readFile(f)); } catch (e) { fail(e); } } drawPend(); };
   $("#chfiles").addEventListener("change", e => { add([...e.target.files]); e.target.value = ""; });
-  ta.addEventListener("paste", e => { const fs = [...(e.clipboardData && e.clipboardData.files || [])]; if (fs.length) { e.preventDefault(); add(fs); } });
-  const zone = $("#chv"); zone.addEventListener("dragover", e => { e.preventDefault(); zone.classList.add("drop"); });
-  zone.addEventListener("dragleave", () => zone.classList.remove("drop"));
-  zone.addEventListener("drop", e => { e.preventDefault(); zone.classList.remove("drop"); add([...e.dataTransfer.files]); });
+  dropTarget($("#chv"), add);       // drop on the conversation; paste (Ctrl+V) anywhere on the page
   let atIdx = 0;
   const atBox = $("#chat");
   const atMatch = () => { const m = ta.value.slice(0, ta.selectionStart).match(/(^|\s)@([\w.\-\u0600-\u06FF]*)$/); return m ? m[2].toLowerCase() : null; };
@@ -8601,7 +8675,7 @@ PAGES.assistant = async (view, parts) => {
       <div class="ch-pending" id="aipend"></div>
       <div class="ch-comp"><div class="dd ch-emo"><button class="btn icbtn" type="button" aria-label="Emoji">${svg("smile")}</button><div class="dd-menu emo-grid">${EMOJIS.map(e => `<button type="button" data-a="aiemo" data-e="${e}">${e}</button>`).join("")}</div></div>
         <label class="icbtn" title="${esc(L2("Attach files (pictures, PDF, Excel, Word, text…)", "إرفاق ملفات (صور، PDF، Excel، Word، نصوص…)"))}">${svg("attach")}<input type="file" id="aifiles" multiple hidden></label>
-        <div class="ch-inbox"><textarea id="aitext" rows="1" placeholder="${esc(L2("Ask about your books or ask for a change…", "اسأل عن دفاترك أو اطلب تعديلاً…"))}"></textarea></div>
+        <div class="ch-inbox"><textarea id="aitext" rows="1" placeholder="${esc(L2("Ask about your books or ask for a change… (drop or paste files)", "اسأل عن دفاترك أو اطلب تعديلاً… (اسحب الملفات أو الصقها)"))}"></textarea></div>
         <button class="btn pri icbtn ch-send" data-a="aisend" aria-label="${esc(L2("Send", "إرسال"))}">${svg("send")}</button></div>
       <div class="muted ai-foot">${esc(L2("What the assistant reads is sent to the AI provider your company chose, to answer you. Check important figures in the reports.", "ما يقرؤه المساعد يُرسل إلى مزوّد الذكاء الاصطناعي الذي اختارته شركتك للإجابة. راجع الأرقام المهمة في التقارير."))}${S.ai.policy.daily_limit ? " · " + esc(L2("Today", "اليوم")) + ` ${S.ai.used_today}/${S.ai.policy.daily_limit}` : ""}</div></section></div>`;
   const ta = $("#aitext");
@@ -8614,10 +8688,7 @@ PAGES.assistant = async (view, parts) => {
   const add = async files => { for (const f of files) { try { AI.pending.push(await readFile(f)); } catch (e) { fail(e); } } drawPend(); };
   AI.drawPend = drawPend;
   $("#aifiles").addEventListener("change", e => { add([...e.target.files]); e.target.value = ""; });
-  ta.addEventListener("paste", e => { const fs = [...(e.clipboardData && e.clipboardData.files || [])]; if (fs.length) { e.preventDefault(); add(fs); } });
-  const zone = $(".chv"); zone.addEventListener("dragover", e => { e.preventDefault(); zone.classList.add("drop"); });
-  zone.addEventListener("dragleave", () => zone.classList.remove("drop"));
-  zone.addEventListener("drop", e => { e.preventDefault(); zone.classList.remove("drop"); add([...e.dataTransfer.files]); });
+  dropTarget($(".chv"), add);
   S.H.aiunpend = el => { AI.pending.splice(+el.dataset.i, 1); drawPend(); };
   S.H.aiemo = el => { const p = ta.selectionStart || ta.value.length; ta.value = ta.value.slice(0, p) + el.dataset.e + ta.value.slice(p); ta.focus(); ta.selectionStart = ta.selectionEnd = p + el.dataset.e.length; $$(".dd.open").forEach(d => d.classList.remove("open")); };
   S.H.aidel = async el => { if (!await uiConfirm(L2("Delete this conversation?", "حذف هذه المحادثة؟"))) return; await api("DELETE", "/api/ai/threads/" + el.dataset.id); location.hash = "#/assistant"; route(); };
