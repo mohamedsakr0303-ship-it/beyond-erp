@@ -34,19 +34,17 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      # The desktop installers take most of the build minutes (Mac minutes count 10×, Windows 2×), so they are rebuilt
-      # only when the app itself changes — or when the workflow is run by hand. Otherwise the site keeps the current ones.
-      - name: Did the app code change?
+      # The desktop installers (Windows + Mac) take most of the build minutes — Mac minutes count 10×, Windows 2× — so they
+      # are built only on demand: Actions → deploy → "Run workflow". A push deploys the tests, database and website only;
+      # the website keeps offering the installers last published on the "desktop-latest" release.
+      - name: Build the desktop installers this time?
         id: changed
         run: |
-          before="${{ github.event.before }}"
-          if [ "${{ github.event_name }}" != "push" ] || [ -z "$before" ] || [ "$before" = "0000000000000000000000000000000000000000" ] \
-             || ! git cat-file -e "$before" 2>/dev/null \
-             || git diff --name-only "$before" "${{ github.sha }}" | grep -qE '^(erp/|run\.py$|packaging/|requirements\.txt$)'; then
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "desktop=true" >> "$GITHUB_OUTPUT"
           else
             echo "desktop=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::App code unchanged — desktop installers not rebuilt (the website keeps the current ones)"
+            echo "::notice::Desktop installers not rebuilt (run the workflow by hand to build them) — the website keeps the current ones"
           fi
       - uses: actions/setup-python@v7
         with:
