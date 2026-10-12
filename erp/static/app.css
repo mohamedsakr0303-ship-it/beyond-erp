@@ -1565,9 +1565,9 @@ label.f .req{color:var(--bad,#e5484d);font-weight:800;margin-inline-start:3px;fo
 :root[data-picheader] .top{isolation:isolate}
 :root[data-picheader] .top::before{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;
   background:var(--pic-header) center/var(--pic-header-size) var(--pic-header-rep);opacity:var(--pic-header-op)}
-:root[data-piclogo] .brand{position:relative;isolation:isolate;overflow:hidden;margin:-14px -14px 8px;padding:20px 22px 16px}
-:root[data-piclogo] .app.mini .brand{margin-inline:-12px}
-:root[data-piclogo] .brand::before{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;
+/* the logo area keeps its own size and layout (the logo stays in place); the picture reaches the side menu's edges */
+:root[data-piclogo] .brand{position:relative;isolation:isolate}
+:root[data-piclogo] .brand::before{content:"";position:absolute;inset:-14px -14px 0;z-index:-1;pointer-events:none;
   background:var(--pic-logo) center/var(--pic-logo-size) var(--pic-logo-rep);opacity:var(--pic-logo-op)}
 /* the side menu scrolls, so its picture is a layer under a veil of the menu's own colour (the veil sets the strength) */
 :root[data-picsidebar] .side{background-image:linear-gradient(color-mix(in srgb,var(--side) var(--pic-sidebar-k),transparent),color-mix(in srgb,var(--side) var(--pic-sidebar-k),transparent)),var(--pic-sidebar);
@@ -1677,7 +1677,7 @@ tr.pending td{background:color-mix(in srgb,var(--accent) 7%,transparent)}
    track on every browser and phone; one look in light and dark */
 input[type=range],:root[data-theme="dark"] input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:28px;padding:0;margin:4px 0;border:0;border-radius:0;
   background:transparent;box-shadow:none;cursor:pointer;--rf:var(--brand)}
-input[type=range]:focus{outline:none;box-shadow:none}
+input[type=range]:focus,:root[data-theme="dark"] input[type=range]:focus,:root[data-tint="custom"] input[type=range]:focus{outline:none;box-shadow:none;border:0;background:transparent}
 input[type=range]::-webkit-slider-runnable-track{height:6px;border-radius:999px;background:linear-gradient(90deg,var(--rf) var(--p,0%),var(--line) var(--p,0%))}
 [dir=rtl] input[type=range]::-webkit-slider-runnable-track{background:linear-gradient(270deg,var(--rf) var(--p,0%),var(--line) var(--p,0%))}
 input[type=range]::-moz-range-track{height:6px;border-radius:999px;background:var(--line)}
