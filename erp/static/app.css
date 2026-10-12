@@ -1509,7 +1509,7 @@ html.dnd-on,html.dnd-on *{cursor:grabbing!important;user-select:none!important;-
 .mchart .ar{opacity:.18}.mchart .ar.r{fill:#34c77b}.mchart .ar.c{fill:#ff5a5f}
 .mchart .pt{stroke:var(--panel);stroke-width:1.5}.mchart .pt.r{fill:#34c77b}.mchart .pt.c{fill:#ff5a5f}
 /* a mandatory field */
-label.f .req{color:var(--bad,#e5484d);font-weight:800;margin-inline-start:3px;font-size:.85em}
+.f .fl{display:block}.f .req{color:var(--ink);font-weight:800;margin-inline-start:5px;font-size:.9em}
 .fc-tools [data-fc=req].on{background:color-mix(in srgb,var(--bad,#e5484d) 18%,transparent);color:var(--bad,#e5484d)}
 /* ---- CRM: the deals board and a contact's timeline */
 .kanban{display:grid;grid-template-columns:repeat(6,minmax(220px,1fr));gap:12px;overflow-x:auto;padding-bottom:8px;align-items:start}
@@ -1715,7 +1715,7 @@ input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 4px color
   background:var(--brand);color:var(--brand-ink);font-weight:600;pointer-events:none;box-shadow:0 8px 30px rgba(0,0,0,.25)}
 
 /* ---- side menu collapsed on a computer: the pages use the whole width of the screen */
-@media (min-width:901px){.app.mini .content{max-width:none}}
+@media (min-width:901px){.content{max-width:none}}
 /* ---- phones: the profile menu opens inside the side menu (pushes the menu down, scrolls with it) — no bar painted over it */
 @media (max-width:900px){
   .side{scrollbar-width:none}.side::-webkit-scrollbar{display:none}

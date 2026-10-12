@@ -1370,14 +1370,14 @@ function form(fields, cols = 2) {
     // an on/off button: only the button itself switches (red = off, green = on)
     else if (f.type === "switch") return `<div class="f sw-field ${f.span || ""}"><span>${esc(f.l)}</span><label class="tgl"><input type="checkbox" role="switch" ${attrs} ${f.v ? "checked" : ""}><span class="sw-ui" aria-hidden="true"><i></i><b class="sw-on">${esc(f.on || L2("On", "مفعّل"))}</b><b class="sw-off">${esc(f.off || L2("Off", "متوقف"))}</b></span></label></div>`;
     else ctl = `<input type="${f.type || "text"}" ${attrs} value="${esc(f.v ?? "")}" ${f.list ? `list="${f.list}"` : ""} ${f.type === "number" ? `step="${f.step || "any"}" inputmode="decimal" class="num"` : ""}>`;
-    return `<label class="f ${f.span || ""}">${esc(f.l)}${f.req ? `<b class="req" title="${esc(L2("Required", "إلزامي"))}" aria-hidden="true">✱</b>` : ""}${ctl}${f.help ? `<span class="muted" style="font-weight:400">${esc(f.help)}</span>` : ""}</label>`;
+    return `<label class="f ${f.span || ""}"><span class="fl">${esc(f.l)}${f.req ? `<b class="req" title="${esc(L2("Required", "إلزامي"))}" aria-hidden="true">✱</b>` : ""}</span>${ctl}${f.help ? `<span class="muted" style="font-weight:400">${esc(f.help)}</span>` : ""}</label>`;
   }).join("") + `</div>`;
 }
 // ---------------------------------------------------------- file drop zones: drag & drop, paste (Ctrl+V) or the Choose files button
 // Only the button opens the file picker; the files chosen are listed (with a ✕ each) and stay on the input for the form to read.
 function dropZone({ name = "", id = "", accept = "", multiple = true, label = "", help = "", req = false, cls = "", skip = false, hint = "" }) {
   const touch = window.matchMedia && matchMedia("(pointer: coarse)").matches;
-  return `<div class="f dzf ${cls}">${label ? `<span>${esc(label)}${req ? `<b class="req" aria-hidden="true">✱</b>` : ""}</span>` : ""}
+  return `<div class="f dzf ${cls}">${label ? `<span class="fl">${esc(label)}${req ? `<b class="req" title="${esc(L2("Required", "إلزامي"))}" aria-hidden="true">✱</b>` : ""}</span>` : ""}
     <div class="dropzone" data-dz="1">
       <input type="file" class="dz-in" ${req ? `data-req="1"` : ""} ${name ? `name="${esc(name)}"` : ""} ${id ? `id="${esc(id)}"` : ""} ${accept ? `accept="${esc(accept)}"` : ""} ${multiple ? "multiple" : ""} ${skip ? `data-skip="1"` : ""} tabindex="-1" aria-hidden="true">
       <div class="dz-row"><span class="dz-ic">${svg("upload")}</span>
@@ -10431,14 +10431,14 @@ function formCustomise(drawerEl, on) {
       (granted("required_fields") && (!ctl.required || o.req) && ctl.type !== "checkbox" ? `<button type="button" data-fc="req" class="${o.req ? "on" : ""}" title="${esc(L2("Mandatory: it must be filled in before saving (super administrator)", "إلزامي: يجب ملؤه قبل الحفظ (المسؤول الأعلى)"))}">✱ ${L2("required", "إلزامي")}</button>` : "") +
       (ctl.type === "file" ? "" : `<button type="button" data-fc="def" class="${o.def !== undefined ? "on" : ""}" title="${esc(L2("Use the value in it now as the default for new entries (press again to remove)", "استخدم قيمته الحالية كقيمة افتراضية (اضغط مرة أخرى للإزالة)"))}">★ ${L2("default", "افتراضي")}</button>`) +
       (extra ? `<button type="button" data-fc="del" title="${esc(L2("Remove this field", "حذف الحقل"))}">✕</button>` : "");
-    const first = lab.childNodes[0];
-    if (first && first.nodeType === 3) first.after(tools); else lab.prepend(tools);
+    const first = lab.childNodes[0], fl = $(".fl", lab);
+    if (fl) fl.append(tools); else if (first && first.nodeType === 3) first.after(tools); else lab.prepend(tools);
     tools.addEventListener("click", async e => {
       const b = e.target.closest("[data-fc]"); if (!b) return; e.preventDefault(); e.stopPropagation();
       try {
         if (b.dataset.fc === "ren") { const v = await uiPrompt(L2("New label (empty = the original)", "الاسم الجديد (فارغ = الأصلي)"), fieldName(lab)); if (v === null) return;
           await saveFormCustom(F => { F[k] = { ...(F[k] || {}) }; if (v.trim()) F[k].label = { ...(F[k].label || {}), [S.lang]: v.trim() }; else delete F[k].label; if (!Object.keys(F[k]).length) delete F[k]; });
-          if (v.trim() && lab.childNodes[0].nodeType === 3) lab.childNodes[0].textContent = v.trim(); }
+          const tn = ($(".fl", lab) || lab).childNodes[0]; if (v.trim() && tn && tn.nodeType === 3) tn.textContent = v.trim(); }
         else if (b.dataset.fc === "hide") { await saveFormCustom(F => { F[k] = { ...(F[k] || {}), hide: 1, name: fieldName(lab) }; }); lab.style.display = "none"; formCustomise(drawerEl, true); }
         else if (b.dataset.fc === "def") { const had = (FC()[fk] || {})[k] && FC()[fk][k].def !== undefined;
           await saveFormCustom(F => { F[k] = { ...(F[k] || {}) }; if (had) delete F[k].def; else F[k].def = ctl.type === "checkbox" ? ctl.checked : ctl.value; if (!Object.keys(F[k]).length) delete F[k]; });
