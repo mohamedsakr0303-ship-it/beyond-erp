@@ -289,7 +289,8 @@ def level_of(user, key):
 
 
 def can(user, module, level="view"):
-    return LEVELS.index(level_of(user, module)) >= LEVELS.index(level)
+    """'a|b': either permission is enough (a screen two sections share)."""
+    return any(LEVELS.index(level_of(user, m)) >= LEVELS.index(level) for m in str(module).split("|"))
 
 
 def action_ok(user, module, action):
@@ -298,6 +299,8 @@ def action_ok(user, module, action):
     its screens that this person can open allows it."""
     if not action or not module or not user or user.get("is_admin"):
         return True
+    if "|" in module:
+        return any(action_ok(user, m, action) for m in module.split("|"))
     p = user.get("perms") or {}
     parts = module.split(".")
     if len(parts) >= 2:

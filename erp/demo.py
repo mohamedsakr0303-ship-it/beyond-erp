@@ -503,6 +503,10 @@ _SHOP_SHEETS = ["Products", "Sales Contracts", "Service Plans", "Service Subscri
 _SITE_SHEETS = ["Equipment", "Maintenance Plans", "Equipment Usage", "Maintenance Log", "Employees", "Attendance"]
 _STOCK_SHEETS = ["Warehouses", "Stock Items", "Stock Moves"]
 
+_CARE_ITEMS = (("GLOVES", "Examination gloves (pair)", "pair", 100), ("SYRINGE", "Syringe 5 ml", "pcs", 100),
+               ("CANNULA", "IV cannula 22G", "pcs", 40), ("DRESS", "Sterile dressing pack", "pack", 40))
+_CARE_DROP = (_PROJECT_SHEETS + _RENTAL_SHEETS + _SHOP_SHEETS + _SITE_SHEETS +
+              ["Direct Costs", "Receipt Vouchers", "Cash Custody", "Custody Expenses"])
 PROFILES = {
     "interior": {"name": "Nile Interiors (demo)", "tagline": "Interior design · Fit-out · Finishing",
                  "bus": {"PRJ-D01", "PRJ-D02", "PRJ-D03"}, "drop": _RENTAL_SHEETS + _SHOP_SHEETS + ["Equipment", "Maintenance Plans",
@@ -541,12 +545,52 @@ PROFILES = {
                 "codes": {"Journal Vouchers": {"JV-D0C", "JV-D01"}},
                 "rename": {"PRJ-D03": ("Client work — Delta Tech", "Client account")},
                 "budget": {"6010", "6020", "6040", "6030"}},
+    "healthcare": {"name": "Nile Care Clinics (demo)", "tagline": "Outpatient clinics · Lab · Radiology · Physiotherapy",
+                   "bus": {"CL-MAADI", "CL-NASR"}, "drop": _CARE_DROP, "codes": {"Journal Vouchers": {"JV-D0C", "JV-D01"}},
+                   "budget": {"6010", "6020", "6040", "6030"}},
+    "homecare": {"name": "Nile Home Care (demo)", "tagline": "Doctors, nurses & physiotherapy at home · Elderly care",
+                 "bus": {"HC-CAIRO", "HC-GIZA"}, "drop": _CARE_DROP, "codes": {"Journal Vouchers": {"JV-D0C", "JV-D01"}},
+                 "budget": {"6010", "6020", "6040", "6030"}},
 }
 INDUSTRY_KEYS = list(PROFILES)
 
 
 def _extra(S, key, d, eom):
     """What only that business does, added to the shared rows."""
+    if key in ("healthcare", "homecare"):
+        home = key == "homecare"
+        S["Business Units"] = [{"code": c, "name": n, "type": "Branch", "location": loc, "start_date": d(0, 1), "status": "In Progress"}
+                               for c, n, loc in ((("HC-CAIRO", "Home care — Cairo", "Maadi office"), ("HC-GIZA", "Home care — Giza", "Dokki"))
+                                                 if home else (("CL-MAADI", "Clinic — Maadi", "Maadi"), ("CL-NASR", "Clinic — Nasr City", "Nasr City")))]
+        S["Warehouses"] = [{"name": "Main Store", "location": "Maadi"}]
+        S["Stock Items"] = [{"name": n, "unit": u, "sku": k, "reorder_level": r} for k, n, u, r in _CARE_ITEMS]
+        S["Stock Moves"] = [{"date": d(m, 1), "type": "Receipt", "warehouse": "Main Store", "item": n, "unit": u, "qty": q, "rate": rt,
+                             "vendor": "Pharma Supplies Co. (demo)", "paid": round(q * rt * (1 if m == 0 else 0.5), 2)}
+                            for m in (0, 3) for (k, n, u, _), q, rt in zip(_CARE_ITEMS, (400, 300, 120, 150), (6, 4, 18, 35))]
+        S["Fixed Assets"] = ([{"code": "FA-H01", "name": "Nurses' car — Renault Logan", "account": "1420", "acquired": d(0, 4), "cost": 820000,
+                               "salvage": 150000, "life_months": 60},
+                              {"code": "FA-H02", "name": "Portable patient monitors ×3", "account": "1412", "acquired": d(0, 6), "cost": 135000, "life_months": 48},
+                              {"code": "FA-H03", "name": "Hospital beds & oxygen concentrators (loan pool)", "account": "1412", "acquired": d(1, 2),
+                               "cost": 210000, "life_months": 60}] if home else
+                             [{"code": "FA-H01", "name": "Ultrasound machine", "account": "1412", "acquired": d(0, 4), "cost": 950000, "salvage": 100000,
+                               "life_months": 84},
+                              {"code": "FA-H02", "name": "Clinic furniture & examination couches", "account": "1400", "acquired": d(0, 2), "cost": 160000,
+                               "life_months": 84},
+                              {"code": "FA-H03", "name": "Lab analyser (CBC)", "account": "1412", "acquired": d(1, 2), "cost": 380000, "life_months": 60}])
+        for r in S["Operating Expenses"] + S["Recurring Entries"]:
+            if r.get("account") == "6010":
+                r.update(amount=30000 if not home else 12000, description=r["description"].replace(
+                    "Office rent", "Clinic rent" if not home else "Office & dispatch rent"))
+                if "name" in r:
+                    r["name"] = r["name"].replace("Office rent", "Clinic rent" if not home else "Office & dispatch rent")
+            if r.get("account") == "6020":
+                r.update(description="Clinic management & booking software")
+        for r in S["Journal Vouchers"]:
+            if r["voucher"] == "JV-D0C":
+                r.update({"memo": "Cash withdrawn for the reception cash box", **{k: 30000 for k in ("debit", "credit") if r.get(k)}})
+        S["Payroll"] += [{**r, "worker": w, "role": role, "rate": rate, "paid": rate}
+                         for r in list(S["Payroll"]) for w, role, rate in ((("Reem Khaled", "Receptionist", 7500),) if not home else
+                                                                             (("Reem Khaled", "Care coordinator (dispatch)", 9000),))]
     if key == "investment":
         S["Journal Vouchers"] += [
             {"voucher": "JV-I01", "date": d(0, 10), "kind": "Journal Voucher", "memo": "Treasury bills — 182 days", "account": "1720", "debit": 1200000},
@@ -690,12 +734,138 @@ def _bank_lines(db, account, date_from, date_to, skip_last=True):
     return out
 
 
+# ---- healthcare / home healthcare: patients, services, six months of visits billed, claims, packages (all invented)
+_INSURERS = (("Nile Health TPA (demo)", 80), ("Delta Medical Insurance (demo)", 90), ("Delta Tech Solutions", 100))
+_CARE_SERVICES = {
+    "healthcare": [("Consultation — general practitioner", "كشف ممارس عام", "consultation", 400, 300, 40, 20, 0, []),
+                   ("Consultation — cardiology", "كشف قلب", "consultation", 700, 550, 50, 30, 0, []),
+                   ("Follow-up consultation", "استشارة متابعة", "consultation", 200, 150, 40, 15, 0, []),
+                   ("Complete blood count (CBC)", "صورة دم كاملة", "lab", 150, 120, 0, 10, 0, [("SYRINGE", 1), ("GLOVES", 1)]),
+                   ("Abdominal ultrasound", "سونار على البطن", "radiology", 600, 450, 30, 20, 0, [("GLOVES", 1)]),
+                   ("Physiotherapy session", "جلسة علاج طبيعي", "physiotherapy", 350, 280, 50, 45, 0, []),
+                   ("Wound dressing", "غيار على جرح", "nursing", 250, 200, 30, 20, 0, [("DRESS", 1), ("GLOVES", 2)]),
+                   ("IV cannula & injection", "تركيب كانيولا وحقن", "nursing", 150, 120, 30, 15, 0, [("CANNULA", 1), ("SYRINGE", 1), ("GLOVES", 1)])],
+    "homecare": [("Doctor home visit", "زيارة طبيب منزلية", "home_visit", 1200, 900, 60, 45, 1, []),
+                 ("Nurse visit — injection / cannula", "زيارة تمريض — حقن / كانيولا", "nursing", 350, 300, 50, 30, 1, [("CANNULA", 1), ("SYRINGE", 1), ("GLOVES", 1)]),
+                 ("Wound dressing at home", "غيار على جرح بالمنزل", "nursing", 450, 380, 50, 40, 1, [("DRESS", 1), ("GLOVES", 2)]),
+                 ("Physiotherapy session at home", "جلسة علاج طبيعي بالمنزل", "physiotherapy", 500, 420, 55, 60, 1, []),
+                 ("Sample collection at home (lab)", "سحب عينة بالمنزل", "lab", 300, 250, 20, 20, 1, [("SYRINGE", 1), ("GLOVES", 1)]),
+                 ("Elderly-care nurse — 12-hour shift", "ممرضة رعاية مسنين — وردية 12 ساعة", "nursing", 900, 0, 70, 720, 1, []),
+                 ("Elderly-care nurse — 24-hour shift", "ممرضة رعاية مسنين — 24 ساعة", "nursing", 1600, 0, 70, 1440, 1, [])]}
+_CARE_PEOPLE = {"healthcare": ["Dr. Ahmed Fathy (GP)", "Dr. Nadia Samir (Cardiology)", "Dr. Karim Lotfy (Radiology)", "PT Yasmin Adel", "Nurse Hoda Salem"],
+                "homecare": ["Dr. Ahmed Fathy", "Nurse Hoda Salem", "Nurse Mona Ibrahim", "PT Yasmin Adel", "Carer Samah Ali"]}
+_PATIENTS = [("Mahmoud Abdelaziz", "male", "Maadi", 0, "Diabetic — type 2"), ("Fatma Hassan", "female", "Nasr City", 1, ""),
+             ("Youssef Nabil", "male", "Heliopolis", -1, ""), ("Hala Mostafa", "female", "Dokki", 2, "Allergic to penicillin"),
+             ("Ibrahim El-Sayed", "male", "Mohandessin", 0, "Hypertension"), ("Salma Tarek", "female", "New Cairo", -1, ""),
+             ("Adel Ramzy", "male", "Sheikh Zayed", 1, "Post-surgery — hip replacement"), ("Nermeen Fouad", "female", "Maadi", -1, ""),
+             ("Hassan Mahmoud", "male", "Nasr City", 2, ""), ("Aya Gamal", "female", "Heliopolis", 0, ""),
+             ("Sherif Adly", "male", "Dokki", -1, "Bedridden — stroke"), ("Laila Kamel", "female", "New Cairo", 1, ""),
+             ("Mostafa Zaki", "male", "Mohandessin", -1, ""), ("Rania Saad", "female", "Sheikh Zayed", 0, "Asthma")]
+
+
+def _care_demo(db, industry, user, a0, today):
+    import random
+    from . import care
+    care.ensure_accounts(db)
+    rnd = random.Random(7 if industry == "homecare" else 3)
+    home = industry == "homecare"
+    bus = [r["id"] for r in db.q("SELECT id FROM business_units ORDER BY code")]
+    sv = [care.save_service(db, {"name": n, "name_ar": ar, "category": cat, "price": p, "insurer_price": ip, "covered": ip > 0,
+                                 "provider_pct": pct, "duration_min": mins, "home": h, "consumables": [{"item": i, "qty": q} for i, q in cons]})
+          for n, ar, cat, p, ip, pct, mins, h, cons in _CARE_SERVICES[industry]]
+    pats = []
+    for i, (name, g, zone, ins, alert) in enumerate(_PATIENTS):
+        yr = 1940 + (i * 7) % 45 if home else 1960 + (i * 5) % 50
+        pats.append(care.save_patient(db, {"name": name, "gender": g, "zone": zone, "dob": f"{yr}-{(i % 12) + 1:02d}-{(i * 3) % 27 + 1:02d}",
+                                           "phone": f"0100000{3000 + i}", "address": f"{10 + i} Demo Street, {zone}",
+                                           "payer": "insurer" if ins >= 0 else "self", "insurer": _INSURERS[ins][0] if ins >= 0 else "",
+                                           "coverage_pct": _INSURERS[ins][1] if ins >= 0 else 0, "policy_no": f"POL-{5000 + i}" if ins >= 0 else "",
+                                           "alerts": alert}))
+    people = _CARE_PEOPLE[industry]
+    # who gives which service
+    giver = (lambda k: people[[0, 1, 0, 4, 2, 3, 4, 4][k]]) if not home else (lambda k: people[[0, 1, 2, 3, 1, 4, 4][k]])
+    fee = lambda zone: 0 if not home else (150 if zone in ("Maadi", "Dokki", "Mohandessin") else 250)   # noqa: E731
+    # prepaid packages: physiotherapy course (and a month of nursing shifts at home)
+    physio = sv[5] if not home else sv[3]
+    pk = [care.sell_package(db, {"patient_id": pats[6], "service_id": physio, "sessions": 10 if not home else 12,
+                                 "price": 3000 if not home else 5400, "date": (today - _dt.timedelta(days=32)).isoformat(),
+                                 "name": "Physiotherapy course" + (" at home" if home else "")}, user)]
+    if home:
+        pk.append(care.sell_package(db, {"patient_id": pats[10], "service_id": sv[5], "sessions": 30, "price": 24000, "paid": 12000,
+                                         "date": (today - _dt.timedelta(days=24)).isoformat(), "name": "A month of 12-hour nursing shifts"}, user))
+    pk_left = {pk[0]: (pats[6], physio, 10 if not home else 12)}
+    if home:
+        pk_left[pk[1]] = (pats[10], sv[5], 30)
+    pk_start = {pk[0]: today - _dt.timedelta(days=30)}
+    if home:
+        pk_start[pk[1]] = today - _dt.timedelta(days=22)
+    day = a0
+    n = 0
+    while day <= today + _dt.timedelta(days=3):
+        if day.weekday() != 4:                     # closed on Fridays
+            for _ in range(rnd.randint(2, 4) if not home else rnd.randint(1, 3)):
+                k = rnd.randrange(len(sv) - (2 if home else 0))
+                pid = rnd.choice(pats)
+                p = db.one("SELECT * FROM care_patients WHERE id=?", (pid,))
+                future = day > today
+                st = "booked" if future or (day == today and n % 2) else rnd.choices(["done", "no_show", "cancelled"], [88, 8, 4])[0]
+                lines = [{"service_id": sv[k], "qty": 1}]
+                if not home and k == 0 and rnd.random() < .35:
+                    lines.append({"service_id": sv[3], "qty": 1})       # a CBC with the GP visit
+                vid = care.save_visit(db, {"date": day.isoformat(), "time": f"{rnd.choice([9, 10, 11, 12, 13, 17, 18, 19]):02d}:{rnd.choice(['00', '30'])}",
+                                           "patient_id": pid, "provider": giver(k), "place": "home" if home else "clinic",
+                                           "bu_id": bus[0] if (not home and p["zone"] in ("Maadi", "Dokki", "Mohandessin", "Sheikh Zayed", "New Cairo"))
+                                           or (home and p["zone"] not in ("Dokki", "Mohandessin", "Sheikh Zayed")) else bus[-1],
+                                           "travel_fee": fee(p["zone"]), "lines": lines}, user)
+                n += 1
+                if st != "booked":
+                    care.set_status(db, vid, st, {"check_in": "10:00", "time": "10:40"} if st == "done" else {})
+                if st == "done":
+                    v = care.visit(db, vid)
+                    owe = rnd.random() < .08
+                    care.bill_visit(db, vid, {"paid": round(v["patient_amt"] / 2) if owe else None, "method": rnd.choice(["Cash", "Cash", "Credit Card"])}, user)
+            # package sessions, twice a week
+            for kid, (pid, sid, total) in list(pk_left.items()):
+                if day >= pk_start[kid] and day <= today and total > 0 and day.weekday() in ((0, 3) if sid == physio else (0, 1, 2, 3, 5, 6)):
+                    vid = care.save_visit(db, {"date": day.isoformat(), "time": "08:00" if sid != physio else "16:00", "patient_id": pid,
+                                               "provider": giver(5 if sid == physio and not home else 3 if sid == physio else 5),
+                                               "place": "home" if home else "clinic", "bu_id": bus[0], "package_id": kid,
+                                               "lines": [{"service_id": sid, "qty": 1}]}, user)
+                    care.set_status(db, vid, "done", {"check_in": "08:00", "time": "20:00"} if sid != physio else {"check_in": "16:00", "time": "16:50"})
+                    care.bill_visit(db, vid, {}, user)
+                    pk_left[kid] = (pid, sid, total - 1)
+        day += _dt.timedelta(days=1)
+    # insurance claims: monthly; the older ones answered (a few lines rejected), last month's still with the insurer
+    som = lambda dt: dt.replace(day=1)   # noqa: E731
+    month = som(a0)
+    while month < som(today):
+        end = (month + _dt.timedelta(days=32)).replace(day=1) - _dt.timedelta(days=1)
+        for ins, _pct in _INSURERS:
+            try:
+                cid = care.make_claim(db, ins, month.isoformat(), end.isoformat(), user)
+            except ValidationError:
+                continue
+            if end < som(today) - _dt.timedelta(days=1):
+                c = db.one("SELECT claimed FROM care_claims WHERE id=?", (cid,))["claimed"] / 100
+                rej = round(c * (0.03 if ins != "Delta Tech Solutions" else 0), 2)
+                care.settle_claim(db, cid, {"paid": round(c - rej, 2), "rejected": rej, "method": "Bank Transfer",
+                                            "date": min(end + _dt.timedelta(days=40), today).isoformat(),
+                                            "notes": "Lines without prior approval" if rej else ""}, user)
+        month = end + _dt.timedelta(days=1)
+    # doctors' and carers' shares paid monthly up to last month
+    for r in db.q("SELECT l.party, SUM(l.credit-l.debit) bal FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id "
+                  "WHERE e.status='posted' AND l.account=? AND e.date<? GROUP BY l.party HAVING bal>0", (care.FEES_DUE, som(today).isoformat())):
+        acc._insert_entry(db, date=som(today).isoformat(), kind="Payment Voucher", memo=f"Fees paid — {r['party']}", bu_id=None, party=r["party"],
+                          ref="", user=user, meta={}, lines=[{"account": care.FEES_DUE, "debit": r["bal"] / 100, "party": r["party"]},
+                                                             {"account": acc.money_account(db, "Bank Transfer"), "credit": r["bal"] / 100}])
+
+
 def load(db, user="", replace=False, industry=None):
     """Fill the books with the demo company — the whole of it, or what one business type does (industry, after
     industries.apply). Refuses on books that already hold data unless replace (wipes first)."""
     from . import (assets, bankrec, documents, interchange, recurring, rentals, sales)
     if not is_empty(db) and not replace:
-        raise ValidationError("These books already hold data — load the demo into an empty company, or choose to replace everything")
+        raise ValidationError("These books already hold data — the demo only loads into an empty company (start a new company to try it)")
     a0, today = _anchor()
     S = sheets(industry)
     bu_has = lambda code: bool(db.one("SELECT 1 FROM business_units WHERE code=?", (code,)))
@@ -703,6 +873,9 @@ def load(db, user="", replace=False, industry=None):
     prod_has = lambda code: bool(db.one("SELECT 1 FROM products WHERE code=?", (code,)))
     sub_has = lambda code: bool(db.one("SELECT 1 FROM subscriptions WHERE code=?", (code,)))
     with db.tx():
+        if industry in ("healthcare", "homecare"):
+            from . import care
+            care.ensure_accounts(db)
         res = interchange.import_data(db, S, mode="replace" if replace else "append", user=user)
         # ---- steps that only exist on screens
         if bu_has("PRJ-D01"):
@@ -724,7 +897,8 @@ def load(db, user="", replace=False, industry=None):
                                   "method": "Bank Transfer"}, user)
         equity.post(db, "transfer", {"seller": "Hossam Adel", "buyer": "Sara Kamal", "share": 5, "date": pay_dates[3]}, user)
         # an asset bought for cash, one sold
-        assets.save(db, {"name": "Laser level & tools", "account": "1410", "acquired": pay_dates[1], "cost": 42000,
+        assets.save(db, {"name": "ECG device & medical tools" if industry in ("healthcare", "homecare") else "Laser level & tools",
+                         "account": "1412" if industry in ("healthcare", "homecare") else "1410", "acquired": pay_dates[1], "cost": 42000,
                          "life_months": 36, "pay": "cash", "method": "Bank Transfer"}, user=user)
         last_month = (today.replace(day=1) - _dt.timedelta(days=1)).isoformat()[:7]
         assets.run_depreciation(db, last_month, user=user)
@@ -876,6 +1050,8 @@ def load(db, user="", replace=False, industry=None):
                                                        "note": "broken in the store" if ln["item"] in short else ""}
                                                       for ln in stocktake.get(db, cid)["lines"]]})
             stocktake.post(db, cid, user)
+        if industry in ("healthcare", "homecare"):
+            _care_demo(db, industry, user, a0, today)
         db.conn.execute("INSERT OR REPLACE INTO settings(key,value) VALUES (?,?)", (TAG, acc.today()))
     return {"counts": res["counts"], "from": a0.isoformat(), "to": today.isoformat()}
 

@@ -13,7 +13,7 @@ with their own cost, and keep labour per project so every site shows its own pro
 import json
 
 from . import accounting as acc
-from . import payroll
+from . import care, payroll
 
 # code, name, Arabic, type, subtype
 _ACC = {
@@ -42,16 +42,18 @@ _ACC = {
                     ("5066", "Scaffold Repairs, Painting & Maintenance", "إصلاح ودهان وصيانة السقالات", "COGS", "cogs"),
                     ("5067", "Transport of Equipment", "نقل المعدات", "COGS", "cogs")],
     "general": [],
+    "healthcare": care.ACCOUNTS,
+    "homecare": care.ACCOUNTS,
 }
 
 TYPES = {
-    "general": {"name": "General business", "ar": "نشاط عام", "hide": ["rentals", "shop", "estimating", "contracts", "equipment"],
+    "general": {"name": "General business", "ar": "نشاط عام", "hide": ["rentals", "shop", "estimating", "contracts", "equipment", "care"],
                 "departments": ["Management", "Finance", "Sales", "Operations", "Admin"],
                 "jobs": ["General Manager", "Accountant", "Sales Representative", "Administrator", "Driver", "Worker"],
                 "bu": "Department / branch", "components": {"site": False},
                 "guide": ["Use business units for branches or departments so each shows its own profit.",
                           "Record purchases as Operating Expenses or Direct Costs; stock items only if you hold stock."]},
-    "interior": {"name": "Interior design & finishing", "ar": "التصميم الداخلي والتشطيبات", "hide": ["rentals", "shop"],
+    "interior": {"name": "Interior design & finishing", "ar": "التصميم الداخلي والتشطيبات", "hide": ["rentals", "shop", "care"],
                  "departments": ["Design", "Execution / Site", "Procurement", "Finance", "Admin"],
                  "jobs": ["Design Manager", "Interior Designer", "3D Visualiser", "Site Engineer", "Site Supervisor", "Foreman",
                           "Quantity Surveyor", "Accountant", "Technician", "Worker"],
@@ -60,7 +62,7 @@ TYPES = {
                            "Design fees, execution and supply are separate revenue accounts; BOQs and the price list feed offers.",
                            "Site workers on daily pay go on payroll as daily employees with the project as their business unit; "
                            "finishing subcontractors paid per m² use the crew calculator."]},
-    "contracting": {"name": "Contracting & construction", "ar": "المقاولات العامة والإنشاءات", "hide": ["rentals", "shop"],
+    "contracting": {"name": "Contracting & construction", "ar": "المقاولات العامة والإنشاءات", "hide": ["rentals", "shop", "care"],
                     "departments": ["Projects", "Technical Office", "Procurement", "Equipment", "QA / QC & Safety", "Finance", "Admin"],
                     "jobs": ["Project Manager", "Site Engineer", "Technical Office Engineer", "Quantity Surveyor", "Safety Officer",
                              "Foreman", "Storekeeper", "Equipment Operator", "Driver", "Accountant", "Worker"],
@@ -73,7 +75,7 @@ TYPES = {
                               "by cumulative certificates (retention, advance recovery, VAT / withholding) — Projects & Contracts.",
                               "Site: purchase requests → quotes compared → orders; daily attendance; equipment hours and maintenance; "
                               "phases with % complete and tasks per project."]},
-    "development": {"name": "Real-estate development", "ar": "التطوير العقاري", "hide": ["rentals"],
+    "development": {"name": "Real-estate development", "ar": "التطوير العقاري", "hide": ["rentals", "care"],
                     "departments": ["Development", "Construction", "Sales & Marketing", "Customer Care", "Finance", "Legal", "Admin"],
                     "jobs": ["Development Manager", "Project Manager", "Site Engineer", "Sales Manager", "Property Consultant",
                              "Customer Service", "Collections Officer", "Legal Counsel", "Accountant"],
@@ -82,19 +84,19 @@ TYPES = {
                               "move to 1230 and are released to cost of sales when each unit is sold.",
                               "Unit sales on installments with cheques run from Sales & showroom; reservation deposits sit in 2140.",
                               "Brokers' and consultants' commissions: payroll commission line or 6032."]},
-    "sales": {"name": "Trading & sales", "ar": "التجارة والمبيعات", "hide": ["rentals", "estimating", "contracts", "equipment"],
+    "sales": {"name": "Trading & sales", "ar": "التجارة والمبيعات", "hide": ["rentals", "estimating", "contracts", "equipment", "care"],
               "departments": ["Sales", "Warehouse", "Purchasing", "Delivery", "Finance", "Admin"],
               "jobs": ["Sales Manager", "Sales Representative", "Cashier", "Storekeeper", "Purchasing Officer", "Driver", "Accountant"],
               "bu": "Branch / channel", "components": {"commission": True},
               "guide": ["Products, stock and installments live in Sales & showroom; business units split branches or channels.",
                         "Pay commission as a monthly payroll line so it is taxed and costed with the salary."]},
-    "investment": {"name": "Investment & holding", "ar": "الاستثمار والقابضة", "hide": ["rentals", "shop", "estimating", "stock", "projects", "contracts", "equipment"],
+    "investment": {"name": "Investment & holding", "ar": "الاستثمار والقابضة", "hide": ["rentals", "shop", "estimating", "stock", "projects", "contracts", "equipment", "care"],
                    "departments": ["Investments", "Finance", "Legal", "Admin"],
                    "jobs": ["Investment Manager", "Financial Analyst", "Accountant", "Legal Counsel", "Administrator"],
                    "bu": "Portfolio / investment", "components": {"commission": False, "site": False},
                    "guide": ["Each holding or property is a business unit; dividends, gains and fair-value changes have their own accounts.",
                              "Loans given and taken run from Loans; partners' capital and distributions from Partners."]},
-    "scaffolding": {"name": "Scaffolding & equipment rental", "ar": "تأجير السقالات والمعدات", "hide": ["shop", "estimating", "contracts"],
+    "scaffolding": {"name": "Scaffolding & equipment rental", "ar": "تأجير السقالات والمعدات", "hide": ["shop", "estimating", "contracts", "care"],
                     "departments": ["Operations / Yard", "Installation Crews", "Sales", "Finance", "Admin"],
                     "jobs": ["Operations Manager", "Yard Keeper", "Installation Supervisor", "Scaffolder", "Safety Inspector",
                              "Driver", "Sales Representative", "Accountant"],
@@ -107,8 +109,39 @@ TYPES = {
                               "with their own client price and crew / truck cost (rental calculator).",
                               "Crews paid per m² (frames × width × height) use the crew calculator; record what you actually paid.",
                               "Watch utilisation (pieces out ÷ owned) and payback (purchase cost ÷ monthly rent) per piece."]},
+    "healthcare": {"name": "Clinics & medical centres", "ar": "العيادات والمراكز الطبية", "hide": ["rentals", "shop", "estimating", "contracts", "projects"],
+                   "departments": ["Clinics / Outpatient", "Laboratory", "Radiology", "Nursing", "Reception & Billing", "Insurance & Claims",
+                                   "Pharmacy & Stores", "Finance", "Admin"],
+                   "jobs": ["Medical Director", "Consultant", "Specialist", "Resident Doctor", "Dentist", "Nurse", "Lab Technician",
+                            "Radiology Technician", "Pharmacist", "Receptionist", "Insurance Coordinator", "Accountant", "Cleaner"],
+                   "bu": "Branch / clinic / department", "components": {"commission": True},
+                   "guide": ["Healthcare: patients (with their insurer / TPA, policy and coverage %), a price list of services (cash price, "
+                             "contracted insurer price, the doctor's share, consumables), and appointments that become visits.",
+                             "Billing a visit splits it into the patient's co-pay (cash / card at the desk) and the insurer's share "
+                             "(1105, claimed monthly); revenue goes to 4061. The doctor's share is booked as a cost (5090) owed to "
+                             "them (2115) — pay it from Payments, or through payroll.",
+                             "Consumables (gloves, syringes, dressing kits) leave stock at cost on each visit (5091): keep them as stock "
+                             "items in the clinic's store.",
+                             "Insurance claims: gather a month's insurer shares into one claim; when the insurer pays, record what was "
+                             "paid and what was rejected (4056).",
+                             "Each branch, clinic or department is a business unit, so each shows its own profit. Medical services are "
+                             "generally VAT-exempt; medical devices you buy may carry 5% VAT (2026)."]},
+    "homecare": {"name": "Home healthcare", "ar": "الرعاية الصحية المنزلية", "hide": ["rentals", "shop", "estimating", "contracts", "projects", "equipment"],
+                 "departments": ["Home Nursing", "Physiotherapy", "Home Doctors", "Elderly Care", "Care Coordination", "Finance", "Admin"],
+                 "jobs": ["Medical Director", "Care Coordinator", "Home Visit Doctor", "Registered Nurse", "Assistant Nurse",
+                          "Physiotherapist", "Caregiver / Elderly Companion", "Driver", "Accountant"],
+                 "bu": "Service line / area team", "components": {"commission": True},
+                 "guide": ["Home healthcare: each visit has the patient's address and district (to route the team), a travel fee "
+                           "(4063), and check-in / check-out times — the record that the visit happened and how long a nursing "
+                           "shift lasted.",
+                           "Packages (12 physiotherapy sessions, a month of nursing) are paid in advance and held as prepaid (2108); "
+                           "each session given moves its share to revenue (4062).",
+                           "Nurses and therapists paid per visit or per shift: their share of each service is booked as a cost (5090) "
+                           "owed to them (2115) and paid weekly or monthly; salaried staff stay on payroll.",
+                           "Insured patients: the insurer's share is claimed monthly like a clinic; family-paid care is billed to the patient.",
+                           "Consumables used at home (dressing kits, catheters) leave stock at cost on each visit."]},
 }
-ORDER = ["general", "interior", "contracting", "development", "sales", "investment", "scaffolding"]
+ORDER = ["general", "interior", "contracting", "development", "sales", "investment", "scaffolding", "healthcare", "homecare"]
 
 
 def catalogue():

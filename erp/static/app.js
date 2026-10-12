@@ -181,6 +181,8 @@ const IC = {
   smile: '<circle cx="12" cy="12" r="9"/><path d="M8.5 14.5a4.5 4.5 0 0 0 7 0"/><path d="M9 9.5h.01M15 9.5h.01"/>',
   send: '<path d="M4 12l16-8-6 16-2.5-6.5z"/><path d="M11.5 13.5L20 4"/>',
   home: '<path d="M3 10.5 12 3l9 7.5V21a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/>',
+  heart: '<path d="M12 20.5s-8-4.7-8-10.6A4.4 4.4 0 0 1 12 7a4.4 4.4 0 0 1 8 2.9c0 5.9-8 10.6-8 10.6z"/><path d="M8.5 12.5h2l1-2 1.5 4 1-2h1.5"/>',
+  steth: '<path d="M6 3v6a4 4 0 0 0 8 0V3"/><path d="M10 13v2a5 5 0 0 0 10 0v-2"/><circle cx="20" cy="11" r="2"/>',
   grid: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
   brief: '<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M3 13h18"/>',
   mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>',
@@ -248,8 +250,9 @@ const ROUTE_IC = { deals: "target", "crm-contacts": "phone", followups: "clock",
   "report/trial_balance": "list", "report/bu_pnl": "pie", "budget-report": "target", aging: "hour", statement: "file", data: "updown",
   settings: "gear", industry: "store", users: "users", audit: "history",
   projects: "target", tasks: "check", contracts: "pen", variations: "swap", certificates: "clip", "purchase-requests": "list", "stock-counts": "check",
-  equipment: "truck", "equipment-usage": "hour", maintenance: "gear", attendance: "users", ereceipts: "receipt" };
-const GROUP_IC = { g_home: "home", g_crm: "users", g_bu: "brief", g_sales: "in", g_shop: "cart", g_est: "list", g_buy: "out", g_stock: "boxes", g_rent: "building",
+  equipment: "truck", "equipment-usage": "hour", maintenance: "gear", attendance: "users", ereceipts: "receipt",
+  "care-visits": "steth", "care-patients": "user", "care-services": "tag", "care-packages": "pack", "care-claims": "send", "care-reports": "chart" };
+const GROUP_IC = { g_home: "home", g_care: "heart", g_crm: "users", g_bu: "brief", g_sales: "in", g_shop: "cart", g_est: "list", g_buy: "out", g_stock: "boxes", g_rent: "building",
   g_prj: "target", g_eq: "truck", g_hr: "users", g_assets: "pie", g_fin: "bank", g_equity: "hands", g_tax: "pct", g_acc: "book", g_rep: "chart", g_sys: "gear" };
 const svg = (name, cls = "") => `<svg class="i ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${IC[name] || IC.grid}</svg>`;
 
@@ -3174,6 +3177,267 @@ PAGES.followups = async (view, parts, q) => {
         <td>${r.party ? `<a href="#/contact/${encodeURIComponent(r.party)}" onclick="event.stopPropagation()">${esc(r.party)}</a>` : ""}</td><td>${esc(r.assigned_to)}</td>
         <td><span class="chip ${r.state === "overdue" ? "bad" : r.state === "today" ? "warn" : r.state === "done" ? "ok" : ""}">${esc(st[r.state])}</span></td></tr>`).join("")}</tbody></table></div>`
       : `<div class="empty">${svg("check")}<div>${esc(L2("Nothing to follow up.", "لا توجد متابعات."))}</div></div>`}</div>`;
+};
+// ---------------------------------------------------------- healthcare: clinics, medical centres and home healthcare (care.py)
+const CARE_ST = () => ({ booked: L2("Booked", "محجوز"), arrived: L2("Arrived", "حضر"), done: L2("Done", "تمت"), no_show: L2("No-show", "لم يحضر"), cancelled: L2("Cancelled", "ملغى") });
+const CARE_CAT = () => ({ consultation: L2("Consultation", "كشف"), procedure: L2("Procedure", "إجراء"), lab: L2("Lab test", "تحاليل"), radiology: L2("Radiology", "أشعة"),
+  nursing: L2("Nursing", "تمريض"), physiotherapy: L2("Physiotherapy", "علاج طبيعي"), home_visit: L2("Home visit", "زيارة منزلية"), package: L2("Package", "باقة"), other: L2("Other", "أخرى") });
+const careChip = st => `<span class="chip ${st === "done" ? "ok" : st === "no_show" || st === "cancelled" ? "bad" : st === "arrived" ? "warn" : ""}">${esc(CARE_ST()[st] || st)}</span>`;
+const careSvcName = s => S.lang === "ar" && s.name_ar ? s.name_ar : s.name;
+async function careLists(need = ["patients", "services"]) {
+  const out = {};
+  if (need.includes("patients")) out.patients = (await api("GET", "/api/care/patients?active=1")).rows;
+  if (need.includes("services")) out.services = (await api("GET", "/api/care/services?active=1")).rows;
+  return out;
+}
+const careProviders = () => S.cache.careProviders || [];
+// the services on a visit: one row per service, quantity, price (blank = list / insurer price)
+function careLinesHtml(services, lines) {
+  const row = (ln = {}) => `<div class="care-ln"><select data-skip="1" class="cl-svc"><option value="">—</option>${services.map(s => `<option value="${s.id}" ${String(s.id) === String(ln.service_id) ? "selected" : ""}>${esc(careSvcName(s))} · ${money(s.price)}</option>`).join("")}</select>
+    <input data-skip="1" class="cl-qty num" type="number" step="any" min="0" value="${esc(ln.qty || 1)}" title="${esc(t("qty"))}">
+    <input data-skip="1" class="cl-price num" type="number" step="any" value="${esc(ln.price ?? "")}" placeholder="${esc(L2("list price", "سعر القائمة"))}" title="${esc(L2("Price (leave blank for the list or insurer price)", "السعر (اتركه فارغاً لسعر القائمة أو سعر التأمين)"))}">
+    <button type="button" class="btn sm" data-a="clrm" title="${esc(t("delete"))}">✕</button></div>`;
+  S.H.clrm = el => { const r = el.closest(".care-ln"); if ($$(".care-ln").length > 1) r.remove(); else { $(".cl-svc", r).value = ""; } };
+  S.H.cladd = el => el.closest(".care-lines").querySelector(".cl-rows").insertAdjacentHTML("beforeend", row());
+  return `<div class="care-lines spanall"><div class="f">${esc(L2("Services", "الخدمات"))}<b class="req" aria-hidden="true">✱</b></div><div class="cl-rows">${(lines && lines.length ? lines : [{}]).map(row).join("")}</div>
+    <button type="button" class="btn sm" data-a="cladd">+ ${esc(L2("Another service", "خدمة أخرى"))}</button></div>`;
+}
+const careReadLines = f => $$(".care-ln", f).map(r => ({ service_id: $(".cl-svc", r).value, qty: $(".cl-qty", r).value, price: $(".cl-price", r).value })).filter(x => x.service_id);
+async function careVisitForm(v) {
+  v = v || {};
+  const { patients, services } = await careLists();
+  if (!patients.length) return uiAlert(L2("Add a patient first (Healthcare → Patients).", "أضف مريضاً أولاً (الرعاية الصحية ← المرضى)."));
+  const pk = v.patient_id ? (await api("GET", "/api/care/packages?" + qs({ patient_id: v.patient_id, status: "active" }))).rows : [];
+  const f = drawer(v.id ? `${L2("Visit", "زيارة")} ${v.number}` : L2("Book a visit", "حجز زيارة"), form([
+    { k: "patient_id", l: L2("Patient", "المريض"), type: "select", req: 1, v: v.patient_id || "", change: "cvpat", opts: [["", "—"], ...patients.map(p => [p.id, `${p.code} — ${p.name}${p.payer === "insurer" ? ` (${p.insurer} ${p.coverage_pct}%)` : ""}`])] },
+    { k: "place", l: L2("Where", "المكان"), type: "select", v: v.place || (S.boot.settings.business_type === "homecare" ? "home" : "clinic"), change: "cvplace", opts: [["clinic", L2("At the clinic / centre", "في العيادة / المركز")], ["home", L2("Home visit", "زيارة منزلية")]] },
+    { k: "date", l: t("date"), type: "date", v: v.date || today(), req: 1 },
+    { k: "time", l: L2("Time", "الوقت"), type: "time", v: v.time || "" },
+    { k: "provider", l: L2("Doctor / nurse / therapist", "الطبيب / الممرض / الأخصائي"), v: v.provider || "", list: "careprov" },
+    { k: "bu_id", l: L2("Branch", "الفرع"), type: "select", v: v.bu_id || (S.boot.bus[0] || {}).id || "", opts: buOpts(t("shared")) },
+    { k: "zone", l: L2("Area / zone", "المنطقة"), v: v.zone || "", list: "carezones" },
+    { k: "travel_fee", l: L2("Home visit fee", "رسوم الانتقال"), type: "number", v: v.travel_fee || "" },
+    { k: "address", l: L2("Address (home visits)", "العنوان (للزيارات المنزلية)"), v: v.address || "", span: "spanall" },
+    { k: "package_id", l: L2("Use a prepaid package", "خصم من باقة مدفوعة"), type: "select", v: v.package_id || "", opts: [["", L2("No package", "بدون باقة")], ...pk.map(k => [k.id, `${k.code} — ${k.name} (${k.left} ${L2("left", "متبقية")})`])] },
+    { html: careLinesHtml(services, v.lines), span: "spanall" },
+    { k: "notes", l: t("notes"), type: "textarea", v: v.notes || "", span: "spanall" }]) + datalist("careprov", careProviders()) + datalist("carezones", S.cache.careZones || []),
+  async (x, f) => { const body = { ...x, lines: careReadLines(f) };
+    if (v.id) await api("PUT", "/api/care/visits/" + v.id, body); else await api("POST", "/api/care/visits", body); toast(t("saved")); }, { wide: true });
+  const sync = () => { const home = $("[name=place]", f).value === "home"; ["zone", "travel_fee", "address"].forEach(k => { $(`[name=${k}]`, f).closest("label").hidden = !home; }); };
+  S.H.cvplace = sync; sync();
+  S.H.cvpat = async () => { const pid = $("[name=patient_id]", f).value, p = patients.find(x => String(x.id) === pid), sel = $("[name=package_id]", f);
+    if (p && !$("[name=address]", f).value) { $("[name=address]", f).value = p.address || ""; $("[name=zone]", f).value = p.zone || ""; }
+    const rows = pid ? (await api("GET", "/api/care/packages?" + qs({ patient_id: pid, status: "active" }))).rows : [];
+    sel.innerHTML = `<option value="">${esc(L2("No package", "بدون باقة"))}</option>` + rows.map(k => `<option value="${k.id}">${esc(`${k.code} — ${k.name} (${k.left} ${L2("left", "متبقية")})`)}</option>`).join(""); };
+}
+function careDoneForm(v) {
+  const vit = v.vitals || {};
+  drawer(`${L2("Visit done", "إنهاء الزيارة")} — ${v.patient}`, form([
+    { k: "check_in", l: L2("Checked in", "وقت الوصول"), type: "time", v: v.check_in || v.time || "" },
+    { k: "time", l: L2("Checked out", "وقت الانصراف"), type: "time", v: new Date().toTimeString().slice(0, 5) },
+    { k: "bp", l: L2("Blood pressure", "ضغط الدم"), v: vit.bp || "", ph: "120/80" }, { k: "pulse", l: L2("Pulse", "النبض"), v: vit.pulse || "" },
+    { k: "temp", l: L2("Temperature", "الحرارة"), v: vit.temp || "" }, { k: "spo2", l: "SpO₂ %", v: vit.spo2 || "" },
+    { k: "sugar", l: L2("Blood sugar", "السكر"), v: vit.sugar || "" },
+    { k: "notes", l: L2("Visit notes", "ملاحظات الزيارة"), type: "textarea", v: v.notes || "", span: "spanall" }]),
+  async x => { const vitals = {}; ["bp", "pulse", "temp", "spo2", "sugar"].forEach(k => { if (x[k]) vitals[k] = x[k]; });
+    await api("POST", `/api/care/visits/${v.id}/status`, { status: "done", time: x.time, check_in: x.check_in, notes: x.notes, vitals }); toast(t("saved")); },
+  { submitLabel: L2("Mark as done", "تمت الزيارة") });
+}
+function careBillForm(v) {
+  const due = v.patient_amt;
+  drawer(`${L2("Bill visit", "فاتورة الزيارة")} ${v.number} — ${v.patient}`, `<div class="banner info">${esc(L2("Patient pays", "يدفع المريض"))}: <b>${money(due)}</b>${v.insurer_amt ? ` · ${esc(L2("Insurer's share (claimed later)", "حصة التأمين (تُطالب لاحقاً)"))}: <b>${money(v.insurer_amt)}</b> — ${esc(v.insurer || "")}` : ""}
+    ${v.provider_amt ? ` · ${esc(L2("Provider's share", "حصة مقدم الخدمة"))}: <b>${money(v.provider_amt)}</b>` : ""}</div>` + form([
+    { k: "paid", l: L2("Paid now", "المدفوع الآن"), type: "number", v: due, help: L2("Less than the co-pay leaves the rest owed by the patient.", "الأقل من المستحق يبقى ديناً على المريض.") },
+    { k: "method", l: t("method"), type: "select", v: "Cash", opts: methodOpts() },
+    { k: "date", l: t("date"), type: "date", v: v.date }]),
+  async x => { const r = await api("POST", `/api/care/visits/${v.id}/bill`, x); toast(t("saved"));
+    if (r.short && r.short.length) await uiAlert(L2("Billed. Some consumables were not taken from stock: ", "تمت الفوترة. بعض المستهلكات لم تُصرف من المخزون: ") + r.short.join(" · ")); },
+  { submitLabel: L2("Bill", "إصدار الفاتورة") });
+}
+async function careVisitView(id) {
+  const v = await api("GET", "/api/care/visits/" + id), vit = v.vitals || {};
+  S.H.cvedit = () => careVisitForm(v);
+  S.H.cvvoid = async () => { const why = await uiPrompt(L2("Why undo the bill? (the invoice is voided)", "سبب إلغاء الفاتورة؟ (يُلغى القيد)"), ""); if (why === null) return;
+    try { await api("POST", `/api/care/visits/${v.id}/void`, { reason: why }); closeDrawer(); route(); } catch (e) { fail(e); } };
+  S.H.cvopen = () => openVoucher(v.entry_id);
+  const row = (l, x) => x ? `<div class="row"><span class="muted">${esc(l)}</span><span class="spacer"></span><b>${x}</b></div>` : "";
+  drawer(`${L2("Visit", "زيارة")} ${v.number}`, `${v.alerts ? `<div class="banner err">⚠ ${esc(v.alerts)}</div>` : ""}
+    <div class="card">${row(L2("Patient", "المريض"), esc(`${v.patient_code} — ${v.patient}`))}${row(t("date"), esc(fd(v.date) + (v.time ? " " + v.time : "")))}${row(t("status"), careChip(v.status))}
+      ${row(L2("Provider", "مقدم الخدمة"), esc(v.provider))}${row(L2("Where", "المكان"), esc(v.place === "home" ? `${L2("Home", "منزل")} · ${v.zone || ""} · ${v.address || ""}` : L2("Clinic", "العيادة")))}
+      ${row(L2("Checked in / out", "الوصول / الانصراف"), esc([v.check_in, v.check_out].filter(Boolean).join(" → ")))}${row(L2("Hours", "الساعات"), v.hours ? esc(v.hours) : "")}
+      ${row(L2("Vitals", "العلامات الحيوية"), esc(Object.entries(vit).map(([k, x]) => `${k}: ${x}`).join(" · ")))}${row(t("notes"), esc(v.notes))}</div>
+    <div class="tbl"><table><thead><tr><th>${esc(L2("Service", "الخدمة"))}</th><th class="num">${t("qty")}</th><th class="num">${esc(L2("Price", "السعر"))}</th><th class="num">${esc(L2("Patient", "المريض"))}</th><th class="num">${esc(L2("Insurer", "التأمين"))}</th><th class="num">${esc(L2("Provider", "مقدم الخدمة"))}</th></tr></thead><tbody>
+      ${v.lines.map(l => `<tr><td>${esc(l.description)}</td><td class="num">${l.qty}</td><td class="num">${money(l.price)}</td><td class="num">${money(l.patient_amt)}</td><td class="num">${money(l.insurer_amt)}</td><td class="num">${money(l.provider_amt)}</td></tr>`).join("")}
+      ${v.travel_fee ? `<tr><td>${esc(L2("Home visit fee", "رسوم الانتقال"))}</td><td></td><td></td><td class="num">${money(v.travel_fee)}</td><td></td><td></td></tr>` : ""}</tbody>
+      <tfoot><tr><th colspan="3">${t("total")}</th><th class="num">${money(v.patient_amt)}</th><th class="num">${money(v.insurer_amt)}</th><th class="num">${money(v.provider_amt)}</th></tr></tfoot></table></div>`, null,
+    { readOnly: true, wide: true, extraButtons: (v.entry_id ? `<button type="button" class="btn" data-a="cvopen">${esc(L2("Open the invoice entry", "فتح قيد الفاتورة"))}</button>` +
+      (can("care.visits", "edit") && !v.claim_id ? `<button type="button" class="btn" data-a="cvvoid">${esc(L2("Undo the bill", "إلغاء الفاتورة"))}</button>` : "")
+      : can("care.visits", "add") ? `<button type="button" class="btn" data-a="cvedit">${esc(t("edit"))}</button>` : "") });
+}
+PAGES["care-visits"] = async (view, parts, q) => {
+  if (!Object.keys(q).length) q = { date_from: today() };
+  const d = await api("GET", "/api/care/visits?" + qs(q)), st = CARE_ST(), add = can("care.visits", "add");
+  if (q.date_from && q.date_from >= today()) d.rows.reverse();      // a day sheet: from today on, earliest first
+  S.cache.careProviders = [...new Set([...careProviders(), ...d.rows.map(r => r.provider).filter(Boolean)])];
+  S.cache.careZones = [...new Set([...(S.cache.careZones || []), ...d.rows.map(r => r.zone).filter(Boolean)])];
+  S.H.cvnew = () => careVisitForm().catch(fail);
+  S.H.cvview = el => careVisitView(+el.dataset.id).catch(fail);
+  const setSt = async (id, status) => { try { await api("POST", `/api/care/visits/${id}/status`, { status }); route(); } catch (e) { fail(e); } };
+  S.H.cvarr = el => setSt(el.dataset.id, "arrived");
+  S.H.cvns = async el => { if (await uiConfirm(L2("Mark as no-show?", "تسجيل عدم الحضور؟"))) setSt(el.dataset.id, "no_show"); };
+  S.H.cvcan = async el => { if (await uiConfirm(L2("Cancel this booking?", "إلغاء هذا الحجز؟"))) setSt(el.dataset.id, "cancelled"); };
+  S.H.cvdone = el => careDoneForm(d.rows.find(r => String(r.id) === el.dataset.id));
+  S.H.cvbill = el => careBillForm(d.rows.find(r => String(r.id) === el.dataset.id));
+  const n = s => d.rows.filter(r => r.status === s).length;
+  const btn = (a, id, l, cls = "") => `<button class="btn sm ${cls}" data-a="${a}" data-id="${id}" onclick="event.stopPropagation()">${esc(l)}</button>`;
+  view.innerHTML = `<div class="toolbar">${add ? `<button class="btn pri" data-a="cvnew">+ ${esc(L2("Book a visit", "حجز زيارة"))}</button>` : ""}<span class="spacer"></span>
+      ${Object.keys(st).map(s => `<span class="chip">${esc(st[s])}: ${n(s)}</span>`).join(" ")}</div>` +
+    filterBar(q, ["dates", ["select", "status", t("status"), Object.entries(st)], ["select", "place", L2("Where", "المكان"), [["clinic", L2("Clinic", "العيادة")], ["home", L2("Home", "منزل")]]],
+      ["select", "billed", L2("Billing", "الفوترة"), [["0", L2("Done, not billed", "تمت ولم تُفوتر")], ["1", L2("Billed", "مفوترة")]]], "q"]) +
+    `<div class="card">${d.rows.length ? `<div class="tbl stack"><table><thead><tr><th>${t("date")}</th><th>#</th><th>${esc(L2("Patient", "المريض"))}</th><th>${esc(L2("Services", "الخدمات"))}</th>
+      <th>${esc(L2("Provider", "مقدم الخدمة"))}</th><th>${esc(L2("Where", "المكان"))}</th><th class="num">${esc(L2("Patient pays", "على المريض"))}</th><th class="num">${esc(L2("Insurer", "التأمين"))}</th><th>${t("status")}</th><th></th></tr></thead><tbody>
+      ${d.rows.map(r => `<tr class="click" data-a="cvview" data-id="${r.id}"><td>${fd(r.date)}${r.time ? ` <b>${esc(r.time)}</b>` : ""}</td><td>${esc(r.number)}</td>
+        <td><b>${esc(r.patient)}</b>${r.alerts ? ` <span class="chip bad" title="${esc(r.alerts)}">⚠</span>` : ""}<div class="lines">${esc(r.patient_code)}${r.phone ? " · " + esc(r.phone) : ""}</div></td>
+        <td>${esc(r.services || "")}</td><td>${esc(r.provider || "")}</td><td>${r.place === "home" ? `🏠 ${esc(r.zone || L2("Home", "منزل"))}` : esc(L2("Clinic", "العيادة"))}</td>
+        <td class="num">${money(r.patient_amt)}</td><td class="num">${r.insurer_amt ? money(r.insurer_amt) + `<div class="lines">${esc(r.insurer)}</div>` : ""}</td>
+        <td>${careChip(r.status)}${r.entry_id ? ` <span class="chip ok">${esc(L2("Billed", "مفوترة"))}</span>` : ""}${r.claim_id ? ` <span class="chip">${esc(L2("Claimed", "مُطالب بها"))}</span>` : ""}</td>
+        <td style="white-space:nowrap">${add && r.status === "booked" ? btn("cvarr", r.id, L2("Arrived", "حضر")) : ""}${add && ["booked", "arrived"].includes(r.status) ? btn("cvdone", r.id, L2("Done", "تمت"), "pri") + btn("cvns", r.id, L2("No-show", "لم يحضر")) : ""}
+          ${add && r.status === "booked" ? btn("cvcan", r.id, "✕") : ""}${add && r.status === "done" && !r.entry_id ? btn("cvbill", r.id, L2("Bill", "فوترة"), "pri") : ""}</td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="empty">${svg("steth")}<div>${esc(L2("No visits in this period.", "لا توجد زيارات في هذه الفترة."))}</div></div>`}</div>`;
+};
+function carePatientForm(p) {
+  p = p || {};
+  const f = drawer(p.id ? p.name : L2("New patient", "مريض جديد"), form([
+    { k: "name", l: t("name"), v: p.name || "", req: 1 }, { k: "code", l: L2("File number", "رقم الملف"), v: p.code || "", ph: L2("automatic", "تلقائي"), dis: !!p.id },
+    { k: "phone", l: L2("Phone", "الهاتف"), v: p.phone || "" }, { k: "phone2", l: L2("Relative's phone", "هاتف أحد الأقارب"), v: p.phone2 || "" },
+    { k: "national_id", l: L2("National ID", "الرقم القومي"), v: p.national_id || "" }, { k: "dob", l: L2("Date of birth", "تاريخ الميلاد"), type: "date", v: p.dob || "" },
+    { k: "gender", l: L2("Gender", "النوع"), type: "select", v: p.gender || "", opts: [["", "—"], ["male", L2("Male", "ذكر")], ["female", L2("Female", "أنثى")]] },
+    { k: "payer", l: L2("Who pays", "من يدفع"), type: "select", v: p.payer || "self", change: "cppay", opts: [["self", L2("The patient (self-pay)", "المريض (نقدي)")], ["insurer", L2("Insurance / TPA / company contract", "تأمين / شركة إدارة / تعاقد شركة")]] },
+    { k: "insurer", l: L2("Insurer / TPA", "شركة التأمين / الإدارة"), v: p.insurer || "", list: "careins" }, { k: "policy_no", l: L2("Card / policy no.", "رقم الكارت / الوثيقة"), v: p.policy_no || "" },
+    { k: "coverage_pct", l: L2("Insurer covers %", "نسبة تحمّل التأمين %"), type: "number", v: p.coverage_pct ?? 80, help: L2("The patient pays the rest (co-pay).", "يدفع المريض الباقي (نسبة التحمل).") },
+    { k: "zone", l: L2("Area / zone", "المنطقة"), v: p.zone || "" }, { k: "address", l: t("address") || L2("Address", "العنوان"), v: p.address || "", span: "spanall" },
+    { k: "alerts", l: L2("Alerts (allergies, chronic conditions)", "تنبيهات (حساسية، أمراض مزمنة)"), v: p.alerts || "", span: "spanall" },
+    { k: "notes", l: t("notes"), type: "textarea", v: p.notes || "", span: "spanall" },
+    ...(p.id ? [{ k: "active", l: L2("Active", "نشط"), type: "switch", v: p.active !== 0 }] : [])]) +
+    datalist("careins", (S.boot.parties || []).filter(x => x.type === "customer").map(x => x.name)),
+  async x => { if (p.id) await api("PUT", "/api/care/patients/" + p.id, x); else await api("POST", "/api/care/patients", x); toast(t("saved")); });
+  const sync = () => { const ins = $("[name=payer]", f).value === "insurer"; ["insurer", "policy_no", "coverage_pct"].forEach(k => { $(`[name=${k}]`, f).closest("label").hidden = !ins; }); };
+  S.H.cppay = sync; sync();
+}
+async function carePatientView(id) {
+  const p = await api("GET", "/api/care/patients/" + id);
+  S.H.cpedit = () => carePatientForm(p);
+  drawer(`${p.code} — ${p.name}`, `${p.alerts ? `<div class="banner err">⚠ ${esc(p.alerts)}</div>` : ""}<div class="kpis"><div class="kpi"><div class="l">${esc(L2("Owes", "عليه"))}</div><div class="v ${p.owes > 0 ? "neg" : ""}">${money(p.owes)}</div></div>
+      <div class="kpi"><div class="l">${esc(L2("Visits", "الزيارات"))}</div><div class="v">${p.visits.length}</div></div><div class="kpi"><div class="l">${esc(L2("Who pays", "من يدفع"))}</div><div class="v" style="font-size:1em">${esc(p.payer === "insurer" ? `${p.insurer} ${p.coverage_pct}%` : L2("Self-pay", "نقدي"))}</div></div></div>
+    <div class="muted">${esc([p.phone, p.phone2, p.national_id, p.dob, p.zone, p.address].filter(Boolean).join(" · "))}</div>
+    <h3>${esc(L2("Packages", "الباقات"))}</h3>${p.packages.map(k => `<div class="row"><b>${esc(k.name)}</b><span class="spacer"></span>${k.used}/${k.sessions} · ${money(k.held)} ${esc(L2("held", "متبقٍ"))}</div>`).join("") || `<div class="muted">—</div>`}
+    <h3>${esc(L2("Visit history", "سجل الزيارات"))}</h3><div class="tbl"><table><tbody>${p.visits.map(v => `<tr><td>${fd(v.date)}</td><td>${esc(v.services || "")}</td><td>${esc(v.provider || "")}</td><td>${careChip(v.status)}</td><td class="num">${money(v.patient_amt + v.insurer_amt)}</td></tr>`).join("") || `<tr><td class="muted">—</td></tr>`}</tbody></table></div>`,
+  null, { readOnly: true, wide: true, extraButtons: can("care.patients", "edit") ? `<button type="button" class="btn" data-a="cpedit">${esc(t("edit"))}</button>` : "" });
+}
+PAGES["care-patients"] = async (view, parts, q) => {
+  const d = await api("GET", "/api/care/patients?" + qs(q));
+  S.H.cpnew = () => carePatientForm();
+  S.H.cpview = el => carePatientView(+el.dataset.id).catch(fail);
+  view.innerHTML = `<div class="toolbar">${can("care.patients", "add") ? `<button class="btn pri" data-a="cpnew">+ ${esc(L2("New patient", "مريض جديد"))}</button>` : ""}</div>` +
+    filterBar(q, ["q", ["select", "payer", L2("Who pays", "من يدفع"), [["self", L2("Self-pay", "نقدي")], ["insurer", L2("Insurance", "تأمين")]]], ["select", "active", L2("Active", "نشط"), [["1", L2("Active", "نشط")], ["0", L2("Inactive", "غير نشط")]]]]) +
+    `<div class="card">${d.rows.length ? `<div class="tbl stack"><table><thead><tr><th>${esc(L2("File", "الملف"))}</th><th>${t("name")}</th><th>${esc(L2("Phone", "الهاتف"))}</th><th>${esc(L2("Who pays", "من يدفع"))}</th><th>${esc(L2("Area", "المنطقة"))}</th>
+      <th class="num">${esc(L2("Visits", "الزيارات"))}</th><th>${esc(L2("Last visit", "آخر زيارة"))}</th><th class="num">${esc(L2("Owes", "عليه"))}</th></tr></thead><tbody>
+      ${d.rows.map(r => `<tr class="click" data-a="cpview" data-id="${r.id}"><td>${esc(r.code)}</td><td><b>${esc(r.name)}</b>${r.alerts ? ` <span class="chip bad" title="${esc(r.alerts)}">⚠</span>` : ""}${r.active ? "" : ` <span class="chip">${esc(L2("Inactive", "غير نشط"))}</span>`}</td>
+        <td>${esc(r.phone || "")}</td><td>${esc(r.payer === "insurer" ? `${r.insurer} ${r.coverage_pct}%` : L2("Self-pay", "نقدي"))}</td><td>${esc(r.zone || "")}</td><td class="num">${r.visits}</td>
+        <td>${r.last_visit ? fd(r.last_visit) : "—"}</td><td class="num ${r.owes > 0 ? "neg" : ""}">${r.owes ? money(r.owes) : ""}</td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="empty">${svg("user")}<div>${esc(L2("No patients yet.", "لا يوجد مرضى بعد."))}</div></div>`}</div>`;
+};
+function careServiceForm(s) {
+  s = s || { covered: 1, active: 1 };
+  const cats = CARE_CAT();
+  drawer(s.id ? careSvcName(s) : L2("New service", "خدمة جديدة"), form([
+    ...inLang(["name", s.name || ""], ["name_ar", s.name_ar || ""], L2("Service", "الخدمة"), { req: 1 }), { k: "code", l: L2("Code", "الكود"), v: s.code || "", ph: L2("automatic", "تلقائي"), dis: !!s.id },
+    { k: "category", l: L2("Category", "الفئة"), type: "select", v: s.category || "consultation", opts: Object.entries(cats) },
+    { k: "price", l: L2("Price (self-pay)", "السعر (نقدي)"), type: "number", v: s.price ?? "", req: 1 },
+    { k: "insurer_price", l: L2("Insurer contract price", "سعر التعاقد مع التأمين"), type: "number", v: s.insurer_price || "", help: L2("Blank = the same price.", "فارغ = نفس السعر.") },
+    { k: "provider_pct", l: L2("Doctor's / provider's share %", "نسبة الطبيب / مقدم الخدمة %"), type: "number", v: s.provider_pct ?? 0 },
+    { k: "duration_min", l: L2("Minutes", "المدة بالدقائق"), type: "number", v: s.duration_min || 30 },
+    { k: "consumables", l: L2("Consumables used (item code × qty, comma-separated)", "المستهلكات (كود الصنف × الكمية، مفصولة بفاصلة)"), v: (s.consumables || []).map(c => `${c.item}×${c.qty}`).join(", "), span: "spanall", ph: "GLOVES×2, SYRINGE×1" },
+    { k: "covered", l: L2("Covered by insurance", "يغطيها التأمين"), type: "switch", v: !!s.covered }, { k: "home", l: L2("Offered at home", "تُقدَّم في المنزل"), type: "switch", v: !!s.home },
+    ...(s.id ? [{ k: "active", l: L2("Active", "نشط"), type: "switch", v: s.active !== 0 }] : [])]),
+  async x => { x.consumables = String(x.consumables || "").split(/[,،\n]/).map(z => z.trim()).filter(Boolean).map(z => { const m = z.split(/\s*[×x*]\s*/i); return { item: m[0], qty: +(m[1] || 1) }; });
+    if (s.id) await api("PUT", "/api/care/services/" + s.id, x); else await api("POST", "/api/care/services", x); toast(t("saved")); });
+}
+PAGES["care-services"] = async (view) => {
+  const d = await api("GET", "/api/care/services"), cats = CARE_CAT();
+  S.H.csnew = () => careServiceForm();
+  S.H.csedit = el => can("care.services", "edit") && careServiceForm(d.rows.find(r => String(r.id) === el.dataset.id));
+  view.innerHTML = `<div class="toolbar">${can("care.services", "add") ? `<button class="btn pri" data-a="csnew">+ ${esc(L2("New service", "خدمة جديدة"))}</button>` : ""}</div>
+    <div class="card">${d.rows.length ? `<div class="tbl stack"><table><thead><tr><th>${esc(L2("Code", "الكود"))}</th><th>${esc(L2("Service", "الخدمة"))}</th><th>${esc(L2("Category", "الفئة"))}</th><th class="num">${esc(L2("Price", "السعر"))}</th>
+      <th class="num">${esc(L2("Insurer price", "سعر التأمين"))}</th><th class="num">${esc(L2("Provider %", "نسبة مقدم الخدمة"))}</th><th>${esc(L2("Consumables", "المستهلكات"))}</th><th></th></tr></thead><tbody>
+      ${d.rows.map(r => `<tr class="click" data-a="csedit" data-id="${r.id}"><td>${esc(r.code)}</td><td><b>${esc(careSvcName(r))}</b>${r.active ? "" : ` <span class="chip">${esc(L2("Inactive", "غير نشط"))}</span>`}</td><td>${esc(cats[r.category] || r.category)}</td>
+        <td class="num">${money(r.price)}</td><td class="num">${r.insurer_price ? money(r.insurer_price) : ""}</td><td class="num">${r.provider_pct ? r.provider_pct + "%" : ""}</td>
+        <td>${esc(r.consumables.map(c => `${c.item}×${c.qty}`).join(", "))}</td><td>${r.home ? "🏠" : ""}${r.covered ? "" : ` <span class="chip">${esc(L2("Not covered", "غير مغطاة"))}</span>`}</td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="empty">${svg("tag")}<div>${esc(L2("No services yet — add consultations, procedures, home visits…", "لا توجد خدمات بعد — أضف الكشف والإجراءات والزيارات المنزلية…"))}</div></div>`}</div>`;
+};
+PAGES["care-packages"] = async (view, parts, q) => {
+  const d = await api("GET", "/api/care/packages?" + qs(q));
+  S.H.cknew = async () => { try { const { patients, services } = await careLists();
+    drawer(L2("Sell a prepaid package", "بيع باقة مدفوعة مقدماً"), form([
+      { k: "patient_id", l: L2("Patient", "المريض"), type: "select", req: 1, opts: [["", "—"], ...patients.map(p => [p.id, `${p.code} — ${p.name}`])] },
+      { k: "service_id", l: L2("Service covered", "الخدمة المشمولة"), type: "select", req: 1, opts: [["", "—"], ...services.map(s => [s.id, `${careSvcName(s)} · ${money(s.price)}`])] },
+      { k: "sessions", l: L2("Sessions / visits", "عدد الجلسات / الزيارات"), type: "number", v: 10, req: 1 }, { k: "price", l: L2("Package price", "سعر الباقة"), type: "number", req: 1 },
+      { k: "paid", l: L2("Paid now", "المدفوع الآن"), type: "number", help: L2("Blank = paid in full.", "فارغ = مدفوع بالكامل.") }, { k: "method", l: t("method"), type: "select", v: "Cash", opts: methodOpts() },
+      { k: "date", l: t("date"), type: "date", v: today() }, { k: "end_date", l: L2("Valid until", "صالحة حتى"), type: "date" },
+      { k: "name", l: L2("Package name", "اسم الباقة"), span: "spanall", ph: L2("e.g. 12 physiotherapy sessions at home", "مثال: 12 جلسة علاج طبيعي بالمنزل") }]),
+    async x => { await api("POST", "/api/care/packages", x); toast(t("saved")); }); } catch (e) { fail(e); } };
+  view.innerHTML = `<div class="banner info">${esc(L2("Money paid in advance for a course of sessions is a liability (2108 Prepaid Care Packages) until each session is delivered; then it moves to revenue.",
+      "المبالغ المدفوعة مقدماً لمجموعة جلسات التزام على المنشأة (2108 باقات رعاية مدفوعة مقدماً) حتى تُقدَّم كل جلسة، ثم تتحول إلى إيراد."))}</div>
+    <div class="toolbar">${can("care.packages", "add") ? `<button class="btn pri" data-a="cknew">+ ${esc(L2("Sell a package", "بيع باقة"))}</button>` : ""}</div>` +
+    filterBar(q, [["select", "status", t("status"), [["active", L2("Active", "سارية")], ["used", L2("Used up", "مستهلكة")]]]]) +
+    `<div class="card">${d.rows.length ? `<div class="tbl stack"><table><thead><tr><th>#</th><th>${esc(L2("Patient", "المريض"))}</th><th>${esc(L2("Package", "الباقة"))}</th><th class="num">${esc(L2("Used", "المستخدم"))}</th>
+      <th class="num">${t("amount")}</th><th class="num">${esc(L2("Still prepaid", "المتبقي مقدماً"))}</th><th>${esc(L2("Valid until", "صالحة حتى"))}</th></tr></thead><tbody>
+      ${d.rows.map(r => `<tr><td>${esc(r.code)}</td><td>${esc(r.patient)}</td><td><b>${esc(r.name)}</b><div class="lines">${esc(r.service)}</div></td><td class="num">${r.used} / ${r.sessions}</td>
+        <td class="num">${money(r.price)}</td><td class="num">${money(r.held)}</td><td>${r.end_date ? fd(r.end_date) : "—"}</td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="empty">${svg("pack")}<div>${esc(L2("No packages.", "لا توجد باقات."))}</div></div>`}</div>`;
+};
+PAGES["care-claims"] = async (view, parts, q) => {
+  const d = await api("GET", "/api/care/claims?" + qs(q)), add = can("care.claims", "add");
+  S.H.clmake = el => { const u = d.unclaimed.find(x => x.insurer === el.dataset.ins);
+    drawer(`${L2("New claim", "مطالبة جديدة")} — ${u.insurer}`, form([{ k: "insurer", v: u.insurer, hidden: 1 },
+      { k: "date_from", l: t("from"), type: "date", v: u.oldest, req: 1 }, { k: "date_to", l: t("to"), type: "date", v: today(), req: 1 }]),
+    async x => { await api("POST", "/api/care/claims", x); toast(t("saved")); }, { submitLabel: L2("Make the claim", "إنشاء المطالبة") }); };
+  S.H.clsettle = el => { const c = d.rows.find(x => String(x.id) === el.dataset.id);
+    drawer(`${L2("Settle claim", "تسوية المطالبة")} ${c.number} — ${c.insurer}`, `<div class="banner info">${esc(L2("Claimed", "المُطالب به"))}: <b>${money(c.claimed)}</b> · ${esc(L2("Paid + rejected must add up to it.", "المدفوع + المرفوض يجب أن يساويه."))}</div>` + form([
+      { k: "paid", l: L2("Paid by the insurer", "ما دفعه التأمين"), type: "number", v: c.claimed, req: 1, input: "clsplit" }, { k: "rejected", l: L2("Rejected", "المرفوض"), type: "number", v: 0, input: "clsplit2" },
+      { k: "method", l: t("method"), type: "select", v: "Bank Transfer", opts: methodOpts() }, { k: "date", l: t("date"), type: "date", v: today() },
+      { k: "notes", l: L2("Rejection reasons", "أسباب الرفض"), type: "textarea", span: "spanall" }]),
+    async x => { await api("POST", `/api/care/claims/${c.id}/settle`, x); toast(t("saved")); }, { submitLabel: L2("Settle", "تسوية") });
+    const f = $("#df"); S.H.clsplit = () => { $("[name=rejected]", f).value = Math.round((c.claimed - (+$("[name=paid]", f).value || 0)) * 100) / 100; };
+    S.H.clsplit2 = () => { $("[name=paid]", f).value = Math.round((c.claimed - (+$("[name=rejected]", f).value || 0)) * 100) / 100; }; };
+  view.innerHTML = `<div class="card"><h2>${esc(L2("Billed, not yet claimed", "مفوتر ولم يُطالب به بعد"))}</h2>${d.unclaimed.length ? `<div class="tbl"><table><thead><tr><th>${esc(L2("Insurer / TPA", "شركة التأمين / الإدارة"))}</th><th class="num">${esc(L2("Visits", "الزيارات"))}</th><th class="num">${t("amount")}</th><th>${esc(L2("Oldest", "الأقدم"))}</th><th></th></tr></thead><tbody>
+      ${d.unclaimed.map(u => `<tr><td><b>${esc(u.insurer)}</b></td><td class="num">${u.visits}</td><td class="num">${money(u.amount)}</td><td>${fd(u.oldest)}</td><td>${add ? `<button class="btn sm pri" data-a="clmake" data-ins="${esc(u.insurer)}">${esc(L2("Make a claim", "إنشاء مطالبة"))}</button>` : ""}</td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="muted">${esc(L2("Nothing waiting — every insurer share billed is in a claim.", "لا شيء معلق — كل حصص التأمين المفوترة ضمن مطالبات."))}</div>`}</div>` +
+    filterBar(q, [["select", "status", t("status"), [["submitted", L2("Submitted", "مقدّمة")], ["settled", L2("Settled", "مُسوّاة")]]]]) +
+    `<div class="card"><h2>${esc(L2("Claims", "المطالبات"))}</h2>${d.rows.length ? `<div class="tbl stack"><table><thead><tr><th>#</th><th>${esc(L2("Insurer / TPA", "شركة التأمين / الإدارة"))}</th><th>${esc(L2("Period", "الفترة"))}</th><th class="num">${esc(L2("Visits", "الزيارات"))}</th>
+      <th class="num">${esc(L2("Claimed", "المُطالب به"))}</th><th class="num">${esc(L2("Paid", "المدفوع"))}</th><th class="num">${esc(L2("Rejected", "المرفوض"))}</th><th>${t("status")}</th><th></th></tr></thead><tbody>
+      ${d.rows.map(c => `<tr><td>${esc(c.number)}</td><td><b>${esc(c.insurer)}</b></td><td>${fd(c.date_from)} → ${fd(c.date_to)}</td><td class="num">${c.visits}</td><td class="num">${money(c.claimed)}</td>
+        <td class="num">${c.status === "settled" ? money(c.paid) : ""}</td><td class="num ${c.rejected ? "neg" : ""}">${c.rejected ? money(c.rejected) : ""}</td>
+        <td><span class="chip ${c.status === "settled" ? "ok" : "warn"}">${esc(c.status === "settled" ? L2("Settled", "مُسوّاة") : L2("Submitted", "مقدّمة"))}</span>${c.rejected && c.notes ? `<div class="lines">${esc(c.notes)}</div>` : ""}</td>
+        <td>${c.status !== "settled" && can("care.claims", "edit") ? `<button class="btn sm" data-a="clsettle" data-id="${c.id}">${esc(L2("Settle", "تسوية"))}</button>` : ""}</td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="muted">—</div>`}</div>`;
+};
+PAGES["care-reports"] = async (view, parts, q) => {
+  if (!q.date_from) q = { date_from: today().slice(0, 8) + "01", ...q };
+  const d = await api("GET", "/api/care/report?" + qs(q)), st = CARE_ST();
+  const k = (l, v, cls = "") => `<div class="kpi"><div class="l">${esc(l)}</div><div class="v ${cls}">${v}</div></div>`;
+  const sum = (rows, key) => rows.reduce((a, r) => a + (+r[key] || 0), 0);
+  const tbl = (title, cols, rows) => `<div class="card"><h2>${esc(title)}</h2>${rows.length ? `<div class="tbl"><table><thead><tr>${cols.map(c => `<th class="${c[2] ? "num" : ""}">${esc(c[0])}</th>`).join("")}</tr></thead><tbody>
+    ${rows.map(r => `<tr>${cols.map(c => `<td class="${c[2] ? "num" : ""}">${c[2] === "m" ? money(r[c[1]] || 0) : esc(r[c[1]] ?? "")}</td>`).join("")}</tr>`).join("")}</tbody></table></div>` : `<div class="muted">—</div>`}</div>`;
+  view.innerHTML = filterBar(q, ["dates", "bu"]) + `<div class="kpis">${k(L2("Visits booked", "زيارات محجوزة"), d.total)}${k(st.done, d.counts.done || 0)}${k(L2("No-show rate", "نسبة عدم الحضور"), d.no_show_rate + "%", d.no_show_rate > 15 ? "neg" : "")}
+      ${k(L2("Revenue billed", "الإيراد المفوتر"), money(sum(d.by_service, "revenue")))}${k(L2("Insurers owe", "مستحق على التأمين"), money(sum(d.insurers_due, "balance")))}
+      ${k(L2("Owed to doctors / carers", "مستحق للأطباء / مقدمي الرعاية"), money(sum(d.fees_due, "balance")))}${k(L2("Prepaid packages held", "باقات مدفوعة مقدماً"), money(d.packages_held))}</div>
+    <div class="grid g2">${tbl(L2("By service", "حسب الخدمة"), [[L2("Service", "الخدمة"), "name"], [t("qty"), "qty", 1], [L2("Revenue", "الإيراد"), "revenue", "m"], [L2("Provider share", "حصة مقدم الخدمة"), "provider", "m"]], d.by_service)}
+      ${tbl(L2("By doctor / carer", "حسب الطبيب / مقدم الرعاية"), [[L2("Provider", "مقدم الخدمة"), "name"], [L2("Visits", "الزيارات"), "visits", 1], [L2("Home", "منزلية"), "home", 1], [L2("Hours", "الساعات"), "hours", 1], [L2("Revenue", "الإيراد"), "revenue", "m"], [L2("Earned", "المستحق له"), "earned", "m"]], d.by_provider)}
+      ${tbl(L2("By payer", "حسب جهة الدفع"), [[L2("Payer", "جهة الدفع"), "name"], [L2("Visits", "الزيارات"), "visits", 1], [L2("Patients paid", "دفع المرضى"), "patient", "m"], [L2("Insurer share", "حصة التأمين"), "insurer", "m"]], d.by_payer)}
+      ${tbl(L2("Home visits by area", "الزيارات المنزلية حسب المنطقة"), [[L2("Area", "المنطقة"), "name"], [L2("Visits", "الزيارات"), "visits", 1], [L2("Visit fees", "رسوم الانتقال"), "travel", "m"]], d.by_zone)}
+      ${tbl(L2("Insurers — balance owed", "شركات التأمين — الأرصدة المستحقة"), [[L2("Insurer / TPA", "شركة التأمين / الإدارة"), "party"], [t("balance"), "balance", "m"]], d.insurers_due)}
+      ${tbl(L2("Unclaimed insurer shares", "حصص تأمين لم يُطالب بها"), [[L2("Insurer / TPA", "شركة التأمين / الإدارة"), "insurer"], [L2("Visits", "الزيارات"), "visits", 1], [t("amount"), "amount", "m"]], d.unclaimed)}</div>`;
 };
 // ---------------------------------------------------------- drafts waiting for approval (maker–checker)
 const APPR_ST = () => ({ pending: L2("Waiting for approval", "في انتظار الاعتماد"), rejected: L2("Sent back for changes", "أُعيد للتعديل"),
@@ -7571,7 +7835,8 @@ const demoWarn = kind => uiConfirm(L2(`Load the demo company${kind ? ` (${indNam
 const IND_NAMES = { general: ["General business", "نشاط عام"], interior: ["Interior design & finishing", "التصميم الداخلي والتشطيبات"],
   contracting: ["Contracting & construction", "المقاولات والإنشاءات"], development: ["Real-estate development", "التطوير العقاري"],
   sales: ["Trading & sales", "التجارة والمبيعات"], investment: ["Investment & holding", "الاستثمار والقابضة"],
-  scaffolding: ["Scaffolding & equipment rental", "تأجير السقالات والمعدات"] };
+  scaffolding: ["Scaffolding & equipment rental", "تأجير السقالات والمعدات"], healthcare: ["Clinics & medical centres", "العيادات والمراكز الطبية"],
+  homecare: ["Home healthcare", "الرعاية الصحية المنزلية"] };
 function indName(k) { const n = IND_NAMES[k]; return n ? L2(n[0], n[1]) : k; }
 PAGES.industry = async (view) => {
   const d = await api("GET", "/api/industries");
@@ -9230,7 +9495,8 @@ PAGES.ereceipts = async (view, parts, q) => {
 // keeps the core steps and that business's own. Where a person stopped is kept in their profile, on every device.
 const TYPE_NAMES = () => ({ interior: L2("Interior design & finishing", "التصميم الداخلي والتشطيبات"), contracting: L2("Contracting & construction", "المقاولات والإنشاءات"),
   development: L2("Real-estate development", "التطوير العقاري"), sales: L2("Trading & sales", "التجارة والمبيعات"), investment: L2("Investment & holding", "الاستثمار والقابضة"),
-  scaffolding: L2("Scaffolding & equipment rental", "السقالات وتأجير المعدات"), general: L2("General business", "نشاط عام") });
+  scaffolding: L2("Scaffolding & equipment rental", "السقالات وتأجير المعدات"), healthcare: L2("Clinics & medical centres", "العيادات والمراكز الطبية"),
+  homecare: L2("Home healthcare", "الرعاية الصحية المنزلية"), general: L2("General business", "نشاط عام") });
 const TOUR = () => [
   ["", L2("Welcome to BeyondERP", "مرحباً بك في BeyondERP"), L2("A quick look around. Next to move on, Hide to look at something closely, Skip any time.", "جولة سريعة. «التالي» للمتابعة، و«إخفاء» لترى شيئاً عن قرب، و«تخطي» في أي وقت."), "core"],
   ["#nav", L2("The menu", "القائمة"), L2("Everything lives here, grouped by area. Click a group to open its screens.", "كل الشاشات هنا مقسّمة حسب المجال. اضغط على أي مجموعة لتظهر شاشاتها."), "core"],
@@ -9239,6 +9505,7 @@ const TOUR = () => [
   ['#nav a[href="#/dashboard"]', L2("Dashboard", "لوحة التحكم"), L2("Cash, receivables, payables and profit at a glance. Super admins, and people they allow, can tailor it per team.", "النقدية والمستحقات والالتزامات والربح في نظرة واحدة. يخصصها المسؤول الأعلى (ومن يسمح له) لكل فريق."), "core"],
   ['[data-g="g_bu"]', L2("Business units", "وحدات الأعمال"), L2("Each project or branch keeps its own costs, billing and profit.", "كل مشروع أو فرع له تكاليفه وفواتيره وربحه."), "interior contracting development scaffolding general"],
   ['[data-g="g_crm"]', L2("Customers & deals", "العملاء والصفقات"), L2("Deals by stage, every call and visit per contact, and follow-ups that ring the bell when due.", "الصفقات حسب المرحلة، وكل مكالمة وزيارة لكل عميل، ومتابعات تنبّهك في موعدها."), "core"],
+  ['[data-g="g_care"]', L2("Healthcare", "الرعاية الصحية"), L2("Appointments and visits (clinic or at home), patients with their insurer, the price list with doctors' shares, prepaid packages and monthly insurance claims.", "المواعيد والزيارات (بالعيادة أو بالمنزل)، والمرضى وجهات تأمينهم، وقائمة الأسعار بنصيب الأطباء، والباقات المدفوعة مقدماً، ومطالبات التأمين الشهرية."), "healthcare homecare"],
   ['[data-g="g_prj"]', L2("Projects & contracts", "المشروعات والعقود"), L2("Phases, tasks, client and subcontracts, variation orders and progress billings.", "المراحل والمهام وعقود العملاء ومقاولي الباطن وأوامر التغيير والمستخلصات."), "interior contracting development"],
   ['[data-g="g_est"]', L2("Quotations", "عروض الأسعار"), L2("BOQ quotations or package offers (Essential · Signature · Prestige) as branded PDF or Word.", "مقايسات أو عروض باقات بصيغة PDF أو Word بهوية شركتك."), "interior contracting"],
   ['[data-g="g_sales"]', L2("Sales & receivables", "المبيعات والمستحقات"), L2("Invoices, client payments and who owes you what.", "الفواتير ومقبوضات العملاء والمبالغ المستحقة لك على كل عميل."), "core"],

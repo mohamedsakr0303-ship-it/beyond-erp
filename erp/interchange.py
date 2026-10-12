@@ -938,7 +938,7 @@ def export_extras(db, files=True):
             "entry_meta": _entry_meta_export(db), "attachments": _attachments_export(db) if files else [],
             "purchase_orders": _po_export(db), "services": _svc_export(db), "chat": _chat_export(db),
             "dashboard_groups": db.q("SELECT key, name, name_ar, layout, sort, look FROM user_groups ORDER BY sort, id"),
-            "line_styles": _line_styles_export(db), "crm": _crm_export(db), "entry_tags": _tags_export(db),
+            "line_styles": _line_styles_export(db), "crm": _crm_export(db), "care": _care_export(db), "entry_tags": _tags_export(db),
             "bu_groups": {r["code"]: r["grp"] for r in db.q("SELECT code, grp FROM business_units WHERE grp<>''")}, "site": site_extras(db)}
 
 
@@ -951,6 +951,11 @@ def _tags_export(db):
         if fp:
             out.setdefault(json.dumps(fp), []).append(r["tag"])
     return [{"key": json.loads(k), "tags": v} for k, v in out.items()]
+
+
+def _care_export(db):
+    from . import care
+    return care.export_rows(db)
 
 
 def _crm_export(db):
@@ -1261,6 +1266,11 @@ def _imp_extras(db, ex, mode, counts):
                                                                         and not db.one("SELECT 1 FROM crm_activities")):
         from . import crm
         counts["Customers & deals"] = crm.import_rows(db, ex["crm"], replace=mode == "replace")
+    if isinstance(ex.get("care"), dict) and any(ex["care"].values()):
+        from . import care
+        n = care.import_rows(db, ex["care"], mode)
+        if n:
+            counts["Healthcare (patients, visits, claims)"] = n
     if isinstance(ex.get("bu_groups"), dict):
         for code, grp in ex["bu_groups"].items():
             db.conn.execute("UPDATE business_units SET grp=? WHERE code=?", (acc.text(grp, maxlen=80), acc.text(code)))
@@ -1325,7 +1335,7 @@ def to_csv(db, sheet_name, template=False):
     return ("﻿" + buf.getvalue()).encode("utf-8")
 
 
-WIPE_ORDER = ("entry_tags", "crm_followups", "crm_activities", "crm_deals", "sub_cert_lines", "sub_certificates", "variation_orders", "contract_lines", "contracts", "pr_quote_lines", "pr_quotes",
+WIPE_ORDER = ("entry_tags", "care_visit_lines", "care_visits", "care_claims", "care_packages", "care_services", "care_patients", "crm_followups", "crm_activities", "crm_deals", "sub_cert_lines", "sub_certificates", "variation_orders", "contract_lines", "contracts", "pr_quote_lines", "pr_quotes",
               "pr_lines", "purchase_requests", "stock_count_lines", "stock_counts", "equipment_usage", "maintenance_logs", "maintenance_plans",
               "equipment", "attendance", "ereceipts", "project_tasks", "project_phases", "payroll_lines", "payroll_runs", "crew_sheets", "employees", "sub_recognitions", "sub_visits", "sub_invoices", "subscriptions", "service_plans", "attachments", "po_receipts", "po_lines", "purchase_orders", "budgets", "bank_lines", "bank_statements", "bank_rules", "recurring_runs", "recurring", "sale_cheques", "sale_installments", "sale_lines", "sales_orders", "product_media", "products", "rent_moves", "rental_invoices", "rental_charges", "rental_handovers", "rental_lines", "rentals", "rent_lots",
               "rent_kit_lines", "rent_kits", "rent_models", "rent_items", "loans", "custodies", "parties", "ownership_changes", "fixed_assets", "stock_moves", "stock_levels", "stock_items", "extract_lines", "extracts", "boq_lines", "boqs",

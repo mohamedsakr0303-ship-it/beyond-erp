@@ -4,6 +4,9 @@
 window.I18N = {
   // ---- groups
   g_home: ["Home", "الرئيسية"], g_crm: ["Customers & Deals (CRM)", "العملاء والصفقات (CRM)"],
+  g_care: ["Healthcare", "الرعاية الصحية"], mod_care: ["Healthcare", "الرعاية الصحية"], m_care_visits: ["Appointments & Visits", "المواعيد والزيارات"],
+  m_care_patients: ["Patients", "المرضى"], m_care_services: ["Medical Services & Prices", "الخدمات الطبية والأسعار"], m_care_packages: ["Care Packages", "باقات الرعاية"],
+  m_care_claims: ["Insurance Claims", "مطالبات التأمين"], m_care_reports: ["Healthcare Reports", "تقارير الرعاية الصحية"],
   m_deals: ["Deals Pipeline", "مسار الصفقات"], m_crm_contacts: ["Contacts & Timeline", "جهات الاتصال والسجل"], m_followups: ["Follow-ups", "المتابعات"],
   mod_crm: ["Customers & deals (CRM)", "العملاء والصفقات (CRM)"], g_bu: ["Business Units", "وحدات الأعمال"], g_sales: ["Sales & Receivables", "المبيعات والمدينون"],
   g_est: ["Estimating & Tendering", "التسعير والعطاءات"], g_buy: ["Procurement & Payables", "المشتريات والدائنون"],
@@ -209,6 +212,8 @@ window.SUBTYPE_LABELS = {
 window.MENU = [
   ["g_home", [["m_dashboard", "dashboard", "dashboard", "◧"], ["m_chat", "chat", "chat", "💬"], ["m_assistant", "assistant", "chat.ai", "✦"], ["m_calcs", "calculators", "dashboard", "🧮"]]],
   ["g_bu", [["m_bus", "bus", "business_units.units", "▦"]]],
+  ["g_care", [["m_care_visits", "care-visits", "care.visits", "✚"], ["m_care_patients", "care-patients", "care.patients", "☺"], ["m_care_services", "care-services", "care.services", "₤"],
+             ["m_care_packages", "care-packages", "care.packages", "▦"], ["m_care_claims", "care-claims", "care.claims", "⇲"], ["m_care_reports", "care-reports", "care.reports", "◔"]]],
   ["g_crm", [["m_deals", "deals", "crm.deals", "◎"], ["m_crm_contacts", "crm-contacts", "crm.contacts", "☎"], ["m_followups", "followups", "crm.followups", "⏰"]]],
   ["g_prj", [["m_projects", "projects", "projects.overview", "◔"], ["m_tasks", "tasks", "projects.tasks", "☑"], ["m_materials", "materials", "projects.overview", "▤"], ["m_contracts", "contracts", "contracts.contracts", "✍"],
              ["m_variations", "variations", "contracts.variations", "±"], ["m_certs", "certificates", "contracts.certificates", "▤"]]],
@@ -232,6 +237,7 @@ window.MENU = [
 ];
 // labels for screen-level permissions (section.screen)
 window.SUBPERM = {
+  "care.visits": "m_care_visits", "care.patients": "m_care_patients", "care.services": "m_care_services", "care.packages": "m_care_packages", "care.claims": "m_care_claims", "care.reports": "m_care_reports",
   "payroll.employees": "m_employees", "payroll.runs": "m_payruns", "payroll.entries": "m_payroll", "payroll.crew": "m_crew", "payroll.settings": "m_payset",
   "business_units.units": "m_bus", "business_units.allocation": "p_alloc", "business_units.profitability": "m_bup",
   "sales.offers": "m_offers", "sales.receipts": "m_receipts", "sales.invoices": "m_invoices", "sales.extracts": "m_extracts", "sales.receivables": "m_receivables", "sales.parties": "m_parties", "shop.products": "m_products", "shop.orders": "m_sales_orders", "shop.installments": "m_installments", "shop.subscriptions": "m_subs",

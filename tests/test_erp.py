@@ -4369,3 +4369,144 @@ class DefaultLogoAndMaterials(unittest.TestCase):
         self.assertIsNone(a.materials_used(db)["one_material"])                   # a project mixes units: no total
         one = a.materials_used(db, item="wall paint 18l")["one_material"]           # one material: its total, in its unit
         self.assertEqual((one["qty"], one["unit"]), (6, "drum"))
+
+
+class Healthcare(unittest.TestCase):
+    """Clinics and home healthcare: insurer share vs co-pay, provider shares, consumables from stock, prepaid
+    packages, claims answered with rejections, the business types and their demo companies."""
+
+    def setUp(self):
+        from erp import care, industries
+        self.care = care
+        self.db = Database(":memory:")
+        industries.apply(self.db, "healthcare")
+        self.db.x("INSERT INTO business_units(code,name) VALUES ('CL1','Clinic 1')")
+        self.bu = self.db.one("SELECT id FROM business_units WHERE code='CL1'")["id"]
+        a.stock_move(self.db, {"type": "Receipt", "date": "2026-01-02", "warehouse": self.db.one("SELECT name FROM warehouses")["name"],
+                               "item": "Gloves", "unit": "pair", "qty": 100, "rate": 5, "paid": 500})
+        self.db.x("UPDATE stock_items SET sku='GLV' WHERE name='Gloves'")
+        self.gp = care.save_service(self.db, {"name": "GP consultation", "category": "consultation", "price": 400, "insurer_price": 300,
+                                              "provider_pct": 40, "consumables": [{"item": "GLV", "qty": 2}]})
+        self.home = care.save_service(self.db, {"name": "Nursing shift", "category": "nursing", "price": 900, "covered": False, "provider_pct": 70})
+        self.ins = care.save_patient(self.db, {"name": "Insured Ina", "payer": "insurer", "insurer": "Demo TPA", "coverage_pct": 80})
+        self.cash = care.save_patient(self.db, {"name": "Cash Cal", "zone": "Maadi", "address": "1 Nile St"})
+
+    def bal(self, code, party=None):
+        """Debit balance of an account (of one party on it)."""
+        return self.db.one("SELECT COALESCE(SUM(l.debit-l.credit),0) b FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id "
+                           "WHERE e.status='posted' AND l.account=? AND (? IS NULL OR l.party=?)", (code, party, party))["b"] / 100
+
+    def test_type_template(self):
+        from erp import industries
+        self.assertTrue(self.db.one("SELECT 1 FROM accounts WHERE code='1105'"))
+        self.assertNotIn("care", json.loads(self.db.setting("hidden_modules")))
+        other = Database(":memory:")                       # every other business keeps the healthcare menus out of sight
+        self.assertIn("care", json.loads(other.setting("hidden_modules")))
+        industries.apply(other, "contracting")
+        self.assertIn("care", json.loads(other.setting("hidden_modules")))
+
+    def test_insured_visit_billing_claim(self):
+        c = self.care
+        vid = c.save_visit(self.db, {"date": "2026-02-01", "patient_id": self.ins, "provider": "Dr. A", "bu_id": self.bu,
+                                     "lines": [{"service_id": self.gp, "qty": 1}]}, "boss")
+        v = c.visit(self.db, vid)
+        # the insurer's contract price (300): 80% insurer, 20% co-pay; the doctor gets 40%
+        self.assertEqual((v["insurer_amt"], v["patient_amt"], v["provider_amt"]), (240, 60, 120))
+        with self.assertRaises(a.ValidationError):
+            c.bill_visit(self.db, vid, {}, "boss")         # not done yet
+        c.set_status(self.db, vid, "arrived", {"time": "10:00"})
+        c.set_status(self.db, vid, "done", {"time": "10:45", "vitals": {"bp": "120/80"}})
+        self.assertEqual(c.visit(self.db, vid)["hours"], 0.75)
+        r = c.bill_visit(self.db, vid, {"paid": 60, "method": "Cash"}, "boss")
+        self.assertEqual(r["short"], [])
+        self.assertEqual(self.bal("1105", "Demo TPA"), 240)
+        self.assertEqual(self.bal("4061"), -300)
+        self.assertEqual(self.bal("2115", "Dr. A"), -120)
+        self.assertEqual(self.bal("5091"), 10)             # 2 pairs × 5 from stock
+        with self.assertRaises(a.ValidationError):
+            c.save_visit(self.db, {"date": "2026-02-01", "patient_id": self.ins, "lines": [{"service_id": self.gp}]}, "boss", vid)
+        # the claim: paid 200, 40 rejected
+        cid = c.make_claim(self.db, "Demo TPA", "2026-02-01", "2026-02-28", "boss")
+        self.assertEqual(c.claims(self.db)[0]["claimed"], 240)
+        self.assertEqual(c.unclaimed(self.db), [])
+        with self.assertRaises(a.ValidationError):
+            c.settle_claim(self.db, cid, {"paid": 200, "rejected": 0}, "boss")
+        with self.assertRaises(a.ValidationError):
+            c.unbill_visit(self.db, vid, "boss")           # in a claim
+        c.settle_claim(self.db, cid, {"paid": 200, "rejected": 40, "date": "2026-03-20"}, "boss")
+        self.assertEqual(self.bal("1105", "Demo TPA"), 0)
+        self.assertEqual(self.bal("4056"), 40)
+
+    def test_home_visit_partial_pay_and_unbill(self):
+        c = self.care
+        vid = c.save_visit(self.db, {"date": "2026-02-03", "patient_id": self.cash, "provider": "Nurse B", "place": "home", "travel_fee": 150,
+                                     "bu_id": self.bu, "lines": [{"service_id": self.home, "qty": 1}]}, "boss")
+        v = c.visit(self.db, vid)
+        self.assertEqual((v["patient_amt"], v["zone"], v["address"]), (1050, "Maadi", "1 Nile St"))
+        c.set_status(self.db, vid, "done", {"check_in": "20:00", "time": "08:00"})
+        self.assertEqual(c.visit(self.db, vid)["hours"], 12)          # an overnight shift
+        c.bill_visit(self.db, vid, {"paid": 50}, "boss")
+        self.assertEqual(self.bal("1100", "Cash Cal"), 1000)
+        self.assertEqual((self.bal("4062"), self.bal("4063")), (-900, -150))
+        self.assertEqual([p["owes"] for p in c.patients(self.db) if p["id"] == self.cash], [1000])
+        c.unbill_visit(self.db, vid, "boss", "wrong patient")
+        self.assertEqual((self.bal("1100", "Cash Cal"), self.bal("4062"), self.bal("2115")), (0, 0, 0))
+        self.assertIsNone(c.visit(self.db, vid)["entry_id"])
+
+    def test_package(self):
+        c = self.care
+        kid = c.sell_package(self.db, {"patient_id": self.cash, "service_id": self.home, "sessions": 4, "price": 3200, "paid": 2000,
+                                       "date": "2026-02-01"}, "boss")
+        self.assertEqual((self.bal("2108"), self.bal("1100", "Cash Cal")), (-3200, 1200))
+        for day in ("2026-02-02", "2026-02-03"):
+            vid = c.save_visit(self.db, {"date": day, "patient_id": self.cash, "place": "home", "package_id": kid, "provider": "Nurse B",
+                                         "lines": [{"service_id": self.home}]}, "boss")
+            self.assertEqual(c.visit(self.db, vid)["patient_amt"], 0)
+            c.set_status(self.db, vid, "done")
+            c.bill_visit(self.db, vid, {}, "boss")
+        k = c.packages(self.db)[0]
+        self.assertEqual((k["used"], k["left"], k["held"]), (2, 2, 1600))
+        self.assertEqual((self.bal("2108"), self.bal("4062")), (-1600, -1600))
+        self.assertEqual(self.bal("2115", "Nurse B"), -1120)            # 70% of 800 per session
+
+    def test_api_permissions_and_report(self):
+        from erp.server import handle
+        app = type("App", (), {"static": False, "server": None})()
+        app.db = self.db
+        auth.create_user(self.db, {"username": "boss", "password": "secret123"}, first=True)
+        auth.create_user(self.db, {"username": "desk", "password": "secret123", "perms": {"care": "add", "care.claims": "none", "care.reports": "none"}})
+        tok = auth.login(self.db, "desk", "secret123")[0]
+        call = lambda m, u, b=None: handle(app, m, u, {"x-requested-with": "BeyondERP", "x-session": tok, "content-type": "application/json"},  # noqa: E731
+                                           json.dumps(b).encode() if b is not None else b"")
+        r = call("POST", "/api/care/visits", {"date": "2026-02-05", "patient_id": self.ins, "lines": [{"service_id": self.gp}], "bu_id": self.bu})
+        vid = json.loads(r.body)["id"]
+        self.assertEqual(call("POST", f"/api/care/visits/{vid}/status", {"status": "done"}).status, 200)
+        self.assertEqual(call("POST", f"/api/care/visits/{vid}/bill", {}).status, 200)
+        self.assertEqual(call("POST", f"/api/care/visits/{vid}/void", {}).status, 403)    # undoing a bill needs edit
+        self.assertEqual(call("GET", "/api/care/claims").status, 403)
+        self.assertEqual(call("GET", "/api/care/report").status, 403)
+        rep = self.care.report(self.db)
+        self.assertEqual((rep["counts"], rep["insurers_due"][0]["balance"], rep["unclaimed"][0]["amount"]), ({"done": 1}, 240, 240))
+
+    def test_demo_companies_and_backup(self):
+        from erp import demo, industries, interchange
+        for kind in ("healthcare", "homecare"):
+            db = Database(":memory:")
+            industries.apply(db, kind)
+            demo.load(db, "boss", industry=kind)
+            self.assertGreater(db.one("SELECT COUNT(*) n FROM care_visits WHERE status='done' AND entry_id IS NOT NULL")["n"], 200)
+            self.assertTrue(db.one("SELECT 1 FROM care_claims WHERE status='settled'"))
+            self.assertTrue(db.one("SELECT 1 FROM care_visits WHERE status='booked'"))
+            tb = db.one("SELECT SUM(debit) d, SUM(credit) c FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id WHERE e.status='posted'")
+            self.assertEqual(tb["d"], tb["c"])
+            held = round(sum(k["held"] for k in self.care.packages(db)), 2)
+            prepaid = db.one("SELECT COALESCE(SUM(credit-debit),0) b FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id "
+                             "WHERE e.status='posted' AND l.account='2108'")["b"] / 100
+            self.assertEqual(round(prepaid, 2), held)              # prepaid = the sessions still owed
+            if kind == "homecare":
+                self.assertTrue(all(v["place"] == "home" for v in self.care.visits(db)))
+            # backup → restore into fresh books keeps every patient, visit and claim
+            fresh = Database(":memory:")
+            interchange.import_data(fresh, interchange.read_json(interchange.to_json(db).encode()), mode="replace")
+            for t in self.care.TABLES:
+                self.assertEqual(fresh.one(f"SELECT COUNT(*) n FROM {t}")["n"], db.one(f"SELECT COUNT(*) n FROM {t}")["n"], t)

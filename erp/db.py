@@ -937,6 +937,103 @@ CREATE TABLE IF NOT EXISTS approvals (     -- entries waiting for approval (make
 );
 CREATE INDEX IF NOT EXISTS approvals_status ON approvals(status, id);
 -- Customers & deals (erp/crm.py): a pipeline of deals, a timeline of what was said and done with each contact, follow-ups
+-- Healthcare (clinics, medical centres, labs, home healthcare) — see care.py
+CREATE TABLE IF NOT EXISTS care_patients (
+    id           INTEGER PRIMARY KEY,
+    code         TEXT UNIQUE NOT NULL,
+    name         TEXT NOT NULL,
+    national_id  TEXT DEFAULT '',
+    phone        TEXT DEFAULT '',
+    phone2       TEXT DEFAULT '',             -- a relative / caregiver at home
+    dob          TEXT DEFAULT '',
+    gender       TEXT DEFAULT '',
+    address      TEXT DEFAULT '',
+    zone         TEXT DEFAULT '',             -- district, for routing home visits
+    payer        TEXT NOT NULL DEFAULT 'self',   -- self | insurer
+    insurer      TEXT DEFAULT '',             -- the insurance company / TPA (a party)
+    policy_no    TEXT DEFAULT '',
+    coverage_pct REAL NOT NULL DEFAULT 0,     -- the insurer's share of covered services; the rest is the patient's co-pay
+    alerts       TEXT DEFAULT '',             -- allergies / what every visit should know
+    notes        TEXT DEFAULT '',
+    active       INTEGER NOT NULL DEFAULT 1,
+    created_at   TEXT
+);
+CREATE TABLE IF NOT EXISTS care_services (
+    id            INTEGER PRIMARY KEY,
+    code          TEXT UNIQUE NOT NULL,
+    name          TEXT NOT NULL,
+    name_ar       TEXT DEFAULT '',
+    category      TEXT NOT NULL DEFAULT 'consultation',
+    price         INTEGER NOT NULL DEFAULT 0,   -- cash price (minor units)
+    insurer_price INTEGER NOT NULL DEFAULT 0,   -- contracted price with insurers (0 = same as cash)
+    covered       INTEGER NOT NULL DEFAULT 1,   -- insurers pay their share of it
+    provider_pct  REAL NOT NULL DEFAULT 0,      -- the doctor's / caregiver's share
+    duration_min  INTEGER NOT NULL DEFAULT 30,
+    home          INTEGER NOT NULL DEFAULT 0,   -- delivered at the patient's home
+    consumables   TEXT NOT NULL DEFAULT '[]',   -- [{item, qty}] taken from stock when the visit is billed
+    active        INTEGER NOT NULL DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS care_packages (
+    id          INTEGER PRIMARY KEY,
+    code        TEXT UNIQUE NOT NULL,
+    patient_id  INTEGER NOT NULL REFERENCES care_patients(id),
+    service_id  INTEGER NOT NULL REFERENCES care_services(id),
+    name        TEXT NOT NULL DEFAULT '',
+    sessions    INTEGER NOT NULL,
+    used        INTEGER NOT NULL DEFAULT 0,
+    price       INTEGER NOT NULL,               -- whole package (minor units), held as prepaid until sessions are given
+    start_date  TEXT,
+    end_date    TEXT DEFAULT '',
+    status      TEXT NOT NULL DEFAULT 'active', -- active | used | expired | cancelled
+    entry_id    INTEGER,
+    created_at  TEXT
+);
+CREATE TABLE IF NOT EXISTS care_claims (
+    id         INTEGER PRIMARY KEY,
+    number     TEXT UNIQUE NOT NULL,
+    insurer    TEXT NOT NULL,
+    date_from  TEXT, date_to TEXT,
+    claimed    INTEGER NOT NULL DEFAULT 0,
+    paid       INTEGER NOT NULL DEFAULT 0,
+    rejected   INTEGER NOT NULL DEFAULT 0,
+    status     TEXT NOT NULL DEFAULT 'submitted',   -- submitted | settled
+    submitted  TEXT, settled TEXT,
+    entry_id   INTEGER,
+    notes      TEXT DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS care_visits (
+    id          INTEGER PRIMARY KEY,
+    number      TEXT UNIQUE NOT NULL,
+    date        TEXT NOT NULL,
+    time        TEXT DEFAULT '',
+    patient_id  INTEGER NOT NULL REFERENCES care_patients(id),
+    provider    TEXT DEFAULT '',              -- doctor / nurse / therapist (an employee or a visiting doctor)
+    place       TEXT NOT NULL DEFAULT 'clinic',  -- clinic | home
+    bu_id       INTEGER,                      -- branch / clinic / home-care team
+    address     TEXT DEFAULT '', zone TEXT DEFAULT '',
+    status      TEXT NOT NULL DEFAULT 'booked',  -- booked | arrived | done | no_show | cancelled
+    check_in    TEXT DEFAULT '', check_out TEXT DEFAULT '',
+    hours       REAL NOT NULL DEFAULT 0,      -- shift length for hourly nursing
+    travel_fee  INTEGER NOT NULL DEFAULT 0,
+    package_id  INTEGER REFERENCES care_packages(id),
+    notes       TEXT DEFAULT '',
+    vitals      TEXT NOT NULL DEFAULT '{}',
+    patient_amt INTEGER NOT NULL DEFAULT 0, insurer_amt INTEGER NOT NULL DEFAULT 0, provider_amt INTEGER NOT NULL DEFAULT 0,
+    paid        INTEGER NOT NULL DEFAULT 0,
+    billed_at   TEXT, entry_id INTEGER, cost_entry_id INTEGER,
+    claim_id    INTEGER REFERENCES care_claims(id),
+    created_by  TEXT, created_at TEXT
+);
+CREATE INDEX IF NOT EXISTS care_visits_date ON care_visits(date);
+CREATE TABLE IF NOT EXISTS care_visit_lines (
+    id          INTEGER PRIMARY KEY,
+    visit_id    INTEGER NOT NULL REFERENCES care_visits(id) ON DELETE CASCADE,
+    service_id  INTEGER REFERENCES care_services(id),
+    description TEXT DEFAULT '',
+    qty         REAL NOT NULL DEFAULT 1,
+    price       INTEGER NOT NULL DEFAULT 0,
+    patient_amt INTEGER NOT NULL DEFAULT 0, insurer_amt INTEGER NOT NULL DEFAULT 0, provider_amt INTEGER NOT NULL DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS crm_deals (
     id INTEGER PRIMARY KEY,
     title TEXT NOT NULL, party TEXT NOT NULL DEFAULT '',
@@ -1609,7 +1706,7 @@ def normal_for(acc_type: str, subtype: str) -> str:
     return "Debit" if debit else "Credit"
 
 
-MODULES = ["dashboard", "crm", "business_units", "projects", "contracts", "sales", "shop", "estimating", "purchasing", "stock", "equipment",
+MODULES = ["dashboard", "crm", "care", "business_units", "projects", "contracts", "sales", "shop", "estimating", "purchasing", "stock", "equipment",
            "rentals", "payroll", "assets",
            "accounting", "partners", "reports", "tax", "import_export", "settings", "users"]
 
@@ -1617,6 +1714,7 @@ MODULES = ["dashboard", "crm", "business_units", "projects", "contracts", "sales
 SUBMODULES = {
     "dashboard": [],
     "crm": ["deals", "contacts", "followups"],
+    "care": ["visits", "patients", "services", "packages", "claims", "reports"],
     "business_units": ["units", "allocation", "profitability"],
     "sales": ["offers", "receipts", "invoices", "extracts", "receivables", "parties"],
     "estimating": ["boqs", "prices"],
@@ -1815,6 +1913,7 @@ class Database:
         self.conn.execute("INSERT OR IGNORE INTO settings(key,value) VALUES ('coa_v2','1')")
         self._brand_v2()
         self._brand_v3()
+        self._care_hidden()
         self._default_logo_v3()
         self._add_role_account("3015", "funding_partner")
         self._add_role_account("5052", "equipment_charge")
@@ -1933,6 +2032,22 @@ class Database:
                 ap["app_name"] = ""
             self.conn.execute("UPDATE settings SET value=? WHERE key='appearance'", (json.dumps(ap),))
         self.conn.execute("INSERT OR IGNORE INTO settings(key,value) VALUES ('brand_v2','1')")
+
+    def _care_hidden(self):
+        """Once per book: Healthcare is for clinics and home-care businesses — hidden elsewhere (Settings → Menus shows it)."""
+        if self.conn.execute("SELECT 1 FROM settings WHERE key='care_v1'").fetchone():
+            return
+        bt = self.conn.execute("SELECT value FROM settings WHERE key='business_type'").fetchone()
+        if not bt or bt[0] not in ("healthcare", "homecare"):
+            row = self.conn.execute("SELECT value FROM settings WHERE key='hidden_modules'").fetchone()
+            try:
+                hid = json.loads(row[0]) if row and row[0] else []
+            except ValueError:
+                hid = []
+            if "care" not in hid:
+                hid.append("care")
+                self.conn.execute("INSERT OR REPLACE INTO settings(key,value) VALUES ('hidden_modules',?)", (json.dumps(hid),))
+        self.conn.execute("INSERT OR REPLACE INTO settings(key,value) VALUES ('care_v1','1')")
 
     def _brand_v3(self):
         """Once per book: the app shows the BeyondERP name, logo and icon — earlier custom app logos / icons and app names are

@@ -882,6 +882,136 @@ def approval_withdraw(ctx, aid):
 
 
 # ---------------------------------------------------------------- customers & deals (erp/crm.py)
+# ================================================================= healthcare (care.py)
+@route("GET", "/api/care/patients", "care.patients|care.visits|care.packages")
+def care_patients(ctx):
+    from . import care
+    return ok({"rows": care.patients(ctx.db, ctx.q.get("q"), ctx.q.get("payer"), ctx.q.get("insurer"), ctx.q.get("active"))})
+
+
+@route("GET", "/api/care/patients/<pid>", "care.patients")
+def care_patient(ctx, pid):
+    from . import care
+    return ok(care.patient(ctx.db, pid))
+
+
+@route("POST", "/api/care/patients", "care.patients", "add")
+def care_patient_add(ctx):
+    from . import care
+    return ok({"id": care.save_patient(ctx.db, ctx.body)})
+
+
+@route("PUT", "/api/care/patients/<pid>", "care.patients", "edit")
+def care_patient_edit(ctx, pid):
+    from . import care
+    return ok({"id": care.save_patient(ctx.db, ctx.body, pid)})
+
+
+@route("GET", "/api/care/services", "care.services|care.visits")
+def care_services(ctx):
+    from . import care
+    return ok({"rows": care.services(ctx.db, ctx.q.get("active")), "categories": list(care.CATEGORIES)})
+
+
+@route("POST", "/api/care/services", "care.services", "add")
+def care_service_add(ctx):
+    from . import care
+    return ok({"id": care.save_service(ctx.db, ctx.body)})
+
+
+@route("PUT", "/api/care/services/<sid>", "care.services", "edit")
+def care_service_edit(ctx, sid):
+    from . import care
+    return ok({"id": care.save_service(ctx.db, ctx.body, sid)})
+
+
+@route("GET", "/api/care/visits", "care.visits")
+def care_visits(ctx):
+    from . import care
+    q = ctx.q
+    return ok({"rows": care.visits(ctx.db, q.get("date_from"), q.get("date_to"), q.get("status"), q.get("place"), q.get("provider"),
+                                   q.get("patient_id"), q.get("bu_id"), q.get("q"), q.get("billed"))})
+
+
+@route("GET", "/api/care/visits/<vid>", "care.visits")
+def care_visit(ctx, vid):
+    from . import care
+    return ok(care.visit(ctx.db, vid))
+
+
+@route("POST", "/api/care/visits", "care.visits", "add")
+def care_visit_add(ctx):
+    from . import care
+    return ok({"id": care.save_visit(ctx.db, ctx.body, ctx.user["username"])})
+
+
+@route("PUT", "/api/care/visits/<vid>", "care.visits", "add")
+def care_visit_edit(ctx, vid):
+    from . import care
+    return ok({"id": care.save_visit(ctx.db, ctx.body, ctx.user["username"], vid)})
+
+
+@route("POST", "/api/care/visits/<vid>/status", "care.visits", "add")
+def care_visit_status(ctx, vid):
+    from . import care
+    care.set_status(ctx.db, vid, ctx.body.get("status"), ctx.body)
+    return ok()
+
+
+@route("POST", "/api/care/visits/<vid>/bill", "care.visits", "add")
+def care_visit_bill(ctx, vid):
+    from . import care
+    r = care.bill_visit(ctx.db, vid, ctx.body, ctx.user["username"])
+    ctx.log("care.bill", vid)
+    return ok(r)
+
+
+@route("POST", "/api/care/visits/<vid>/void", "care.visits", "edit")
+def care_visit_unbill(ctx, vid):
+    from . import care
+    care.unbill_visit(ctx.db, vid, ctx.user["username"], ctx.body.get("reason") or "")
+    ctx.log("care.unbill", vid)
+    return ok()
+
+
+@route("GET", "/api/care/packages", "care.packages|care.visits")
+def care_packages(ctx):
+    from . import care
+    return ok({"rows": care.packages(ctx.db, ctx.q.get("patient_id"), ctx.q.get("status"))})
+
+
+@route("POST", "/api/care/packages", "care.packages", "add")
+def care_package_add(ctx):
+    from . import care
+    return ok({"id": care.sell_package(ctx.db, ctx.body, ctx.user["username"])})
+
+
+@route("GET", "/api/care/claims", "care.claims")
+def care_claims(ctx):
+    from . import care
+    return ok({"rows": care.claims(ctx.db, ctx.q.get("insurer"), ctx.q.get("status")), "unclaimed": care.unclaimed(ctx.db)})
+
+
+@route("POST", "/api/care/claims", "care.claims", "add")
+def care_claim_add(ctx):
+    from . import care
+    return ok({"id": care.make_claim(ctx.db, ctx.body.get("insurer"), ctx.body.get("date_from"), ctx.body.get("date_to"), ctx.user["username"])})
+
+
+@route("POST", "/api/care/claims/<cid>/settle", "care.claims", "edit")
+def care_claim_settle(ctx, cid):
+    from . import care
+    care.settle_claim(ctx.db, cid, ctx.body, ctx.user["username"])
+    ctx.log("care.claim.settle", cid)
+    return ok()
+
+
+@route("GET", "/api/care/report", "care.reports")
+def care_report(ctx):
+    from . import care
+    return ok(care.report(ctx.db, ctx.q.get("date_from"), ctx.q.get("date_to"), ctx.q.get("bu_id")))
+
+
 @route("GET", "/api/crm/board", "crm.deals")
 def crm_board(ctx):
     from . import crm
@@ -4465,11 +4595,11 @@ def offer_type_del(ctx, tid):
 
 
 # ============================================================ erase all data
-ERASE_TRANSACTIONS = ("entry_tags", "crm_followups", "crm_activities", "crm_deals", "approvals", "sub_cert_lines", "sub_certificates", "pr_quote_lines", "pr_quotes", "pr_lines", "purchase_requests", "stock_count_lines",
+ERASE_TRANSACTIONS = ("entry_tags", "care_visit_lines", "care_visits", "care_claims", "care_packages", "crm_followups", "crm_activities", "crm_deals", "approvals", "sub_cert_lines", "sub_certificates", "pr_quote_lines", "pr_quotes", "pr_lines", "purchase_requests", "stock_count_lines",
                       "stock_counts", "equipment_usage", "maintenance_logs", "attendance", "ereceipts", "sub_recognitions", "sub_visits", "sub_invoices", "subscriptions", "po_receipts", "po_lines", "purchase_orders", "bank_lines", "bank_statements", "recurring_runs", "sale_cheques", "sale_installments", "sale_lines", "sales_orders", "stock_moves", "stock_levels", "extract_lines", "extracts", "ownership_changes", "journal_lines",
                       "journal_entries", "offers", "loans", "custodies", "rent_moves", "rental_invoices", "rental_charges",
                       "rental_handovers", "rental_lines", "rentals", "rent_lots")
-ERASE_ALL = ERASE_TRANSACTIONS + ("parties", "stock_items", "boq_lines", "boqs", "partner_shares", "partners", "rates",
+ERASE_ALL = ERASE_TRANSACTIONS + ("care_services", "care_patients", "parties", "stock_items", "boq_lines", "boqs", "partner_shares", "partners", "rates",
                                   "fixed_assets", "business_units", "offer_types", "tax_codes", "assets", "rent_kit_lines", "rent_kits",
                                   "rent_items", "rent_models", "product_media", "products", "bank_rules", "recurring", "budgets", "attachments", "service_plans",
                                   "variation_orders", "contract_lines", "contracts", "maintenance_plans", "equipment", "project_tasks", "project_phases")

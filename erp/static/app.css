@@ -1630,6 +1630,7 @@ tr.pending td{background:color-mix(in srgb,var(--accent) 7%,transparent)}
 .ch-rxall button:hover{background:var(--hover)}
 
 /* ---- "turn on notifications?" — asked inside the app */
+body:has(.drawer-bg) .nnudge,body:has(.dlg-bg) .nnudge{display:none}
 .nnudge{position:fixed;z-index:90;bottom:20px;inset-inline-end:20px;width:min(380px,calc(100vw - 32px));display:flex;gap:12px;padding:16px;border-radius:16px;
   background:var(--sheet,var(--panel));color:var(--ink);border:1px solid var(--line);box-shadow:0 18px 50px rgba(0,0,0,.35);animation:dlgpop .25s}
 :root[data-theme="dark"]:not([data-surf]) .nnudge{background:rgba(12,13,46,.97)}
@@ -1685,3 +1686,8 @@ input[type=range]::-moz-range-progress{height:6px;border-radius:999px;background
 input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;margin-top:-7px;border-radius:50%;background:var(--rf);border:3px solid var(--panel);box-shadow:0 1px 4px rgba(0,0,0,.35)}
 input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:var(--rf);border:3px solid var(--panel);box-shadow:0 1px 4px rgba(0,0,0,.35)}
 input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 4px color-mix(in srgb,var(--rf) 30%,transparent)}
+
+/* ---- healthcare: services on a visit */
+.care-ln{display:flex;gap:8px;align-items:center;margin-bottom:6px}
+.care-ln .cl-svc{flex:1;min-width:0}.care-ln .cl-qty{width:70px;flex:none}.care-ln .cl-price{width:120px;flex:none}
+@media (max-width:560px){.care-ln{flex-wrap:wrap}.care-ln .cl-svc{flex-basis:100%}}
