@@ -155,11 +155,18 @@ const levelOf = key => {
   if (key === "chat.ai") return S.ai && S.ai.allowed ? "edit" : "none";   // the assistant: super administrator's policy
   if (u.is_admin) return "edit";
   const p = u.perms;
+  if (key.split(".").length > 2) return LV.includes(p[key]) ? p[key] : levelOf(key.split(".").slice(0, 2).join("."));   // a tab: its own level, else its screen's
   if (key.includes(".")) return LV.includes(p[key]) ? p[key] : (p[key.split(".")[0]] || "none");
   let best = p[key] || "none";
-  Object.entries(p).forEach(([k, v]) => { if (k.startsWith(key + ".") && LV.indexOf(v) > LV.indexOf(best)) best = v; });
+  Object.entries(p).forEach(([k, v]) => { if (k.startsWith(key + ".") && LV.includes(v) && LV.indexOf(v) > LV.indexOf(best)) best = v; });
   return best;
 };
+// export / import / delete can be switched off per screen ("section.screen!action" = "no"); the server checks it too
+const actionOk = (key, action) => { const u = S.boot && S.boot.user; if (!u || u.is_admin || !key) return true;
+  return String(key).split("|").some(k => { const [a, b] = k.split("."); return u.perms[b ? `${a}.${b}!${action}` : `${a}!${action}`] !== "no"; }); };
+// the permission key of the screen being shown (from the menu)
+const screenKey = () => { const { parts } = parseHash(), items = window.MENU.flatMap(([, it]) => it);
+  const here = items.find(i => i[1] === parts.join("/")) || items.find(i => i[1] === parts[0]); return here ? here[2] : ""; };
 // "a|b": either permission is enough (one screen that two sections share, e.g. the contacts directory)
 const can = (mod, lvl = "view") => String(mod).split("|").some(m => LV.indexOf(levelOf(m)) >= LV.indexOf(lvl));
 
@@ -1182,7 +1189,7 @@ async function renderOnboarding() {
       $("#lerr").innerHTML = "";
       try {
         if (kind() === "clean") { busy(true); return await finish(); }
-        if (kind() === "demo") { busy(true, ar ? "جارٍ تجهيز الشركة التجريبية…" : "Setting up the demo company…"); await api("POST", "/api/demo", { industry: $("#obtype").value }); return await finish(); }
+        if (kind() === "demo") { if (!await demoWarn($("#obtype").value)) return; busy(true, ar ? "جارٍ تجهيز الشركة التجريبية…" : "Setting up the demo company…"); await api("POST", "/api/demo", { industry: $("#obtype").value, confirmed: true }); return await finish(); }
         if (checked) { busy(true, ar ? "جارٍ الاستيراد…" : "Importing…"); const { r } = await upload(false); checked = null;
           toast(Object.entries(r.counts).map(([k, v]) => `${k}: ${v}`).slice(0, 4).join(" · ")); return await finish(); }
         busy(true, ar ? "جارٍ الفحص…" : "Checking…");
@@ -1472,6 +1479,7 @@ function filterBar(q, fields, extra = "") {
       <button type="button" class="btn sm" data-a="fviewsave" title="${esc(L2("Save these filters under a name (only for you)", "حفظ هذه الفلاتر باسم (لك وحدك)"))}">☆ ${esc(L2("Save view", "حفظ العرض"))}</button></span></div></div>${extra}</div>`;
 }
 function exportMenu(name, params) {
+  if (!actionOk(screenKey(), "export")) return "";
   const base = `/api/reports/${name}?` + qs({ ...params, lang: params.lang || S.lang });
   return `<div class="dd"><button class="btn">${t("export")} ▾</button><div class="dd-menu">
     <a href="${base}&format=pdf" target="_blank" rel="noopener">PDF (print)</a><a href="${base}&format=xlsx">Excel (.xlsx)</a>
@@ -1479,11 +1487,13 @@ function exportMenu(name, params) {
 }
 // Client documents (company layout, logo & watermark per Settings → Documents & branding)
 function docMenu(base, formats, extra = "") {
+  if (!actionOk(screenKey(), "export")) return "";
   return `<div class="dd"><button class="btn">⬇ ${t("documents")} ▾</button><div class="dd-menu">${formats.map(([f, l]) =>
     `<a href="${base}?format=${f}" ${f === "pdf" ? 'target="_blank" rel="noopener"' : ""}>${t(l)}</a>`).join("")}${extra}</div></div>`;
 }
 // Delete after a clear confirmation; the server refuses anything still in use and says why.
 async function confirmDelete(what, path, after) {
+  if (!actionOk(screenKey(), "delete")) { uiAlert(L2("Deleting and voiding are switched off for you on this screen.", "الحذف والإلغاء غير مسموحين لك في هذه الشاشة.")); return false; }
   if (!await uiConfirm((S.lang === "ar" ? "حذف " : "Delete ") + what + (S.lang === "ar" ? "؟ لا يمكن التراجع." : "? This cannot be undone."))) return false;
   try { await api("DELETE", path); if (after) await after(); closeDrawer(); toast(S.lang === "ar" ? "تم الحذف" : "Deleted"); route(); return true; }
   catch (e) { fail(e); return false; }
@@ -3519,17 +3529,15 @@ PAGES.data = async (view) => {
   demoCard.innerHTML = `<h2>${L2("Demo company", "الشركة التجريبية")}</h2>
     <p class="muted" style="margin-top:0">${L2("“Nile Demo Co.” — about six months of an invented business on every screen: projects (cost-plus, fixed price, flexible) with costs, negotiation discounts, payroll, VAT & withholding, a BOQ and invoices, stock, fixed assets, loans, cash custody, equipment rentals with a signed handover and deposit, unit sales on installments with cheques, recurring entries and bank statements (one reconciled, one to do). Use it to test every function or to train people.", "«شركة النيل التجريبية» — حوالي ستة أشهر من نشاط وهمي على كل الشاشات: مشروعات بتكاليفها وخصومات التفاوض والرواتب والضرائب والمقايسة والفواتير والمخزون والأصول والقروض والعهد وتأجير المعدات بمحضر تسليم وتأمين وبيع وحدات بالتقسيط بشيكات وقيود متكررة وكشوف بنك (واحد مسوّى وواحد للتجربة). استخدمها لتجربة كل الوظائف أو للتدريب.")}</p>
     <div class="row" style="gap:6px;flex-wrap:wrap"><a class="btn" href="/api/demo/workbook">⬇ ${L2("Demo company — Excel workbook (every sheet filled)", "الشركة التجريبية — ملف Excel (كل الأوراق مملوءة)")}</a>
-    ${S.boot.user.is_admin && (dm.empty || S.boot.user.is_super) ? `<select id="demoind" style="width:auto">${(dm.industries || []).map(k => `<option value="${k}"${k === dm.current ? " selected" : ""}>${esc(L2("Demo", "تجريبي") + ": " + indName(k))}</option>`).join("")}
+    ${S.boot.user.is_admin && dm.empty ? `<select id="demoind" style="width:auto">${(dm.industries || []).map(k => `<option value="${k}"${k === dm.current ? " selected" : ""}>${esc(L2("Demo", "تجريبي") + ": " + indName(k))}</option>`).join("")}
       <option value=""${dm.current ? "" : " selected"}>${esc(L2("Everything (every screen filled)", "كل شيء (كل الشاشات مملوءة)"))}</option></select>` : ""}
     ${S.boot.user.is_admin ? `<p class="muted" style="flex-basis:100%;margin:4px 0 0">${L2("Each business type gets its own demo: only what that kind of business does, under its own name.", "لكل نوع نشاط بياناته التجريبية الخاصة: فقط ما يقوم به هذا النشاط وباسم مناسب له.")}</p>` : ""}
     ${S.boot.user.is_admin ? (dm.empty ? `<button class="btn pri" data-a="demoload">▶ ${L2("Load the demo company into these books", "تحميل الشركة التجريبية في هذه الدفاتر")}</button>`
-      : S.boot.user.is_super ? `<button class="btn danger" data-a="demorepl">${L2("Replace everything with the demo company…", "استبدال كل البيانات بالشركة التجريبية…")}</button>` : "") : ""}</div>
+      : `<p class="muted" style="flex-basis:100%;margin:4px 0 0">🔒 ${L2("These books already hold data, so the demo company can't be loaded here — it only goes into empty books. To try it, use a new company (or back up, then erase the data in Settings → System).", "هذه الدفاتر بها بيانات، لذا لا يمكن تحميل الشركة التجريبية هنا — تُحمَّل في دفاتر فارغة فقط. للتجربة استخدم شركة جديدة (أو خذ نسخة احتياطية ثم امسح البيانات من الإعدادات ← النظام).")}</p>`) : ""}</div>
     ${dm.loaded ? `<p class="muted">${L2("Demo data loaded on", "تم تحميل البيانات التجريبية في")} ${fd(dm.loaded)} — ${L2("erase it from Settings → System when you are done.", "امسحها من الإعدادات ← النظام عند الانتهاء.")}</p>` : ""}`;
   view.appendChild(demoCard);
-  S.H.demoload = async el => { el.disabled = true; el.textContent = L2("Loading…", "جارٍ التحميل…");
-    try { await api("POST", "/api/demo", { industry: ($("#demoind") || {}).value || "" }); await refreshBoot(); toast(L2("Demo company loaded", "تم تحميل الشركة التجريبية")); location.hash = "#/dashboard"; } catch (e) { fail(e); el.disabled = false; } };
-  S.H.demorepl = async () => { const c = await uiPrompt(L2("This ERASES all data in these books (a backup is made first) and loads the demo company. Type DEMO to continue.", "ستُمسح كل البيانات (بعد أخذ نسخة احتياطية) وتُحمَّل الشركة التجريبية. اكتب DEMO للمتابعة."), "");
-    if (c == null) return; try { await api("POST", "/api/demo", { replace: true, confirm: c, industry: ($("#demoind") || {}).value || "" }); await refreshBoot(); toast(L2("Demo company loaded", "تم تحميل الشركة التجريبية")); location.hash = "#/dashboard"; } catch (e) { fail(e); } };
+  S.H.demoload = async el => { const k = ($("#demoind") || {}).value || ""; if (!await demoWarn(k)) return; el.disabled = true; el.textContent = L2("Loading…", "جارٍ التحميل…");
+    try { await api("POST", "/api/demo", { industry: k, confirmed: true }); await refreshBoot(); toast(L2("Demo company loaded", "تم تحميل الشركة التجريبية")); location.hash = "#/dashboard"; } catch (e) { fail(e); el.disabled = false; } };
   S.H.impopen = el => importWizard(el.dataset.sheet);
   S.H.csv = () => openApi("/api/export/csv?" + qs({ sheet: $("#csvs").value }));
   S.H.csvt = () => openApi("/api/export/csv?" + qs({ sheet: $("#csvs").value, template: 1 }));
@@ -3753,7 +3761,7 @@ const DOC_FONTS = ["Arial", "Calibri", "Tahoma", "Segoe UI", "Times New Roman", 
 PAGES.settings = async (view, parts, q) => {
   const tabs = [["company", "tab_company", can("settings.company")], ["docs", "tab_docs", can("settings.branding")], ["look", "tab_look", true], ["theme", "tab_theme", true], ["notify", "tab_notify", true],
     ["menus", "tab_menus", can("settings.menus")], ["system", "tab_system", can("settings.system") || S.boot.user.is_admin],
-    ["workspace", "tab_workspace", S.boot.user.is_admin || cloudOn()], ["ai", "tab_ai", !!S.boot.user.is_super]].filter(x => x[2]);
+    ["workspace", "tab_workspace", S.boot.user.is_admin || (cloudOn() && can("settings.workspace"))], ["ai", "tab_ai", !!S.boot.user.is_super]].filter(x => x[2]);
   const tab = tabs.find(x => x[0] === q.tab) ? q.tab : tabs[0][0];
   const head = `<div class="tabs">${tabs.map(([k, l]) => `<a href="#/settings?tab=${k}" class="${k === tab ? "on" : ""}">${t(l)}</a>`).join("")}</div>`;
   const st = S.boot.settings;
@@ -4003,18 +4011,28 @@ async function brandingTab(view, head) {
 
 // ------------------------------------------------------------------ users
 // Permission matrix: every section row sets all of its screens at once; each screen can then be set on its own.
+// Below each screen (▸): its tabs, with their own level (or the screen's), and the actions that can be switched off.
+const TAB_LABEL = () => ({ "shop.subscriptions.plans": L2("Plans tab", "تبويب الخطط"), "payroll.attendance.summary": L2("Summary & productivity tab", "تبويب الملخص والإنتاجية"),
+  ...Object.fromEntries(["prices", "items", "expenses", "payroll", "depreciation", "loans", "sales"].map(k => [`reports.forecast.${k}`, L2("Forecast — ", "التنبؤ — ") + (FC_SECTIONS()[k] || k)])) });
+const ACT_LABEL = () => ({ export: L2("Export, print & download", "التصدير والطباعة والتنزيل"), import: L2("Import from Excel / CSV", "الاستيراد من Excel / CSV"), delete: L2("Delete & void", "الحذف والإلغاء") });
 function permMatrix(perms) {
-  const mods = S.boot.enums.modules, subs = S.boot.enums.submodules || {}, L = ["none", "view", "add", "edit"];
+  const mods = S.boot.enums.modules, subs = S.boot.enums.submodules || {}, tabs = S.boot.enums.subtabs || {}, acts = S.boot.enums.actions || [], L = ["none", "view", "add", "edit"];
   const lbl = { none: t("perm_none"), view: t("perm_view"), add: t("perm_add"), edit: t("perm_full") };
   const eff = (m, s) => { const k = `${m}.${s}`; return L.includes(perms[k]) ? perms[k] : (perms[m] || "none"); };
   const radio = (name, key, v, cls) => L.map(l => `<td class="c"><input type="radio" name="${name}" value="${l}" data-pk="${key}" class="${cls}" ${v === l ? "checked" : ""} aria-label="${esc(lbl[l])}"></td>`).join("");
+  const detail = (key, scrLevel) => { const tb = tabs[key] || [], tl = TAB_LABEL(), al = ACT_LABEL();
+    return tb.map(x => { const k = `${key}.${x}`, own = L.includes(perms[k]) ? perms[k] : "";
+        return `<tr class="pdet" data-of="${key}" hidden><td class="tab">↳ ${esc(tl[k] || x)}</td><td colspan="4"><select class="ptab" data-pk="${k}"><option value="">${esc(L2("Same as the screen", "مثل الشاشة"))}</option>${L.map(l => `<option value="${l}" ${own === l ? "selected" : ""}>${esc(lbl[l])}</option>`).join("")}</select></td></tr>`; }).join("")
+      + `<tr class="pdet" data-of="${key}" hidden><td class="tab">↳ ${esc(L2("Allowed actions", "الإجراءات المسموحة"))}</td><td colspan="4"><div class="row" style="gap:14px;flex-wrap:wrap">${acts.map(a =>
+          `<label class="f chk"><input type="checkbox" class="pact" data-pk="${key}!${a}" ${perms[`${key}!${a}`] === "no" ? "" : "checked"}>${esc(al[a] || a)}</label>`).join("")}</div></td></tr>`; };
   return `<div class="row" style="margin:6px 0 10px"><b>${t("preset")}:</b>${["none", "view", "add", "edit"].map(l => `<button type="button" class="btn sm" data-a="pmall" data-l="${l}">${esc({ none: t("pr_none"), view: t("pr_view"), add: t("pr_add"), edit: t("pr_full") }[l])}</button>`).join("")}</div>
-    <p class="muted" style="font-size:.82em;margin:0 0 8px">${t("perm_help")}</p>
+    <p class="muted" style="font-size:.82em;margin:0 0 8px">${t("perm_help")} ${esc(L2("Open ▸ on a screen for its tabs and to switch off exporting, importing or deleting there.", "افتح ▸ بجوار أي شاشة لضبط تبويباتها أو لإيقاف التصدير أو الاستيراد أو الحذف فيها."))}</p>
     <div class="tbl"><table class="perm"><thead><tr><th>${t("module")} / ${t("screen")}</th>${L.map(l => `<th class="c">${esc(lbl[l])}</th>`).join("")}</tr></thead><tbody>
     ${mods.map(m => { const ss = subs[m] || [];
       const secVal = ss.length ? (ss.every(s => eff(m, s) === eff(m, ss[0])) ? eff(m, ss[0]) : "") : (perms[m] || "none");
-      return `<tr class="sec"><td>${esc(t("mod_" + m))}${ss.length ? ` <span class="eff">(${ss.length})</span>` : ""}</td>${radio("ps_" + m, m, secVal, "psec")}</tr>` +
-        ss.map(s => `<tr><td class="scr">${esc(t(window.SUBPERM[`${m}.${s}`] || s))}</td>${radio(`pp_${m}_${s}`, `${m}.${s}`, eff(m, s), "pscr")}</tr>`).join(""); }).join("")}
+      const tog = key => `<button type="button" class="ptog" data-a="ptog" data-k="${key}" aria-label="${esc(L2("Tabs and actions", "التبويبات والإجراءات"))}" title="${esc(L2("Tabs and actions", "التبويبات والإجراءات"))}">▸</button>`;
+      return `<tr class="sec"><td>${ss.length ? "" : tog(m)}${esc(t("mod_" + m))}${ss.length ? ` <span class="eff">(${ss.length})</span>` : ""}</td>${radio("ps_" + m, m, secVal, "psec")}</tr>` + (ss.length ? "" : detail(m)) +
+        ss.map(s => `<tr><td class="scr">${tog(`${m}.${s}`)}${esc(t(window.SUBPERM[`${m}.${s}`] || s))}</td>${radio(`pp_${m}_${s}`, `${m}.${s}`, eff(m, s), "pscr")}</tr>` + detail(`${m}.${s}`)).join(""); }).join("")}
     </tbody></table></div>`;
 }
 function readPerms(f) {
@@ -4027,6 +4045,8 @@ function readPerms(f) {
     const L = ["none", "view", "add", "edit"]; perms[m] = vals.reduce((a, v) => L.indexOf(v) > L.indexOf(a) ? v : a, "none");
     ss.forEach((s, i) => { perms[`${m}.${s}`] = vals[i]; });
   });
+  $$("select.ptab", f).forEach(x => { if (x.value) perms[x.dataset.pk] = x.value; });
+  $$("input.pact", f).forEach(x => { if (!x.checked) perms[x.dataset.pk] = "no"; });
   return perms;
 }
 function wirePerms(f) {
@@ -4038,6 +4058,7 @@ function wirePerms(f) {
       $$(`input[name=ps_${m}]`, f).forEach(r => { r.checked = vals.every(v => v === vals[0]) && r.value === vals[0]; }); }
   });
   S.H.pmall = el => { $$("input.psec, input.pscr", f).forEach(r => { r.checked = r.value === el.dataset.l; }); };
+  S.H.ptog = el => { const rows = $$(`tr.pdet[data-of="${el.dataset.k}"]`, f), open = rows.length && rows[0].hidden; rows.forEach(r => { r.hidden = !open; }); el.textContent = open ? "▾" : "▸"; el.classList.toggle("on", open); };
 }
 PAGES.users = async (view) => {
   const [rows, gr] = await Promise.all([api("GET", "/api/users"), api("GET", "/api/dashboard/groups").catch(() => ({ groups: [] }))]);
@@ -6688,12 +6709,12 @@ const subChip = st => `<span class="chip ${SUB_ST[st][2]}">${esc(L2(SUB_ST[st][0
 const kindL = k => L2((SUB_KIND[k] || SUB_KIND.other)[0], (SUB_KIND[k] || SUB_KIND.other)[1]);
 const everyL = n => n === 1 ? L2("monthly", "شهرياً") : n === 3 ? L2("quarterly", "ربع سنوي") : n === 6 ? L2("every 6 months", "نصف سنوي") : n === 12 ? L2("yearly", "سنوياً") : L2(`every ${n} months`, `كل ${n} شهر`);
 PAGES.subs = async (view, parts, q) => {
-  const tab = q.tab || "subs";
+  const tab = q.tab === "plans" && can("shop.subscriptions.plans") ? "plans" : "subs";
   const add = can("shop.subscriptions", "add"), ed = can("shop.subscriptions", "edit");
   Object.assign(S.H, { subnew: () => subForm(), plannew: () => planForm(),
     subrun: async () => { try { const r = await api("POST", "/api/subscriptions-run", { through: today() });
       toast(r.invoices ? `${r.invoices} ${L2("invoices", "فاتورة")} · ${money(r.amount)}` : L2("Nothing due", "لا يوجد مستحق")); route(); } catch (e) { fail(e); } } });
-  const tabs = `<div class="tabs">${[["subs", L2("Subscriptions", "الاشتراكات")], ["plans", L2("Plans", "الخطط")]].map(([k, l]) => `<a class="tab ${tab === k ? "on" : ""}" href="#/subs?tab=${k}">${esc(l)}</a>`).join("")}</div>`;
+  const tabs = `<div class="tabs">${[["subs", L2("Subscriptions", "الاشتراكات")], ...(can("shop.subscriptions.plans") ? [["plans", L2("Plans", "الخطط")]] : [])].map(([k, l]) => `<a class="tab ${tab === k ? "on" : ""}" href="#/subs?tab=${k}">${esc(l)}</a>`).join("")}</div>`;
   if (tab === "plans") {
     const d = await api("GET", "/api/service-plans");
     S.H.planedit = el => planForm(d.rows.find(p => String(p.id) === el.dataset.id));
@@ -7106,7 +7127,7 @@ async function addImportMenu(view, screen) {
   const names = SCREEN_SHEETS[screen]; if (!names || !view.isConnected) return;
   await impSheets();
   const bar = $(".toolbar", view); if (!bar || $(".impdd", bar)) return;
-  const usable = names.filter(n => (S.cache.impSheets || []).some(s => s.name === n));
+  const usable = names.filter(n => (S.cache.impSheets || []).some(s => s.name === n && (!s.perm || actionOk(s.perm, "import"))));
   if (!usable.length) return;
   const dd = document.createElement("div"); dd.className = "dd impdd";
   dd.innerHTML = `<button class="btn" type="button">⇅ ${L2("Import", "استيراد")} ▾</button><div class="dd-menu">${usable.map(n => `
@@ -7522,6 +7543,9 @@ function crewPay(C) {
 }
 
 // ---------------------------------------------------------------- business type & templates
+// the one warning before any demo data goes in (the server also refuses unless the books are empty and this was confirmed)
+const demoWarn = kind => uiConfirm(L2(`Load the demo company${kind ? ` (${indName(kind)})` : ""}?\n\nThis fills these empty books with about six months of INVENTED data on every screen — customers, invoices, payroll, stock, loans and more. It is only for trying BeyondERP out: don't record real work on top of it.\n\nWhen you're done, erase it from Settings → System before you start with your real data.`,
+  `تحميل الشركة التجريبية${kind ? ` (${indName(kind)})` : ""}؟\n\nسيملأ هذا الدفاتر الفارغة ببيانات وهمية لنحو ستة أشهر في كل الشاشات — عملاء وفواتير ورواتب ومخزون وقروض وغيرها. هي للتجربة فقط: لا تسجّل عملاً حقيقياً فوقها.\n\nعند الانتهاء امسحها من الإعدادات ← النظام قبل البدء ببياناتك الحقيقية.`));
 const IND_NAMES = { general: ["General business", "نشاط عام"], interior: ["Interior design & finishing", "التصميم الداخلي والتشطيبات"],
   contracting: ["Contracting & construction", "المقاولات والإنشاءات"], development: ["Real-estate development", "التطوير العقاري"],
   sales: ["Trading & sales", "التجارة والمبيعات"], investment: ["Investment & holding", "الاستثمار والقابضة"],
@@ -7531,11 +7555,10 @@ PAGES.industry = async (view) => {
   const d = await api("GET", "/api/industries");
   let dm = { empty: false }; try { dm = await api("GET", "/api/demo"); } catch { /* no permission */ }
   S.H.inddemo = async el => { const k = el.dataset.k;
-    if (dm.empty) { if (!await uiConfirm(L2(`Set up this company as “${indName(k)}” and fill it with that business's demo data (invented names and numbers)? Erase it from Settings → System when you are done.`, `ضبط الشركة كـ «${indName(k)}» وملؤها ببيانات تجريبية لهذا النشاط (أسماء وأرقام وهمية)؟ امسحها من الإعدادات ← النظام عند الانتهاء.`))) return; }
-    else { const c = await uiPrompt(L2("These books already hold data. This ERASES everything (a backup is made first), sets up this business type and loads its demo. Type DEMO to continue.", "هذه الدفاتر بها بيانات. سيتم مسح كل شيء (بعد نسخة احتياطية) وضبط نوع النشاط وتحميل بياناته التجريبية. اكتب DEMO للمتابعة."), "");
-      if (c == null) return; el.dataset.c = c; }
+    if (!dm.empty) return uiAlert(L2("These books already hold data, so a demo can't be loaded here — demo data only goes into empty books. To try it, use a new company (or back up, then erase the data in Settings → System).", "هذه الدفاتر بها بيانات، لذا لا يمكن تحميل بيانات تجريبية هنا — تُحمَّل في دفاتر فارغة فقط. للتجربة استخدم شركة جديدة (أو خذ نسخة احتياطية ثم امسح البيانات من الإعدادات ← النظام)."));
+    if (!await demoWarn(k)) return;
     el.disabled = true; el.textContent = L2("Loading…", "جارٍ التحميل…");
-    try { await api("POST", "/api/demo", dm.empty ? { industry: k } : { industry: k, replace: true, confirm: el.dataset.c }); await refreshBoot(); toast(L2("Demo loaded", "تم تحميل البيانات التجريبية")); location.hash = "#/dashboard"; }
+    try { await api("POST", "/api/demo", { industry: k, confirmed: true }); await refreshBoot(); toast(L2("Demo loaded", "تم تحميل البيانات التجريبية")); location.hash = "#/dashboard"; }
     catch (e) { fail(e); el.disabled = false; } };
   const ed = can("settings.menus", "edit");
   S.H.indapply = async el => { const k = el.dataset.k, ty = d.types.find(x => x.key === k);
@@ -9073,9 +9096,9 @@ PAGES.maintenance = async (view) => {
 // ------------------------------------------------------------ attendance
 const AT_ST = { present: ["ok", "Present", "حاضر"], half: ["warn", "Half day", "نصف يوم"], absent: ["bad", "Absent", "غائب"], leave: ["", "Leave", "إجازة"], sick: ["warn", "Sick", "مرضي"] };
 PAGES.attendance = async (view, parts, q) => {
-  const tab = q.tab || "day";
+  const tab = q.tab === "summary" && can("payroll.attendance.summary") ? "summary" : "day";
   const add = can("payroll.attendance", "add");
-  const tabs = `<div class="seg" style="margin-bottom:10px">${[["day", L2("Daily sheet", "كشف اليوم")], ["summary", L2("Summary & productivity", "الملخص والإنتاجية")]].map(([k, l]) => `<button class="btn ${tab === k ? "pri" : ""}" data-a="attab" data-k="${k}">${l}</button>`).join("")}</div>`;
+  const tabs = `<div class="seg" style="margin-bottom:10px">${[["day", L2("Daily sheet", "كشف اليوم")], ...(can("payroll.attendance.summary") ? [["summary", L2("Summary & productivity", "الملخص والإنتاجية")]] : [])].map(([k, l]) => `<button class="btn ${tab === k ? "pri" : ""}" data-a="attab" data-k="${k}">${l}</button>`).join("")}</div>`;
   S.H.attab = el => setQ({ ...q, tab: el.dataset.k });
   if (tab === "summary") {
     const d = await api("GET", "/api/attendance-summary?" + qs(q));

@@ -659,8 +659,19 @@ def _trim(S, key, d, eom):
     return {k: v for k, v in S.items() if v}
 
 
+# what a new company already has before anyone types anything (chart of accounts, default warehouse, tax codes, the
+# general chat room…) and the system's own records; every other table holding a row means the books are in use
+SETUP_TABLES = {"settings", "accounts", "warehouses", "tax_codes", "assets", "offer_types", "chat_rooms", "chat_members", "users",
+                "sessions", "audit_log", "user_profiles", "user_groups", "cloud_local", "ai_threads", "ai_usage", "support_tickets",
+                "rent_models"}
+
+
 def is_empty(db):
-    return not db.one("SELECT 1 FROM journal_entries") and not db.one("SELECT 1 FROM business_units")
+    """True only for a clean slate: no business data anywhere (entries, parties, items, documents, people, chat…)."""
+    for r in db.q("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"):
+        if r["name"] not in SETUP_TABLES and db.one(f'SELECT 1 FROM "{r["name"]}" LIMIT 1'):
+            return False
+    return True
 
 
 def _bank_lines(db, account, date_from, date_to, skip_last=True):

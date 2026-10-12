@@ -23,7 +23,7 @@ from urllib.parse import parse_qs, urlparse
 from . import assets, bankrec, custody, entries, industries, payroll, equity, loans, recurring, rental_docs, rentals, sales, sales_docs, __version__
 from . import accounting as acc
 from . import auth, branding, cloud, documents, einvoice, interchange, looks, reports
-from .db import Database, MODULES, SUBMODULES, SUBTYPES, to_major, to_minor
+from .db import ACTIONS, Database, MODULES, SUBMODULES, SUBTABS, SUBTYPES, to_major, to_minor
 
 STATIC = Path(__file__).resolve().parent / "static"
 MAX_BODY = 25 * 1024 * 1024
@@ -41,6 +41,24 @@ def route_module(method, path):
     for m, rx, module, level, public, fn in ROUTES:
         if m == method and rx.match(path):
             return module
+    return None
+
+
+EXPORT_PATH = re.compile(r"/(export|pdf|xlsx|docx|csv|print|download|workbook|statement-pdf)(/|$)|\.(pdf|xlsx|docx|csv|zip)$")
+ACTION_DENIED = {"export": "Exporting and printing are switched off for you on this screen",
+                 "import": "Importing is switched off for you on this screen",
+                 "delete": "Deleting and voiding are switched off for you on this screen"}
+
+
+def request_action(method, path, q):
+    """The switchable action a request performs on its screen: delete (deleting, voiding, reversing), import, or
+    export (downloads, prints, files)."""
+    if method == "DELETE" or (method in ("POST", "PUT") and re.search(r"/(void|reverse|cancel-entry)$", path)):
+        return "delete"
+    if method == "POST" and "/import" in path:
+        return "import"
+    if method == "GET" and (EXPORT_PATH.search(path) or (q.get("format") or "").lower() in ("pdf", "xlsx", "docx", "csv")):
+        return "export"
     return None
 
 
@@ -182,7 +200,7 @@ def bootstrap(ctx):
                   "payroll_types": list(acc.PAYROLL_TYPES), "stock_types": acc.STOCK_MOVE_TYPES,
                   "entry_kinds": acc.ENTRY_KINDS + sorted({k for k in entries.kinds(db) if k not in acc.ENTRY_KINDS}),
                   "subtypes": SUBTYPES, "modules": MODULES,
-                  "submodules": SUBMODULES, "levels": list(auth.LEVELS),
+                  "submodules": SUBMODULES, "levels": list(auth.LEVELS), "subtabs": SUBTABS, "actions": list(ACTIONS),
                   "doc_kinds": [{"key": k, "en": en, "ar": ar} for k, en, ar, _, _ in branding.DOC_KINDS],
                   "entry_types": entries.for_client(db), "new_menu": entries.menu(db),
                   "menu_items": [{"key": k, "en": en, "ar": ar, "module": m} for k, en, ar, m in entries.MENU_ITEMS],
@@ -1579,17 +1597,17 @@ def _svc():
     return services
 
 
-@route("GET", "/api/service-plans", "shop.subscriptions")
+@route("GET", "/api/service-plans", "shop.subscriptions.plans")
 def svc_plans(ctx):
     return ok({"rows": _svc().plans(ctx.db)})
 
 
-@route("POST", "/api/service-plans", "shop.subscriptions", "add")
+@route("POST", "/api/service-plans", "shop.subscriptions.plans", "add")
 def svc_plan_add(ctx):
     return ok({"id": _svc().save_plan(ctx.db, ctx.body)})
 
 
-@route("PUT", "/api/service-plans/<pid>", "shop.subscriptions", "edit")
+@route("PUT", "/api/service-plans/<pid>", "shop.subscriptions.plans", "edit")
 def svc_plan_edit(ctx, pid):
     _svc().save_plan(ctx.db, ctx.body, pid)
     return ok({})
@@ -3426,7 +3444,7 @@ def att_save(ctx):
     return ok({"saved": n})
 
 
-@route("GET", "/api/attendance-summary", "payroll.attendance")
+@route("GET", "/api/attendance-summary", "payroll.attendance.summary")
 def att_summary(ctx):
     from . import labour
     q = ctx.q
@@ -3705,6 +3723,8 @@ def _sheet_can(ctx, name, level="add"):
     perm = importkit.SHEET_PERM.get(name)
     if not (ctx.can("import_export.import", "edit") or (perm and ctx.can(perm, level))):
         raise PermissionError()
+    if perm and not auth.action_ok(ctx.user, perm, "import"):
+        raise PermissionError(ACTION_DENIED["import"])
 
 
 @route("GET", "/api/import-sheets")
@@ -3755,17 +3775,15 @@ def demo_load(ctx):
     from . import demo
     if not ctx.user["is_admin"]:
         raise PermissionError()
-    replace = ctx.body.get("replace") in (True, 1, "1", "true")
-    if replace:
-        _need_super(ctx, "replace the books with the demo company")
-        if (ctx.body.get("confirm") or "").strip().upper() != "DEMO":
-            raise acc.ValidationError("Type DEMO to replace everything with the demo company")
-        ctx.server.backup("before-demo")
-        keep = {k: ctx.db.setting(k) for k in ("company_name", "language")}
-        _erase(ctx.db, "all")
-        for k, v in keep.items():
-            if v:
-                ctx.db.set_setting(k, v)
+    # demo data only ever goes into empty books, and only when the person confirmed the warning: a mis-click can never
+    # mix invented numbers into real books (to try the demo on books in use: back up, erase in Settings → System, then load)
+    if ctx.body.get("replace") in (True, 1, "1", "true"):
+        raise acc.ValidationError("The demo company can only be loaded into empty books. Back up, erase the data in "
+                                  "Settings → System, then load the demo.")
+    if not demo.is_empty(ctx.db):
+        raise acc.ValidationError("These books already hold data — the demo company can only be loaded into empty books.")
+    if ctx.body.get("confirmed") is not True:
+        raise acc.ValidationError("Confirm the warning to load the demo company")
     # with a business type: that type is set up first (its accounts, menus, payroll lists), then only its kind of data
     kind = ctx.body.get("industry") if ctx.body.get("industry") in demo.INDUSTRY_KEYS else None
     if kind:
@@ -4192,7 +4210,10 @@ def ai_params(ctx):
 @route("GET", "/api/forecast", "reports.forecast")
 def forecast_get(ctx):
     from . import forecast
-    return ok(forecast.build(ctx.db))
+    d = forecast.build(ctx.db)
+    if isinstance(d, dict) and isinstance(d.get("sections"), list):   # each part of the forecast is a tab with its own permission
+        d["sections"] = [x for x in d["sections"] if ctx.can(f"reports.forecast.{x.get('key')}")]
+    return ok(d)
 
 
 @route("GET", "/api/forecast/outlook", "reports.forecast")
@@ -4767,6 +4788,9 @@ class Ctx:
     def require(self, module, level="view"):
         if not self.can(module, level):
             raise PermissionError()
+        act = getattr(self, "action", None)
+        if act and not auth.action_ok(self.user, module, act):
+            raise PermissionError(ACTION_DENIED[act])
 
     def log(self, action, detail=""):
         self.db.log(self.user["username"] if self.user else "", action, detail)
@@ -4843,6 +4867,9 @@ def handle(app, method, target, headers, raw=b"", as_user=None, dry=False):
                 ai.guard(db, user, method, url.path, raw, headers, route_module(method, url.path) or module)   # policy; changes only after check + review
             if module and not auth.can(user, module, level):
                 return ok({"error": "You do not have permission for this"}, 403)
+            action = request_action(method, url.path, q)
+            if module and not auth.action_ok(user, module, action):
+                return ok({"error": ACTION_DENIED[action]}, 403)
             if (method != "GET" and as_user is None and getattr(app, "licensing", False) and not public
                     and not LICENCE_FREE.match(url.path)):
                 from . import licence
@@ -4851,6 +4878,7 @@ def handle(app, method, target, headers, raw=b"", as_user=None, dry=False):
                     return ok({"error": f"{st.get('problem') or 'No licence'} — the books are read-only (view, print and export "
                                         "still work). Enter a licence key in Settings → System → Licence.", "licence": st["state"]}, 402)
             ctx = Ctx(app, db, user, token, q, body, raw, headers)
+            ctx.action = action
             ctx.cloud_hook = getattr(app, "cloud", None)
             return fn(ctx, **match.groupdict())
         return ok({"error": "Not found"}, 404)

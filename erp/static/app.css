@@ -1665,3 +1665,10 @@ tr.pending td{background:color-mix(in srgb,var(--accent) 7%,transparent)}
 .nt-pick{flex:1;text-align:start}.nt-snd.on .nt-pick{font-weight:600}
 .nt-play{border-inline-start:1px solid var(--line)!important;color:var(--brand)!important}
 .nt-own{margin-top:12px;gap:10px;align-items:center}
+/* permissions: tabs and actions under each screen */
+.perm .ptog{border:0;background:transparent;color:var(--muted);cursor:pointer;width:20px;margin-inline-end:4px;font-size:.9em;padding:0}
+.perm .ptog.on,.perm .ptog:hover{color:var(--brand)}
+.perm tr.pdet td{background:color-mix(in srgb,var(--chip) 50%,transparent);font-size:.9em}
+.perm td.tab{padding-inline-start:48px;color:var(--muted)}
+.perm tr.pdet select{max-width:240px}
+.perm tr.pdet .f.chk{margin:0}

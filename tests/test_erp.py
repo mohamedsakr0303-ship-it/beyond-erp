@@ -3969,6 +3969,65 @@ class ChatReactionsAndNotify(unittest.TestCase):
         self.assertEqual(self.call("boss", "GET", "/api/me/profile")[1]["prefs"]["notify"]["sound"], "chime")   # only hers changed
 
 
+class FinerPermissionsAndDemo(unittest.TestCase):
+    """Per-screen action switches (export / import / delete), tabs inside screens with their own level, and demo data
+    only ever into empty books after a confirmed warning."""
+
+    def setUp(self):
+        from erp.server import handle
+        self.handle = handle
+        self.app = type("App", (), {"static": False, "server": None})()
+        self.app.db = self.db = Database(":memory:")
+        auth.create_user(self.db, {"username": "boss", "password": "secret123"}, first=True)
+        auth.create_user(self.db, {"username": "sam", "password": "secret123", "perms": {
+            "shop": "edit", "shop.products": "edit", "shop.subscriptions": "edit", "shop.subscriptions.plans": "none",
+            "shop.products!delete": "no", "reports": "view", "reports.income_statement": "view", "reports.income_statement!export": "no",
+            "reports.forecast": "view", "reports.forecast.loans": "none"}})
+        self.tok = {u: auth.login(self.db, u, "secret123")[0] for u in ("boss", "sam")}
+
+    def call(self, who, method, url, body=None):
+        h = {"x-requested-with": "BeyondERP", "x-session": self.tok[who], "content-type": "application/json"}
+        r = self.handle(self.app, method, url, h, json.dumps(body).encode() if body is not None else b"")
+        return r.status, (json.loads(r.body) if r.ctype.startswith("application/json") else r.body)
+
+    def test_actions_and_tabs(self):
+        u = auth.public_user(self.db.one("SELECT * FROM users WHERE username='sam'"))
+        self.assertEqual(u["perms"]["shop.products!delete"], "no")
+        self.assertEqual(auth.level_of(u, "shop.subscriptions.plans"), "none")
+        self.assertEqual(auth.level_of(u, "shop"), "edit")
+        st, made = self.call("sam", "POST", "/api/products", {"code": "U-1", "name": "Unit 1", "kind": "unit", "price": 100})
+        self.assertEqual(st, 200)
+        st, body = self.call("sam", "DELETE", f"/api/products/{made['id']}")
+        self.assertEqual((st, "switched off" in body["error"]), (403, True))
+        self.assertEqual(self.call("boss", "DELETE", f"/api/products/{made['id']}")[0], 200)
+        # viewing a report still works; printing / exporting it does not
+        self.assertEqual(self.call("sam", "GET", "/api/reports/income_statement")[0], 200)
+        self.assertEqual(self.call("sam", "GET", "/api/reports/income_statement?format=pdf")[0], 403)
+        self.assertEqual(self.call("sam", "GET", "/api/reports/income_statement?format=xlsx")[0], 403)
+        # a tab with its own level
+        self.assertEqual(self.call("sam", "GET", "/api/subscriptions")[0], 200)
+        self.assertEqual(self.call("sam", "GET", "/api/service-plans")[0], 403)
+        keys = [x["key"] for x in self.call("sam", "GET", "/api/forecast")[1]["sections"]]
+        self.assertNotIn("loans", keys)
+        self.assertIn("prices", keys)
+
+    def test_demo_only_into_empty_books(self):
+        self.assertEqual(self.call("boss", "POST", "/api/demo", {})[0], 400)                    # no confirmed warning
+        self.assertEqual(self.call("boss", "POST", "/api/demo", {"replace": True, "confirm": "DEMO"})[0], 400)
+        self.call("boss", "POST", "/api/products", {"code": "U-1", "name": "Unit 1", "kind": "unit", "price": 100})
+        st, body = self.call("boss", "POST", "/api/demo", {"confirmed": True})
+        self.assertEqual((st, "empty books" in body["error"]), (400, True))
+        db2 = Database(":memory:")
+        from erp import demo
+        auth.create_user(db2, {"username": "boss", "password": "secret123"}, first=True)
+        self.assertTrue(demo.is_empty(db2))
+        self.app.db = db2
+        self.tok["boss"] = auth.login(db2, "boss", "secret123")[0]
+        self.assertEqual(self.call("boss", "POST", "/api/demo", {"confirmed": True})[0], 200)
+        self.assertFalse(demo.is_empty(db2))
+        self.assertEqual(self.call("boss", "POST", "/api/demo", {"confirmed": True})[0], 400)   # not twice
+
+
 class PersonalLook(unittest.TestCase):
     """Colours, font, sizes and background pictures belong to each person (on their profile); only a super
     administrator sets the company look, and a large look is stored whole, never cut short."""

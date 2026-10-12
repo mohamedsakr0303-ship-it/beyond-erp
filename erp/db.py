@@ -1634,9 +1634,18 @@ SUBMODULES = {
     "reports": ["partner_pack", "income_statement", "balance_sheet", "cash_flow", "trial_balance", "budget", "aging", "statement", "forecast"],
     "tax": ["codes", "report", "einvoice", "ereceipt"],
     "import_export": ["export", "import"],
-    "settings": ["company", "branding", "menus", "layout", "system", "dashboards"],
+    "settings": ["company", "branding", "menus", "layout", "system", "dashboards", "workspace"],
     "users": ["users", "audit"],
 }
+
+# Third level: tabs inside a screen ("section.screen.tab"); each falls back to its screen's level.
+SUBTABS = {
+    "shop.subscriptions": ["plans"],
+    "payroll.attendance": ["summary"],
+    "reports.forecast": ["prices", "items", "expenses", "payroll", "depreciation", "loans", "sales"],
+}
+# Actions that can be switched off for a screen even when its level allows them ("section.screen!action" = "no").
+ACTIONS = ("export", "import", "delete")
 
 DEFAULT_SETTINGS = {
     "company_name": "",       # asked at setup; until then files say "Company Name"

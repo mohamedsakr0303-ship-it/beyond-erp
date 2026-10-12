@@ -7,7 +7,7 @@ import os
 import secrets
 
 from .accounting import ValidationError, text
-from .db import MODULES, SUBMODULES
+from .db import ACTIONS, MODULES, SUBMODULES, SUBTABS
 
 ITERATIONS = 240_000
 if os.environ.get("BEYOND_ERP_STATIC") == "1":  # browser build: pure-Python hashing is slow, data stays local
@@ -93,6 +93,18 @@ def clean_perms(perms):
             v = perms.get(f"{m}.{s}")
             if v in LEVELS:
                 out[f"{m}.{s}"] = v
+            for a in ACTIONS:
+                if perms.get(f"{m}.{s}!{a}") == "no":
+                    out[f"{m}.{s}!{a}"] = "no"
+        if not subs:
+            for a in ACTIONS:
+                if perms.get(f"{m}!{a}") == "no":
+                    out[f"{m}!{a}"] = "no"
+    for scr, tabs in SUBTABS.items():
+        for tb in tabs:
+            v = perms.get(f"{scr}.{tb}")
+            if v in LEVELS:
+                out[f"{scr}.{tb}"] = v
     return out
 
 
@@ -263,15 +275,34 @@ def level_of(user, key):
     if user["is_admin"]:
         return "edit"
     p = user["perms"]
+    if key.count(".") >= 2:            # a tab inside a screen: its own level, else the screen's
+        v = p.get(key)
+        return v if v in LEVELS else level_of(user, key.rsplit(".", 1)[0])
     if "." in key:
         v = p.get(key)
         return v if v in LEVELS else p.get(key.split(".")[0], "none")
     best = p.get(key, "none")
     for k, v in p.items():
-        if k.startswith(key + ".") and LEVELS.index(v) > LEVELS.index(best):
+        if k.startswith(key + ".") and v in LEVELS and LEVELS.index(v) > LEVELS.index(best):
             best = v
     return best
 
 
 def can(user, module, level="view"):
     return LEVELS.index(level_of(user, module)) >= LEVELS.index(level)
+
+
+def action_ok(user, module, action):
+    """Whether an action (export / import / delete) is allowed on a screen. Off only where a super administrator
+    switched it off ("section.screen!action": "no"); a tab follows its screen; a whole section allows it while any of
+    its screens that this person can open allows it."""
+    if not action or not module or not user or user.get("is_admin"):
+        return True
+    p = user.get("perms") or {}
+    parts = module.split(".")
+    if len(parts) >= 2:
+        return p.get(f"{parts[0]}.{parts[1]}!{action}") != "no"
+    subs = SUBMODULES.get(module) or []
+    if not subs:
+        return p.get(f"{module}!{action}") != "no"
+    return any(p.get(f"{module}.{s}!{action}") != "no" and level_of(user, f"{module}.{s}") != "none" for s in subs)
