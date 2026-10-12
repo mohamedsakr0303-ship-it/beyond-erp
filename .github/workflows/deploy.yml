@@ -36,7 +36,7 @@ jobs:
           fetch-depth: 0
       # The desktop installers (Windows + Mac) take most of the build minutes — Mac minutes count 10×, Windows 2× — so they
       # are built only on demand: Actions → deploy → "Run workflow". A push deploys the tests, database and website only;
-      # the website keeps offering the installers last published on the "desktop-latest" release.
+      # the website keeps offering the installers last published on the "desktop-app" release.
       - name: Build the desktop installers this time?
         id: changed
         run: |
@@ -104,7 +104,10 @@ jobs:
         if: env.SUPABASE_ACCESS_TOKEN == '' || env.PROJECT_ID == ''
         run: echo "::notice::Supabase secrets not set yet — database step skipped (see docs/SUPABASE_SETUP.md)"
 
-  # The desktop app: a Windows installer and a Mac app, offered on the website's "Get the app" page.
+  # The desktop app: a Windows installer and a Mac app, offered on the website's "Get the app" page. They are the
+  # connected app only — a small launcher that opens the website in its own window, like the phone apps. The offline
+  # editions (the whole app inside) are not built here: this repository is public, so anything it publishes is too.
+  # Build them on your own computer (pyinstaller packaging/beyond_erp.spec) and keep them private.
   desktop:
     needs: test
     if: needs.test.outputs.desktop == 'true'
@@ -115,7 +118,7 @@ jobs:
         os: [windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     permissions:
-      contents: write   # publishes the installers on the "desktop-latest" release
+      contents: write   # publishes the installers on the "desktop-app" release
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -132,7 +135,6 @@ jobs:
         run: |
           echo "$SITE" > packaging/site_url.txt
           if [ -n "$URL" ] && [ -n "$KEY" ]; then printf '{"url": "%s", "key": "%s"}' "$URL" "$KEY" > erp/workspace_preset.json; fi
-      - run: pyinstaller packaging/beyond_erp.spec --noconfirm
       - run: pyinstaller packaging/online.spec --noconfirm --distpath dist-online --workpath build-online
       - name: Windows installers
         if: runner.os == 'Windows'
@@ -143,24 +145,21 @@ jobs:
           if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress; $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
           & $iscc "/DAppVersion=$v" /DOnline packaging\installer.iss
           if ($LASTEXITCODE -ne 0) { exit 1 }
-          & $iscc "/DAppVersion=$v" packaging\installer.iss
-          if ($LASTEXITCODE -ne 0) { exit 1 }
       - name: Mac apps
         if: runner.os == 'macOS'
         run: |
           ditto -c -k --keepParent "dist-online/BeyondERP.app" BeyondERP-mac.zip
-          ditto -c -k --keepParent "dist/BeyondERP Offline.app" BeyondERP-Offline-mac.zip
       # The installers go on a GitHub release instead of the Actions artifact storage, which a private repository's
       # free quota runs out of; release files have no such limit and stay until the next build replaces them.
-      - name: Publish the installers on the desktop-latest release
+      - name: Publish the installers on the desktop-app release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view desktop-latest >/dev/null 2>&1 || gh release create desktop-latest --prerelease \
-            --title "Desktop apps (latest build)" --notes "Built automatically from main. Private: the offline editions are only here (never on the website); the connected app is also offered on the website."
-          files=$(ls dist-installer/*.exe BeyondERP-mac.zip BeyondERP-Offline-mac.zip 2>/dev/null || true)
-          if [ -n "$files" ]; then gh release upload desktop-latest $files --clobber; fi
+          gh release view desktop-app >/dev/null 2>&1 || gh release create desktop-app --prerelease \
+            --title "BeyondERP desktop app (latest build)" --notes "The connected desktop app: opens the BeyondERP website in its own window. Built from main; also offered on the website."
+          files=$(ls dist-installer/BeyondERP-Setup.exe BeyondERP-mac.zip 2>/dev/null || true)
+          if [ -n "$files" ]; then gh release upload desktop-app $files --clobber; fi
 
   web:
     needs: [test, database, desktop]
@@ -188,7 +187,7 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release download desktop-latest -R "${{ github.repository }}" -D dl --clobber
+        run: gh release download desktop-app -R "${{ github.repository }}" -D dl --clobber
       - name: Add the public downloads (the connected desktop app only)
         env:
           SITE: ${{ vars.SITE_URL || format('https://{0}.pages.dev/', vars.CLOUDFLARE_PAGES_PROJECT || 'beyond-erp') }}

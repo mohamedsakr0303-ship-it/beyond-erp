@@ -29,11 +29,11 @@ another company.
 
 On the hosted site open the user menu → **Get the app**:
 * **BeyondERP** (Windows installer / Mac app) — opens the website in its own window: same sign-in, same books.
-* **BeyondERP Offline** (Windows installer / Mac app) — the whole app on the computer. **Not public**: it carries the
-  whole app, so it is only on the private GitHub release `desktop-latest` (refreshed by every deploy); the platform
-  owner sees a link to it under Get the app.
-* The installers (`packaging/`) are rebuilt by GitHub Actions only when the app code changes (`erp/`, `run.py`,
-  `packaging/`, `requirements.txt`) or when the workflow is run by hand (Actions → deploy → Run workflow); other
+* **BeyondERP Offline** (Windows installer / Mac app) — the whole app on the computer. **Not public**, and not built by
+  GitHub Actions while this repository is public (anything a public repository publishes is public too): build it on your
+  own computer with `pyinstaller packaging/beyond_erp.spec` and keep it private. Older builds stay on the `desktop-latest`
+  release — keep that release a draft so only the owner sees it.
+* The connected installers (`packaging/`) are rebuilt by GitHub Actions only when the workflow is run by hand (Actions → deploy → Run workflow); other
   pushes keep the ones already on the site. This keeps the free 2,000 build minutes a month far from running out.
 * **Phone / tablet** — the site is installable (Android: ⋮ → Install app; iPhone: Share → Add to Home Screen), opens
   full-screen and keeps an offline copy of the app.

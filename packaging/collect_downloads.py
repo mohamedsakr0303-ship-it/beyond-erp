@@ -36,7 +36,7 @@ if site:
 live_files = {f["file"]: f for f in live.get("files", [])}
 reused = False
 # Only the connected desktop app (a small launcher that opens the website) is public. The offline editions carry the whole
-# app, so they stay on the private GitHub release ("desktop-latest") for the owner and are never put on the website.
+# app, so they are never put on the website (nor built by Actions while the repository is public).
 wanted = [("windows", "BeyondERP-Setup.exe"), ("mac", "BeyondERP-mac.zip")]
 files = []
 for kind, name in wanted:
