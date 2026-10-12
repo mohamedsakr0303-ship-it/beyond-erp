@@ -510,6 +510,12 @@ const hiddenMods = () => (S.boot && S.boot.settings && S.boot.settings.hidden_mo
 // hidden for everyone in Settings → Menus: a whole section ("sales") or one screen ("sales.offers")
 const shown = key => String(key).split("|").some(k => !hiddenMods().includes(k.split(".")[0]) && !hiddenMods().includes(k));
 
+// sliders show their filled part (WebKit has no built-in fill): kept in step with the value wherever a slider appears
+const syncRange = el => { const lo = +el.min || 0, hi = el.max === "" ? 100 : +el.max, v = +el.value;
+  el.style.setProperty("--p", `${hi > lo ? Math.max(0, Math.min(100, (v - lo) / (hi - lo) * 100)) : 0}%`); };
+document.addEventListener("input", e => { if (e.target.type === "range") syncRange(e.target); }, true);
+new MutationObserver(() => $$('input[type=range]').forEach(syncRange)).observe(document.documentElement, { childList: true, subtree: true });
+
 // ---------------------------------------------------------------- events
 document.addEventListener("click", e => {
   // phones / narrow windows: tapping anywhere outside the open side menu closes it

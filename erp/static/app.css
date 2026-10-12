@@ -1672,3 +1672,16 @@ tr.pending td{background:color-mix(in srgb,var(--accent) 7%,transparent)}
 .perm td.tab{padding-inline-start:48px;color:var(--muted)}
 .perm tr.pdet select{max-width:240px}
 .perm tr.pdet .f.chk{margin:0}
+
+/* sliders (volume, picture strength, font size…): no input padding / border, so 100% sits exactly at the end of the
+   track on every browser and phone; one look in light and dark */
+input[type=range],:root[data-theme="dark"] input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:28px;padding:0;margin:4px 0;border:0;border-radius:0;
+  background:transparent;box-shadow:none;cursor:pointer;--rf:var(--brand)}
+input[type=range]:focus{outline:none;box-shadow:none}
+input[type=range]::-webkit-slider-runnable-track{height:6px;border-radius:999px;background:linear-gradient(90deg,var(--rf) var(--p,0%),var(--line) var(--p,0%))}
+[dir=rtl] input[type=range]::-webkit-slider-runnable-track{background:linear-gradient(270deg,var(--rf) var(--p,0%),var(--line) var(--p,0%))}
+input[type=range]::-moz-range-track{height:6px;border-radius:999px;background:var(--line)}
+input[type=range]::-moz-range-progress{height:6px;border-radius:999px;background:var(--rf)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;margin-top:-7px;border-radius:50%;background:var(--rf);border:3px solid var(--panel);box-shadow:0 1px 4px rgba(0,0,0,.35)}
+input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:var(--rf);border:3px solid var(--panel);box-shadow:0 1px 4px rgba(0,0,0,.35)}
+input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 4px color-mix(in srgb,var(--rf) 30%,transparent)}
