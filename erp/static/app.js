@@ -3808,7 +3808,7 @@ function kbForm(a) {
 }
 PAGES.kb = async (view, parts, q) => {
   if (parts[1]) {
-    const a = await api("GET", "/api/kb/" + parts[1]), mine = a.created_by === S.boot.user.username || S.boot.user.is_admin;
+    const a = await api("GET", "/api/kb/" + parts[1]), mine = (a.created_by === S.boot.user.username && can("team.kb", "add")) || can("team.kb", "edit");
     $("#ttl").textContent = a.title;
     S.H.kbedit = () => kbForm(a);
     S.H.kbdel = async () => { if (!await uiConfirm(L2("Delete this article?", "حذف هذا المقال؟"))) return; try { await api("DELETE", "/api/kb/" + a.id); location.hash = "#/kb"; } catch (e) { fail(e); } };
@@ -3820,7 +3820,7 @@ PAGES.kb = async (view, parts, q) => {
   }
   const d = await api("GET", "/api/kb?" + qs(q)); S.cache.kbcats = d.categories;
   S.H.kbnew = () => kbForm({ category: q.category || "" });
-  view.innerHTML = `<div class="toolbar"><button class="btn pri" data-a="kbnew">+ ${esc(L2("New article", "مقال جديد"))}</button>
+  view.innerHTML = `<div class="toolbar">${can("team.kb", "add") ? `<button class="btn pri" data-a="kbnew">+ ${esc(L2("New article", "مقال جديد"))}</button>` : ""}
       <span class="spacer"></span>${S.ai && S.ai.allowed ? `<span class="muted" style="font-size:.85em">✨ ${esc(L2("The assistant can answer from these articles.", "يستطيع المساعد الإجابة من هذه المقالات."))}</span>` : ""}</div>` +
     filterBar(q, ["q"]) + (d.categories.length ? `<div class="row" style="gap:6px;margin-bottom:10px"><a class="chip ${!q.category ? "ok" : ""}" href="#/kb">${esc(t("all"))}</a>${d.categories.map(c => `<a class="chip ${q.category === c ? "ok" : ""}" href="#/kb?${qs({ category: c })}">${esc(c)}</a>`).join("")}</div>` : "") +
     (d.rows.length ? `<div class="kb-grid">${d.rows.map(r => `<a class="card kb-card" href="#/kb/${r.id}" dir="auto"><div class="row">${r.pinned ? "📌" : ""}<b>${esc(r.title)}</b><span class="spacer"></span>${r.category ? `<span class="chip">${esc(r.category)}</span>` : ""}</div>
@@ -4722,6 +4722,7 @@ const TAB_LABEL = () => ({ "shop.subscriptions.plans": L2("Plans tab", "تبوي
   ...Object.fromEntries(["prices", "items", "expenses", "payroll", "depreciation", "loans", "sales"].map(k => [`reports.forecast.${k}`, L2("Forecast — ", "التنبؤ — ") + (FC_SECTIONS()[k] || k)])) });
 const ACT_LABEL = () => ({ export: L2("Export, print & download", "التصدير والطباعة والتنزيل"), import: L2("Import from Excel / CSV", "الاستيراد من Excel / CSV"), delete: L2("Delete & void", "الحذف والإلغاء") });
 function permMatrix(perms) {
+  perms = { ...(S.boot.enums.perm_defaults || {}), ...perms };     // sections everyone has until set (workplace tools)
   const mods = S.boot.enums.modules, subs = S.boot.enums.submodules || {}, tabs = S.boot.enums.subtabs || {}, acts = S.boot.enums.actions || [], L = ["none", "view", "add", "edit"];
   const lbl = { none: t("perm_none"), view: t("perm_view"), add: t("perm_add"), edit: t("perm_full") };
   const eff = (m, s) => { const k = `${m}.${s}`; return L.includes(perms[k]) ? perms[k] : (perms[m] || "none"); };
@@ -8795,7 +8796,7 @@ renderShell = function () {   // eslint-disable-line no-func-assign
   _renderShell();
   const p = S.boot.profile || {}, u = me();
   const av = $(".ucard .avatar"); if (av && p.avatar) av.outerHTML = `<img class="avatar av" src="${esc(p.avatar)}" alt="">`;
-  const um = $(".ucard .dd-menu"); if (um && !$('a[href="#/profile"]', um)) um.insertAdjacentHTML("afterbegin", `<a href="#/profile">${svg("user")} ${esc(L2("My profile", "ملفي الشخصي"))}</a><a href="#/my-day">${svg("clock")} ${esc(L2("My day (start / end)", "يومي (بداية / نهاية)"))}</a><a href="#/notifications">${svg("bell")} ${esc(L2("Notifications", "الإشعارات"))}</a>`);
+  const um = $(".ucard .dd-menu"); if (um && !$('a[href="#/profile"]', um)) um.insertAdjacentHTML("afterbegin", `<a href="#/profile">${svg("user")} ${esc(L2("My profile", "ملفي الشخصي"))}</a>${can("team.myday", "add") ? `<a href="#/my-day">${svg("clock")} ${esc(L2("My day (start / end)", "يومي (بداية / نهاية)"))}</a>` : ""}<a href="#/notifications">${svg("bell")} ${esc(L2("Notifications", "الإشعارات"))}</a>`);
   if (um && !$('a[href="#/settings?tab=perms"]', um)) { const pr = $('a[href="#/profile"]', um); if (pr) pr.insertAdjacentHTML("afterend", `<a href="#/settings?tab=perms">${svg("shield")} ${esc(L2("Device permissions", "أذونات الجهاز"))}</a>`); }
   if (!C2.started) { C2.started = true; setTimeout(pollChat, 1200); setTimeout(notifyNudge, 6000); }
   void u;

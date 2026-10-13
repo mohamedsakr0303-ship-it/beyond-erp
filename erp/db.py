@@ -1801,7 +1801,7 @@ def normal_for(acc_type: str, subtype: str) -> str:
 
 MODULES = ["dashboard", "crm", "care", "business_units", "projects", "contracts", "sales", "shop", "estimating", "purchasing", "stock", "equipment",
            "rentals", "payroll", "assets",
-           "accounting", "partners", "reports", "tax", "import_export", "settings", "users"]
+           "accounting", "partners", "reports", "tax", "import_export", "settings", "users", "team"]
 
 # Second-level permissions: each screen can have its own level, or inherit its section's.
 SUBMODULES = {
@@ -1825,8 +1825,9 @@ SUBMODULES = {
     "reports": ["partner_pack", "income_statement", "balance_sheet", "cash_flow", "trial_balance", "budget", "aging", "statement", "forecast"],
     "tax": ["codes", "report", "einvoice", "ereceipt"],
     "import_export": ["export", "import"],
-    "settings": ["company", "branding", "menus", "layout", "system", "dashboards", "workspace", "automations"],
+    "settings": ["company", "branding", "menus", "layout", "system", "dashboards", "workspace", "automations", "api"],
     "users": ["users", "audit"],
+    "team": ["kb", "myday"],        # everyone's workplace tools: knowledge base, my day (open to all until set)
 }
 
 # Third level: tabs inside a screen ("section.screen.tab"); each falls back to its screen's level.
@@ -1835,6 +1836,10 @@ SUBTABS = {
     "payroll.attendance": ["summary"],
     "reports.forecast": ["prices", "items", "expenses", "payroll", "depreciation", "loans", "sales"],
 }
+# Levels a person has before anyone sets them, for sections and screens added after people were set up: the
+# workplace tools are open to everyone (read + write their own); API keys start from "System settings".
+PERM_DEFAULTS = {"team": "add"}
+PERM_FROM = {"settings.api": "settings.system"}
 # Actions that can be switched off for a screen even when its level allows them ("section.screen!action" = "no").
 ACTIONS = ("export", "import", "delete")
 

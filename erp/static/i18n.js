@@ -171,7 +171,7 @@ window.I18N = {
   m_ereceipts: ["E-Receipts (B2C POS)", "الإيصال الإلكتروني"],
   "Subcontractor Certificate": ["Subcontractor Certificate", "مستخلص مقاول باطن"], "Equipment Usage": ["Equipment Usage", "تشغيل معدات"],
   "Equipment Maintenance": ["Equipment Maintenance", "صيانة معدات"], "E-Receipt": ["E-Receipt", "إيصال إلكتروني"],
-  mod_settings: ["Settings", "الإعدادات"], mod_users: ["Users & audit log", "المستخدمون والتدقيق"],
+  mod_settings: ["Settings", "الإعدادات"], mod_users: ["Users & audit log", "المستخدمون والتدقيق"], mod_team: ["Workplace (everyone's tools)", "مكان العمل (أدوات الجميع)"], m_myday: ["My day (start / end)", "يومي (بداية / نهاية)"],
   // ---- voucher types
   "Direct Cost": ["Direct Cost", "تكلفة مباشرة"], "Operating Expense": ["Operating Expense", "مصروف تشغيلي"], "Payroll Accrual": ["Payroll Accrual", "استحقاق أجور"],
   "Payment Voucher": ["Payment Voucher", "سند صرف"], "Receipt Voucher": ["Receipt Voucher", "سند قبض"], "Sales Invoice": ["Sales Invoice", "فاتورة مبيعات"],
@@ -210,7 +210,7 @@ window.SUBTYPE_LABELS = {
 };
 // sidebar: [group, [ [menuKey, route, module, icon], ... ]]
 window.MENU = [
-  ["g_home", [["m_dashboard", "dashboard", "dashboard", "◧"], ["m_chat", "chat", "chat", "💬"], ["m_kb", "kb", "chat", "📖"], ["m_assistant", "assistant", "chat.ai", "✦"], ["m_calcs", "calculators", "dashboard", "🧮"]]],
+  ["g_home", [["m_dashboard", "dashboard", "dashboard", "◧"], ["m_chat", "chat", "chat", "💬"], ["m_kb", "kb", "team.kb", "📖"], ["m_assistant", "assistant", "chat.ai", "✦"], ["m_calcs", "calculators", "dashboard", "🧮"]]],
   ["g_bu", [["m_bus", "bus", "business_units.units", "▦"]]],
   ["g_care", [["m_care_visits", "care-visits", "care.visits", "✚"], ["m_care_patients", "care-patients", "care.patients", "☺"], ["m_care_services", "care-services", "care.services", "₤"],
              ["m_care_packages", "care-packages", "care.packages", "▦"], ["m_care_claims", "care-claims", "care.claims", "⇲"], ["m_care_reports", "care-reports", "care.reports", "◔"]]],
@@ -233,7 +233,7 @@ window.MENU = [
   ["g_rep", [["m_ppack", "report/partner_pack", "reports.partner_pack", "▣"], ["m_forecast", "forecast", "reports.forecast", "◷"], ["m_is", "report/income_statement", "reports.income_statement", "◰"], ["m_bs", "report/balance_sheet", "reports.balance_sheet", "◱"], ["m_cf", "report/cash_flow", "reports.cash_flow", "◲"],
              ["m_tb", "report/trial_balance", "reports.trial_balance", "◳"], ["m_bup", "report/bu_pnl", "business_units.profitability", "◴"],
              ["m_budget_rep", "budget-report", "reports.budget", "◎"], ["m_aging", "aging", "reports.aging", "⏳"], ["m_statement", "statement", "reports.statement", "☰"]]],
-  ["g_sys", [["m_data", "data", "import_export", "⇅"], ["m_settings", "settings", "settings", "⚙"], ["m_automations", "automations", "settings.automations", "↻"], ["m_api", "api-keys", "settings.system", "⌘"], ["m_industry", "industry", "settings", "◎"], ["m_users", "users", "users.users", "☷"], ["m_audit", "audit", "users.audit", "⌚"]]],
+  ["g_sys", [["m_data", "data", "import_export", "⇅"], ["m_settings", "settings", "settings", "⚙"], ["m_automations", "automations", "settings.automations", "↻"], ["m_api", "api-keys", "settings.api", "⌘"], ["m_industry", "industry", "settings", "◎"], ["m_users", "users", "users.users", "☷"], ["m_audit", "audit", "users.audit", "⌚"]]],
 ];
 // labels for screen-level permissions (section.screen)
 window.SUBPERM = {
@@ -255,6 +255,7 @@ window.SUBPERM = {
   "import_export.export": "p_export", "import_export.import": "p_import",
   "settings.company": "p_company", "settings.branding": "p_branding", "settings.menus": "menu_names", "settings.layout": "p_layout", "settings.system": "p_system", "settings.dashboards": "p_dashboards",
   "users.users": "m_users", "users.audit": "m_audit",
+  "settings.api": "m_api", "team.kb": "m_kb", "team.myday": "m_myday", "settings.workspace": "tab_workspace", "reports.forecast": "m_forecast",
 };
 
 Object.assign(window.I18N, {

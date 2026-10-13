@@ -4760,6 +4760,39 @@ class KnowledgeBaseAndApiKeys(unittest.TestCase):
         kb.save(db, {"title": "Return policy (2026)", "body": "30 days"}, boss, kid)   # administrators may
         self.assertEqual(kb.get(db, kid)["updated_by"], "boss")
 
+    def test_new_permissions(self):
+        """Workplace tools (knowledge base, my day) are open to people set up before they existed; super admins can
+        narrow them. API keys got their own screen, starting from each person's "System settings" level."""
+        from erp.server import handle
+        app = type("App", (), {"static": False})()
+        app.db = db = Database(":memory:")
+        auth.create_user(db, {"username": "boss", "password": "secret123"}, first=True)
+        auth.create_user(db, {"username": "old", "password": "secret123", "perms": {"crm": "view", "settings": "edit", "settings.company": "edit", "settings.system": "none"}})
+        auth.create_user(db, {"username": "sys", "password": "secret123", "perms": {"settings": "edit", "settings.system": "edit"}})
+        auth.create_user(db, {"username": "reader", "password": "secret123", "perms": {"team": "view"}})
+        auth.create_user(db, {"username": "office", "password": "secret123", "perms": {"team": "add", "team.myday": "none"}})
+        pu = {u: auth.public_user(db.one("SELECT * FROM users WHERE username=?", (u,))) for u in ("old", "sys", "reader", "office")}
+        self.assertEqual((auth.level_of(pu["old"], "team.kb"), auth.level_of(pu["old"], "team.myday")), ("add", "add"))
+        self.assertEqual((auth.level_of(pu["old"], "settings.api"), auth.level_of(pu["sys"], "settings.api")), ("none", "edit"))
+        tok = {u: auth.login(db, u, "secret123")[0] for u in ("boss", "old", "sys", "reader", "office")}
+
+        def call(who, method, url, body=None):
+            h = {"x-requested-with": "BeyondERP", "x-session": tok[who], "content-type": "application/json"}
+            return self.handle_status(handle(app, method, url, h, json.dumps(body).encode() if body is not None else b""))
+        self.handle_status = lambda r: r.status
+        self.assertEqual(call("old", "GET", "/api/api-keys"), 403)       # had no System settings: still no API keys
+        self.assertEqual(call("sys", "GET", "/api/api-keys"), 200)
+        self.assertEqual(call("old", "POST", "/api/kb", {"title": "How we quote"}), 200)
+        self.assertEqual(call("reader", "GET", "/api/kb"), 200)
+        self.assertEqual(call("reader", "POST", "/api/kb", {"title": "x"}), 403)   # read only
+        kid = db.one("SELECT id FROM kb_pages")["id"]
+        self.assertEqual(call("office", "PUT", f"/api/kb/{kid}", {"title": "mine now"}), 403)   # someone else's article
+        db.x("UPDATE users SET perms=? WHERE username='office'", (json.dumps({"team": "edit", "team.myday": "none"}),))
+        self.assertEqual(call("office", "PUT", f"/api/kb/{kid}", {"title": "Tidied"}), 200)    # full rights on the KB
+        self.assertEqual(call("office", "POST", "/api/my-day/start", {}), 403)               # my day switched off for them
+        self.assertEqual(call("reader", "POST", "/api/my-day/start", {}), 403)               # view only
+        self.assertEqual(call("old", "POST", "/api/my-day/start", {}), 200)
+
     def test_api_keys(self):
         from erp.server import ERPServer
         tmp = tempfile.TemporaryDirectory()

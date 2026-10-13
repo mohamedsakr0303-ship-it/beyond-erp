@@ -23,7 +23,7 @@ from urllib.parse import parse_qs, urlparse
 from . import assets, bankrec, custody, entries, industries, payroll, equity, loans, recurring, rental_docs, rentals, sales, sales_docs, __version__
 from . import accounting as acc
 from . import auth, branding, cloud, documents, einvoice, interchange, looks, reports
-from .db import ACTIONS, Database, MODULES, SUBMODULES, SUBTABS, SUBTYPES, to_major, to_minor
+from .db import ACTIONS, Database, MODULES, PERM_DEFAULTS, SUBMODULES, SUBTABS, SUBTYPES, to_major, to_minor
 
 STATIC = Path(__file__).resolve().parent / "static"
 MAX_BODY = 25 * 1024 * 1024
@@ -200,7 +200,7 @@ def bootstrap(ctx):
                   "payroll_types": list(acc.PAYROLL_TYPES), "stock_types": acc.STOCK_MOVE_TYPES,
                   "entry_kinds": acc.ENTRY_KINDS + sorted({k for k in entries.kinds(db) if k not in acc.ENTRY_KINDS}),
                   "subtypes": SUBTYPES, "modules": MODULES,
-                  "submodules": SUBMODULES, "levels": list(auth.LEVELS), "subtabs": SUBTABS, "actions": list(ACTIONS),
+                  "submodules": SUBMODULES, "levels": list(auth.LEVELS), "subtabs": SUBTABS, "actions": list(ACTIONS), "perm_defaults": PERM_DEFAULTS,
                   "doc_kinds": [{"key": k, "en": en, "ar": ar} for k, en, ar, _, _ in branding.DOC_KINDS],
                   "entry_types": entries.for_client(db), "new_menu": entries.menu(db),
                   "menu_items": [{"key": k, "en": en, "ar": ar, "module": m} for k, en, ar, m in entries.MENU_ITEMS],
@@ -883,13 +883,13 @@ def approval_withdraw(ctx, aid):
 
 # ---------------------------------------------------------------- customers & deals (erp/crm.py)
 # ================================================================= API keys
-@route("GET", "/api/api-keys", "settings.system", "edit")
+@route("GET", "/api/api-keys", "settings.api", "edit")
 def api_keys_list(ctx):
     return ok({"rows": auth.api_keys(ctx.db), "people": [r["username"] for r in ctx.db.q("SELECT username FROM users WHERE active=1 ORDER BY username")],
                "server": getattr(ctx.app, "static", False) is not True})
 
 
-@route("POST", "/api/api-keys", "settings.system", "edit")
+@route("POST", "/api/api-keys", "settings.api", "edit")
 def api_keys_add(ctx):
     u = ctx.db.one("SELECT id FROM users WHERE username=? AND active=1", (ctx.body.get("username") or ctx.user["username"],))
     if not u:
@@ -899,7 +899,7 @@ def api_keys_add(ctx):
     return ok({"id": kid, "key": key})
 
 
-@route("DELETE", "/api/api-keys/<kid>", "settings.system", "edit")
+@route("DELETE", "/api/api-keys/<kid>", "settings.api", "edit")
 def api_keys_revoke(ctx, kid):
     auth.revoke_api_key(ctx.db, kid)
     ctx.log("api_key.revoke", kid)
@@ -915,58 +915,58 @@ def api_docs(ctx):
 
 
 # ================================================================= knowledge base (kb.py)
-@route("GET", "/api/kb")
+@route("GET", "/api/kb", "team.kb")
 def kb_list(ctx):
     """The company knowledge base: its own how-tos, policies and answers (search with q). Check it when asked how the company does something."""
     from . import kb
     return ok(kb.listing(ctx.db, ctx.q.get("q"), ctx.q.get("category")))
 
 
-@route("GET", "/api/kb/<kid>")
+@route("GET", "/api/kb/<kid>", "team.kb")
 def kb_get(ctx, kid):
     """One knowledge base article with its full text."""
     from . import kb
     return ok(kb.get(ctx.db, kid))
 
 
-@route("POST", "/api/kb")
+@route("POST", "/api/kb", "team.kb", "add")
 def kb_add(ctx):
     """Write a knowledge base article: {title, body, category, pinned}."""
     from . import kb
     return ok({"id": kb.save(ctx.db, ctx.body, ctx.user)})
 
 
-@route("PUT", "/api/kb/<kid>")
+@route("PUT", "/api/kb/<kid>", "team.kb", "add")
 def kb_edit(ctx, kid):
-    """Change a knowledge base article (its writer or an administrator)."""
+    """Change a knowledge base article (its writer, or anyone with full rights on the knowledge base)."""
     from . import kb
-    return ok({"id": kb.save(ctx.db, ctx.body, ctx.user, kid)})
+    return ok({"id": kb.save(ctx.db, ctx.body, ctx.user, kid, any_article=ctx.can("team.kb", "edit"))})
 
 
-@route("DELETE", "/api/kb/<kid>")
+@route("DELETE", "/api/kb/<kid>", "team.kb", "add")
 def kb_delete(ctx, kid):
-    """Delete a knowledge base article (its writer or an administrator)."""
+    """Delete a knowledge base article (its writer, or anyone with full rights on the knowledge base)."""
     from . import kb
-    kb.delete(ctx.db, kid, ctx.user)
+    kb.delete(ctx.db, kid, ctx.user, any_article=ctx.can("team.kb", "edit"))
     return ok()
 
 
 # ================================================================= my day (workdays.py)
-@route("GET", "/api/my-day")
+@route("GET", "/api/my-day", "team.myday")
 def my_day(ctx):
     """The signed-in person's working day today (started? ended?) and a draft report of what they did."""
     from . import workdays
     return ok(workdays.mine(ctx.db, ctx.user))
 
 
-@route("POST", "/api/my-day/start")
+@route("POST", "/api/my-day/start", "team.myday", "add")
 def my_day_start(ctx):
     """Start my working day (with lat / lng when location is shared)."""
     from . import workdays
     return ok({"id": workdays.start(ctx.db, ctx.user, ctx.body)})
 
 
-@route("POST", "/api/my-day/end")
+@route("POST", "/api/my-day/end", "team.myday", "add")
 def my_day_end(ctx):
     """End my working day with a short report."""
     from . import workdays

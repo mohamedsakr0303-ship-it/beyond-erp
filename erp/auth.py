@@ -7,7 +7,7 @@ import os
 import secrets
 
 from .accounting import ValidationError, text
-from .db import ACTIONS, MODULES, SUBMODULES, SUBTABS
+from .db import ACTIONS, MODULES, PERM_DEFAULTS, PERM_FROM, SUBMODULES, SUBTABS
 
 ITERATIONS = 240_000
 if os.environ.get("BEYOND_ERP_STATIC") == "1":  # browser build: pure-Python hashing is slow, data stays local
@@ -87,7 +87,10 @@ def check_password(pw: str, stored: str) -> bool:
 def clean_perms(perms):
     """Section levels (always present) + optional per-screen overrides ('section.screen'); 'inherit' = no override."""
     perms = perms or {}
-    out = {m: (perms.get(m) if perms.get(m) in LEVELS else "none") for m in MODULES}
+    out = {m: (perms.get(m) if perms.get(m) in LEVELS else PERM_DEFAULTS.get(m, "none")) for m in MODULES}
+    for new, old in PERM_FROM.items():      # a screen split off later keeps the level of the screen it came from
+        if perms.get(new) not in LEVELS and perms.get(old) in LEVELS:
+            perms = {**perms, new: perms[old]}
     for m, subs in SUBMODULES.items():
         for s in subs:
             v = perms.get(f"{m}.{s}")
