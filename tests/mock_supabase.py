@@ -413,13 +413,27 @@ class Handler(BaseHTTPRequestHandler):
         if fn == "desk_pages":
             return 200, [{**x, "new": sum(1 for r in st.inbox if r["page_id"] == x["id"] and r["status"] == "new")}
                          for x in st.pages.values() if x["company_id"] == cid]
-        if fn == "desk_page_save":
+        if fn == "desk_publishers":
             if not admin:
                 return _err("42501", "only administrators of this company can do this", 403)
+            alls, signs = {e.lower() for e in p.get("p_all") or []}, {e.lower() for e in p.get("p_sign") or []}
+            for (c, e), x in st.members.items():
+                if c == cid:
+                    x["desk_publish"] = "all" if e.lower() in alls else "sign" if e.lower() in signs else ""
+            return 200, sum(1 for k in st.members if k[0] == cid)
+        if fn == "desk_my_publish":
+            return 200, "all" if admin else m.get("desk_publish", "")
+        if fn == "desk_page_save":
+            kind = p.get("p_kind")
             if p.get("p_id"):
                 pg = st.pages.get(p["p_id"])
                 if not pg or pg["company_id"] != cid:
                     return _err("P0002", "no such page", 404)
+                kind = pg["kind"]
+            pub = m.get("desk_publish", "")
+            if not (admin or pub == "all" or (pub == "sign" and kind == "sign")):
+                return _err("42501", "you are not allowed to publish pages for this company", 403)
+            if p.get("p_id"):
                 pg.update(title=p.get("p_title") if p.get("p_title") is not None else pg["title"], config=p.get("p_config") if p.get("p_config") is not None else pg["config"],
                           active=pg["active"] if p.get("p_active") is None else bool(p.get("p_active")))
             else:

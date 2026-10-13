@@ -4609,6 +4609,8 @@ class PublicDesk(unittest.TestCase):
         # the company publishes a booking page; a visitor books, the slot is held, a second visitor cannot take it
         st, d = self.call(op, "GET", "/api/desk")
         self.assertEqual([s["name"] for s in d["services"]], ["GP consultation"])
+        self.assertEqual(self.cloud(op, "desk_my_publish"), "all")                        # administrators publish any page
+        self.assertGreaterEqual(self.cloud(op, "desk_publishers", {"p_all": ["desk@x.com"], "p_sign": ["sales@x.com"]}), 1)
         page = self.cloud(op, "desk_page_save", {"p_id": None, "p_kind": "booking", "p_title": "Book a visit",
                                                   "p_config": {"services": d["services"], "per_slot": 1}})
         tok = page["token"]

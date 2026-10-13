@@ -572,7 +572,7 @@ def cloud_new_books(name, email):
         async call(kind, name, params) {
           const RPCS = ["my_super", "set_member_super", "chat_link_list", "chat_link_create", "chat_link_accept", "chat_link_end",
             "chat_link_messages", "chat_link_file", "chat_link_send", "chat_link_edit", "chat_link_read", "ai_settings_get", "ai_settings_set",
-            "desk_pages", "desk_page_save", "desk_claim", "desk_reply", "desk_thread"];
+            "desk_pages", "desk_page_save", "desk_claim", "desk_reply", "desk_thread", "desk_publishers", "desk_my_publish"];
           if (kind === "rpc" && RPCS.includes(name)) return rpc(name, { p_company: co(), ...(params || {}) });
           if (kind === "fn" && name === "ai") return req("POST", "/functions/v1/ai", { ...(params || {}), company: co() }, await token());
           throw new Error("Unknown workspace call");

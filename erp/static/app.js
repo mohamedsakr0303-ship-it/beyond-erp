@@ -3539,6 +3539,19 @@ const WEEKDAYS = () => [L2("Sun", "الأحد"), L2("Mon", "الاثنين"), L2
 const deskBase = () => STATIC ? location.origin + location.pathname.replace(/[^/]*$/, "") : String(S.boot.settings.desk_site || "").replace(/\/?$/, "/");
 const deskLink = tok => deskBase() + "p.html#t=" + encodeURIComponent(tok);
 const deskRpc = (name, params) => CloudAPI.call("rpc", name, params || {});
+// Who may publish public pages lives in the shared workspace (it cannot read the books): administrators copy it there
+// from everyone's permissions — "Online Booking & Forms" at full rights = any page, "Offers" at full rights = signing pages.
+const permOf = (u, key) => { const p = u.perms || {}, L = ["none", "view", "add", "edit"]; return L.includes(p[key]) ? p[key] : (p[key.split(".")[0]] || "none"); };
+const memberEmail = u => u.email || `${u.username}@users.beyond-erp.invalid`;
+async function deskSyncPublishers() {
+  if (!cloudOn() || !S.boot.user.is_admin) return;
+  try {
+    const users = (await api("GET", "/api/users")).filter(u => u.active && !u.is_admin);
+    const all = users.filter(u => permOf(u, "crm.desk") === "edit").map(memberEmail);
+    const sign = users.filter(u => permOf(u, "crm.desk") !== "edit" && permOf(u, "sales.offers") === "edit").map(memberEmail);
+    await deskRpc("desk_publishers", { p_all: all, p_sign: sign });
+  } catch { /* the workspace is older than this, or offline: tried again next time */ }
+}
 // claim what visitors sent and add it to the books — every minute while the app is open (one device takes each row)
 let deskBusy = false, deskLast = 0;
 async function deskPull(force) {
@@ -3623,7 +3636,8 @@ PAGES.desk = async (view, parts, q) => {
   await deskPull(true);
   const tab = q.tab || "pages";
   const [d, pages] = await Promise.all([api("GET", "/api/desk?" + qs({ from: today() })), deskRpc("desk_pages").catch(e => { fail(e); return []; })]);
-  const kinds = DESK_KIND(), adm = S.boot.user.is_admin;
+  if (S.boot.user.is_admin) deskSyncPublishers();
+  const kinds = DESK_KIND(), pub = S.boot.user.is_admin ? "all" : (await deskRpc("desk_my_publish").catch(() => "")) || "", adm = pub === "all";
   Object.assign(S.H, {
     dknew: el => deskPageForm(el.dataset.k, null, d),
     dkedit: el => { const pg = pages.find(p => p.id === el.dataset.id); deskPageForm(pg.kind, pg, d); },
@@ -3648,7 +3662,7 @@ PAGES.desk = async (view, parts, q) => {
       ${pages.map(p => `<tr><td><b>${esc(p.title)}</b><div class="lines" dir="ltr">${esc(deskLink(p.token).replace(/^https?:\/\//, "").slice(0, 60))}…</div></td><td>${kinds[p.kind][1]} ${esc(kinds[p.kind][0])}</td>
         <td><span class="chip ${p.active ? "ok" : ""}">${esc(p.active ? L2("Live", "مفعلة") : L2("Off", "متوقفة"))}</span></td><td>${fd(String(p.updated_at || p.created_at).slice(0, 10))}</td>
         <td style="white-space:nowrap"><button class="btn sm pri" data-a="dkshare" data-id="${p.id}">🔗 ${esc(L2("Share", "مشاركة"))}</button>${adm && p.kind !== "sign" ? `<button class="btn sm" data-a="dkedit" data-id="${p.id}">${esc(t("edit"))}</button>` : ""}
-          ${adm ? `<button class="btn sm" data-a="dkactive" data-id="${p.id}">${esc(p.active ? L2("Switch off", "إيقاف") : L2("Switch on", "تفعيل"))}</button>` : ""}</td></tr>`).join("")}</tbody></table></div>`
+          ${adm || (pub === "sign" && p.kind === "sign") ? `<button class="btn sm" data-a="dkactive" data-id="${p.id}">${esc(p.active ? L2("Switch off", "إيقاف") : L2("Switch on", "تفعيل"))}</button>` : ""}</td></tr>`).join("")}</tbody></table></div>`
       : `<div class="empty">${svg("calc")}<div>${esc(L2("No pages yet. Start with a booking page: customers pick a service, a day and a free time — it lands in your books by itself.", "لا توجد صفحات بعد. ابدأ بصفحة حجز: يختار العميل الخدمة واليوم والوقت المتاح — ويُضاف الحجز إلى دفاترك تلقائياً."))}</div></div>`}</div>
     <div class="banner info">${esc(L2("To have a customer sign an offer online, open the offer and choose “Send for e-signature”.", "ليوقّع العميل عرضاً إلكترونياً، افتح العرض واختر «إرسال للتوقيع الإلكتروني»."))}</div>`;
   if (tab === "bookings") body = `<div class="card">${d.bookings.length ? `<div class="tbl stack"><table><thead><tr><th>${esc(L2("When", "الموعد"))}</th><th>${esc(L2("Customer", "العميل"))}</th><th>${esc(L2("Service", "الخدمة"))}</th><th>${t("status")}</th><th></th></tr></thead><tbody>
@@ -4798,6 +4812,7 @@ PAGES.users = async (view) => {
     if (S.boot.user.is_super) body.is_super = !!v.is_super; else { body.is_admin = !!u.is_admin; }
     if (u.id) await api("PUT", "/api/users/" + u.id, body); else await api("POST", "/api/users", body);
     if (!cloudOn()) { toast(t("saved")); return; }
+    setTimeout(deskSyncPublishers, 1500);     // after their workspace account exists
     // shared workspace: create / update their sign-in account so they can sign in with username + password now
     try {
       const r = await CloudAPI.manageUser({ username: body.username, email: v.email, password: v.password, full_name: v.full_name, active: v.active !== false });
