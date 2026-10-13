@@ -108,13 +108,19 @@ def clean_perms(perms):
             v = perms.get(f"{scr}.{tb}")
             if v in LEVELS:
                 out[f"{scr}.{tb}"] = v
+    if perms.get("_grid"):                 # saved from the permission grid (administrators then follow it)
+        out["_grid"] = 1
     return out
 
 
 def public_user(u):
     if not u:
         return None
-    perms = {m: "edit" for m in MODULES} if u["is_admin"] else clean_perms(json.loads(u["perms"] or "{}"))
+    stored = json.loads(u["perms"] or "{}")
+    # only super administrators skip the permissions; administrators follow them too — one whose permissions were never
+    # set keeps full access (as administrators had before) until a super administrator saves theirs
+    full = u.get("is_super") or (u["is_admin"] and not stored.get("_grid"))
+    perms = {m: "edit" for m in MODULES} if full else clean_perms(stored)
     return {"id": u["id"], "username": u["username"], "full_name": u["full_name"], "email": u.get("email") or "",
             "is_admin": bool(u["is_admin"]), "is_super": bool(u.get("is_super")), "active": bool(u["active"]), "perms": perms,
             "group_key": u.get("group_key") or "", "needs_approval": bool(u.get("needs_approval")),
@@ -157,7 +163,7 @@ def create_user(db, d, first=False):
                (username, text(d.get("full_name")), pw, is_admin, is_super,
                 json.dumps(clean_perms(d.get("perms"))), now().strftime("%Y-%m-%d %H:%M:%S"), email,
                 _group(db, d.get("group_key")))).lastrowid
-    if d.get("needs_approval") and not d.get("is_admin") and not d.get("is_super"):
+    if d.get("needs_approval") and not d.get("is_super"):
         db.x("UPDATE users SET needs_approval=1 WHERE id=?", (uid,))
     if d.get("grants"):                  # (the server lets only a super administrator send them)
         db.x("UPDATE users SET grants=? WHERE id=?", (json.dumps(clean_grants(d["grants"])), uid))
@@ -200,7 +206,7 @@ def update_user(db, uid, d, acting_user_id):
     if "grants" in d:              # special rights (the server lets only a super administrator change them)
         db.x("UPDATE users SET grants=? WHERE id=?", (json.dumps(clean_grants(d["grants"])), uid))
     if "needs_approval" in d:      # their entries wait for someone to approve and post them
-        db.x("UPDATE users SET needs_approval=? WHERE id=?", (1 if d["needs_approval"] and not is_admin else 0, uid))
+        db.x("UPDATE users SET needs_approval=? WHERE id=?", (1 if d["needs_approval"] and not is_super else 0, uid))
     if d.get("password"):
         db.x("UPDATE users SET pw_hash=? WHERE id=?", (hash_password(d["password"]), uid))
         db.x("DELETE FROM sessions WHERE user_id=? ", (uid,))
@@ -312,7 +318,7 @@ def level_of(user, key):
     or any of its screens is granted (used for showing menus); screens fall back to their section."""
     if not user:
         return "none"
-    if user["is_admin"]:
+    if user.get("is_super"):
         return "edit"
     p = user["perms"]
     if key.count(".") >= 2:            # a tab inside a screen: its own level, else the screen's
@@ -337,7 +343,7 @@ def action_ok(user, module, action):
     """Whether an action (export / import / delete) is allowed on a screen. Off only where a super administrator
     switched it off ("section.screen!action": "no"); a tab follows its screen; a whole section allows it while any of
     its screens that this person can open allows it."""
-    if not action or not module or not user or user.get("is_admin"):
+    if not action or not module or not user or user.get("is_super"):
         return True
     if "|" in module:
         return any(action_ok(user, m, action) for m in module.split("|"))

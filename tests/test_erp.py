@@ -4829,6 +4829,35 @@ class KnowledgeBaseAndApiKeys(unittest.TestCase):
         self.assertEqual(call("reader", "POST", "/api/my-day/start", {}), 403)               # view only
         self.assertEqual(call("old", "POST", "/api/my-day/start", {}), 200)
 
+    def test_removed_picture_stays_removed(self):
+        """Removing a background picture keeps a "none here" mark, so the company's picture does not show in its place."""
+        from erp.looks import clean_look
+        png = "data:image/png;base64,iVBORw0KGgo="
+        out = clean_look({"images": {"page": {"off": 1}, "header": {"src": png, "op": 0.3}, "sidebar": {}, "bogus": {"off": 1}}})
+        self.assertEqual(out["images"], {"page": {"off": 1}, "header": {"src": png, "op": 0.3, "fit": "cover"}})
+
+    def test_admins_follow_the_grid(self):
+        """Only super administrators skip permissions. An administrator whose grid was never saved keeps full access;
+        once a super administrator saves it, they follow it (approvals and posting included)."""
+        from erp import approvals
+        db = Database(":memory:")
+        auth.create_user(db, {"username": "boss", "password": "secret123"}, first=True)
+        auth.create_user(db, {"username": "old_admin", "password": "secret123", "is_admin": True})
+        auth.create_user(db, {"username": "new_admin", "password": "secret123", "is_admin": True,
+                              "perms": {"crm": "edit", "accounting": "view", "_grid": 1}, "needs_approval": True})
+        pu = {u: auth.public_user(db.one("SELECT * FROM users WHERE username=?", (u,))) for u in ("boss", "old_admin", "new_admin")}
+        self.assertEqual([auth.level_of(pu["old_admin"], k) for k in ("accounting.journal", "settings.system")], ["edit", "edit"])
+        self.assertEqual([auth.level_of(pu["new_admin"], k) for k in ("crm.deals", "accounting.journal", "settings.system")], ["edit", "view", "none"])
+        self.assertTrue(pu["new_admin"]["perms"].get("_grid"))
+        self.assertEqual(auth.level_of(pu["boss"], "settings.system"), "edit")
+        self.assertTrue(approvals.needs_approval(db, pu["new_admin"]))            # "can post" applies to administrators too
+        self.assertFalse(approvals.needs_approval(db, pu["boss"]))
+        row = {"created_by": "sam", "module": "accounting.journal", "group_key": "site"}
+        can = lambda u: (lambda m, lvl="view": auth.can(u, m, lvl))
+        self.assertFalse(approvals.can_approve(pu["new_admin"], can(pu["new_admin"]), row))   # no approval permission
+        self.assertTrue(approvals.can_approve(pu["old_admin"], can(pu["old_admin"]), row))    # full access, any group
+        self.assertTrue(approvals.can_approve(pu["boss"], can(pu["boss"]), row))
+
     def test_api_keys(self):
         from erp.server import ERPServer
         tmp = tempfile.TemporaryDirectory()

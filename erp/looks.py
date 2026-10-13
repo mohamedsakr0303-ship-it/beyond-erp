@@ -66,7 +66,11 @@ def clean_look(d):
         out["corners"] = d["corners"]
     imgs, total = {}, 0
     for slot, im in (d.get("images") or {}).items() if isinstance(d.get("images"), dict) else []:
-        if slot not in IMAGE_SLOTS or not isinstance(im, dict) or not im.get("src"):
+        if slot not in IMAGE_SLOTS or not isinstance(im, dict):
+            continue
+        if not im.get("src"):
+            if im.get("off"):              # "no picture here" — so the company's picture does not show in its place
+                imgs[slot] = {"off": 1}
             continue
         src = im["src"]
         if not isinstance(src, str) or not _IMG.match(src):

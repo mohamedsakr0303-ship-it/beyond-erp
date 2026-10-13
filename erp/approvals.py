@@ -20,8 +20,8 @@ class _DryRun(Exception):
 
 
 def needs_approval(db, user):
-    """Does this person's work wait for approval? (Administrators never do.)"""
-    if not user or user.get("is_admin") or user.get("is_super"):
+    """Does this person's work wait for approval? (Super administrators never do.)"""
+    if not user or user.get("is_super"):
         return False
     r = db.one("SELECT needs_approval FROM users WHERE id=?", (user["id"],))
     return bool(r and r["needs_approval"])
@@ -79,21 +79,21 @@ def get(db, aid):
 
 def can_approve(user, can, row):
     """May this person post this draft? Their own drafts never; otherwise the approval permission, the right to post
-    that kind of entry, and the same group as the maker (administrators: any group)."""
+    that kind of entry, and the same group as the maker (administrators: any group; super administrators: always)."""
     if row["created_by"] == user.get("username"):
         return False
-    if user.get("is_admin") or user.get("is_super"):
+    if user.get("is_super"):
         return True
     if not (can("accounting.approvals", "edit") and can(row["module"] or "accounting.journal", "add")):
         return False
-    return not row["group_key"] or row["group_key"] == (user.get("group_key") or "")
+    return user.get("is_admin") or not row["group_key"] or row["group_key"] == (user.get("group_key") or "")
 
 
 def may_see(user, can, row):
-    """Looking without approving: administrators everything; the approval permission, within the person's own group."""
-    if user.get("is_admin") or user.get("is_super"):
+    """Looking without approving: super administrators everything; others the approval permission (administrators: any group)."""
+    if user.get("is_super"):
         return True
-    return can("accounting.approvals", "view") and (not row["group_key"] or row["group_key"] == (user.get("group_key") or ""))
+    return can("accounting.approvals", "view") and (user.get("is_admin") or not row["group_key"] or row["group_key"] == (user.get("group_key") or ""))
 
 
 def listing(db, user, can, q):

@@ -158,7 +158,7 @@ const levelOf = key => {
   if (key === "chat") return "edit";                                       // chat needs no permission
   if (key === "dashboard" && !u.is_admin && LV.indexOf(u.perms.dashboard || "none") < 1) return "view";   // everyone opens their group's dashboard (its cards check their own permissions)
   if (key === "chat.ai") return S.ai && S.ai.allowed ? "edit" : "none";   // the assistant: super administrator's policy
-  if (u.is_admin) return "edit";
+  if (u.is_super) return "edit";                                          // only super administrators skip the permissions
   const p = u.perms;
   if (key.split(".").length > 2) return LV.includes(p[key]) ? p[key] : levelOf(key.split(".").slice(0, 2).join("."));   // a tab: its own level, else its screen's
   if (key.includes(".")) return LV.includes(p[key]) ? p[key] : (p[key.split(".")[0]] || "none");
@@ -167,7 +167,7 @@ const levelOf = key => {
   return best;
 };
 // export / import / delete can be switched off per screen ("section.screen!action" = "no"); the server checks it too
-const actionOk = (key, action) => { const u = S.boot && S.boot.user; if (!u || u.is_admin || !key) return true;
+const actionOk = (key, action) => { const u = S.boot && S.boot.user; if (!u || u.is_super || !key) return true;
   return String(key).split("|").some(k => { const [a, b] = k.split("."); return u.perms[b ? `${a}.${b}!${action}` : `${a}!${action}`] !== "no"; }); };
 // the permission key of the screen being shown (from the menu)
 const screenKey = () => { const { parts } = parseHash(), items = window.MENU.flatMap(([, it]) => it);
@@ -344,6 +344,10 @@ function applyTheme(th) {
   ["--sb-bg", "--sb-ink", "--nav-bg", "--nav-ink", "--top-bg", "--top-ink", "--menu-c", "--btn-bg", "--btn-ink", "--btn2-bg", "--btn2-ink", "--page-ink", "--card-bg", "--card-ink", "--bg", "--ink", "--muted", "--panel", "--sheet", "--input", "--line", "--chip", "--hover", "--surf-ink"].forEach(v => st.removeProperty(v));
   ["nav", "top", "menu", "btn", "btn2", "page", "card", "text", "surf", "tint"].forEach(k => { delete de.dataset[k]; });
   if (!th) return;
+  // the ☀/☾ button flipped to the other mode than the theme was made for: its backgrounds step aside (or a dark
+  // theme stays dark in "light"), its accents stay
+  if ((th.mode === "light" || th.mode === "dark") && th.mode !== de.getAttribute("data-theme"))
+    th = Object.fromEntries(["primary", "button", "button2", "menu"].filter(k => th[k]).map(k => [k, th[k]]));
   if (hexOk(th.primary)) { st.setProperty("--brand", th.primary); st.setProperty("--accent", th.primary); }
   if (hexOk(th.sidebar)) { de.dataset.sidebar = "custom"; st.setProperty("--sb-bg", th.sidebar); st.setProperty("--sb-ink", inkOn(th.sidebar)); }
   if (hexOk(th.nav)) { de.dataset.nav = "custom"; st.setProperty("--nav-bg", th.nav); st.setProperty("--nav-ink", inkOn(th.nav)); }
@@ -425,8 +429,9 @@ async function themeTab(view, head) {
   const pics = () => { const im = lookVal("images") || {}, mine = (myLook() || {}).images;
     return `<div class="card"><h2>${esc(L2("Background pictures", "صور الخلفية"))}</h2>
       <p class="muted" style="margin-top:0">${esc(L2("Put a picture of your choice behind the app, the top bar, the side menu or the logo area. They start faint so the screens stay easy to read — slide to make one stronger or lighter.", "ضع صورة من اختيارك خلف التطبيق أو الشريط العلوي أو القائمة الجانبية أو منطقة الشعار. تبدأ باهتة حتى تبقى الشاشات سهلة القراءة — حرّك المؤشر لتقويتها أو تخفيفها."))}
-      ${!mine && Object.keys(im).length ? ` ${esc(L2("You are seeing the company's pictures.", "تظهر لك الآن صور الشركة."))}` : ""}</p>
-      <div class="grid g2">${PIC_SLOTS().map(([k, l, d]) => { const p = im[k];
+      ${!mine && Object.values(im).some(x => x && x.src) ? ` ${esc(L2("You are seeing the company's pictures — removing one hides it for you only.", "تظهر لك الآن صور الشركة — إزالة صورة تخفيها عنك أنت فقط."))}` : ""}
+      ${S.boot.user.is_super && Object.values(coLook().images || {}).some(x => x && x.src) ? ` ${esc(L2("To change them for everyone, set your pictures and press “Make my look the company look” below.", "لتغييرها للجميع، اضبط صورك ثم اضغط «اجعل مظهري مظهر الشركة» بالأسفل."))}` : ""}</p>
+      <div class="grid g2">${PIC_SLOTS().map(([k, l, d]) => { const p = im[k] && im[k].src ? im[k] : null;
         return `<div class="picslot"><div class="picprev ${p ? "" : "empty"}" style="${p ? `background-image:url('${p.src}');opacity:${Math.max(0.35, p.op)}` : ""}"></div>
           <div class="picbody"><b>${esc(l)}</b>
             <div class="row" style="gap:6px;margin:6px 0"><label class="btn sm" style="cursor:pointer">${svg("upload")} ${esc(p ? L2("Change", "تغيير") : L2("Choose a picture", "اختر صورة"))}<input type="file" accept="image/*" hidden data-pic="${k}"></label>
@@ -459,7 +464,7 @@ async function themeTab(view, head) {
           ${(S.boot.settings.appearance || {}).look || (S.boot.settings.appearance || {}).theme ? `<button class="btn" data-a="thcoclear">${esc(L2("Remove the company look", "إزالة مظهر الشركة"))}</button>` : ""}</div></div>` : ""}`;
     $$("input[data-pic]", view).forEach(inp => inp.addEventListener("change", async e => { const f = e.target.files[0]; if (!f) return; const k = inp.dataset.pic;
       try { const src = await picShrink(f, k === "page" ? 1920 : 1000), d = PIC_SLOTS().find(x => x[0] === k)[2];
-        const im = { ...((myLook() || {}).images || lookVal("images") || {}) }; im[k] = { src, op: (im[k] && im[k].op) || d, fit: (im[k] && im[k].fit) || "cover" };
+        const im = { ...((myLook() || {}).images || lookVal("images") || {}) }; const was = im[k] && im[k].src ? im[k] : {}; im[k] = { src, op: was.op || d, fit: was.fit || "cover" };
         setMyLook({ images: im }); draw(); } catch (err) { fail(err); } }));
   };
   const preview = () => { const th = Object.fromEntries(THEME_KEYS.filter(k => k !== "mode" && draft[k]).map(k => [k, draft[k]]));
@@ -485,10 +490,10 @@ async function themeTab(view, head) {
         await refreshBoot(); useTheme(th); toast(t("saved")); } catch (err) { fail(err); } },
     thshare: (el, e) => S.H.thsave(el, e, true),
     thcompany: () => companyLook(), thcoclear: () => companyLookClear(),
-    picdel: el => { const im = myImgs(); delete im[el.dataset.k]; setMyLook({ images: Object.keys(im).length ? im : null }); draw(); },
-    picop: el => { const im = myImgs(), k = el.dataset.k; if (!im[k]) return; im[k] = { ...im[k], op: +el.value / 100 }; const v = $("#picv-" + k); if (v) v.textContent = el.value + "%";
+    picdel: el => { const im = myImgs(); im[el.dataset.k] = { off: 1 }; setMyLook({ images: im }); draw(); },   // "none here", not "use the company's"
+    picop: el => { const im = myImgs(), k = el.dataset.k; if (!im[k] || !im[k].src) return; im[k] = { ...im[k], op: +el.value / 100 }; const v = $("#picv-" + k); if (v) v.textContent = el.value + "%";
       setMyLook({ images: im }); },
-    picfit: el => { const im = myImgs(), k = el.dataset.k; if (!im[k]) return; im[k] = { ...im[k], fit: el.value }; setMyLook({ images: im }); },
+    picfit: el => { const im = myImgs(), k = el.dataset.k; if (!im[k] || !im[k].src) return; im[k] = { ...im[k], fit: el.value }; setMyLook({ images: im }); },
   });
   draw();
 }
@@ -4773,6 +4778,7 @@ function readPerms(f) {
   });
   $$("select.ptab", f).forEach(x => { if (x.value) perms[x.dataset.pk] = x.value; });
   $$("input.pact", f).forEach(x => { if (!x.checked) perms[x.dataset.pk] = "no"; });
+  perms._grid = 1;                 // set from the grid: an administrator follows it from now on
   return perms;
 }
 function wirePerms(f) {
@@ -4803,16 +4809,16 @@ PAGES.users = async (view) => {
     // one role: a super administrator can do everything an administrator can, and an administrator ignores the grid below
     ...(S.boot.user.is_super ? [{ k: "role", l: L2("Role", "الدور"), type: "select", span: "spanall", change: "urole", v: u.is_super ? "super" : u.is_admin ? "admin" : "user", opts: [
       ["user", L2("User — only what the permissions below allow", "مستخدم — ما تسمح به الصلاحيات أدناه فقط")],
-      ["admin", L2("Administrator — everything, ignores the permissions below", "مسؤول — كل شيء، دون التقيد بالصلاحيات أدناه")],
+      ["admin", L2("Administrator — adds users; does what the permissions below allow (starts with full access)", "مسؤول — يضيف المستخدمين؛ ويعمل بما تسمح به الصلاحيات أدناه (تبدأ بصلاحيات كاملة)")],
       ["super", L2("Super administrator — everything, plus managing administrators and erasing / restoring the books", "مسؤول أعلى — كل شيء، مع إدارة المسؤولين ومسح / استعادة الدفاتر")]] }] : []),
     ...(S.boot.user.is_super && !u.is_super ? [{ html: `<div class="f spanall" id="ugrants"><b>${esc(L2("Special rights (super administrators have them all — give them to others here)", "صلاحيات خاصة (للمسؤولين الأعلى كلها — امنحها لغيرهم من هنا)"))}</b>
       <div class="row" style="gap:14px;flex-wrap:wrap;margin-top:6px">${[["design_dashboards", L2("Design dashboards & groups", "تصميم لوحات التحكم والمجموعات")], ["required_fields", L2("Make fields required", "جعل الحقول إلزامية")],
         ["arrange_forms", L2("Arrange menus & forms", "ترتيب القوائم والنماذج")], ["build_calculators", L2("Build calculators", "إنشاء الحاسبات")]].map(([k, l]) =>
         `<label class="f chk"><input type="checkbox" data-grant="${k}" data-skip="1" ${(u.grants || []).includes(k) ? "checked" : ""}>${esc(l)}</label>`).join("")}</div></div>`, span: "spanall" }] : []),
-    { k: "can_post", type: "checkbox", v: u.is_admin || u.is_super || (u.id ? !u.needs_approval : false), dis: !!(u.is_admin || u.is_super) || (u.id && u.id === S.boot.user.id && !S.boot.user.is_super),
+    { k: "can_post", type: "checkbox", v: u.is_super || (u.id ? !u.needs_approval : false), dis: !!u.is_super || (u.id && u.id === S.boot.user.id && !S.boot.user.is_super),
       l: L2("Can post entries to the books (unticked: their entries are saved as drafts and wait for someone with “Approve & post entries” to post them)", "يمكنه ترحيل القيود إلى الدفاتر (بدون علامة: تُحفظ قيوده كمسودات وتنتظر من له صلاحية «اعتماد وترحيل القيود» لترحيلها)") },
     ...(u.id ? [{ k: "active", l: t("active") + (cloudOn() ? (ar ? " (إلغاء التحديد يمنع تسجيل الدخول)" : " (untick to block sign-in)") : ""), type: "checkbox", v: u.active !== false }] : []),
-    { html: `<div id="permwrap"><h4 style="margin:8px 0 0">${t("perm_matrix")}</h4><div class="banner" id="permadm" ${u.is_admin || u.is_super ? "" : "hidden"}>${esc(L2("Administrators and super administrators can do everything — the permissions below only apply to users.", "المسؤولون والمسؤولون الأعلى يمكنهم فعل كل شيء — الصلاحيات أدناه تخص المستخدمين فقط."))}</div><div id="permgrid" ${u.is_admin || u.is_super ? 'class="dim"' : ""}>${permMatrix(u.perms || {})}</div></div>`, span: "spanall" }]),
+    { html: `<div id="permwrap"><h4 style="margin:8px 0 0">${t("perm_matrix")}</h4><div class="banner" id="permadm" ${u.is_super ? "" : "hidden"}>${esc(L2("Super administrators can do everything — the permissions below don't apply to them.", "المسؤول الأعلى يمكنه فعل كل شيء — الصلاحيات أدناه لا تنطبق عليه."))}</div><div id="permgrid" ${u.is_super ? 'class="dim"' : ""}>${permMatrix(u.perms || {})}</div></div>`, span: "spanall" }]),
   async (v, f) => { const perms = readPerms(f);
     if (v.role) { v.is_admin = v.role !== "user"; v.is_super = v.role === "super"; }
     const body = { username: v.username || u.username, full_name: v.full_name, email: v.email, password: v.password, is_admin: v.is_admin || v.is_super, active: v.active, perms, _no_password: !v.password,
@@ -4838,7 +4844,9 @@ PAGES.users = async (view) => {
       } else toast((ar ? "تم حفظ المستخدم، لكن لم يُنشأ حساب الدخول: " : "User saved, but the sign-in account was not set: ") + e.message, true);
     } },
   { onOpen: f => { wirePerms(f); pwWire(f);
-    S.H.urole = el => { const top = el.value !== "user", cp = $("[name=can_post]", f);
+    S.H.urole = el => { const top = el.value === "super", cp = $("[name=can_post]", f);
+      // a new administrator starts with full access in the grid (narrow it as needed)
+      if (el.value === "admin" && !$$("input.psec:checked, input.pscr:checked", f).some(r => r.value !== "none" && !/^(ps_team|pp_team_)/.test(r.name))) S.H.pmall({ dataset: { l: "edit" } });
       const g = $("#ugrants", f); if (g) g.hidden = el.value === "super";
       $("#permadm", f).hidden = !top; $("#permgrid", f).classList.toggle("dim", top);
       if (cp && !(u.id && u.id === S.boot.user.id && !S.boot.user.is_super)) {
