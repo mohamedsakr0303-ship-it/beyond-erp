@@ -4795,18 +4795,23 @@ PAGES.users = async (view) => {
       : (ar ? "اختياري — يُستخدم لتسجيل الدخول إلى مساحة العمل المشتركة عند تفعيلها." : "Optional — used for signing in to the shared workspace when you connect one.") },
     { html: pwFields(true, (cloudOn() ? (ar ? "كلمة مرور الدخول" : "Sign-in password") : t("password")) + (u.id ? (ar ? " (اتركها فارغة للإبقاء)" : " (leave blank to keep)") : ""), !!u.id,
         cloudOn() ? (ar ? "يسجل بها الدخول فوراً — بدون رسائل تأكيد." : "They can sign in with it right away — no confirmation email.") : ""), span: "spanall" },
-    ...(S.boot.user.is_super ? [{ k: "is_admin", l: t("admin") + (S.lang === "ar" ? " (كل الصلاحيات)" : " (everything, ignores the matrix)"), type: "checkbox", v: u.is_admin },
-      { k: "is_super", l: L2("Super administrator (manages administrators, can erase / restore the books)", "مسؤول أعلى (يدير المسؤولين ويمكنه مسح / استبدال الدفاتر)"), type: "checkbox", v: u.is_super }] : []),
-    ...(S.boot.user.is_super && !u.is_super ? [{ html: `<div class="f spanall"><b>${esc(L2("Special rights (super administrators have them all — give them to others here)", "صلاحيات خاصة (للمسؤولين الأعلى كلها — امنحها لغيرهم من هنا)"))}</b>
+    // one role: a super administrator can do everything an administrator can, and an administrator ignores the grid below
+    ...(S.boot.user.is_super ? [{ k: "role", l: L2("Role", "الدور"), type: "select", span: "spanall", change: "urole", v: u.is_super ? "super" : u.is_admin ? "admin" : "user", opts: [
+      ["user", L2("User — only what the permissions below allow", "مستخدم — ما تسمح به الصلاحيات أدناه فقط")],
+      ["admin", L2("Administrator — everything, ignores the permissions below", "مسؤول — كل شيء، دون التقيد بالصلاحيات أدناه")],
+      ["super", L2("Super administrator — everything, plus managing administrators and erasing / restoring the books", "مسؤول أعلى — كل شيء، مع إدارة المسؤولين ومسح / استعادة الدفاتر")]] }] : []),
+    ...(S.boot.user.is_super && !u.is_super ? [{ html: `<div class="f spanall" id="ugrants"><b>${esc(L2("Special rights (super administrators have them all — give them to others here)", "صلاحيات خاصة (للمسؤولين الأعلى كلها — امنحها لغيرهم من هنا)"))}</b>
       <div class="row" style="gap:14px;flex-wrap:wrap;margin-top:6px">${[["design_dashboards", L2("Design dashboards & groups", "تصميم لوحات التحكم والمجموعات")], ["required_fields", L2("Make fields required", "جعل الحقول إلزامية")],
         ["arrange_forms", L2("Arrange menus & forms", "ترتيب القوائم والنماذج")], ["build_calculators", L2("Build calculators", "إنشاء الحاسبات")]].map(([k, l]) =>
         `<label class="f chk"><input type="checkbox" data-grant="${k}" data-skip="1" ${(u.grants || []).includes(k) ? "checked" : ""}>${esc(l)}</label>`).join("")}</div></div>`, span: "spanall" }] : []),
-    { k: "needs_approval", type: "checkbox", v: !!u.needs_approval, dis: !!(u.is_admin || u.is_super) || (u.id && u.id === S.boot.user.id && !S.boot.user.is_super),
-      l: L2("Their entries wait for approval (saved as drafts; someone with “Approve & post entries” in their group posts them)", "قيوده تنتظر الاعتماد (تُحفظ كمسودات ويرحّلها من له صلاحية «اعتماد وترحيل القيود» في مجموعته)") },
+    { k: "can_post", type: "checkbox", v: u.is_admin || u.is_super || (u.id ? !u.needs_approval : false), dis: !!(u.is_admin || u.is_super) || (u.id && u.id === S.boot.user.id && !S.boot.user.is_super),
+      l: L2("Can post entries to the books (unticked: their entries are saved as drafts and wait for someone with “Approve & post entries” to post them)", "يمكنه ترحيل القيود إلى الدفاتر (بدون علامة: تُحفظ قيوده كمسودات وتنتظر من له صلاحية «اعتماد وترحيل القيود» لترحيلها)") },
     ...(u.id ? [{ k: "active", l: t("active") + (cloudOn() ? (ar ? " (إلغاء التحديد يمنع تسجيل الدخول)" : " (untick to block sign-in)") : ""), type: "checkbox", v: u.active !== false }] : []),
-    { html: `<h4 style="margin:8px 0 0">${t("perm_matrix")}</h4>${permMatrix(u.perms || {})}`, span: "spanall" }]),
+    { html: `<div id="permwrap"><h4 style="margin:8px 0 0">${t("perm_matrix")}</h4><div class="banner" id="permadm" ${u.is_admin || u.is_super ? "" : "hidden"}>${esc(L2("Administrators and super administrators can do everything — the permissions below only apply to users.", "المسؤولون والمسؤولون الأعلى يمكنهم فعل كل شيء — الصلاحيات أدناه تخص المستخدمين فقط."))}</div><div id="permgrid" ${u.is_admin || u.is_super ? 'class="dim"' : ""}>${permMatrix(u.perms || {})}</div></div>`, span: "spanall" }]),
   async (v, f) => { const perms = readPerms(f);
-    const body = { username: v.username || u.username, full_name: v.full_name, email: v.email, password: v.password, is_admin: v.is_admin || v.is_super, active: v.active, perms, _no_password: !v.password, needs_approval: !!v.needs_approval };
+    if (v.role) { v.is_admin = v.role !== "user"; v.is_super = v.role === "super"; }
+    const body = { username: v.username || u.username, full_name: v.full_name, email: v.email, password: v.password, is_admin: v.is_admin || v.is_super, active: v.active, perms, _no_password: !v.password,
+      ...(v.can_post === undefined || (u.id && u.id === S.boot.user.id && !S.boot.user.is_super) ? {} : { needs_approval: !v.can_post }) };
     if (S.boot.user.is_super && $("[data-grant]", f)) body.grants = $$("[data-grant]", f).filter(x => x.checked).map(x => x.dataset.grant);
     if (v.group_key !== undefined) body.group_key = v.group_key === "general" ? "" : v.group_key;
     if (S.boot.user.is_super) body.is_super = !!v.is_super; else { body.is_admin = !!u.is_admin; }
@@ -4828,6 +4833,13 @@ PAGES.users = async (view) => {
       } else toast((ar ? "تم حفظ المستخدم، لكن لم يُنشأ حساب الدخول: " : "User saved, but the sign-in account was not set: ") + e.message, true);
     } },
   { onOpen: f => { wirePerms(f); pwWire(f);
+    S.H.urole = el => { const top = el.value !== "user", cp = $("[name=can_post]", f);
+      const g = $("#ugrants", f); if (g) g.hidden = el.value === "super";
+      $("#permadm", f).hidden = !top; $("#permgrid", f).classList.toggle("dim", top);
+      if (cp && !(u.id && u.id === S.boot.user.id && !S.boot.user.is_super)) {
+        if (top && !cp.disabled) { cp.dataset.prev = cp.checked ? "1" : ""; cp.checked = true; }      // administrators always post
+        else if (!top && cp.dataset.prev !== undefined) { cp.checked = cp.dataset.prev === "1"; delete cp.dataset.prev; }
+        cp.disabled = top; } };
       if (u.id && u.id !== S.boot.user.id && !S.boot.user.is_super) {     // administrators add people; only the super administrator changes or removes them
         $$("input, select, textarea", f).forEach(x => { x.disabled = true; });
         f.querySelector(".dbody, form").insertAdjacentHTML("afterbegin", `<div class="banner info">${esc(L2("Only the super administrator can change or remove someone's account. You can add new users.", "المسؤول الأعلى فقط يمكنه تعديل حساب أي شخص أو حذفه. يمكنك إضافة مستخدمين جدد."))}</div>`); } },
@@ -8620,7 +8632,7 @@ const pq = async name => { try { return (await navigator.permissions.query({ nam
 // the list: key, icon, name, what uses it, which devices, how to read it, how to ask
 const PERMS = () => [
   { k: "notifications", ic: "bell", n: L2("Notifications", "الإشعارات"),
-    why: L2("Pop-ups for new chat messages, entries waiting for your approval, follow-ups and bookings due, desk messages — even when BeyondERP is in the background.", "تنبيهات منبثقة لرسائل المحادثة والقيود التي تنتظر اعتمادك والمتابعات والحجوزات المستحقة ورسائل مكتب العملاء — حتى والتطبيق في الخلفية."),
+    why: L2("Pop-ups for new chat messages, entries waiting for your approval, follow-ups and bookings due, desk messages — while BeyondERP is open, even minimised or in another tab.", "تنبيهات منبثقة لرسائل المحادثة والقيود التي تنتظر اعتمادك والمتابعات والحجوزات المستحقة ورسائل مكتب العملاء — طالما BeyondERP مفتوح، حتى لو كان مصغّراً أو في تبويب آخر."),
     on: ["phone", "pc", "desktop"], ok: () => typeof Notification !== "undefined",
     na: DEVICE.ios && !DEVICE.installed ? L2("On iPhone, install BeyondERP first (Share → Add to Home Screen), then allow them from the installed app.", "على آيفون ثبّت BeyondERP أولاً (مشاركة ← إضافة إلى الشاشة الرئيسية) ثم اسمح بها من التطبيق المثبّت.") : "",
     state: async () => { const p = notifPerm(); return p === "default" ? "prompt" : p; },
@@ -8641,7 +8653,7 @@ const PERMS = () => [
     why: L2("“Paste” in the right-click menu of fields and tables. Ctrl+V always works without it.", "خيار «لصق» في قائمة الزر الأيمن للحقول والجداول. اختصار Ctrl+V يعمل دائماً بدونه."),
     on: ["pc", "desktop"], ok: () => !!(navigator.clipboard && navigator.clipboard.readText) && DEVICE.browser !== "Firefox" && DEVICE.browser !== "Safari",
     state: () => pq("clipboard-read"), ask: () => navigator.clipboard.readText().then(() => "granted") },
-  { k: "storage", ic: "db", n: L2("Keep data on this device", "حفظ البيانات على هذا الجهاز"),
+  { k: "storage", ic: "db", n: L2("Storage — keep data on this device", "التخزين — حفظ البيانات على هذا الجهاز"),
     why: STATIC && !cloudOn() ? L2("Important here: your books are kept in this browser. This stops the browser from clearing them when the device runs low on space.", "مهم هنا: دفاترك محفوظة في هذا المتصفح. هذا يمنع المتصفح من مسحها عند امتلاء مساحة الجهاز.")
       : L2("Keeps the app, unsaved drafts and the offline copy from being cleared by the browser when space runs low.", "يمنع المتصفح من مسح التطبيق والمسودات غير المحفوظة والنسخة دون اتصال عند امتلاء المساحة."),
     on: ["phone", "pc", "desktop"], ok: () => !!(navigator.storage && navigator.storage.persist),
@@ -8674,9 +8686,13 @@ const PERM_TXT = () => ({ granted: [L2("Allowed", "مسموح"), "ok"], denied: 
 
 // Settings → Device permissions
 async function permsTab(view, head) {
+  let used = "";
+  const big = x => x >= 1073741824 ? (x / 1073741824).toFixed(1) + " GB" : sizeTxt(x);
+  try { const e = await navigator.storage.estimate(); if (e && e.quota) used = L2(`Using ${big(e.usage || 0)} of about ${big(e.quota)} this browser allows here.`, `المستخدم ${big(e.usage || 0)} من حوالي ${big(e.quota)} يسمح بها هذا المتصفح هنا.`); } catch { /* not supported */ }
   const draw = async () => {
     const list = permsHere(), states = await Promise.all(list.map(permState));
     const T = PERM_TXT();
+    S.permLast = { list, states };
     view.innerHTML = head + `<div class="card"><h2 class="row" style="gap:8px">${esc(L2("Device permissions", "أذونات الجهاز"))}<span class="spacer"></span><button class="btn sm" data-a="permre">↻ ${esc(L2("Check again", "تحقق مرة أخرى"))}</button></h2>
       <p class="muted">${esc(L2("All optional — BeyondERP works without them. Each one only switches on the feature listed next to it, and a feature asks again when you use it. They belong to this device and this browser: your other devices have their own.",
         "كلها اختيارية — يعمل BeyondERP بدونها. كل إذن يشغّل الميزة المذكورة بجانبه فقط، والميزة تطلبه مرة أخرى عند استخدامها. الأذونات خاصة بهذا الجهاز وهذا المتصفح: أجهزتك الأخرى لها أذوناتها."))}</p>
@@ -8686,7 +8702,7 @@ async function permsTab(view, head) {
           : s === "auto" ? `<small class="muted">${esc(L2("The browser grants this by itself once BeyondERP is installed or used often.", "يمنحه المتصفح تلقائياً بعد تثبيت BeyondERP أو استخدامه كثيراً."))}</small>`
           : s === "granted" ? "" : s === "denied" ? `<button class="btn sm" data-a="permhow">${esc(L2("How to allow", "كيفية السماح"))}</button>`
           : `<button class="btn sm pri" data-a="permask" data-k="${p.k}">${esc(p.k === "install" ? L2("Install", "تثبيت") : L2("Allow", "سماح"))}</button>`;
-        return `<div class="perm-row"><span class="perm-ic">${svg(p.ic)}</span><div class="perm-t"><b>${esc(p.n)}</b><small>${esc(p.why)}</small></div>
+        return `<div class="perm-row"><span class="perm-ic">${svg(p.ic)}</span><div class="perm-t"><b>${esc(p.n)}</b><small>${esc(p.why)}${p.k === "storage" && used ? " " + esc(used) : ""}</small></div>
           <span class="chip ${cls}">${esc(lbl)}</span><span class="perm-act">${act}</span></div>`; }).join("")}</div>
       ${states.includes("denied") ? `<div class="banner warn" style="margin-top:12px">${esc(unblockHow())}</div>` : ""}
       <button class="btn" style="margin-top:12px" data-a="permall">${esc(L2("Allow everything I haven't answered yet", "السماح بكل ما لم أُجب عنه بعد"))}</button></div>
@@ -8697,7 +8713,14 @@ async function permsTab(view, head) {
       <li>${esc(L2("Copying codes and links, downloads, printing, full screen", "نسخ الرموز والروابط، التنزيلات، الطباعة، ملء الشاشة"))}</li>
       <li>${esc(L2("Pasting and dropping files into forms and chat (Ctrl+V, drag and drop)", "لصق الملفات وإفلاتها في النماذج والمحادثة (Ctrl+V والسحب والإفلات)"))}</li></ul></div>`;
   };
-  S.H.permre = draw;
+  // Check again: read every one afresh and say what came out — also when all is well
+  S.H.permre = async el => { if (el) el.disabled = true; await draw();
+    const { list, states } = S.permLast, n = k => states.filter(x => x === k).length, todo = n("prompt") + n("denied");
+    const names = k => list.filter((p, i) => states[i] === k).map(p => p.n).join(", ");
+    if (!todo) toast(L2(`All good ✓ — everything this device can use is allowed (${n("granted")} of ${list.filter((p, i) => states[i] !== "na").length})`, `كل شيء جاهز ✓ — كل ما يمكن لهذا الجهاز استخدامه مسموح (${n("granted")} من ${list.filter((p, i) => states[i] !== "na").length})`));
+    else toast([n("granted") ? L2(`${n("granted")} allowed`, `${n("granted")} مسموح`) : "", n("denied") ? L2(`Blocked: ${names("denied")}`, `محظور: ${names("denied")}`) : "",
+      n("prompt") ? L2(`Not asked yet: ${names("prompt")}`, `لم يُطلب بعد: ${names("prompt")}`) : ""].filter(Boolean).join(" · "), n("denied") > 0);
+    const b = $("[data-a=permre]"); if (b) { b.disabled = false; b.classList.add("done"); setTimeout(() => b.classList.remove("done"), 1200); } };
   S.H.permhow = () => uiAlert(unblockHow());
   S.H.permask = async el => { const p = PERMS().find(x => x.k === el.dataset.k); if (!p) return; el.disabled = true;
     const r = await permAsk(p); if (r === "denied") toast(L2("Not allowed — you can change it any time from here", "لم يُسمح — يمكنك تغييره في أي وقت من هنا"), true);

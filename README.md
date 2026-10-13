@@ -52,7 +52,7 @@ Everyone can see and change theirs in **Settings → Device permissions** (also 
 | Microphone | voice messages; sound in video clips | ✓ | ✓ | ✓ |
 | Location | "My day" start / end, only when the company asks for it | ✓ | ✓ | ✓ |
 | Clipboard (paste) | "Paste" in right-click menus (Ctrl+V works without it) | — | ✓ (Chrome / Edge) | ✓ |
-| Keep data on this device | stops the browser clearing data when space is low (vital for the browser-only edition) | ✓ | ✓ | ✓ |
+| Storage (keep data on this device) | stops the browser clearing saved data when space is low (vital for the browser-only edition); saving itself needs no permission | ✓ | ✓ | ✓ |
 | Install the app | own icon and window, offline; needed for notifications on iPhone | ✓ | ✓ | (already) |
 
 No permission needed: alert sounds and icon badges, vibration (Android), attaching / pasting / dropping files, copying,

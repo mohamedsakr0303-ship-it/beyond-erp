@@ -1802,3 +1802,8 @@ input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 4px color
 .kb-card{display:block;text-decoration:none;color:inherit;transition:transform .12s,border-color .12s}.kb-card:hover{transform:translateY(-2px);border-color:var(--brand)}
 .kb-card p{margin:8px 0;font-size:.9em}
 .kb-art{max-width:860px;line-height:1.7}.kb-art h1{margin-top:0}
+
+/* users: the permission grid does not apply to administrators */
+#permgrid.dim{opacity:.45;pointer-events:none}
+.perm-dev+.perm-list{margin-top:4px}
+[data-a=permre].done{outline:2px solid var(--good);outline-offset:2px}
