@@ -8017,7 +8017,15 @@ function entryOptionWire(view) {
 // ======================================================== get the app (hosted site)
 // Downloads built by GitHub Actions (downloads/beyond-downloads.json) and installing the site on a phone.
 let installPrompt = null;
-window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); installPrompt = e; });
+// Installed? Asked live, not once at start: installing from inside the app moves this very page into the new app
+// window without reloading it (Edge / Chrome on Windows and Mac). A browser tab left behind remembers it too.
+const APP_MODES = ["standalone", "window-controls-overlay", "minimal-ui"];
+const inAppWindow = () => { try { return APP_MODES.some(m => matchMedia(`(display-mode: ${m})`).matches) || !!navigator.standalone; } catch { return false; } };
+const appInstalled = () => inAppWindow() || store.get("pwaInstalled", 0) === 1;
+const onInstallChange = () => { if (/#\/settings\?tab=perms/.test(location.hash) && S.permDraw) S.permDraw(); else if (/^#\/download/.test(location.hash)) route(); };
+window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); installPrompt = e; store.set("pwaInstalled", 0); });   // offered = not installed
+window.addEventListener("appinstalled", () => { installPrompt = null; store.set("pwaInstalled", 1); toast(L2("BeyondERP is installed ✓", "تم تثبيت BeyondERP ✓")); onInstallChange(); });
+APP_MODES.forEach(m => { try { matchMedia(`(display-mode: ${m})`).addEventListener("change", onInstallChange); } catch { /* old browsers */ } });
 PAGES.download = async view => {
   let d = { files: [] };
   try { const r = await fetch("downloads/beyond-downloads.json", { cache: "no-store" }); if (r.ok) d = await r.json(); } catch { /* none built yet */ }
@@ -8027,9 +8035,10 @@ PAGES.download = async view => {
   const card = (title, body) => `<div class="card"><h2>${title}</h2>${body}</div>`;
   const dl = (x, label) => x ? `<a class="btn ${x.kind.includes("offline") ? "" : "pri"}" href="downloads/${encodeURIComponent(x.file)}" download>⬇ ${esc(label)}</a> <span class="muted">${mb(x)} · ${L2("version", "إصدار")} ${esc(d.version || "")}</span>`
     : `<div class="muted">${L2("Not built yet — it appears here after the next update is published.", "لم يُجهز بعد — يظهر هنا بعد نشر التحديث القادم.")}</div>`;
-  S.H.pwainstall = async () => { if (!installPrompt) return; installPrompt.prompt(); await installPrompt.userChoice.catch(() => {}); installPrompt = null; route(); };
+  S.H.pwainstall = async () => { if (!installPrompt) return; installPrompt.prompt(); const c = await installPrompt.userChoice.catch(() => ({}));
+    installPrompt = null; if (c.outcome === "accepted") store.set("pwaInstalled", 1); route(); };
   S.H.copycfg = async el => { try { await navigator.clipboard.writeText(el.dataset.v); toast(L2("Copied", "تم النسخ")); } catch { await uiPrompt("", el.dataset.v); } };
-  const installed = window.matchMedia && window.matchMedia("(display-mode: standalone)").matches;
+  const installed = inAppWindow();
   view.innerHTML =
     card(L2("Phone or tablet (Android / iPhone)", "الموبايل أو التابلت (أندرويد / آيفون)"), installed ? `<div class="banner ok">${L2("You are using the installed app ✓", "أنت تستخدم التطبيق المثبت ✓")}</div>` :
       `${installPrompt ? `<p><button class="btn pri" data-a="pwainstall">${L2("Install BeyondERP", "تثبيت BeyondERP")}</button></p>` : ""}
@@ -8659,10 +8668,9 @@ const DEVICE = (() => {
   const ua = navigator.userAgent, ios = /iPhone|iPad|iPod/i.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
   const android = /Android/i.test(ua), phone = ios || android;
   let desk = false; try { desk = /[?&]app=desktop\b/.test(location.search) || sessionStorage.getItem("berp.desk") === "1"; if (desk) sessionStorage.setItem("berp.desk", "1"); } catch { /* private window */ }
-  const installed = !!(matchMedia("(display-mode: standalone)").matches || navigator.standalone);
   const browser = /Edg\//.test(ua) ? "Edge" : /SamsungBrowser/.test(ua) ? "Samsung Internet" : /Firefox\//.test(ua) ? "Firefox" : /Chrome\//.test(ua) ? "Chrome" : /Safari\//.test(ua) ? "Safari" : "";
   const kind = phone ? "phone" : desk ? "desktop" : "pc";
-  return { ios, android, phone, desk, installed, browser, kind };
+  return { ios, android, phone, desk, browser, kind, get installed() { return inAppWindow(); } };
 })();
 const deviceName = () => DEVICE.phone ? (DEVICE.ios ? "iPhone / iPad" : "Android") + " · " + (DEVICE.installed ? L2("installed app", "التطبيق المثبّت") : DEVICE.browser || L2("browser", "متصفح"))
   : DEVICE.desk ? L2("BeyondERP desktop app", "تطبيق BeyondERP لسطح المكتب") : L2("Computer", "كمبيوتر") + " · " + (DEVICE.installed ? L2("installed app", "التطبيق المثبّت") : DEVICE.browser || L2("browser", "متصفح"));
@@ -8725,11 +8733,12 @@ const PERMS = () => [
     ask: () => navigator.storage.persist().then(r => { store.set("persistAsked", 1); return r ? "granted" : "auto"; }), soft: true },
   { k: "install", ic: "download", n: L2("Install the app", "تثبيت التطبيق"),
     why: L2("Its own icon and window, opens faster, works offline; on iPhone it is needed for notifications.", "أيقونة ونافذة خاصة، يفتح أسرع ويعمل دون اتصال؛ وعلى آيفون مطلوب للإشعارات."),
-    on: ["phone", "pc"], ok: () => true,
-    state: async () => DEVICE.installed ? "granted" : "prompt",
+    on: ["phone", "pc"], ok: () => true, done: L2("Installed", "مثبّت"),
+    state: async () => appInstalled() ? "granted" : "prompt",
     ask: async () => {
-      if (installPrompt) { installPrompt.prompt(); const c = await installPrompt.userChoice; installPrompt = null; return c.outcome === "accepted" ? "granted" : "prompt"; }
-      uiAlert(DEVICE.ios ? L2("In Safari tap Share (□↑) → Add to Home Screen → Add.", "في سفاري اضغط مشاركة (□↑) ← إضافة إلى الشاشة الرئيسية ← إضافة.")
+      if (installPrompt) { installPrompt.prompt(); const c = await installPrompt.userChoice; installPrompt = null;
+        if (c.outcome === "accepted") { store.set("pwaInstalled", 1); return "granted"; } return "prompt"; }
+      uiAlert(DEVICE.ios ? L2("In Safari tap Share (□↑) → Add to Home Screen → Add. Already added? Open BeyondERP from your Home Screen — Safari can't tell from here.", "في سفاري اضغط مشاركة (□↑) ← إضافة إلى الشاشة الرئيسية ← إضافة. أضفته بالفعل؟ افتح BeyondERP من الشاشة الرئيسية — سفاري لا يستطيع معرفة ذلك من هنا.")
         : DEVICE.android ? L2("Open the browser menu (⋮) → Install app (or Add to Home screen).", "افتح قائمة المتصفح (⋮) ← تثبيت التطبيق (أو إضافة إلى الشاشة الرئيسية).")
         : L2("Click the install icon (⊕ / a screen with an arrow) at the right of the address bar, or the browser menu → Install BeyondERP / Apps → Install this site as an app. Or download the desktop app from “Get the app”.",
           "اضغط أيقونة التثبيت (⊕ / شاشة بسهم) يمين شريط العنوان، أو قائمة المتصفح ← تثبيت BeyondERP / التطبيقات ← تثبيت هذا الموقع كتطبيق. أو نزّل تطبيق سطح المكتب من «احصل على التطبيق»."));
@@ -8762,12 +8771,14 @@ async function permsTab(view, head) {
         "كلها اختيارية — يعمل BeyondERP بدونها. كل إذن يشغّل الميزة المذكورة بجانبه فقط، والميزة تطلبه مرة أخرى عند استخدامها. الأذونات خاصة بهذا الجهاز وهذا المتصفح: أجهزتك الأخرى لها أذوناتها."))}</p>
       <div class="perm-dev">${svg(DEVICE.phone ? "phone" : "monitor")} <b>${esc(L2("This device", "هذا الجهاز"))}:</b> ${esc(deviceName())}</div>
       <div class="perm-list">${list.map((p, i) => { const s = states[i], [lbl, cls] = T[s] || T.unknown;
-        const act = s === "na" ? (p.na ? `<small class="muted">${esc(p.na)}</small>` : "")
+        const [lbl2] = s === "granted" && p.done ? [p.done] : [lbl];
+        const act = p.k === "install" && s === "granted" && !inAppWindow() ? `<small class="muted">${esc(DEVICE.phone ? L2("Open it from your home screen.", "افتحه من الشاشة الرئيسية.") : L2("Open it from the Start menu, desktop or Dock.", "افتحه من قائمة ابدأ أو سطح المكتب أو شريط Dock."))}</small>`
+          : s === "na" ? (p.na ? `<small class="muted">${esc(p.na)}</small>` : "")
           : s === "auto" ? `<small class="muted">${esc(L2("The browser grants this by itself once BeyondERP is installed or used often.", "يمنحه المتصفح تلقائياً بعد تثبيت BeyondERP أو استخدامه كثيراً."))}</small>`
           : s === "granted" ? "" : s === "denied" ? `<button class="btn sm" data-a="permhow">${esc(L2("How to allow", "كيفية السماح"))}</button>`
           : `<button class="btn sm pri" data-a="permask" data-k="${p.k}">${esc(p.k === "install" ? L2("Install", "تثبيت") : L2("Allow", "سماح"))}</button>`;
         return `<div class="perm-row"><span class="perm-ic">${svg(p.ic)}</span><div class="perm-t"><b>${esc(p.n)}</b><small>${esc(p.why)}${p.k === "storage" && used ? " " + esc(used) : ""}</small></div>
-          <span class="chip ${cls}">${esc(lbl)}</span><span class="perm-act">${act}</span></div>`; }).join("")}</div>
+          <span class="chip ${cls}">${esc(lbl2)}</span><span class="perm-act">${act}</span></div>`; }).join("")}</div>
       ${states.includes("denied") ? `<div class="banner warn" style="margin-top:12px">${esc(unblockHow())}</div>` : ""}
       <button class="btn" style="margin-top:12px" data-a="permall">${esc(L2("Allow everything I haven't answered yet", "السماح بكل ما لم أُجب عنه بعد"))}</button></div>
     <div class="card"><h2>${esc(L2("Works without any permission", "يعمل دون أي إذن"))}</h2><ul class="perm-free">
@@ -8786,6 +8797,7 @@ async function permsTab(view, head) {
       n("prompt") ? L2(`Not asked yet: ${names("prompt")}`, `لم يُطلب بعد: ${names("prompt")}`) : ""].filter(Boolean).join(" · "), n("denied") > 0);
     const b = $("[data-a=permre]"); if (b) { b.disabled = false; b.classList.add("done"); setTimeout(() => b.classList.remove("done"), 1200); } };
   S.H.permhow = () => uiAlert(unblockHow());
+  S.permDraw = draw;
   S.H.permask = async el => { const p = PERMS().find(x => x.k === el.dataset.k); if (!p) return; el.disabled = true;
     const r = await permAsk(p); if (r === "denied") toast(L2("Not allowed — you can change it any time from here", "لم يُسمح — يمكنك تغييره في أي وقت من هنا"), true);
     if (r === "none") toast(L2("No such device was found", "لم يُعثر على هذا الجهاز"), true); draw(); };
