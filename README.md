@@ -39,6 +39,25 @@ On the hosted site open the user menu → **Get the app**:
   full-screen and keeps an offline copy of the app.
 * **Offline browser copy** — no longer published; `python build_web.py --zip` still makes one for your own use.
 
+## Device permissions (all optional)
+
+BeyondERP runs without any of them. The first time someone reaches the ERP screens on a device (never on the welcome
+page or the sign-in) a small card offers the ones that device can use; each feature also asks again when it is used.
+Everyone can see and change theirs in **Settings → Device permissions** (also in the profile menu).
+
+| Permission | What uses it | Phone | Computer browser | Desktop app |
+|---|---|:-:|:-:|:-:|
+| Notifications | chat messages, approvals, follow-ups, bookings and desk messages while the app is in the background | ✓ (iPhone: installed app only) | ✓ | ✓ |
+| Camera | chat camera: photo or video clip | ✓ | ✓ | ✓ |
+| Microphone | voice messages; sound in video clips | ✓ | ✓ | ✓ |
+| Location | "My day" start / end, only when the company asks for it | ✓ | ✓ | ✓ |
+| Clipboard (paste) | "Paste" in right-click menus (Ctrl+V works without it) | — | ✓ (Chrome / Edge) | ✓ |
+| Keep data on this device | stops the browser clearing data when space is low (vital for the browser-only edition) | ✓ | ✓ | ✓ |
+| Install the app | own icon and window, offline; needed for notifications on iPhone | ✓ | ✓ | (already) |
+
+No permission needed: alert sounds and icon badges, vibration (Android), attaching / pasting / dropping files, copying,
+downloads, printing, full screen.
+
 ## Three ways to run it
 
 | Edition | For | How |

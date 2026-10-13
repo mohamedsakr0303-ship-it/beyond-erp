@@ -183,6 +183,11 @@ const IC = {
   camera: '<path d="M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13" r="3.5"/>',
   flip: '<path d="M4 9a8 8 0 0 1 14-3l2 2M20 15a8 8 0 0 1-14 3l-2-2"/><path d="M20 4v4h-4M4 20v-4h4"/>',
   trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
+  shield: '<path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/>',
+  pin: '<path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/>',
+  copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/>',
+  db: '<ellipse cx="12" cy="5.5" rx="7" ry="2.5"/><path d="M5 5.5v13c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5v-13M5 12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5"/>',
+  monitor: '<rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M8 20h8M12 16v4"/>',
   send: '<path d="M4 12l16-8-6 16-2.5-6.5z"/><path d="M11.5 13.5L20 4"/>',
   home: '<path d="M3 10.5 12 3l9 7.5V21a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/>',
   heart: '<path d="M12 20.5s-8-4.7-8-10.6A4.4 4.4 0 0 1 12 7a4.4 4.4 0 0 1 8 2.9c0 5.9-8 10.6-8 10.6z"/><path d="M8.5 12.5h2l1-2 1.5 4 1-2h1.5"/>',
@@ -3752,7 +3757,7 @@ function whereAmI(need) {
   return new Promise((res, rej) => {
     if (need === "off" || !navigator.geolocation) return need === "required" ? rej(new Error(L2("This device cannot share its location", "هذا الجهاز لا يستطيع مشاركة موقعه"))) : res({});
     navigator.geolocation.getCurrentPosition(p => res({ lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy }),
-      () => need === "required" ? rej(new Error(L2("Allow location for this app to start or end your day (your browser or phone settings).", "اسمح لهذا التطبيق بالوصول إلى الموقع لبدء أو إنهاء يومك (من إعدادات المتصفح أو الهاتف)."))) : res({}),
+      () => need === "required" ? rej(new Error(L2("Allow location for this app to start or end your day — Settings → Device permissions shows how.", "اسمح لهذا التطبيق بالوصول إلى الموقع لبدء أو إنهاء يومك — الإعدادات ← أذونات الجهاز توضح الطريقة."))) : res({}),
       { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 });
   });
 }
@@ -4454,7 +4459,7 @@ const FONTS = ["system", "Inter", "Nunito Sans", "Cairo", "Arial", "Tahoma", "Se
 const DOC_FONTS = ["Arial", "Calibri", "Tahoma", "Segoe UI", "Times New Roman", "Georgia", "Cairo", "Traditional Arabic", "Bodoni MT Black", "Bodoni MT", "Garamond", "Century Gothic"];
 
 PAGES.settings = async (view, parts, q) => {
-  const tabs = [["company", "tab_company", can("settings.company")], ["docs", "tab_docs", can("settings.branding")], ["look", "tab_look", true], ["theme", "tab_theme", true], ["notify", "tab_notify", true],
+  const tabs = [["company", "tab_company", can("settings.company")], ["docs", "tab_docs", can("settings.branding")], ["look", "tab_look", true], ["theme", "tab_theme", true], ["notify", "tab_notify", true], ["perms", "tab_perms", true],
     ["menus", "tab_menus", can("settings.menus")], ["system", "tab_system", can("settings.system") || S.boot.user.is_admin],
     ["workspace", "tab_workspace", S.boot.user.is_admin || (cloudOn() && can("settings.workspace"))], ["ai", "tab_ai", !!S.boot.user.is_super]].filter(x => x[2]);
   const tab = tabs.find(x => x[0] === q.tab) ? q.tab : tabs[0][0];
@@ -4576,6 +4581,7 @@ PAGES.settings = async (view, parts, q) => {
   if (tab === "workspace") return workspaceTab(view, head);
   if (tab === "theme") return themeTab(view, head);
   if (tab === "notify") return notifPage(view, head);
+  if (tab === "perms") return permsTab(view, head);
   if (tab === "ai") return aiSettingsTab(view, head);
   if (tab === "menus") {
     const menuKeys = window.MENU.flatMap(([g, items]) => [g, ...items.map(i => i[0])]);
@@ -8566,22 +8572,176 @@ async function saveNotify(patch) {
   const p = S.boot.profile || (S.boot.profile = { prefs: {} }); p.prefs = { ...(p.prefs || {}), notify };
   try { S.boot.profile = await api("PUT", "/api/me/profile", { prefs: { notify } }); } catch (e) { fail(e); }
 }
-function notifyNudge() {
-  if (!S.boot || !S.boot.user || $("#nnudge") || notifPerm() !== "default") return;
-  const p = notifyPrefs(), snooze = store.get("notifSnooze:" + S.boot.user.id, 0);
-  if (p.ask === "never" || p.ask === "done" || Date.now() < snooze) return;
-  if ($(".dlg-bg, .drawer-bg, .tour-card, .onb")) { setTimeout(notifyNudge, 20000); return; }   // never on top of another question or the tour
-  const el = document.createElement("div"); el.id = "nnudge"; el.className = "nnudge"; el.setAttribute("role", "dialog");
-  el.innerHTML = `<div class="nn-ic">${svg("bell")}</div><div class="nn-b"><b>${esc(L2("Turn on notifications?", "تفعيل الإشعارات؟"))}</b>
-      <p>${esc(L2("Get a ping for new messages, entries waiting for your approval and follow-ups due — even when BeyondERP is in the background.", "تصلك تنبيهات بالرسائل الجديدة والقيود التي تنتظر اعتمادك والمتابعات المستحقة — حتى والتطبيق في الخلفية."))}</p>
-      <div class="row"><button type="button" class="btn pri sm" data-n="yes">${esc(L2("Yes, turn on", "نعم، فعّلها"))}</button><button type="button" class="btn sm" data-n="later">${esc(L2("Not now", "ليس الآن"))}</button>
-        <button type="button" class="lnk" data-n="never">${esc(L2("Don't ask again", "لا تسألني مرة أخرى"))}</button></div></div>`;
-  el.addEventListener("click", async e => { const b = e.target.closest("[data-n]"); if (!b) return; el.remove();
-    if (b.dataset.n === "yes") await askNotifications();
-    else if (b.dataset.n === "later") store.set("notifSnooze:" + S.boot.user.id, Date.now() + 3 * 86400000);
-    else saveNotify({ ask: "never" }); });
+// ================================================================== device permissions (Settings → Device permissions)
+// Everything here is optional: BeyondERP works without any of it; a feature that needs one asks again when it is used.
+// Each kind of device gets its own list (a phone has no right-click paste; a computer has no "Add to Home screen").
+const DEVICE = (() => {
+  const ua = navigator.userAgent, ios = /iPhone|iPad|iPod/i.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+  const android = /Android/i.test(ua), phone = ios || android;
+  let desk = false; try { desk = /[?&]app=desktop\b/.test(location.search) || sessionStorage.getItem("berp.desk") === "1"; if (desk) sessionStorage.setItem("berp.desk", "1"); } catch { /* private window */ }
+  const installed = !!(matchMedia("(display-mode: standalone)").matches || navigator.standalone);
+  const browser = /Edg\//.test(ua) ? "Edge" : /SamsungBrowser/.test(ua) ? "Samsung Internet" : /Firefox\//.test(ua) ? "Firefox" : /Chrome\//.test(ua) ? "Chrome" : /Safari\//.test(ua) ? "Safari" : "";
+  const kind = phone ? "phone" : desk ? "desktop" : "pc";
+  return { ios, android, phone, desk, installed, browser, kind };
+})();
+const deviceName = () => DEVICE.phone ? (DEVICE.ios ? "iPhone / iPad" : "Android") + " · " + (DEVICE.installed ? L2("installed app", "التطبيق المثبّت") : DEVICE.browser || L2("browser", "متصفح"))
+  : DEVICE.desk ? L2("BeyondERP desktop app", "تطبيق BeyondERP لسطح المكتب") : L2("Computer", "كمبيوتر") + " · " + (DEVICE.installed ? L2("installed app", "التطبيق المثبّت") : DEVICE.browser || L2("browser", "متصفح"));
+// how to undo a "Block", for this very device
+const unblockHow = () => DEVICE.ios ? (DEVICE.installed
+    ? L2("iPhone: open the Settings app → Notifications → BeyondERP for notifications; for camera, microphone and location: Settings → Privacy & Security → the item → allow, then reopen BeyondERP.",
+      "آيفون: افتح تطبيق الإعدادات ← الإشعارات ← BeyondERP للإشعارات؛ وللكاميرا والميكروفون والموقع: الإعدادات ← الخصوصية والأمان ← العنصر ← سماح، ثم أعد فتح BeyondERP.")
+    : L2("iPhone (Safari): tap ᴀA in the address bar → Website Settings → set Camera / Microphone / Location to Allow, then reload. Notifications need the app installed (Share → Add to Home Screen).",
+      "آيفون (سفاري): اضغط ᴀA في شريط العنوان ← إعدادات موقع الويب ← اجعل الكاميرا / الميكروفون / الموقع «سماح» ثم أعد التحميل. الإشعارات تتطلب تثبيت التطبيق (مشاركة ← إضافة إلى الشاشة الرئيسية)."))
+  : DEVICE.android ? L2("Android: long-press the BeyondERP icon → App info → Permissions / Notifications (or in Chrome: ⋮ → Settings → Site settings → BeyondERP's site) → Allow, then reopen.",
+      "أندرويد: اضغط مطولاً على أيقونة BeyondERP ← معلومات التطبيق ← الأذونات / الإشعارات (أو في كروم: ⋮ ← الإعدادات ← إعدادات المواقع ← موقع BeyondERP) ← سماح، ثم أعد الفتح.")
+  : DEVICE.desk ? L2("Desktop app: click ⋮ (top right of the window) → App info / Site settings → set the item to Allow, then press F5. Windows / macOS must also allow the browser to use the camera, microphone and location (Privacy settings).",
+      "تطبيق سطح المكتب: اضغط ⋮ (أعلى يمين النافذة) ← معلومات التطبيق / إعدادات الموقع ← اجعل العنصر «سماح» ثم اضغط F5. ويجب أن يسمح ويندوز / ماك للمتصفح باستخدام الكاميرا والميكروفون والموقع (إعدادات الخصوصية).")
+  : L2("Computer: click the lock / settings icon at the left of the address bar → Site settings (or Permissions) → set the item to Allow, then reload. Windows / macOS must also allow the browser to use the camera, microphone and location (Privacy settings).",
+      "الكمبيوتر: اضغط رمز القفل / الإعدادات يسار شريط العنوان ← إعدادات الموقع (أو الأذونات) ← اجعل العنصر «سماح» ثم أعد التحميل. ويجب أن يسمح ويندوز / ماك للمتصفح باستخدام الكاميرا والميكروفون والموقع (إعدادات الخصوصية).");
+const mediaOK = () => !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.isSecureContext);
+const stopAll = s => { try { s.getTracks().forEach(t => t.stop()); } catch { /* nothing to stop */ } };
+const pq = async name => { try { return (await navigator.permissions.query({ name })).state; } catch { return ""; } };   // "" = this browser can't say
+// the list: key, icon, name, what uses it, which devices, how to read it, how to ask
+const PERMS = () => [
+  { k: "notifications", ic: "bell", n: L2("Notifications", "الإشعارات"),
+    why: L2("Pop-ups for new chat messages, entries waiting for your approval, follow-ups and bookings due, desk messages — even when BeyondERP is in the background.", "تنبيهات منبثقة لرسائل المحادثة والقيود التي تنتظر اعتمادك والمتابعات والحجوزات المستحقة ورسائل مكتب العملاء — حتى والتطبيق في الخلفية."),
+    on: ["phone", "pc", "desktop"], ok: () => typeof Notification !== "undefined",
+    na: DEVICE.ios && !DEVICE.installed ? L2("On iPhone, install BeyondERP first (Share → Add to Home Screen), then allow them from the installed app.", "على آيفون ثبّت BeyondERP أولاً (مشاركة ← إضافة إلى الشاشة الرئيسية) ثم اسمح بها من التطبيق المثبّت.") : "",
+    state: async () => { const p = notifPerm(); return p === "default" ? "prompt" : p; },
+    ask: () => Notification.requestPermission().then(r => { if (r === "granted") saveNotify({ ask: "done" }); return r; }) },
+  { k: "camera", ic: "camera", n: L2("Camera", "الكاميرا"),
+    why: L2("Take a photo or a short video in chat and send it straight away.", "التقاط صورة أو فيديو قصير في المحادثة وإرساله فوراً."),
+    on: ["phone", "pc", "desktop"], ok: mediaOK, state: () => pq("camera"),
+    ask: () => navigator.mediaDevices.getUserMedia({ video: true }).then(s => { stopAll(s); return "granted"; }) },
+  { k: "microphone", ic: "mic", n: L2("Microphone", "الميكروفون"),
+    why: L2("Voice messages in chat, and sound in the video clips you record.", "الرسائل الصوتية في المحادثة، والصوت في مقاطع الفيديو التي تسجّلها."),
+    on: ["phone", "pc", "desktop"], ok: mediaOK, state: () => pq("microphone"),
+    ask: () => navigator.mediaDevices.getUserMedia({ audio: true }).then(s => { stopAll(s); return "granted"; }) },
+  { k: "geolocation", ic: "pin", n: L2("Location", "الموقع"),
+    why: L2("“My day”: records where you start and end your working day, when your company asks for it. Used only at that moment — never tracked in the background.", "«يومي»: يسجّل مكان بدء يوم عملك وانتهائه عندما تطلب شركتك ذلك. يُستخدم في تلك اللحظة فقط — لا تتبّع في الخلفية."),
+    on: ["phone", "pc", "desktop"], ok: () => !!navigator.geolocation, state: () => pq("geolocation"),
+    ask: () => new Promise((ok, bad) => navigator.geolocation.getCurrentPosition(() => ok("granted"), e => bad(e), { timeout: 15000, maximumAge: 600000 })) },
+  { k: "clipboard", ic: "copy", n: L2("Clipboard (paste)", "الحافظة (اللصق)"),
+    why: L2("“Paste” in the right-click menu of fields and tables. Ctrl+V always works without it.", "خيار «لصق» في قائمة الزر الأيمن للحقول والجداول. اختصار Ctrl+V يعمل دائماً بدونه."),
+    on: ["pc", "desktop"], ok: () => !!(navigator.clipboard && navigator.clipboard.readText) && DEVICE.browser !== "Firefox" && DEVICE.browser !== "Safari",
+    state: () => pq("clipboard-read"), ask: () => navigator.clipboard.readText().then(() => "granted") },
+  { k: "storage", ic: "db", n: L2("Keep data on this device", "حفظ البيانات على هذا الجهاز"),
+    why: STATIC && !cloudOn() ? L2("Important here: your books are kept in this browser. This stops the browser from clearing them when the device runs low on space.", "مهم هنا: دفاترك محفوظة في هذا المتصفح. هذا يمنع المتصفح من مسحها عند امتلاء مساحة الجهاز.")
+      : L2("Keeps the app, unsaved drafts and the offline copy from being cleared by the browser when space runs low.", "يمنع المتصفح من مسح التطبيق والمسودات غير المحفوظة والنسخة دون اتصال عند امتلاء المساحة."),
+    on: ["phone", "pc", "desktop"], ok: () => !!(navigator.storage && navigator.storage.persist),
+    state: async () => (await navigator.storage.persisted()) ? "granted" : store.get("persistAsked", 0) ? "auto" : "prompt",   // browsers decide this one themselves
+    ask: () => navigator.storage.persist().then(r => { store.set("persistAsked", 1); return r ? "granted" : "auto"; }), soft: true },
+  { k: "install", ic: "download", n: L2("Install the app", "تثبيت التطبيق"),
+    why: L2("Its own icon and window, opens faster, works offline; on iPhone it is needed for notifications.", "أيقونة ونافذة خاصة، يفتح أسرع ويعمل دون اتصال؛ وعلى آيفون مطلوب للإشعارات."),
+    on: ["phone", "pc"], ok: () => true,
+    state: async () => DEVICE.installed ? "granted" : "prompt",
+    ask: async () => {
+      if (installPrompt) { installPrompt.prompt(); const c = await installPrompt.userChoice; installPrompt = null; return c.outcome === "accepted" ? "granted" : "prompt"; }
+      uiAlert(DEVICE.ios ? L2("In Safari tap Share (□↑) → Add to Home Screen → Add.", "في سفاري اضغط مشاركة (□↑) ← إضافة إلى الشاشة الرئيسية ← إضافة.")
+        : DEVICE.android ? L2("Open the browser menu (⋮) → Install app (or Add to Home screen).", "افتح قائمة المتصفح (⋮) ← تثبيت التطبيق (أو إضافة إلى الشاشة الرئيسية).")
+        : L2("Click the install icon (⊕ / a screen with an arrow) at the right of the address bar, or the browser menu → Install BeyondERP / Apps → Install this site as an app. Or download the desktop app from “Get the app”.",
+          "اضغط أيقونة التثبيت (⊕ / شاشة بسهم) يمين شريط العنوان، أو قائمة المتصفح ← تثبيت BeyondERP / التطبيقات ← تثبيت هذا الموقع كتطبيق. أو نزّل تطبيق سطح المكتب من «احصل على التطبيق»."));
+      return "prompt"; } },
+];
+const permsHere = () => PERMS().filter(p => p.on.includes(DEVICE.kind));
+async function permState(p) {
+  if (!p.ok()) return "na";
+  try { return (await p.state()) || "unknown"; } catch { return "unknown"; }
+}
+async function permAsk(p) {
+  try { return await p.ask(); }
+  catch (e) { return e && (e.name === "NotAllowedError" || e.code === 1) ? "denied" : e && e.name === "NotFoundError" ? "none" : "prompt"; }
+}
+const PERM_TXT = () => ({ granted: [L2("Allowed", "مسموح"), "ok"], denied: [L2("Blocked", "محظور"), "bad"], prompt: [L2("Not asked yet", "لم يُطلب بعد"), "warn"],
+  unknown: [L2("Asked when used", "يُطلب عند الاستخدام"), ""],
+  auto: [L2("Up to the browser", "يقرره المتصفح"), ""], na: [L2("Not available here", "غير متاح هنا"), ""], none: [L2("No device found", "لا يوجد جهاز"), "bad"] });
+
+// Settings → Device permissions
+async function permsTab(view, head) {
+  const draw = async () => {
+    const list = permsHere(), states = await Promise.all(list.map(permState));
+    const T = PERM_TXT();
+    view.innerHTML = head + `<div class="card"><h2 class="row" style="gap:8px">${esc(L2("Device permissions", "أذونات الجهاز"))}<span class="spacer"></span><button class="btn sm" data-a="permre">↻ ${esc(L2("Check again", "تحقق مرة أخرى"))}</button></h2>
+      <p class="muted">${esc(L2("All optional — BeyondERP works without them. Each one only switches on the feature listed next to it, and a feature asks again when you use it. They belong to this device and this browser: your other devices have their own.",
+        "كلها اختيارية — يعمل BeyondERP بدونها. كل إذن يشغّل الميزة المذكورة بجانبه فقط، والميزة تطلبه مرة أخرى عند استخدامها. الأذونات خاصة بهذا الجهاز وهذا المتصفح: أجهزتك الأخرى لها أذوناتها."))}</p>
+      <div class="perm-dev">${svg(DEVICE.phone ? "phone" : "monitor")} <b>${esc(L2("This device", "هذا الجهاز"))}:</b> ${esc(deviceName())}</div>
+      <div class="perm-list">${list.map((p, i) => { const s = states[i], [lbl, cls] = T[s] || T.unknown;
+        const act = s === "na" ? (p.na ? `<small class="muted">${esc(p.na)}</small>` : "")
+          : s === "auto" ? `<small class="muted">${esc(L2("The browser grants this by itself once BeyondERP is installed or used often.", "يمنحه المتصفح تلقائياً بعد تثبيت BeyondERP أو استخدامه كثيراً."))}</small>`
+          : s === "granted" ? "" : s === "denied" ? `<button class="btn sm" data-a="permhow">${esc(L2("How to allow", "كيفية السماح"))}</button>`
+          : `<button class="btn sm pri" data-a="permask" data-k="${p.k}">${esc(p.k === "install" ? L2("Install", "تثبيت") : L2("Allow", "سماح"))}</button>`;
+        return `<div class="perm-row"><span class="perm-ic">${svg(p.ic)}</span><div class="perm-t"><b>${esc(p.n)}</b><small>${esc(p.why)}</small></div>
+          <span class="chip ${cls}">${esc(lbl)}</span><span class="perm-act">${act}</span></div>`; }).join("")}</div>
+      ${states.includes("denied") ? `<div class="banner warn" style="margin-top:12px">${esc(unblockHow())}</div>` : ""}
+      <button class="btn" style="margin-top:12px" data-a="permall">${esc(L2("Allow everything I haven't answered yet", "السماح بكل ما لم أُجب عنه بعد"))}</button></div>
+    <div class="card"><h2>${esc(L2("Works without any permission", "يعمل دون أي إذن"))}</h2><ul class="perm-free">
+      <li>${esc(L2("Alert sounds and badges on the app icon", "أصوات التنبيه والعدّاد على أيقونة التطبيق"))}</li>
+      <li>${esc(DEVICE.ios ? L2("Vibration — iPhones don't let websites vibrate", "الاهتزاز — أجهزة آيفون لا تسمح للمواقع بالاهتزاز") : L2("Vibration for alerts (Android phones)", "الاهتزاز مع التنبيهات (هواتف أندرويد)"))}</li>
+      <li>${esc(L2("Attaching files and photos (you pick them each time — on a phone that includes taking a picture)", "إرفاق الملفات والصور (تختارها في كل مرة — وعلى الهاتف يشمل ذلك التقاط صورة)"))}</li>
+      <li>${esc(L2("Copying codes and links, downloads, printing, full screen", "نسخ الرموز والروابط، التنزيلات، الطباعة، ملء الشاشة"))}</li>
+      <li>${esc(L2("Pasting and dropping files into forms and chat (Ctrl+V, drag and drop)", "لصق الملفات وإفلاتها في النماذج والمحادثة (Ctrl+V والسحب والإفلات)"))}</li></ul></div>`;
+  };
+  S.H.permre = draw;
+  S.H.permhow = () => uiAlert(unblockHow());
+  S.H.permask = async el => { const p = PERMS().find(x => x.k === el.dataset.k); if (!p) return; el.disabled = true;
+    const r = await permAsk(p); if (r === "denied") toast(L2("Not allowed — you can change it any time from here", "لم يُسمح — يمكنك تغييره في أي وقت من هنا"), true);
+    if (r === "none") toast(L2("No such device was found", "لم يُعثر على هذا الجهاز"), true); draw(); };
+  S.H.permall = async () => { await askMany(permsHere().filter(p => p.k !== "install"), await Promise.all(permsHere().filter(p => p.k !== "install").map(permState))); draw(); };
+  // the page follows changes made in the browser's own settings
+  for (const n of ["camera", "microphone", "geolocation", "notifications", "clipboard-read"]) {
+    try { (await navigator.permissions.query({ name: n })).onchange = () => { if (document.body.contains(view) && /tab=perms/.test(location.hash)) draw(); }; } catch { /* not supported */ }
+  }
+  await draw();
+}
+// ask several at once: every request starts inside the same tap (browsers only show these questions right after a tap);
+// camera and microphone go in one question
+async function askMany(list, states) {
+  const todo = list.filter((p, i) => states[i] === "prompt" || states[i] === "unknown");
+  const has = k => todo.some(p => p.k === k);
+  const jobs = [];
+  if (has("notifications")) jobs.push(permAsk(todo.find(p => p.k === "notifications")));
+  if (has("camera") && has("microphone")) jobs.push(navigator.mediaDevices.getUserMedia({ audio: true, video: true }).then(s => stopAll(s))
+    .catch(e => { if (e && e.name === "NotFoundError") return Promise.all([permAsk(todo.find(p => p.k === "microphone")), permAsk(todo.find(p => p.k === "camera"))]); }));
+  else for (const k of ["camera", "microphone"]) if (has(k)) jobs.push(permAsk(todo.find(p => p.k === k)));
+  for (const p of todo) if (!["notifications", "camera", "microphone"].includes(p.k)) jobs.push(permAsk(p));
+  await Promise.allSettled(jobs);
+}
+
+// the first time on the ERP screens (never on the welcome page or the sign-in): one card for this device
+const permKey = () => "permAsk:" + ((S.boot && S.boot.user && S.boot.user.id) || 0);
+async function permNudge() {
+  if (!S.boot || !S.boot.user || $("#nnudge") || !$("#nav")) return;
+  const seen = store.get(permKey(), 0);
+  if (seen === "never" || Date.now() < seen) return;
+  if ($(".dlg-bg, .drawer-bg, .tour-card, .onb, .cam") || (DEVICE.phone && $("#tourbar"))) { setTimeout(permNudge, 20000); return; }   // never on top of another question or the tour
+  const np = notifyPrefs();
+  const list = permsHere().filter(p => p.k !== "install" && !(p.k === "notifications" && np.ask === "never")
+    && !(p.k === "geolocation" && (S.boot.settings || {}).workday_location === "off") && !(p.k === "clipboard"));
+  const states = await Promise.all(list.map(permState));
+  const open = list.filter((p, i) => states[i] === "prompt" || (states[i] === "unknown" && !p.soft));
+  if (!open.some(p => !p.soft)) return;
+  const el = document.createElement("div"); el.id = "nnudge"; el.className = "nnudge perm-nudge"; el.setAttribute("role", "dialog");
+  el.innerHTML = `<div class="nn-ic">${svg("shield")}</div><div class="nn-b"><b>${esc(L2("Set up this device?", "تجهيز هذا الجهاز؟"))}</b>
+      <p>${esc(L2("BeyondERP can use these on this device. All optional — tick what you want; your browser or phone then asks you to confirm.", "يمكن لـ BeyondERP استخدام ما يلي على هذا الجهاز. كلها اختيارية — اختر ما تريد، ثم يطلب منك المتصفح أو الهاتف التأكيد."))}</p>
+      <div class="pn-list">${open.map(p => `<label class="pn-it"><input type="checkbox" value="${p.k}" checked><span>${svg(p.ic)}</span><span><b>${esc(p.n)}</b><small>${esc(p.why)}</small></span></label>`).join("")}</div>
+      <div class="row"><button type="button" class="btn pri sm" data-n="yes">${esc(L2("Allow selected", "السماح بالمحدد"))}</button><button type="button" class="btn sm" data-n="later">${esc(L2("Not now", "ليس الآن"))}</button>
+        <button type="button" class="lnk" data-n="never">${esc(L2("Don't ask again", "لا تسألني مرة أخرى"))}</button></div>
+      <small class="muted">${esc(L2("Change these any time: Settings → Device permissions.", "يمكنك تغييرها في أي وقت: الإعدادات ← أذونات الجهاز."))}</small></div>`;
+  el.addEventListener("click", async e => { const b = e.target.closest("[data-n]"); if (!b) return;
+    const picked = $$("input:checked", el).map(i => i.value); el.remove();
+    if (b.dataset.n === "yes") {
+      store.set(permKey(), Date.now() + 14 * 86400000);      // what stays unanswered is offered again in two weeks
+      if (!picked.includes("notifications")) saveNotify({ ask: "never" });
+      const chosen = open.filter(p => picked.includes(p.k));
+      await askMany(chosen, chosen.map(() => "prompt"));
+      const after = await Promise.all(chosen.map(permState)), n = after.filter(s => s === "granted").length;
+      toast(n === chosen.length ? L2("All set ✓", "تم ✓") : L2(`${n} of ${chosen.length} allowed — see Settings → Device permissions`, `تم السماح بـ ${n} من ${chosen.length} — راجع الإعدادات ← أذونات الجهاز`));
+      if (picked.includes("notifications") && notifPerm() === "granted") alertPerson({ title: L2("Notifications are on", "تم تفعيل الإشعارات"), body: L2("This is how new messages, approvals and follow-ups will reach you.", "هكذا ستصلك الرسائل والاعتمادات والمتابعات الجديدة."), force: true, test: true, tag: "berp-test" });
+    } else if (b.dataset.n === "later") store.set(permKey(), Date.now() + 3 * 86400000);
+    else { store.set(permKey(), "never"); saveNotify({ ask: "never" }); } });
   document.body.appendChild(el);
 }
+const notifyNudge = permNudge;
 if (navigator.serviceWorker) navigator.serviceWorker.addEventListener("message", e => { if (e.data && e.data.href) location.hash = e.data.href; });
 
 const notifyKey = () => "chatLast:" + ((S.boot && S.boot.user && S.boot.user.id) || 0);
@@ -8636,6 +8796,7 @@ renderShell = function () {   // eslint-disable-line no-func-assign
   const p = S.boot.profile || {}, u = me();
   const av = $(".ucard .avatar"); if (av && p.avatar) av.outerHTML = `<img class="avatar av" src="${esc(p.avatar)}" alt="">`;
   const um = $(".ucard .dd-menu"); if (um && !$('a[href="#/profile"]', um)) um.insertAdjacentHTML("afterbegin", `<a href="#/profile">${svg("user")} ${esc(L2("My profile", "ملفي الشخصي"))}</a><a href="#/my-day">${svg("clock")} ${esc(L2("My day (start / end)", "يومي (بداية / نهاية)"))}</a><a href="#/notifications">${svg("bell")} ${esc(L2("Notifications", "الإشعارات"))}</a>`);
+  if (um && !$('a[href="#/settings?tab=perms"]', um)) { const pr = $('a[href="#/profile"]', um); if (pr) pr.insertAdjacentHTML("afterend", `<a href="#/settings?tab=perms">${svg("shield")} ${esc(L2("Device permissions", "أذونات الجهاز"))}</a>`); }
   if (!C2.started) { C2.started = true; setTimeout(pollChat, 1200); setTimeout(notifyNudge, 6000); }
   void u;
 };
@@ -8927,7 +9088,7 @@ function mediaError(e, what) {
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.isSecureContext)
     return new Error(L2(`This browser can't use the ${what} here`, what === "microphone" ? "لا يمكن لهذا المتصفح استخدام الميكروفون هنا" : "لا يمكن لهذا المتصفح استخدام الكاميرا هنا"));
   if (e && (e.name === "NotAllowedError" || e.name === "SecurityError"))
-    return new Error(L2(`Allow the ${what} for this site (the icon next to the address bar), then try again`, what === "microphone" ? "اسمح باستخدام الميكروفون لهذا الموقع (الأيقونة بجانب شريط العنوان) ثم حاول مرة أخرى" : "اسمح باستخدام الكاميرا لهذا الموقع (الأيقونة بجانب شريط العنوان) ثم حاول مرة أخرى"));
+    return new Error(L2(`The ${what} is blocked for BeyondERP on this device. Settings → Device permissions shows how to allow it.`, what === "microphone" ? "الميكروفون محظور لـ BeyondERP على هذا الجهاز. الإعدادات ← أذونات الجهاز توضح كيفية السماح به." : "الكاميرا محظورة لـ BeyondERP على هذا الجهاز. الإعدادات ← أذونات الجهاز توضح كيفية السماح بها."));
   if (e && e.name === "NotFoundError") return new Error(L2(`No ${what} found on this device`, what === "microphone" ? "لا يوجد ميكروفون على هذا الجهاز" : "لا توجد كاميرا على هذا الجهاز"));
   return e instanceof Error ? e : new Error(String(e));
 }

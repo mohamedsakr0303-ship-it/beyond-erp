@@ -3912,6 +3912,20 @@ class CalculatorBuilder(unittest.TestCase):
         self.assertEqual((st, r["results"][0]["value"]), (200, 12))
 
 
+class DesktopWindowMarker(unittest.TestCase):
+    """The desktop window tells the app it is the desktop app (its own list of device permissions), keeping the page."""
+
+    def test_marker(self):
+        from unittest import mock
+        from erp import appwindow
+        seen = []
+        with mock.patch.object(appwindow, "candidates", return_value=[]), mock.patch("webbrowser.open", side_effect=seen.append):
+            for url in ("https://x.dev/", "https://x.dev/?a=1", "https://x.dev/#/chat/2", "https://x.dev/?app=desktop"):
+                appwindow.open_window(url)
+        self.assertEqual(seen, ["https://x.dev/?app=desktop", "https://x.dev/?a=1&app=desktop",
+                                "https://x.dev/?app=desktop#/chat/2", "https://x.dev/?app=desktop"])
+
+
 class ChatReactionsAndNotify(unittest.TestCase):
     """WhatsApp-style reactions (one per person, same again takes it back) and each person's notification settings."""
 

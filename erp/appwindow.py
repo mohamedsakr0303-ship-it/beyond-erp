@@ -35,6 +35,9 @@ def profile_dir():
 
 
 def open_window(url, profile="app-window"):
+    if "app=desktop" not in url:      # lets the app know it runs in the desktop window (its own list of permissions)
+        base, _, frag = url.partition("#")
+        url = base + ("&" if "?" in base else "?") + "app=desktop" + ("#" + frag if frag else "")
     for exe in candidates():
         if exe and Path(exe).is_file():
             d = profile_dir().parent / profile

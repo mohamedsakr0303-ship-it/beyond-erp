@@ -1690,6 +1690,28 @@ body:has(.drawer-bg) .nnudge,body:has(.dlg-bg) .nnudge{display:none}
 .nn-ic{flex:none;width:40px;height:40px;border-radius:12px;display:grid;place-items:center;background:color-mix(in srgb,var(--brand) 16%,transparent);color:var(--brand)}
 .nn-b b{display:block;margin-bottom:4px}.nn-b p{margin:0 0 10px;color:var(--muted);font-size:.9em;line-height:1.45}
 .nn-b .row{gap:8px;align-items:center}
+.perm-nudge{width:min(440px,calc(100vw - 32px));max-height:calc(100vh - 40px);overflow:auto}
+.perm-nudge .nn-b{min-width:0}
+.perm-nudge .nn-b>small{display:block;margin-top:8px}
+.pn-list{display:flex;flex-direction:column;gap:6px;margin:0 0 12px}
+.pn-it{display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border:1px solid var(--line);border-radius:12px;cursor:pointer}
+.pn-it input{margin-top:3px;flex:none}
+.pn-it>span:nth-of-type(1){flex:none;color:var(--brand);line-height:0;margin-top:1px}
+.pn-it>span:nth-of-type(1) svg{width:18px;height:18px}
+.pn-it b{display:block;margin:0;font-size:.92em}.pn-it small{color:var(--muted);font-size:.8em;line-height:1.35;display:block}
+@media (max-width:700px){.nnudge.perm-nudge{bottom:calc(84px + env(safe-area-inset-bottom));inset-inline:12px;width:auto;max-height:calc(100vh - 120px)}}
+.perm-dev{display:flex;align-items:center;gap:8px;margin:4px 0 12px;color:var(--muted)}
+.perm-dev svg{width:18px;height:18px}.perm-dev b{color:var(--ink)}
+.perm-list{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:14px;overflow:hidden}
+.perm-row{display:grid;grid-template-columns:auto 1fr auto auto;gap:12px;align-items:center;padding:12px 14px}
+.perm-row+.perm-row{border-top:1px solid var(--line)}
+.perm-ic{width:36px;height:36px;border-radius:10px;display:grid;place-items:center;background:color-mix(in srgb,var(--brand) 14%,transparent);color:var(--brand)}
+.perm-ic svg{width:19px;height:19px}
+.perm-t b{display:block}.perm-t small{color:var(--muted);line-height:1.4;display:block}
+.perm-act{min-width:0;text-align:end}
+.perm-act small{display:block;max-width:240px}
+@media (max-width:640px){.perm-row{grid-template-columns:auto 1fr;}.perm-row .chip{grid-column:2;justify-self:start}.perm-act{grid-column:1/-1;text-align:start}.perm-act:empty{display:none}}
+.perm-free{margin:0;padding-inline-start:20px;line-height:1.8;color:var(--muted)}
 @media (max-width:700px){.nnudge{inset-inline:16px;bottom:16px;width:auto}}
 
 /* ---- Settings → Notifications */
