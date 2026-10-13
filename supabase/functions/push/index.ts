@@ -55,24 +55,33 @@ async function keys() {
 // minutes since midnight in the device's own time zone (tz = getTimezoneOffset(), as the page saved it)
 const localMinutes = (tz: number) => { const d = new Date(Date.now() - (Number(tz) || 0) * 60000); return d.getUTCHours() * 60 + d.getUTCMinutes(); };
 const hm = (x: string) => { const [h, m] = String(x || "0:0").split(":").map(Number); return (h || 0) * 60 + (m || 0); };
+const localDay = (tz: number) => new Date(Date.now() - (Number(tz) || 0) * 60000);
 function quiet(p: any) {
+  if ((p.quiet_days || []).includes(localDay(p.tz).getUTCDay())) return true;       // a quiet day (e.g. Friday)
   if (!p.quiet) return false;
   const m = localMinutes(p.tz), a = hm(p.quiet_from), b = hm(p.quiet_to);
   return a <= b ? m >= a && m < b : m >= a || m < b;
 }
+// one of the notification types the person can switch off (older settings had one switch for all of them)
+const on = (p: any, k: string) => p[k] ?? (p.alerts !== false);
 // does this device want this message? (the same rules the open app uses)
 function wants(p: any, kind: string, room: number, direct: boolean) {
   if (p.desktop === false || p.push === false) return false;
   if (kind === "chat") {
     const level = p.level || "all";
+    if (level === "none") return false;
+    if ((p.muted || []).includes(room) && !direct) return false;      // a muted room: only when I am named in it
     return level === "all" || (level === "mentions" && direct) || (level === "rooms" && (direct || (p.rooms || []).includes(room)));
   }
-  if (kind === "link") return (p.level || "all") !== "none";
-  if (kind === "notify-reactions") return p.reactions !== false && p.alerts !== false;
-  return p.alerts !== false;     // approvals, bookings and messages from the public pages
+  if (kind === "link") return p.links !== false;
+  if (kind === "approval") return on(p, "approvals");
+  if (kind === "desk") return on(p, "desk");
+  if (kind.startsWith("notify-")) return kind === "notify-reactions" ? p.reactions !== false : on(p, kind.slice(7));
+  return p.alerts !== false;
 }
 
-async function deliver(company: string | null, emails: string[], msg: any, opts: { kind: string; room?: number; direct?: Set<string> }) {
+async function deliver(company: string | null, emails: string[], msg: any,
+                       opts: { kind: string; room?: number; direct?: Set<string>; ready?: (p: any) => boolean; later?: string[] }) {
   if (!emails.length) return 0;
   const list = emails.map(e => `"${e.replace(/"/g, "")}"`).join(",");
   const q = `/rest/v1/push_subs?select=endpoint,email,p256dh,auth,prefs${company ? `&company_id=eq.${enc(company)}` : ""}&email=in.(${enc(list)})&limit=500`;
@@ -82,7 +91,9 @@ async function deliver(company: string | null, emails: string[], msg: any, opts:
   let sent = 0;
   await Promise.allSettled(subs.data.map(async (s: any) => {
     const p = s.prefs || {}, direct = !!opts.direct?.has(String(s.email).toLowerCase());
-    if (!wants(p, opts.kind === "notify" && msg.pref === "reactions" ? "notify-reactions" : opts.kind, opts.room || 0, direct)) return;
+    if (!wants(p, opts.kind === "notify" && msg.pref ? "notify-" + msg.pref : opts.kind, opts.room || 0, direct)) return;
+    if (opts.ready && !opts.ready(p)) { opts.later?.push(String(s.email)); return; }      // a reminder before this person's time
+    if (Number(p.snooze_until) > Date.now()) { opts.later?.push(String(s.email)); return; }  // paused: reminders wait, the rest is skipped
     const silent = quiet(p);
     const body = p.preview === false ? (p.lang === "ar" ? "افتح BeyondERP لقراءتها" : "Open BeyondERP to read it") : msg.body;
     const st = await send(s, { ...msg, body, silent }, k, SUBJECT, { topic: msg.tag, urgency: silent ? "low" : "high" }).catch(() => 0);
@@ -157,8 +168,20 @@ Deno.serve(async (req) => {
     const due = await call("POST", "/rest/v1/rpc/push_due", { p_limit: 200 });
     let sent = 0;
     for (const q of (due.ok ? due.data : []) || []) {
-      const m = q.msg || {};
-      sent += await deliver(q.company_id, await emailsFor(q.company_id, m.to), { title: m.title, body: m.body, href: m.href, tag: m.tag, kind: "notify" }, { kind: "notify" });
+      const m = q.msg || {}, later: string[] = [];
+      const emails = Array.isArray(m.emails) ? m.emails : await emailsFor(q.company_id, m.to);
+      // ready when that device's own day has come and its reminder time has passed (each person picks theirs)
+      const ready = (p: any) => {
+        if (!m.day) return true;
+        const d = localDay(p.tz).toISOString().slice(0, 10);
+        return d > m.day || (d === m.day && localMinutes(p.tz) >= hm(p.fu_time || "09:00"));
+      };
+      sent += await deliver(q.company_id, emails, { title: m.title, body: m.body, href: m.href, tag: m.tag, kind: "notify", pref: m.pref || "fu_due" },
+                            { kind: "notify", ready, later });
+      const stale = m.day && new Date(m.day + "T00:00:00Z").getTime() < Date.now() - 2 * 86400000;
+      if (later.length && !stale)                // the others get it at their time: back in the queue for them
+        await call("POST", "/rest/v1/push_queue?on_conflict=company_id,key", { company_id: q.company_id, key: q.key, sender: q.sender,
+          at: new Date(Date.now() + 9 * 60000).toISOString(), msg: { ...m, emails: [...new Set(later)] } }, { ...svc, Prefer: "resolution=merge-duplicates" });
     }
     return reply(200, { due: (due.data || []).length, sent });
   }
@@ -183,7 +206,8 @@ Deno.serve(async (req) => {
     if (!key || isNaN(at.getTime()) || at.getTime() > Date.now() + 400 * 86400000) return fail(400, "Say when");
     const to = (Array.isArray(b.to) ? b.to : []).map((x: any) => clip(x, 80)).slice(0, 50);
     await call("POST", "/rest/v1/push_queue?on_conflict=company_id,key", { company_id: company, key, at: at.toISOString(), sender: caller,
-      msg: { to, title: clip(b.title, 80), body: clip(b.body, 180), href: String(b.href || "#/").slice(0, 120), tag: clip(b.tag, 40) } },
+      msg: { to, title: clip(b.title, 80), body: clip(b.body, 180), href: String(b.href || "#/").slice(0, 120), tag: clip(b.tag, 40),
+             day: /^\d{4}-\d{2}-\d{2}$/.test(String(b.day || "")) ? b.day : undefined, pref: ["fu_due"].includes(b.pref) ? b.pref : "fu_due" } },
       { ...svc, Prefer: "resolution=merge-duplicates" });
     return reply(200, { ok: true });
   }
@@ -197,7 +221,8 @@ Deno.serve(async (req) => {
     const direct = new Set<string>(b.dm ? emails : emails.filter((e: string) => ment.has(e)));
     sent = await deliver(company, emails, msg, { kind: "chat", room: Number(b.room) || 0, direct });
   } else if (b.kind === "notify") {        // follow-ups, approval decisions, reactions… (named by username)
-    sent = await deliver(company, await emailsFor(company, b.to, caller), { ...msg, pref: b.pref === "reactions" ? "reactions" : "" }, { kind: "notify" });
+    const pref = ["reactions", "decisions", "fu_new", "fu_due"].includes(b.pref) ? b.pref : "";
+    sent = await deliver(company, await emailsFor(company, b.to, caller), { ...msg, pref }, { kind: "notify" });
   } else if (b.kind === "approval") {
     const adm = await call("GET", `/rest/v1/members?select=email&company_id=eq.${enc(company)}&active=is.true&pending=is.false&is_admin=is.true`);
     sent = await deliver(company, (adm.data || []).map((m: any) => String(m.email).toLowerCase()).filter((e: string) => e !== caller), msg, { kind: "approval" });

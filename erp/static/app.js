@@ -783,13 +783,13 @@ function approvalNotices(d) {
   const back = (d.rows.find(r => r.kind === "approvals_back") || {}).count || 0, backKey = "apprBack:" + uid, wasBack = store.get(backKey, 0);
   store.set(key, d.approvals || []); store.set(backKey, back);
   if (fresh.length && !first) alertPerson({ title: L2("Entries waiting for your approval", "قيود في انتظار اعتمادك"),
-    body: L2(`${fresh.length} new — review and post them`, `${fresh.length} جديد — راجعها ورحّلها`), href: "#/approvals", tag: "berp-approvals", force: true, kind: "alert" });
+    body: L2(`${fresh.length} new — review and post them`, `${fresh.length} جديد — راجعها ورحّلها`), href: "#/approvals", tag: "berp-approvals", force: true, kind: "alert", cat: "approvals" });
   const fkey = "fuSeen:" + uid, ffirst = store.get(fkey, null) === null, fseen = new Set(store.get(fkey, [])), fnew = (d.followups || []).filter(id => !fseen.has(id));
   store.set(fkey, d.followups || []);
   if (fnew.length && !ffirst) alertPerson({ title: L2("Follow-ups due", "متابعات مستحقة"), body: L2(`${fnew.length} to do today — open Follow-ups`, `${fnew.length} مطلوبة اليوم — افتح المتابعات`),
-    href: "#/followups?status=due", tag: "berp-followups", force: true, kind: "alert" });
+    href: "#/followups?status=due", tag: "berp-followups", force: true, kind: "alert", cat: "fu_due" });
   if (back > wasBack) alertPerson({ title: L2("An entry was sent back to you", "أُعيد إليك قيد للتعديل"),
-    body: L2("See the reason, fix it and send it again", "اطّلع على السبب وعدّله وأرسله مرة أخرى"), href: "#/approvals?status=rejected", tag: "berp-approvals-back", force: true, kind: "alert" });
+    body: L2("See the reason, fix it and send it again", "اطّلع على السبب وعدّله وأرسله مرة أخرى"), href: "#/approvals?status=rejected", tag: "berp-approvals-back", force: true, kind: "alert", cat: "decisions" });
 }
 // Ctrl+K: jump to any screen or start any new entry by typing
 function openPalette() {
@@ -8446,6 +8446,17 @@ PAGES.profile = async view => {
 
 // ================================================================== notification settings (each person's own)
 PAGES.notifications = view => notifPage(view, "");
+// one tap to a common choice; each switch below can still be changed one by one
+const NOTIFY_PRESETS = () => [["all", L2("Everything", "كل شيء"), "🔔"], ["mine", L2("Only what's for me", "ما يخصني فقط"), "🎯"],
+  ["mentions", L2("Mentions only", "الإشارات فقط"), "@"], ["none", L2("Nothing", "لا شيء"), "🔕"]];
+const NOTIFY_PRESET_SET = {
+  all: { level: "all", links: true, reactions: true, approvals: true, decisions: true, fu_new: true, fu_due: true, desk: true, bell: true },
+  mine: { level: "mentions", links: true, reactions: false, approvals: true, decisions: true, fu_new: true, fu_due: true, desk: false, bell: false },
+  mentions: { level: "mentions", links: false, reactions: false, approvals: false, decisions: false, fu_new: false, fu_due: false, desk: false, bell: false },
+  none: { level: "none", links: false, reactions: false, approvals: false, decisions: false, fu_new: false, fu_due: false, desk: false, bell: false },
+};
+const whatPreset = p => Object.keys(NOTIFY_PRESET_SET).find(k => Object.entries(NOTIFY_PRESET_SET[k]).every(([x, v]) =>
+  x === "level" ? (p.level || "all") === v : x === "links" ? (p.links !== false) === v : x === "reactions" ? (p.reactions !== false) === v : notifyOn(p, x) === v)) || "";
 async function notifPage(view, head) {
   const ttl = $("#ttl"); if (ttl && !head) ttl.textContent = L2("Notifications", "الإشعارات");
   let rooms = []; try { rooms = (await api("GET", "/api/chat/rooms")).rooms; } catch { /* chat unavailable */ }
@@ -8477,14 +8488,35 @@ async function notifPage(view, head) {
         ${sw("banner", L2("Banner inside BeyondERP", "شريط تنبيه داخل التطبيق"), L2("A short note at the bottom while you work", "ملاحظة قصيرة أسفل الشاشة أثناء العمل"))}
         ${sw("preview", L2("Show the message text in pop-ups", "إظهار نص الرسالة في الإشعار"), L2("Off = just “new message”, for privacy on shared screens", "إيقافه = «رسالة جديدة» فقط، للخصوصية"))}</div>
       <div class="card"><h2>${esc(L2("What notifies me", "ما ينبهني"))}</h2>
-        <label class="f">${esc(L2("Chat messages", "رسائل المحادثة"))}<select data-change="ntlevel">${[["all", L2("Every new message", "كل رسالة جديدة")], ["mentions", L2("Only @mentions and direct messages", "الإشارات @ والرسائل المباشرة فقط")], ["rooms", L2("Only the rooms I pick (and @mentions)", "الغرف التي أختارها فقط (والإشارات @)")], ["none", L2("No chat alerts (badges only)", "بدون تنبيهات للمحادثة (العدّاد فقط)")]].map(([v, l]) => `<option value="${v}" ${p.level === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
-        ${p.level === "rooms" ? `<div class="chkgrid" style="margin:6px 0 10px">${rooms.filter(r => r.kind !== "dm").map(r => `<label class="f chk"><input type="checkbox" class="ntroom" value="${r.id}" data-change="ntrooms" ${(p.rooms || []).includes(r.id) ? "checked" : ""}>${esc(r.name)}</label>`).join("") || `<span class="muted">—</span>`}</div>` : ""}
+        <div class="nt-presets nt-what">${NOTIFY_PRESETS().map(([k, l, ic]) => `<button type="button" class="nt-pre ${whatPreset(p) === k ? "on" : ""}" data-a="ntwhat" data-k="${k}"><span>${ic}</span>${esc(l)}</button>`).join("")}</div>
+        ${p.snooze_until && p.snooze_until > Date.now() ? `<div class="banner warn" style="margin:8px 0">${esc(L2("Paused until ", "متوقفة مؤقتاً حتى "))}${esc(new Date(p.snooze_until).toLocaleString(S.lang === "ar" ? "ar-EG" : undefined, { weekday: "short", hour: "2-digit", minute: "2-digit" }))}
+          <button class="btn sm" data-a="ntsnooze" data-k="0">${esc(L2("Resume now", "استئناف الآن"))}</button></div>`
+          : `<div class="row nt-snooze"><span class="muted">${esc(L2("Pause everything for", "إيقاف الكل مؤقتاً لمدة"))}</span>${[[1, L2("1 hour", "ساعة")], [3, L2("3 hours", "٣ ساعات")], ["tomorrow", L2("until tomorrow", "حتى الغد")]].map(([k, l]) =>
+            `<button class="btn sm" data-a="ntsnooze" data-k="${k}">${esc(l)}</button>`).join("")}</div>`}
+        <h3 class="nt-h">${esc(L2("Chat", "المحادثات"))}</h3>
+        <label class="f">${esc(L2("Chat messages", "رسائل المحادثة"))}<select data-change="ntlevel">${[["all", L2("Every new message", "كل رسالة جديدة")], ["mentions", L2("Only @mentions and direct messages", "الإشارات @ والرسائل المباشرة فقط")],
+          ["rooms", L2("Only the rooms I pick (+ mentions and direct)", "الغرف التي أختارها فقط (+ الإشارات والمباشرة)")], ["none", L2("Nothing — I'll check the chat myself", "لا شيء — سأتابع المحادثات بنفسي")]].map(([v, l]) => `<option value="${v}" ${p.level === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
+        ${p.level === "rooms" ? `<div class="chkgrid" style="margin:6px 0 10px">${rooms.filter(r => r.kind !== "dm").map(r => `<label class="f chk"><input type="checkbox" class="ntroom" value="${r.id}" data-change="ntrooms" ${(p.rooms || []).includes(r.id) ? "checked" : ""}>${esc(r.name)}</label>`).join("") || `<span class="muted">${esc(L2("No rooms yet", "لا توجد غرف بعد"))}</span>`}</div>` : ""}
+        ${p.level === "all" || p.level === "mentions" ? `<details class="nt-mute" ${(p.muted || []).length ? "open" : ""}><summary>${esc(L2("Mute rooms", "كتم غرف"))}${(p.muted || []).length ? ` <span class="chip">${(p.muted || []).length}</span>` : ""}</summary>
+          <small class="muted">${esc(L2("A muted room only notifies you when you are @mentioned in it.", "الغرفة المكتومة لا تنبهك إلا عند الإشارة إليك فيها."))}</small>
+          <div class="chkgrid" style="margin:6px 0 10px">${rooms.filter(r => r.kind !== "dm").map(r => `<label class="f chk"><input type="checkbox" class="ntmute" value="${r.id}" data-change="ntmute" ${(p.muted || []).includes(r.id) ? "checked" : ""}>${esc(r.name)}</label>`).join("") || `<span class="muted">${esc(L2("No rooms yet", "لا توجد غرف بعد"))}</span>`}</div></details>` : ""}
+        ${sw("links", L2("Chat with other companies", "المحادثات مع الشركات الأخرى"), L2("Messages from companies you are connected with", "رسائل الشركات المرتبطة بشركتك"), p.links !== false)}
         ${sw("reactions", L2("Reactions to my messages", "التفاعلات على رسائلي"), L2("When someone reacts with an emoji", "عندما يتفاعل أحد برمز تعبيري"))}
-        ${sw("alerts", L2("Approvals and follow-ups", "الاعتمادات والمتابعات"), L2("Entries waiting for me, entries sent back, follow-ups due", "قيود تنتظرني أو أُعيدت إليّ، ومتابعات مستحقة"))}
+        <h3 class="nt-h">${esc(L2("Work", "العمل"))}</h3>
+        ${sw("approvals", L2("Entries waiting for my approval", "قيود تنتظر اعتمادي"), L2("Drafts someone sent for approval", "مسودات أرسلها أحدهم للاعتماد"), notifyOn(p, "approvals"))}
+        ${sw("decisions", L2("My entries approved or sent back", "قيودي التي اعتُمدت أو أُعيدت"), "", notifyOn(p, "decisions"))}
+        ${sw("fu_new", L2("Follow-ups given to me", "متابعات أُسندت إليّ"), L2("When someone assigns me a follow-up", "عندما يسند إليّ أحدهم متابعة"), notifyOn(p, "fu_new"))}
+        ${sw("fu_due", L2("Follow-up reminders", "تذكير المتابعات"), L2("On the morning they are due", "صباح يوم الاستحقاق"), notifyOn(p, "fu_due"))}
+        ${notifyOn(p, "fu_due") ? `<label class="f nt-time">${esc(L2("Remind me at", "ذكّرني الساعة"))}<input type="time" value="${esc(p.fu_time || "09:00")}" data-change="nttime" data-k="fu_time"></label>` : ""}
+        ${can("crm.desk") || S.boot.user.is_admin ? sw("desk", L2("Bookings and messages from our public pages", "الحجوزات والرسائل من صفحاتنا العامة"), L2("New bookings, changes, enquiries, guest chats, signed offers", "حجوزات جديدة وتعديلات واستفسارات ودردشات وعروض موقّعة"), notifyOn(p, "desk")) : ""}
+        ${sw("bell", L2("Other alerts", "تنبيهات أخرى"), L2("Contracts ending, overdue payments, low stock… — while BeyondERP is open", "عقود تنتهي ومدفوعات متأخرة ومخزون منخفض… — أثناء فتح BeyondERP"), notifyOn(p, "bell"))}
         <h3 class="nt-h">${esc(L2("Quiet hours", "ساعات الهدوء"))}</h3>
         ${sw("quiet", L2("No sound or vibration during quiet hours", "بدون صوت أو اهتزاز في ساعات الهدوء"), L2("Badges and pop-ups still arrive silently", "يستمر العدّاد والإشعارات بصمت"))}
         <div class="row" style="gap:10px" ${p.quiet ? "" : "hidden"}><label class="f">${esc(L2("From", "من"))}<input type="time" value="${esc(p.quiet_from)}" data-change="nttime" data-k="quiet_from"></label>
-          <label class="f">${esc(L2("To", "إلى"))}<input type="time" value="${esc(p.quiet_to)}" data-change="nttime" data-k="quiet_to"></label></div></div>
+          <label class="f">${esc(L2("To", "إلى"))}<input type="time" value="${esc(p.quiet_to)}" data-change="nttime" data-k="quiet_to"></label></div>
+        <label class="f" style="margin-top:8px">${esc(L2("Quiet all day on", "هادئ طوال يوم"))}</label>
+        <div class="nt-days">${WEEKDAYS().map((d, i) => `<label class="nt-day ${(p.quiet_days || []).includes(i) ? "on" : ""}"><input type="checkbox" value="${i}" data-change="ntdays" ${(p.quiet_days || []).includes(i) ? "checked" : ""}>${esc(d)}</label>`).join("")}</div>
+        <small class="muted">${esc(L2("Notifications still arrive on quiet days, just without sound or vibration.", "تستمر الإشعارات في الأيام الهادئة لكن بدون صوت أو اهتزاز."))}</small></div>
       <div class="card" style="grid-column:1/-1"><h2>${esc(L2("Sound", "الصوت"))}</h2>
         <div class="nt-sounds">${[...SOUNDS(), ["custom", L2("My own", "صوتي الخاص")], ["none", L2("No sound", "بدون صوت")]].map(([k, l]) => `<div class="nt-snd ${p.sound === k ? "on" : ""}">
             <button type="button" class="nt-pick" data-a="ntsound" data-k="${k}">${k === "none" ? "🔕" : k === "custom" ? "🎵" : "♪"} ${esc(l)}</button>
@@ -8520,6 +8552,12 @@ async function notifPage(view, head) {
       set({ [k]: on }); },
     ntlevel: el => set({ level: el.value }),
     ntrooms: () => set({ rooms: $$(".ntroom:checked", view).map(x => +x.value) }),
+    ntmute: () => set({ muted: $$(".ntmute:checked", view).map(x => +x.value) }),
+    ntdays: () => set({ quiet_days: $$("[data-change=ntdays]:checked", view).map(x => +x.value) }),
+    ntwhat: el => set(NOTIFY_PRESET_SET[el.dataset.k]),
+    ntsnooze: el => { const k = el.dataset.k, d = new Date();
+      if (k === "tomorrow") { d.setDate(d.getDate() + 1); d.setHours(8, 0, 0, 0); }
+      set({ snooze_until: k === "0" ? 0 : k === "tomorrow" ? d.getTime() : Date.now() + (+k) * 3600000 }); },
     nttime: el => set({ [el.dataset.k]: el.value }),
     ntsound: el => { const k = el.dataset.k; if (k === "custom" && !(S.boot.profile.prefs || {}).notify_sound) { $("#ntfile", view).click(); return; }
       if (k !== "none") playSound(k, notifyPrefs().volume); set({ sound: k, mode: k === "none" ? (notifyPrefs().vibrate ? "vibrate" : "silent") : "sound" }); },
@@ -8534,8 +8572,11 @@ async function notifPage(view, head) {
 
 // ================================================================== notifications (every screen)
 // each person's notification settings (Settings → Notifications); missing keys fall back to the defaults
-const NOTIFY_DEFAULTS = { level: "all", rooms: [], mode: "sound", desktop: true, sound: "chime", volume: 70, vibrate: true, vibe: "double", banner: true,
-  preview: true, reactions: true, alerts: true, quiet: false, quiet_from: "22:00", quiet_to: "07:00", ask: "" };
+const NOTIFY_DEFAULTS = { level: "all", rooms: [], muted: [], mode: "sound", desktop: true, sound: "chime", volume: 70, vibrate: true, vibe: "double", banner: true,
+  preview: true, reactions: true, alerts: true, links: true, fu_time: "09:00", quiet: false, quiet_from: "22:00", quiet_to: "07:00", quiet_days: [], ask: "" };
+// one notification type the person can switch off — the older single "approvals and follow-ups" switch still counts
+const NOTIFY_TYPES = ["approvals", "decisions", "fu_new", "fu_due", "desk", "bell"];
+const notifyOn = (p, k) => k === "reactions" ? p.reactions !== false : k === "links" ? p.links !== false : (p[k] ?? (p.alerts !== false));
 const notifyPrefs = () => ({ ...NOTIFY_DEFAULTS, ...(((S.boot && S.boot.profile) || {}).prefs || {}).notify });
 const notifPerm = () => (typeof Notification === "undefined" ? "unsupported" : Notification.permission);
 // the alert sounds: short, soft tones made in the browser (nothing to download), plus the person's own clip
@@ -8567,12 +8608,13 @@ function playSound(name, volume) {
 }
 const beep = () => playSound("chime", 70);
 const vibrateNow = pattern => { try { navigator.vibrate && navigator.vibrate(VIBES[pattern] || VIBES.double); } catch { /* not supported */ } };
-const inQuiet = p => { if (!p.quiet) return false; const now = new Date(), m = now.getHours() * 60 + now.getMinutes(), hm = x => { const [h, mi] = String(x || "0:0").split(":").map(Number); return h * 60 + mi; };
+const inQuiet = p => { if ((p.quiet_days || []).includes(new Date().getDay())) return true; if (!p.quiet) return false; const now = new Date(), m = now.getHours() * 60 + now.getMinutes(), hm = x => { const [h, mi] = String(x || "0:0").split(":").map(Number); return h * 60 + mi; };
   const a = hm(p.quiet_from), b = hm(p.quiet_to); return a <= b ? m >= a && m < b : m >= a || m < b; };
 // one alert, every way this person asked for: sound, vibration, a pop-up on the device and a banner inside the app
 async function alertPerson(n) {
   const p = notifyPrefs();
-  if ((n.kind === "reaction" && !p.reactions) || (n.kind === "alert" && !p.alerts)) return;
+  if ((n.kind === "reaction" && !p.reactions) || (n.cat && !notifyOn(p, n.cat)) || (n.kind === "alert" && !n.cat && !notifyOn(p, "bell"))) return;
+  if (p.snooze_until && p.snooze_until > Date.now() && !n.test) return;      // paused for a while
   const quiet = inQuiet(p) && !n.test;
   const soundOn = p.mode !== "silent" && p.mode !== "vibrate" && p.sound !== "none";
   if (soundOn && !quiet) playSound(p.sound, p.volume);
@@ -8811,8 +8853,10 @@ const notifyNudge = permNudge;
 // workspace sends only what this person wants here. Messages are pushed by the sender's app through the push function.
 const PUSH = { on: false, endpoint: "", why: "" };
 const pushPrefs = () => { const p = notifyPrefs();
-  return { level: p.level, rooms: p.rooms || [], preview: p.preview !== false, quiet: !!p.quiet, quiet_from: p.quiet_from, quiet_to: p.quiet_to,
-    alerts: p.alerts !== false, desktop: p.desktop !== false, push: p.push !== false, tz: new Date().getTimezoneOffset(), lang: S.lang }; };
+  return { level: p.level, rooms: p.rooms || [], muted: p.muted || [], preview: p.preview !== false, quiet: !!p.quiet, quiet_from: p.quiet_from, quiet_to: p.quiet_to,
+    quiet_days: p.quiet_days || [], alerts: p.alerts !== false, reactions: p.reactions !== false, links: p.links !== false, fu_time: p.fu_time || "09:00",
+    ...Object.fromEntries(NOTIFY_TYPES.map(k => [k, notifyOn(p, k)])),
+    snooze_until: p.snooze_until || 0, desktop: p.desktop !== false, push: p.push !== false, tz: new Date().getTimezoneOffset(), lang: S.lang }; };
 const pushable = () => STATIC && cloudOn() && "serviceWorker" in navigator && "PushManager" in window && typeof Notification !== "undefined";
 async function pushReg() {
   if (!navigator.serviceWorker) return null;
@@ -8853,10 +8897,11 @@ function pushHints(list) {
   if (!STATIC || !cloudOn()) return;
   for (const h of list || []) {
     if (h.cancel) { CloudAPI.call("fn", "push", { action: "cancel", key: h.cancel }).catch(() => {}); continue; }
-    if (h.day) {
-      const nine = new Date(h.day + "T09:00:00"), soon = new Date(Date.now() + 60000);
-      if (isNaN(nine.getTime()) || h.day < today()) continue;        // already past: the bell shows it
-      CloudAPI.call("fn", "push", { action: "schedule", key: h.key, at: (nine > soon ? nine : soon).toISOString(), to: h.to, title: h.title, body: h.body, href: h.href, tag: h.tag }).catch(() => {});
+    if (h.day) {     // queued from the earliest time zone's start of that day; each device rings at its own reminder time
+      const start = Date.parse(h.day + "T00:00:00Z") - 14 * 3600000;
+      if (isNaN(start) || h.day < today()) continue;                 // already past: the bell shows it
+      CloudAPI.call("fn", "push", { action: "schedule", key: h.key, at: new Date(Math.max(start, Date.now() + 60000)).toISOString(), day: h.day, pref: h.pref,
+        to: h.to, title: h.title, body: h.body, href: h.href, tag: h.tag }).catch(() => {});
       continue;
     }
     pushSend({ kind: h.kind || "notify", to: h.to, title: h.title, body: h.body, href: h.href, tag: h.tag, pref: h.pref });
@@ -8891,7 +8936,8 @@ async function pollChat() {
   const open = (location.hash.match(/^#\/chat\/(\d+)/) || [])[1];
   for (const m of d.messages) {
     const direct = m.kind === "dm" || m.mention;
-    const want = prefs.level === "all" || (prefs.level === "mentions" && direct) || (prefs.level === "rooms" && (direct || (prefs.rooms || []).includes(m.room_id)));
+    const muted = (prefs.muted || []).includes(m.room_id) && !direct;          // a muted room: only when I am named in it
+    const want = !muted && prefs.level !== "none" && (prefs.level === "all" || (prefs.level === "mentions" && direct) || (prefs.level === "rooms" && (direct || (prefs.rooms || []).includes(m.room_id))));
     if (!want || (String(m.room_id) === open && !document.hidden)) continue;
     const who = personById(m.user_id).name;
     alertPerson({ title: m.kind === "dm" ? who : `${who} · ${m.room}`, body: m.text || (m.files ? fileWord(m.file_mime) : ""), href: "#/chat/" + m.room_id, tag: "room" + m.room_id });
@@ -8905,7 +8951,7 @@ async function pollLinks() {
   if (C2.linkAt && Date.now() - C2.linkAt < 25000) return;
   C2.linkAt = Date.now();
   try { const links = await CloudAPI.call("rpc", "chat_link_list", {}); const n = (links || []).reduce((a, l) => a + (l.unread || 0), 0);
-    if (n > linkUnread && C2.linkInit) alertPerson({ title: L2("Message from another company", "رسالة من شركة أخرى"), body: (links.find(l => l.unread) || {}).other || "", href: "#/chat" });
+    if (n > linkUnread && C2.linkInit && notifyPrefs().links !== false) alertPerson({ kind: "link", title: L2("Message from another company", "رسالة من شركة أخرى"), body: (links.find(l => l.unread) || {}).other || "", href: "#/chat" });
     linkUnread = n; C2.linkInit = true; setChatBadge(); } catch { /* workspace not upgraded or offline */ }
 }
 function setChatBadge(unread, mentions) {

@@ -118,7 +118,8 @@ def save_profile(db, uid, d):
                 prefs["notify"]["mode"] = n["mode"]
             if "desktop" in n:
                 prefs["notify"]["desktop"] = bool(n["desktop"])
-            for k in ("vibrate", "banner", "preview", "reactions", "alerts", "quiet"):
+            for k in ("vibrate", "banner", "preview", "reactions", "alerts", "quiet", "push", "links",
+                      "approvals", "decisions", "fu_new", "fu_due", "desk", "bell"):     # each kind of notification
                 if k in n:
                     prefs["notify"][k] = bool(n[k])
             if n.get("sound") in SOUNDS:
@@ -130,13 +131,21 @@ def save_profile(db, uid, d):
                     prefs["notify"]["volume"] = max(0, min(100, int(float(n["volume"]))))
                 except (TypeError, ValueError):
                     pass
-            for k in ("quiet_from", "quiet_to"):
+            for k in ("quiet_from", "quiet_to", "fu_time"):
                 if isinstance(n.get(k), str) and _HHMM.match(n[k]):
                     prefs["notify"][k] = n[k]
             if n.get("ask") in ("", "never", "done"):      # the "turn on notifications?" question: never ask again / answered
                 prefs["notify"]["ask"] = n["ask"]
-            if isinstance(n.get("rooms"), list):
-                prefs["notify"]["rooms"] = [int(x) for x in n["rooms"] if str(x).lstrip("-").isdigit()][:200]
+            for k in ("rooms", "muted"):        # rooms that notify me / rooms muted except when I am named
+                if isinstance(n.get(k), list):
+                    prefs["notify"][k] = [int(x) for x in n[k] if str(x).lstrip("-").isdigit()][:200]
+            if isinstance(n.get("quiet_days"), list):
+                prefs["notify"]["quiet_days"] = sorted({int(x) for x in n["quiet_days"] if str(x).isdigit() and 0 <= int(x) <= 6})
+            if "snooze_until" in n:              # paused until this moment (ms), 0 = not paused
+                try:
+                    prefs["notify"]["snooze_until"] = max(0, int(float(n["snooze_until"] or 0)))
+                except (TypeError, ValueError):
+                    pass
     db.x("""INSERT INTO user_profiles(user_id, display_name, job_title, department, phone, bio, status, avatar, prefs, updated_at)
             VALUES (?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(user_id) DO UPDATE SET display_name=excluded.display_name, job_title=excluded.job_title,

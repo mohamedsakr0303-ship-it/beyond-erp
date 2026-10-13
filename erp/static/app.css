@@ -1807,3 +1807,14 @@ input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 4px color
 #permgrid.dim{opacity:.45;pointer-events:none}
 .perm-dev+.perm-list{margin-top:4px}
 [data-a=permre].done{outline:2px solid var(--good);outline-offset:2px}
+
+/* Settings → Notifications: presets, pause, muted rooms, quiet days */
+.nt-what{margin-bottom:6px}
+.nt-snooze{gap:6px;align-items:center;flex-wrap:wrap;margin:6px 0 2px}
+.nt-mute{margin:4px 0 8px}.nt-mute summary{cursor:pointer;font-weight:600;padding:4px 0}
+.nt-time{max-width:180px;margin:-2px 0 8px 46px}
+[dir=rtl] .nt-time{margin:-2px 46px 8px 0}
+.nt-days{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 6px}
+.nt-day{display:inline-flex;align-items:center;padding:6px 12px;border:1px solid var(--line);border-radius:999px;cursor:pointer;font-size:.88em;user-select:none}
+.nt-day input{position:absolute;opacity:0;pointer-events:none}
+.nt-day.on{background:var(--brand);border-color:var(--brand);color:#fff}

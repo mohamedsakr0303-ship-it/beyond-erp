@@ -3969,6 +3969,19 @@ class ChatReactionsAndNotify(unittest.TestCase):
         self.assertEqual(self.db.one("SELECT COUNT(*) n FROM chat_reactions")["n"], 0)
         self.assertEqual(self.call("sara", "POST", f"/api/chat/messages/{mid}/react", {"emoji": "👍"})[0], 400)
 
+    def test_notify_kinds(self):
+        """Each kind of notification can be switched off; muted rooms, quiet days, the reminder time and a pause are kept."""
+        st, p = self.call("sara", "PUT", "/api/me/profile", {"prefs": {"notify": {
+            "level": "none", "links": False, "approvals": False, "decisions": True, "fu_new": False, "fu_due": True, "desk": False, "bell": False,
+            "push": False, "muted": [3, "4", "x"], "quiet_days": [5, 9, "6"], "fu_time": "07:30", "snooze_until": 1893456000000}}})
+        n = p["prefs"]["notify"]
+        self.assertEqual((n["level"], n["links"], n["approvals"], n["decisions"], n["fu_new"], n["fu_due"], n["desk"], n["bell"], n["push"]),
+                         ("none", False, False, True, False, True, False, False, False))
+        self.assertEqual((n["muted"], n["quiet_days"], n["fu_time"], n["snooze_until"]), ([3, 4], [5, 6], "07:30", 1893456000000))
+        st, p = self.call("sara", "PUT", "/api/me/profile", {"prefs": {"notify": {"fu_time": "9am", "snooze_until": "nope", "level": "loud"}}})
+        n = p["prefs"]["notify"]
+        self.assertEqual((n["fu_time"], n["snooze_until"], n["level"]), ("07:30", 1893456000000, "none"))     # nonsense is ignored
+
     def test_push_hints(self):
         """Replies tell the app whom to notify when the app is closed: a follow-up's owner now and on its morning
         (cancelled when done or deleted), an approval's maker when it is decided; never the person acting."""

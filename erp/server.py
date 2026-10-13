@@ -852,7 +852,7 @@ def approval_approve(ctx, aid):
             attachments.move(ctx.db, "approval", int(aid), "entry", eid)
     ctx.log("approval.approve", f"#{aid} -> {eid}")
     return ok(push_hint({"id": eid}, {"kind": "notify", "to": [r["created_by"]] if r["created_by"] != ctx.user["username"] else [],
-                                      "title": "Your entry was approved", "body": f"By {ctx.user['username']}", "href": "#/journal", "tag": f"appr{aid}"}))
+                                      "title": "Your entry was approved", "body": f"By {ctx.user['username']}", "href": "#/journal", "tag": f"appr{aid}", "pref": "decisions"}))
 
 
 @route("POST", "/api/approvals/<aid>/reject")
@@ -868,7 +868,7 @@ def approval_reject(ctx, aid):
     approvals.decide(ctx.db, aid, ctx.user, "rejected", ctx.body.get("note"))
     ctx.log("approval.reject", f"#{aid}")
     return ok(push_hint(None, {"kind": "notify", "to": [r["created_by"]] if r["created_by"] != ctx.user["username"] else [],
-                               "title": "Your entry was sent back", "body": str(ctx.body.get("note") or "")[:160], "href": "#/approvals", "tag": f"appr{aid}"}))
+                               "title": "Your entry was sent back", "body": str(ctx.body.get("note") or "")[:160], "href": "#/approvals", "tag": f"appr{aid}", "pref": "decisions"}))
 
 
 @route("PUT", "/api/approvals/<aid>")
@@ -1304,10 +1304,10 @@ def _followup_push(ctx, fid, new=False):
         return [{"cancel": f"fu:{fid}"}]
     who = f["assigned_to"] or f["created_by"]
     out = [{"kind": "notify", "key": f"fu:{fid}", "day": f["due"], "to": [who], "title": "Follow-up due today",
-            "body": f["title"] + (f" — {f['party']}" if f["party"] else ""), "href": "#/followups", "tag": f"fu{fid}"}]
+            "body": f["title"] + (f" — {f['party']}" if f["party"] else ""), "href": "#/followups", "tag": f"fu{fid}", "pref": "fu_due"}]
     if new and who != ctx.user["username"]:
         out.append({"kind": "notify", "to": [who], "title": f"New follow-up from {ctx.user['username']}",
-                    "body": f["title"] + f" · due {f['due']}", "href": "#/followups", "tag": f"fu{fid}"})
+                    "body": f["title"] + f" · due {f['due']}", "href": "#/followups", "tag": f"fu{fid}", "pref": "fu_new"})
     return out
 
 
