@@ -766,7 +766,7 @@ function userMenu() {
   return `<button data-a="theme">${t("theme")}: ${esc(modeNow())}</button>
     ${cloudOn() ? `<button data-a="coswitch">⇄ ${S.lang === "ar" ? "الشركات" : "Companies"}</button>` : ""}
     ${cloudOn() && window.BeyondCloud && window.BeyondCloud.billing ? `<a href="#/subscription">◎ ${S.lang === "ar" ? "الاشتراك" : "Subscription"}</a>` : ""}${S.billing && S.billing.is_owner ? `<a href="#/platform">⚙ ${S.lang === "ar" ? "إدارة الاشتراكات (المالك)" : "Platform billing (owner)"}</a>` : ""}
-    <a href="#/settings">${t("m_settings")}</a><button data-a="tour">➜ ${S.lang === "ar" ? "جولة في التطبيق" : "Take the tour"}</button><a href="#/discover">✦ ${S.lang === "ar" ? "اكتشف BeyondERP" : "Discover BeyondERP"}</a>${isPhone() ? `<button data-a="landscape">⟳ ${S.lang === "ar" ? "عرض أفقي" : "Landscape"}</button>` : ""}<a href="#/support">? ${S.lang === "ar" ? "المساعدة والدعم" : "Help & support"}</a>${STATIC && /^https?:$/.test(location.protocol) ? `<a href="#/download">⬇ ${S.lang === "ar" ? "تحميل التطبيق" : "Get the app"}</a>` : ""}<button data-a="pw">${t("change_pw")}</button><button data-a="logout">${t("logout")}</button>`;
+    <a href="#/settings">${t("m_settings")}</a><button data-a="tour">➜ ${S.lang === "ar" ? "جولة في التطبيق" : "Take the tour"}</button><a href="#/discover">✦ ${S.lang === "ar" ? "اكتشف BeyondERP" : "Discover BeyondERP"}</a>${isPhone() ? `<button data-a="landscape">⟳ ${S.lang === "ar" ? "عرض أفقي" : "Landscape"}</button>` : ""}<a href="#/support">? ${S.lang === "ar" ? "المساعدة والدعم" : "Help & support"}</a>${STATIC && /^https?:$/.test(location.protocol) ? `<a href="#/download">⬇ ${S.lang === "ar" ? "تحميل التطبيق" : "Get the app"}</a>` : ""}<button data-a="updcheck">↻ ${S.lang === "ar" ? "البحث عن تحديثات" : "Check for updates"}</button><button data-a="pw">${t("change_pw")}</button><button data-a="logout">${t("logout")}</button>`;
 }
 // the bell: what needs attention (bills to issue, overdue installments, depreciation, books checks…)
 async function loadAlerts(force) {
@@ -908,6 +908,7 @@ S.GLOBAL_H = {
   lang: () => { setMyLook({ lang: S.lang === "ar" ? "en" : "ar" }, { quiet: true }); applyLook(); renderShell(); route(); },
   // one tap switches between light and dark from what is showing now (device setting by default); the choice is kept
   theme: () => { setMyLook({ mode: isDark() ? "light" : "dark" }, { quiet: true }); applyLook(); renderShell(); route(); },
+  updcheck: el => window.BeyondUpdate && window.BeyondUpdate.ask(el),
   logout: async () => { await api("POST", "/api/logout").catch(() => {}); store.set("token", "");
     if (STATIC && window.BeyondCloud) window.BeyondCloud.signout(); location.hash = ""; S.boot.user = null; afterSignOut(); },
   pw: () => drawer(t("change_pw"), form([{ k: "current", l: t("current_pw"), type: "password" }, { k: "new", l: t("new_pw"), type: "password" }]),
@@ -4624,7 +4625,10 @@ PAGES.settings = async (view, parts, q) => {
   // system & data
   const sys = can("settings.system") ? await api("GET", "/api/system").catch(() => null) : null;
   const ed = can("settings.system", "edit");
-  view.innerHTML = head + (sys ? `<div class="card"><h2>${t("system_info")}</h2><div class="grid g2"><div>Version ${esc(sys.version)}<br><span class="muted">${esc(sys.db_path)}</span><br>${(sys.db_size / 1048576).toFixed(2)} MB</div>
+  S.H.updcheck = el => window.BeyondUpdate && window.BeyondUpdate.ask(el);
+  view.innerHTML = head + `<div class="card" id="updcard"><h2 class="row" style="gap:8px">${esc(L2("Updates", "التحديثات"))}<span class="spacer"></span><button class="btn sm" data-a="updcheck">↻ ${esc(L2("Check for updates", "البحث عن تحديثات"))}</button></h2>
+      <p class="muted">${esc(L2("This app: version", "هذا التطبيق: الإصدار"))} ${esc(S.boot.version || "")}${window.BEYOND_BUILD ? ` <small>(${esc(String(window.BEYOND_BUILD).slice(0, 12))})</small>` : ""}. ${esc(STATIC ? L2("While the app is open it keeps its version until you press Update now. Everyone in a shared workspace works on the same version, so the newest one also loads the next time the app starts.", "طالما التطبيق مفتوح يبقى على إصداره حتى تضغط «حدِّث الآن». كل أعضاء مساحة العمل المشتركة يعملون على الإصدار نفسه، لذا يُحمَّل الأحدث أيضاً عند فتح التطبيق في المرة القادمة.")
+        : L2("Updates never install by themselves — when one is ready you choose when to install it.", "التحديثات لا تُثبَّت تلقائياً — عند توفر تحديث تختار أنت وقت تثبيته."))}</p></div>` + (sys ? `<div class="card"><h2>${t("system_info")}</h2><div class="grid g2"><div>Version ${esc(sys.version)}<br><span class="muted">${esc(sys.db_path)}</span><br>${(sys.db_size / 1048576).toFixed(2)} MB</div>
       <div>${Object.entries(sys.counts).map(([k, v]) => `${esc(k)}: ${v}`).join(" · ")}<br><span class="muted">${sys.backups.length} backups: ${esc(sys.backups.slice(0, 3).join(", "))}</span></div></div>
       ${ed ? `<div class="row" style="margin-top:10px"><label class="f">${t("backups_keep")}<input id="bkeep" type="number" value="${esc(st.backup_keep || 14)}" style="max-width:100px"></label><button class="btn" data-a="maint">${t("maintenance")}</button><a class="btn" href="/api/backup">⬇ ${t("db_backup")}</a></div>` : ""}</div>
     ${STATIC ? "" : `<div class="card" id="liccard"><h2>${L2("Licence", "الترخيص")}</h2><div class="muted">${t("loading")}</div></div>`}
@@ -8834,17 +8838,25 @@ async function askMany(list, states) {
 
 // the first time on the ERP screens (never on the welcome page or the sign-in): one card for this device
 const permKey = () => "permAsk:" + ((S.boot && S.boot.user && S.boot.user.id) || 0);
+// The card comes back early when something new can be asked here (a permission added since, or one this device never
+// offered) — "Not now" and "Allow selected" only quiet the ones already shown.
+const permSeenKey = () => "permSeen:" + ((S.boot && S.boot.user && S.boot.user.id) || 0);
 async function permNudge() {
-  if (!S.boot || !S.boot.user || $("#nnudge") || !$("#nav")) return;
+  if (!S.boot || !S.boot.user || $("#nnudge")) return;
+  if (!$("#nav")) { setTimeout(permNudge, 5000); return; }   // the ERP screens aren't up yet
   const seen = store.get(permKey(), 0);
-  if (seen === "never" || Date.now() < seen) return;
+  if (seen === "never") return;
   if ($(".dlg-bg, .drawer-bg, .tour-card, .onb, .cam") || (DEVICE.phone && $("#tourbar"))) { setTimeout(permNudge, 20000); return; }   // never on top of another question or the tour
-  const np = notifyPrefs();
-  const list = permsHere().filter(p => p.k !== "install" && !((p.k === "notifications" || p.k === "background") && np.ask === "never")
-    && !(p.k === "geolocation" && (S.boot.settings || {}).workday_location === "off") && !(p.k === "clipboard"));
+  // "no notifications" is answered per device (each device has its own permission), so another device's answer never hides them here
+  const noNotif = store.get(permKey() + ":nonotif", 0);
+  const list = permsHere().filter(p => p.k !== "install" && !((p.k === "notifications" || p.k === "background") && noNotif)
+    && !(p.k === "geolocation" && (S.boot.settings || {}).workday_location === "off"));
   const states = await Promise.all(list.map(permState));
   const open = list.filter((p, i) => states[i] === "prompt" || (states[i] === "unknown" && !p.soft));
   if (!open.some(p => !p.soft)) return;
+  const offered = store.get(permSeenKey(), []) || [];
+  if (Date.now() < seen && !open.some(p => !p.soft && !offered.includes(p.k))) return;
+  store.set(permSeenKey(), [...new Set([...offered, ...open.map(p => p.k)])]);
   const el = document.createElement("div"); el.id = "nnudge"; el.className = "nnudge perm-nudge"; el.setAttribute("role", "dialog");
   el.innerHTML = `<div class="nn-ic">${svg("shield")}</div><div class="nn-b"><b>${esc(L2("Set up this device?", "تجهيز هذا الجهاز؟"))}</b>
       <p>${esc(L2("BeyondERP can use these on this device. All optional — tick what you want; your browser or phone then asks you to confirm.", "يمكن لـ BeyondERP استخدام ما يلي على هذا الجهاز. كلها اختيارية — اختر ما تريد، ثم يطلب منك المتصفح أو الهاتف التأكيد."))}</p>
@@ -8856,14 +8868,14 @@ async function permNudge() {
     const picked = $$("input:checked", el).map(i => i.value); el.remove();
     if (b.dataset.n === "yes") {
       store.set(permKey(), Date.now() + 14 * 86400000);      // what stays unanswered is offered again in two weeks
-      if (!picked.includes("notifications")) saveNotify({ ask: "never" });
+      if (!picked.includes("notifications") && open.some(p => p.k === "notifications")) store.set(permKey() + ":nonotif", 1);
       const chosen = open.filter(p => picked.includes(p.k));
       await askMany(chosen, chosen.map(() => "prompt"));
       const after = await Promise.all(chosen.map(permState)), n = after.filter(s => s === "granted").length;
       toast(n === chosen.length ? L2("All set ✓", "تم ✓") : L2(`${n} of ${chosen.length} allowed — see Settings → Device permissions`, `تم السماح بـ ${n} من ${chosen.length} — راجع الإعدادات ← أذونات الجهاز`));
       if (picked.includes("notifications") && notifPerm() === "granted") alertPerson({ title: L2("Notifications are on", "تم تفعيل الإشعارات"), body: L2("This is how new messages, approvals and follow-ups will reach you.", "هكذا ستصلك الرسائل والاعتمادات والمتابعات الجديدة."), force: true, test: true, tag: "berp-test" });
     } else if (b.dataset.n === "later") store.set(permKey(), Date.now() + 3 * 86400000);
-    else { store.set(permKey(), "never"); saveNotify({ ask: "never" }); } });
+    else store.set(permKey(), "never"); });
   document.body.appendChild(el);
 }
 const notifyNudge = permNudge;
@@ -11701,6 +11713,27 @@ async function doUpdate(bar, info) {
     msg.innerHTML = `<b>${esc(L2("The update did not finish", "لم يكتمل التحديث"))}</b><small>${esc(e.message || "")}</small><div class="tb-acts"><button class="btn sm pri" data-u="now">${esc(L2("Try again", "حاول مرة أخرى"))}</button><button class="btn sm tb-never" data-u="later">${esc(L2("Later", "لاحقاً"))}</button></div>`;
   }
 }
+// "Check for updates" (user menu, Settings → System & data): asks now, says what came out, and offers the update even
+// if "Later" was pressed for it
+window.BeyondUpdate = { ask: async el => {
+  if (el) el.disabled = true;
+  try {
+    let info = null;
+    if (STATIC) {
+      if (!/^https?:/.test(location.protocol)) return toast(L2("This copy is opened from a file — download the latest from the website.", "هذه النسخة مفتوحة من ملف — نزّل الأحدث من الموقع."));
+      const r = await fetch("build.json?t=" + Date.now(), { cache: "no-store" });
+      if (!r.ok) throw new Error(String(r.status));
+      const b = await r.json();
+      if (b.build && UPD.build && b.build !== UPD.build) info = { kind: "web", version: b.version, build: b.build };
+    } else if (S.boot && S.boot.desktop_app) {
+      const d = await api("GET", "/api/app-update");
+      if (d.newer) info = { kind: "desktop", version: d.latest, build: d.latest, install: d.can_install && S.boot.user.is_admin, url: d.url };
+    } else return toast(L2("This copy runs from source — update it with git pull, or install the desktop app.", "هذه النسخة تعمل من الكود المصدري — حدّثها بـ git pull أو ثبّت تطبيق سطح المكتب."));
+    if (!info) return toast(L2(`You're up to date ✓ (version ${S.boot.version || ""})`, `لديك أحدث إصدار ✓ (الإصدار ${S.boot.version || ""})`));
+    store.set("updLater", null); UPD.info = null; showUpdate(info);
+  } catch { toast(L2("Couldn't check — are you online? Try again in a moment.", "تعذر التحقق — هل أنت متصل؟ حاول بعد قليل."), true); }
+  finally { if (el) el.disabled = false; }
+} };
 setTimeout(checkUpdate, 20000);                                   // after start-up has settled
 setInterval(checkUpdate, 10 * 60 * 1000);                         // then every 10 minutes
 document.addEventListener("visibilitychange", () => { if (!document.hidden) checkUpdate(); });   // and when the app comes back to the screen
