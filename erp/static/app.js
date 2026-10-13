@@ -50,7 +50,12 @@ let API_WRITES = 0;   // saves still on their way (an update waits for them)
 async function api(method, path, body, raw) {
   if (method === "GET") return apiCall(method, path, body, raw);
   API_WRITES++;
-  try { return await apiCall(method, path, body, raw); } finally { API_WRITES--; }
+  try { const r = await apiCall(method, path, body, raw);
+    if (r && r.pending && r.approval) pushSend({ kind: "approval", title: L2("Entry waiting for your approval", "قيد ينتظر اعتمادك"),
+      body: `${me().full_name || me().username}`, href: "#/approvals", tag: "approval" });
+    if (r && r._push) pushHints(r._push);
+    return r; }
+  finally { API_WRITES--; }
 }
 async function apiCall(method, path, body, raw) {
   if (STATIC) return staticApi(method, path, body, raw);
@@ -8467,6 +8472,8 @@ async function notifPage(view, head) {
         ${sw("sound_on", L2("Sound", "الصوت"), "", sndOn)}
         ${sw("vibrate", L2("Vibration", "الاهتزاز"), (canVibe ? "" : phone ? L2("iPhones don't allow websites to vibrate", "أجهزة آيفون لا تسمح للمواقع بالاهتزاز") : L2("Works on Android phones", "يعمل على هواتف أندرويد")), vibOn)}
         ${sw("desktop", L2("Pop-up on this computer / phone", "إشعار منبثق على الجهاز"), L2("Shown when BeyondERP is in the background", "يظهر والتطبيق في الخلفية"))}
+        ${pushable() ? sw("push", L2("Also when BeyondERP is closed", "حتى عندما يكون BeyondERP مغلقاً"), PUSH.on ? L2("On for this device — messages, approvals and bookings arrive like WhatsApp", "مفعّل على هذا الجهاز — تصلك الرسائل والاعتمادات والحجوزات مثل واتساب")
+          : DEVICE.ios && !DEVICE.installed ? L2("On iPhone, install the app first (Share → Add to Home Screen)", "على آيفون ثبّت التطبيق أولاً (مشاركة ← إضافة إلى الشاشة الرئيسية)") : L2("Allow notifications, then switch this on", "اسمح بالإشعارات ثم فعّل هذا الخيار"), p.push !== false && PUSH.on) : ""}
         ${sw("banner", L2("Banner inside BeyondERP", "شريط تنبيه داخل التطبيق"), L2("A short note at the bottom while you work", "ملاحظة قصيرة أسفل الشاشة أثناء العمل"))}
         ${sw("preview", L2("Show the message text in pop-ups", "إظهار نص الرسالة في الإشعار"), L2("Off = just “new message”, for privacy on shared screens", "إيقافه = «رسالة جديدة» فقط، للخصوصية"))}</div>
       <div class="card"><h2>${esc(L2("What notifies me", "ما ينبهني"))}</h2>
@@ -8509,6 +8516,7 @@ async function notifPage(view, head) {
       if (k === "vibrate" && p.mode === "silent" && on) return set({ vibrate: true, mode: "vibrate" });
       if (k === "vibrate" && !on && p.mode === "vibrate") return set({ vibrate: false, mode: "silent" });
       if (k === "desktop" && on && notifPerm() === "default") askNotifications(true);
+      if (k === "push") { if (on && notifPerm() !== "granted") askNotifications(true); set({ push: on }); setTimeout(draw, 2500); return; }
       set({ [k]: on }); },
     ntlevel: el => set({ level: el.value }),
     ntrooms: () => set({ rooms: $$(".ntroom:checked", view).map(x => +x.value) }),
@@ -8571,7 +8579,8 @@ async function alertPerson(n) {
   if (p.vibrate && p.mode !== "silent" && !quiet) vibrateNow(p.vibe);
   const away = document.hidden || !location.hash.startsWith("#/chat");
   const body = p.preview || n.test ? n.body : L2("Open BeyondERP to read it", "افتح BeyondERP لقراءتها");
-  if (p.desktop && (away || n.force) && notifPerm() === "granted") {
+  const pushed = PUSH.on && !n.kind && !n.force && document.hidden;     // the push to this device shows it (no double pop-up)
+  if (p.desktop && (away || n.force) && notifPerm() === "granted" && !pushed) {
     const opts = { body, icon: "icon-192.png", badge: "icon-192.png", tag: n.tag || "berp-chat", renotify: true, silent: true, data: { href: n.href } };
     try {
       const reg = navigator.serviceWorker && await Promise.race([navigator.serviceWorker.getRegistration(), new Promise(r => setTimeout(() => r(null), 800))]);
@@ -8591,7 +8600,7 @@ async function askNotifications(fromSettings) {
   if (perm === "denied") { uiAlert(L2("Notifications are blocked for BeyondERP on this device. To allow them: click the lock or settings icon next to the address (or the app's settings on a phone) → Notifications → Allow, then reload.",
     "الإشعارات محظورة لـ BeyondERP على هذا الجهاز. للسماح بها: اضغط رمز القفل أو الإعدادات بجوار العنوان (أو إعدادات التطبيق على الهاتف) ← الإشعارات ← سماح، ثم أعد التحميل.")); return perm; }
   let r = "default"; try { r = await Notification.requestPermission(); } catch { /* old browsers */ }
-  if (r === "granted") { saveNotify({ ask: "done" }); alertPerson({ title: L2("Notifications are on", "تم تفعيل الإشعارات"), body: L2("This is how new messages, approvals and follow-ups will reach you.", "هكذا ستصلك الرسائل والاعتمادات والمتابعات الجديدة."), force: true, test: true, tag: "berp-test" }); }
+  if (r === "granted") { saveNotify({ ask: "done" }); pushSync(); alertPerson({ title: L2("Notifications are on", "تم تفعيل الإشعارات"), body: L2("This is how new messages, approvals and follow-ups will reach you.", "هكذا ستصلك الرسائل والاعتمادات والمتابعات الجديدة."), force: true, test: true, tag: "berp-test" }); }
   else if (r === "denied") toast(L2("Not allowed — you can turn them on later from Settings → Notifications", "لم يُسمح بها — يمكنك تفعيلها لاحقاً من الإعدادات ← الإشعارات"), true);
   return r;
 }
@@ -8599,6 +8608,7 @@ async function saveNotify(patch) {
   const notify = { ...notifyPrefs(), ...patch }; delete notify.notify_sound;
   const p = S.boot.profile || (S.boot.profile = { prefs: {} }); p.prefs = { ...(p.prefs || {}), notify };
   try { S.boot.profile = await api("PUT", "/api/me/profile", { prefs: { notify } }); } catch (e) { fail(e); }
+  pushSync();
 }
 // ================================================================== device permissions (Settings → Device permissions)
 // Everything here is optional: BeyondERP works without any of it; a feature that needs one asks again when it is used.
@@ -8636,7 +8646,19 @@ const PERMS = () => [
     on: ["phone", "pc", "desktop"], ok: () => typeof Notification !== "undefined",
     na: DEVICE.ios && !DEVICE.installed ? L2("On iPhone, install BeyondERP first (Share → Add to Home Screen), then allow them from the installed app.", "على آيفون ثبّت BeyondERP أولاً (مشاركة ← إضافة إلى الشاشة الرئيسية) ثم اسمح بها من التطبيق المثبّت.") : "",
     state: async () => { const p = notifPerm(); return p === "default" ? "prompt" : p; },
-    ask: () => Notification.requestPermission().then(r => { if (r === "granted") saveNotify({ ask: "done" }); return r; }) },
+    ask: () => Notification.requestPermission().then(r => { if (r === "granted") { saveNotify({ ask: "done" }); pushSync(); } return r; }) },
+  { k: "background", ic: "bell", n: L2("Notifications when the app is closed", "الإشعارات والتطبيق مغلق"),
+    why: L2("Like WhatsApp: chat messages, follow-ups due, approvals, reactions and bookings reach this device even when BeyondERP is closed. Uses the phone's or computer's own notification service — nothing keeps running in the background or drains the battery.",
+      "مثل واتساب: تصل رسائل المحادثة والمتابعات المستحقة والاعتمادات والتفاعلات والحجوزات إلى هذا الجهاز حتى والتطبيق مغلق. تستخدم خدمة الإشعارات الخاصة بالهاتف أو الكمبيوتر — لا شيء يعمل في الخلفية ولا يستهلك البطارية."),
+    on: ["phone", "pc", "desktop"], ok: () => pushable() && !(DEVICE.ios && !DEVICE.installed),
+    na: !cloudOn() ? L2("Needs the shared workspace (Settings → Workspace).", "تتطلب مساحة العمل المشتركة (الإعدادات ← مساحة العمل).")
+      : DEVICE.ios && !DEVICE.installed ? L2("On iPhone, install BeyondERP first (Share → Add to Home Screen), then turn this on from the installed app.", "على آيفون ثبّت BeyondERP أولاً (مشاركة ← إضافة إلى الشاشة الرئيسية) ثم فعّلها من التطبيق المثبّت.")
+      : L2("This browser can't receive notifications while closed — use Chrome, Edge, Safari or Firefox.", "هذا المتصفح لا يستقبل الإشعارات وهو مغلق — استخدم كروم أو إيدج أو سفاري أو فايرفوكس."),
+    state: async () => PUSH.on ? "granted" : notifPerm() === "denied" ? "denied" : "prompt",
+    ask: async () => {
+      if (notifPerm() !== "granted") { const r = await Notification.requestPermission(); if (r !== "granted") return r === "denied" ? "denied" : "prompt"; }
+      if (notifyPrefs().push === false || notifyPrefs().ask !== "done") await saveNotify({ push: true, ask: "done" });
+      return (await pushSync(true)) ? "granted" : "prompt"; } },
   { k: "camera", ic: "camera", n: L2("Camera", "الكاميرا"),
     why: L2("Take a photo or a short video in chat and send it straight away.", "التقاط صورة أو فيديو قصير في المحادثة وإرساله فوراً."),
     on: ["phone", "pc", "desktop"], ok: mediaOK, state: () => pq("camera"),
@@ -8738,11 +8760,13 @@ async function askMany(list, states) {
   const todo = list.filter((p, i) => states[i] === "prompt" || states[i] === "unknown");
   const has = k => todo.some(p => p.k === k);
   const jobs = [];
-  if (has("notifications")) jobs.push(permAsk(todo.find(p => p.k === "notifications")));
+  const nj = has("notifications") ? permAsk(todo.find(p => p.k === "notifications")) : Promise.resolve();
+  jobs.push(nj);
+  if (has("background")) jobs.push(nj.then(() => permAsk(todo.find(p => p.k === "background"))));
   if (has("camera") && has("microphone")) jobs.push(navigator.mediaDevices.getUserMedia({ audio: true, video: true }).then(s => stopAll(s))
     .catch(e => { if (e && e.name === "NotFoundError") return Promise.all([permAsk(todo.find(p => p.k === "microphone")), permAsk(todo.find(p => p.k === "camera"))]); }));
   else for (const k of ["camera", "microphone"]) if (has(k)) jobs.push(permAsk(todo.find(p => p.k === k)));
-  for (const p of todo) if (!["notifications", "camera", "microphone"].includes(p.k)) jobs.push(permAsk(p));
+  for (const p of todo) if (!["notifications", "background", "camera", "microphone"].includes(p.k)) jobs.push(permAsk(p));
   await Promise.allSettled(jobs);
 }
 
@@ -8754,7 +8778,7 @@ async function permNudge() {
   if (seen === "never" || Date.now() < seen) return;
   if ($(".dlg-bg, .drawer-bg, .tour-card, .onb, .cam") || (DEVICE.phone && $("#tourbar"))) { setTimeout(permNudge, 20000); return; }   // never on top of another question or the tour
   const np = notifyPrefs();
-  const list = permsHere().filter(p => p.k !== "install" && !(p.k === "notifications" && np.ask === "never")
+  const list = permsHere().filter(p => p.k !== "install" && !((p.k === "notifications" || p.k === "background") && np.ask === "never")
     && !(p.k === "geolocation" && (S.boot.settings || {}).workday_location === "off") && !(p.k === "clipboard"));
   const states = await Promise.all(list.map(permState));
   const open = list.filter((p, i) => states[i] === "prompt" || (states[i] === "unknown" && !p.soft));
@@ -8781,6 +8805,74 @@ async function permNudge() {
   document.body.appendChild(el);
 }
 const notifyNudge = permNudge;
+
+// ================================================================== notifications when the app is closed (Web Push)
+// The device subscribes once (shared workspace, hosted app, notifications allowed); its settings travel with it so the
+// workspace sends only what this person wants here. Messages are pushed by the sender's app through the push function.
+const PUSH = { on: false, endpoint: "", why: "" };
+const pushPrefs = () => { const p = notifyPrefs();
+  return { level: p.level, rooms: p.rooms || [], preview: p.preview !== false, quiet: !!p.quiet, quiet_from: p.quiet_from, quiet_to: p.quiet_to,
+    alerts: p.alerts !== false, desktop: p.desktop !== false, push: p.push !== false, tz: new Date().getTimezoneOffset(), lang: S.lang }; };
+const pushable = () => STATIC && cloudOn() && "serviceWorker" in navigator && "PushManager" in window && typeof Notification !== "undefined";
+async function pushReg() {
+  if (!navigator.serviceWorker) return null;
+  return Promise.race([navigator.serviceWorker.ready, new Promise(r => setTimeout(() => r(null), 4000))]);
+}
+// turn on (or refresh) this device's subscription; quiet when anything is missing
+async function pushSync(force) {
+  PUSH.why = "";
+  if (!pushable()) { PUSH.why = "unsupported"; return false; }
+  if (notifPerm() !== "granted") { PUSH.why = "permission"; return false; }
+  if (notifyPrefs().push === false && !force) { PUSH.why = "off"; if (PUSH.on || store.get("pushOn", 0)) await pushOff(); return false; }
+  try {
+    const reg = await pushReg(); if (!reg || !reg.pushManager) { PUSH.why = "unsupported"; return false; }
+    const key = (await CloudAPI.call("fn", "push", { action: "key" })).key;
+    const want = Uint8Array.from(atob(key.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((key.length + 3) % 4)), c => c.charCodeAt(0));
+    let sub = await reg.pushManager.getSubscription();
+    const has = sub && sub.options && sub.options.applicationServerKey ? new Uint8Array(sub.options.applicationServerKey) : null;
+    if (sub && has && (has.length !== want.length || has.some((b, i) => b !== want[i]))) { await sub.unsubscribe().catch(() => {}); sub = null; }
+    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: want });
+    const j = sub.toJSON();
+    await CloudAPI.call("rpc", "push_subscribe", { p_endpoint: j.endpoint, p_p256dh: j.keys.p256dh, p_auth: j.keys.auth, p_prefs: pushPrefs(), p_device: deviceName() });
+    PUSH.on = true; PUSH.endpoint = j.endpoint; store.set("pushOn", 1);
+    return true;
+  } catch (e) { PUSH.on = false; PUSH.why = (e && e.message) || "failed"; return false; }
+}
+async function pushOff() {
+  try { const reg = await pushReg(); const sub = reg && reg.pushManager && await reg.pushManager.getSubscription();
+    if (sub) { await CloudAPI.call("rpc", "push_unsubscribe", { p_endpoint: sub.endpoint }).catch(() => {}); await sub.unsubscribe(); } } catch { /* nothing to undo */ }
+  PUSH.on = false; store.set("pushOn", 0);
+}
+// sent from this device to the others (never waits, never fails the action it follows)
+function pushSend(msg) {
+  if (!STATIC || !cloudOn()) return;
+  CloudAPI.call("fn", "push", { action: "send", ...msg }).catch(() => { /* workspace without the push function yet */ });
+}
+// what the server asked to tell others (follow-ups, decisions, reactions): now, on the morning of a day, or cancelled
+function pushHints(list) {
+  if (!STATIC || !cloudOn()) return;
+  for (const h of list || []) {
+    if (h.cancel) { CloudAPI.call("fn", "push", { action: "cancel", key: h.cancel }).catch(() => {}); continue; }
+    if (h.day) {
+      const nine = new Date(h.day + "T09:00:00"), soon = new Date(Date.now() + 60000);
+      if (isNaN(nine.getTime()) || h.day < today()) continue;        // already past: the bell shows it
+      CloudAPI.call("fn", "push", { action: "schedule", key: h.key, at: (nine > soon ? nine : soon).toISOString(), to: h.to, title: h.title, body: h.body, href: h.href, tag: h.tag }).catch(() => {});
+      continue;
+    }
+    pushSend({ kind: h.kind || "notify", to: h.to, title: h.title, body: h.body, href: h.href, tag: h.tag, pref: h.pref });
+  }
+}
+// a chat message just sent: everyone else in the room (by username — the push function finds their accounts)
+function pushChat(room, body, files) {
+  const people = room.kind === "general" ? (C2.people || []).filter(p => p.active) : (room.members || []).map(personById);
+  const to = people.filter(p => p.id !== me().id && p.username).map(p => p.username);
+  if (!to.length) return;
+  const names = (String(body).match(/@([\w.\-؀-ۿ]+)/g) || []).map(x => x.slice(1).toLowerCase());
+  const mentions = names.includes("all") ? to : to.filter(u => names.includes(u.toLowerCase()));
+  const mine = (S.boot.profile || {}).display_name || me().full_name || me().username;
+  pushSend({ kind: "chat", room: room.id, dm: room.kind === "dm", to, mentions, title: room.kind === "dm" ? mine : `${mine} · ${room.name}`,
+    body: body || (files && files.length ? fileWord(files[0].mime) : ""), href: "#/chat/" + room.id, tag: "room" + room.id });
+}
 if (navigator.serviceWorker) navigator.serviceWorker.addEventListener("message", e => { if (e.data && e.data.href) location.hash = e.data.href; });
 
 const notifyKey = () => "chatLast:" + ((S.boot && S.boot.user && S.boot.user.id) || 0);
@@ -8836,7 +8928,7 @@ renderShell = function () {   // eslint-disable-line no-func-assign
   const av = $(".ucard .avatar"); if (av && p.avatar) av.outerHTML = `<img class="avatar av" src="${esc(p.avatar)}" alt="">`;
   const um = $(".ucard .dd-menu"); if (um && !$('a[href="#/profile"]', um)) um.insertAdjacentHTML("afterbegin", `<a href="#/profile">${svg("user")} ${esc(L2("My profile", "ملفي الشخصي"))}</a>${can("team.myday", "add") ? `<a href="#/my-day">${svg("clock")} ${esc(L2("My day (start / end)", "يومي (بداية / نهاية)"))}</a>` : ""}<a href="#/notifications">${svg("bell")} ${esc(L2("Notifications", "الإشعارات"))}</a>`);
   if (um && !$('a[href="#/settings?tab=perms"]', um)) { const pr = $('a[href="#/profile"]', um); if (pr) pr.insertAdjacentHTML("afterend", `<a href="#/settings?tab=perms">${svg("shield")} ${esc(L2("Device permissions", "أذونات الجهاز"))}</a>`); }
-  if (!C2.started) { C2.started = true; setTimeout(pollChat, 1200); setTimeout(notifyNudge, 6000); }
+  if (!C2.started) { C2.started = true; setTimeout(pollChat, 1200); setTimeout(notifyNudge, 6000); setTimeout(pushSync, 4000); }
   void u;
 };
 
@@ -9114,7 +9206,7 @@ async function openRoom(room, rooms) {
   };
   wireComposer(async (body, files, editing) => {
     if (editing) await api("PUT", "/api/chat/messages/" + editing, { body });
-    else await api("POST", `/api/chat/rooms/${room.id}/messages`, { body, files });
+    else { await api("POST", `/api/chat/rooms/${room.id}/messages`, { body, files }); pushChat(room, body, files); }
     await refresh(); list.scrollTop = list.scrollHeight;
   }, () => (room.kind === "general" ? (C2.people || []).filter(p => p.active) : room.members.map(personById)).filter(p => p.id !== me().id));
   void rooms;
@@ -9344,6 +9436,7 @@ async function openLink(l) {
       const total = files.reduce((a, f) => a + f.size, 0); if (total > 15 * 1048576) throw new Error(L2("Files are limited to 15 MB per message", "حجم الملفات محدود بـ 15 ميجابايت لكل رسالة"));
       const prof = S.boot.profile || {};
       await CloudAPI.call("rpc", "chat_link_send", { p_link: l.id, p_body: body, p_files: files, p_name: prof.display_name || me().full_name || me().username });
+      pushSend({ kind: "link", link: l.id, title: prof.display_name || me().full_name || me().username, body: body || (files.length ? fileWord(files[0].mime) : ""), tag: "link" + String(l.id).slice(0, 8) });
     }
     await load(); list.scrollTop = list.scrollHeight;
   }, () => []);

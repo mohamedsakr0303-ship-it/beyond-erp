@@ -8,12 +8,36 @@ The mark itself stays transparent (no white square); where a platform needs a so
 full-bleed "maskable" icon) it sits on the app's night navy."""
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageChops, ImageDraw
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 logo = Image.open(HERE / "app-logo.png").convert("RGBA")
-logo = logo.crop(logo.getbbox())            # trim empty edges
+
+
+def tight(src, halo=0.035):
+    """The solid badge plus a thin halo of its glow that fades out round, so the badge fills the icon instead of a
+    wide, faint glow taking a quarter of it (that made the desktop / taskbar icon look shrunk)."""
+    a = src.getchannel("A")
+    l, t, r, b = a.point(lambda v: 255 if v > 200 else 0).getbbox()          # the badge itself
+    d = max(r - l, b - t)
+    m = round(d * halo)
+    box = src.crop((l - m, t - m, r + m, b + m))
+    n = box.width
+    cx = cy = n / 2
+    inner, outer = d / 2, n / 2
+    fade = Image.new("L", box.size)
+    px = fade.load()
+    for y in range(n):
+        for x in range(n):
+            dist = ((x + .5 - cx) ** 2 + (y + .5 - cy) ** 2) ** .5
+            px[x, y] = 255 if dist <= inner else max(0, round(255 * (1 - (dist - inner) / max(1, outer - inner))))
+    out = box.copy()
+    out.putalpha(ImageChops.multiply(box.getchannel("A"), fade))
+    return out
+
+
+logo = tight(logo)
 
 
 def green(n):
@@ -37,13 +61,13 @@ def icon(n, pad, bg=None, src=None):
     return im
 
 
-icon(256, 0.04).save(HERE / "icon.ico", sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
-icon(1024, 0.08).save(HERE / "icon.png")
+icon(256, 0.0).save(HERE / "icon.ico", sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
+icon(1024, 0.05).save(HERE / "icon.png")       # macOS icons keep a small margin
 for n in (192, 512):
-    icon(n, 0.06).save(ROOT / "web-src" / f"icon-{n}.png", optimize=True)
+    icon(n, 0.01).save(ROOT / "web-src" / f"icon-{n}.png", optimize=True)
 icon(512, 0.1, "green").convert("RGB").save(ROOT / "web-src" / "icon-maskable-512.png", optimize=True)
 icon(180, 0.07, "green").convert("RGB").save(ROOT / "web-src" / "apple-touch-icon.png", optimize=True)
-icon(64, 0.04).save(ROOT / "web-src" / "favicon.png")
+icon(64, 0.0).save(ROOT / "web-src" / "favicon.png")
 icon(512, 0.0).save(ROOT / "erp" / "static" / "icons" / "beyond.png", optimize=True)   # in-app default icon + sidebar logo
 # Every icon choice in Settings -> App icon gets real icon files and its own manifest on the site, so an installed
 # phone app is a proper app with that icon (a manifest made in the page would make Android show Chrome's badge on it)
@@ -52,10 +76,9 @@ CHOICES = {"beyond": logo}       # the one BeyondERP icon (the earlier alternati
 base = json.loads((ROOT / "web-src" / "manifest.webmanifest").read_text(encoding="utf-8"))
 (ROOT / "erp" / "static" / "icons" / "app").mkdir(exist_ok=True)
 for k, src in CHOICES.items():
-    src = src.crop(src.getbbox())
     out = ROOT / "erp" / "static" / "icons" / "app"
-    icon(192, 0.06, src=src).save(out / f"{k}-192.png", optimize=True)
-    icon(512, 0.06, src=src).save(out / f"{k}-512.png", optimize=True)
+    icon(192, 0.01, src=src).save(out / f"{k}-192.png", optimize=True)
+    icon(512, 0.01, src=src).save(out / f"{k}-512.png", optimize=True)
     icon(512, 0.12, "green", src=src).convert("RGB").save(out / f"{k}-maskable.png", optimize=True)
     m = dict(base, icons=[{"src": f"icons/app/{k}-192.png", "sizes": "192x192", "type": "image/png"},
                           {"src": f"icons/app/{k}-512.png", "sizes": "512x512", "type": "image/png"},

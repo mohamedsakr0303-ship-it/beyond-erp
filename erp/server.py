@@ -77,6 +77,17 @@ class Reply:
         self.headers = headers or {}
 
 
+def push_hint(obj, *items):
+    """Ask the signed-in person's app to notify others' devices (the shared workspace's push function sends it, so it
+    reaches them even with the app closed): {kind, to: [usernames], title, body, href, tag} now, or with "day" a
+    reminder that morning, or {cancel: key}. Without a shared workspace the app ignores it."""
+    items = [i for i in items if i and (i.get("to") or i.get("cancel"))]
+    if items:
+        obj = dict(obj or {})
+        obj["_push"] = items
+    return obj
+
+
 def ok(obj=None, status=200):
     return Reply(json.dumps(obj if obj is not None else {"ok": True}, ensure_ascii=False, default=str).encode("utf-8"),
                  status)
@@ -840,7 +851,8 @@ def approval_approve(ctx, aid):
             from . import attachments
             attachments.move(ctx.db, "approval", int(aid), "entry", eid)
     ctx.log("approval.approve", f"#{aid} -> {eid}")
-    return ok({"id": eid})
+    return ok(push_hint({"id": eid}, {"kind": "notify", "to": [r["created_by"]] if r["created_by"] != ctx.user["username"] else [],
+                                      "title": "Your entry was approved", "body": f"By {ctx.user['username']}", "href": "#/journal", "tag": f"appr{aid}"}))
 
 
 @route("POST", "/api/approvals/<aid>/reject")
@@ -855,7 +867,8 @@ def approval_reject(ctx, aid):
         raise acc.ValidationError("Say why it is sent back, so it can be fixed")
     approvals.decide(ctx.db, aid, ctx.user, "rejected", ctx.body.get("note"))
     ctx.log("approval.reject", f"#{aid}")
-    return ok()
+    return ok(push_hint(None, {"kind": "notify", "to": [r["created_by"]] if r["created_by"] != ctx.user["username"] else [],
+                               "title": "Your entry was sent back", "body": str(ctx.body.get("note") or "")[:160], "href": "#/approvals", "tag": f"appr{aid}"}))
 
 
 @route("PUT", "/api/approvals/<aid>")
@@ -1283,10 +1296,26 @@ def crm_followups(ctx):
                "people": [r["username"] for r in ctx.db.q("SELECT username FROM users WHERE active=1 ORDER BY username")]})
 
 
+def _followup_push(ctx, fid, new=False):
+    f = ctx.db.one("SELECT id, title, due, party, assigned_to, created_by, done FROM crm_followups WHERE id=?", (int(fid),))
+    if not f:
+        return [{"cancel": f"fu:{fid}"}]
+    if f["done"]:
+        return [{"cancel": f"fu:{fid}"}]
+    who = f["assigned_to"] or f["created_by"]
+    out = [{"kind": "notify", "key": f"fu:{fid}", "day": f["due"], "to": [who], "title": "Follow-up due today",
+            "body": f["title"] + (f" — {f['party']}" if f["party"] else ""), "href": "#/followups", "tag": f"fu{fid}"}]
+    if new and who != ctx.user["username"]:
+        out.append({"kind": "notify", "to": [who], "title": f"New follow-up from {ctx.user['username']}",
+                    "body": f["title"] + f" · due {f['due']}", "href": "#/followups", "tag": f"fu{fid}"})
+    return out
+
+
 @route("POST", "/api/crm/followups", "crm.followups", "add")
 def crm_followup_add(ctx):
     from . import crm
-    return ok({"id": crm.save_followup(ctx.db, ctx.body, ctx.user["username"])})
+    fid = crm.save_followup(ctx.db, ctx.body, ctx.user["username"])
+    return ok(push_hint({"id": fid}, *_followup_push(ctx, fid, True)))
 
 
 def _own_followup(ctx, fid):
@@ -1305,14 +1334,14 @@ def crm_followup_edit(ctx, fid):
         crm.done_followup(ctx.db, fid, ctx.user["username"], bool(ctx.body["done"]), ctx.body.get("outcome") or "")
     else:
         crm.save_followup(ctx.db, ctx.body, ctx.user["username"], int(fid))
-    return ok()
+    return ok(push_hint(None, *_followup_push(ctx, fid)))
 
 
 @route("DELETE", "/api/crm/followups/<fid>", "crm.followups", "add")
 def crm_followup_del(ctx, fid):
     _own_followup(ctx, fid)
     ctx.db.x("DELETE FROM crm_followups WHERE id=?", (int(fid),))
-    return ok()
+    return ok(push_hint(None, {"cancel": f"fu:{fid}"}))
 
 
 def _offer_bu(ctx, o):
@@ -4442,7 +4471,12 @@ def chat_remove(ctx, mid):
 @route("POST", "/api/chat/messages/<mid>/react")
 def chat_react(ctx, mid):
     from . import chat
-    return ok({"emoji": chat.react(ctx.db, ctx.user, mid, ctx.body.get("emoji"))})
+    emoji = chat.react(ctx.db, ctx.user, mid, ctx.body.get("emoji"))
+    m = ctx.db.one("SELECT m.room_id, m.body, u.username FROM chat_messages m JOIN users u ON u.id=m.user_id WHERE m.id=?", (int(mid),))
+    to = [m["username"]] if emoji and m and m["username"] != ctx.user["username"] else []
+    return ok(push_hint({"emoji": emoji}, {"kind": "notify", "to": to, "title": f"{ctx.user['username']} reacted {emoji}",
+                                           "body": (m["body"] or "")[:120] if m else "", "href": f"#/chat/{m['room_id']}" if m else "#/chat",
+                                           "tag": f"rx{mid}", "pref": "reactions"}))
 
 
 @route("GET", "/api/chat/files/<fid>")

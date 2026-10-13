@@ -58,6 +58,17 @@ Everyone can see and change theirs in **Settings → Device permissions** (also 
 No permission needed: alert sounds and icon badges, vibration (Android), attaching / pasting / dropping files, copying,
 downloads, printing, full screen.
 
+### Notifications when the app is closed (Web Push)
+
+On the hosted app with the shared workspace, each device that allows it (Settings → Device permissions →
+"Notifications when the app is closed") gets notifications like WhatsApp even when BeyondERP is closed: chat
+messages (following each person's all / mentions / rooms, preview and quiet-hours settings), chat between
+companies, reactions, entries waiting for approval and the decision on them, follow-ups assigned to someone and a
+reminder at 9:00 on the day they are due, and bookings / enquiries / messages / signatures from the public pages.
+The `push` function (supabase/functions/push) signs and encrypts them itself; its keys are made on first use and kept
+server-side. `.github/workflows/reminders.yml` sends due reminders every 10 minutes. iPhone needs the app added to the
+Home Screen (iOS 16.4+).
+
 ## Three ways to run it
 
 | Edition | For | How |

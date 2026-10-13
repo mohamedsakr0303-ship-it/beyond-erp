@@ -18,6 +18,23 @@ self.addEventListener("fetch", e => {
     return res;
   }).catch(() => caches.match(r, { ignoreSearch: true }).then(hit => hit || (r.mode === "navigate" ? caches.match("./") : Response.error()))));
 });
+// notifications sent while the app is closed (Web Push, see supabase/functions/push): shown unless the app is on screen,
+// where it shows its own; quiet hours arrive marked silent
+self.addEventListener("push", e => {
+  let m = {};
+  try { m = e.data ? e.data.json() : {}; } catch { m = { title: "BeyondERP", body: e.data ? e.data.text() : "" }; }
+  e.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(list => {
+    if (list.some(c => c.visibilityState === "visible" && c.focused !== false)) {
+      list.forEach(c => c.postMessage({ push: m }));
+      return;
+    }
+    return self.registration.showNotification(m.title || "BeyondERP", {
+      body: m.body || "", icon: "icon-192.png", badge: "icon-192.png", tag: m.tag || "berp", renotify: !m.silent, silent: !!m.silent,
+      data: { href: m.href || "#/" }, lang: /[\u0600-\u06FF]/.test((m.title || "") + (m.body || "")) ? "ar" : "en", dir: "auto" });
+  }));
+});
+// the push service replaced this device's address: the app re-registers it the next time it opens
+self.addEventListener("pushsubscriptionchange", () => {});
 // chat notifications: tapping one opens (or focuses) the app on that conversation
 self.addEventListener("notificationclick", e => {
   e.notification.close();

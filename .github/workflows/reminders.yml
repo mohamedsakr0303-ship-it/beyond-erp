@@ -1,0 +1,26 @@
+# Sends the reminders that are due (follow-ups due this morning…) as notifications, so they reach people's phones and
+# computers even when no one has BeyondERP open. Calls the workspace's push function every 10 minutes; it only sends
+# what is due and is harmless to call more often. Needs the repository variables SUPABASE_URL and SUPABASE_ANON_KEY
+# (already used by the deploy workflow). Free on public repositories.
+name: reminders
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+permissions: {}
+concurrency:
+  group: reminders
+  cancel-in-progress: false
+jobs:
+  flush:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - name: Send the reminders that are due
+        env:
+          URL: ${{ vars.SUPABASE_URL }}
+          KEY: ${{ vars.SUPABASE_ANON_KEY }}
+        run: |
+          if [ -z "$URL" ] || [ -z "$KEY" ]; then echo "::notice::Workspace not configured — nothing to send"; exit 0; fi
+          curl -sS --max-time 60 -X POST "${URL%/}/functions/v1/push" -H "apikey: $KEY" -H "Authorization: Bearer $KEY" \
+               -H "Content-Type: application/json" -d '{"action":"flush"}' || echo "::warning::The push function did not answer"

@@ -76,6 +76,10 @@ async function rpc(name, body) {
   catch { throw new Error(T("No connection — check your internet and try again.", "لا يوجد اتصال — تحقق من الإنترنت وحاول مرة أخرى.")); }
   const txt = await r.text(); let j = null; try { j = txt ? JSON.parse(txt) : null; } catch { j = { message: txt }; }
   if (!r.ok) throw new Error((j && (j.message || j.msg)) || ("Error " + r.status));
+  // something new reached the company: let its people know on their phones (the server checks it really arrived)
+  if (name === "public_send" || (name === "public_manage" && body.p_action))
+    fetch(cfgc.url.replace(/\/+$/, "") + "/functions/v1/push", { method: "POST", headers: { apikey: cfgc.key, Authorization: "Bearer " + cfgc.key, "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "visitor", token: TOK }) }).catch(() => {});
   return j;
 }
 let PG = null;

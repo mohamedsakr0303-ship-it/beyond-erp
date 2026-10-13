@@ -3947,7 +3947,10 @@ class ChatReactionsAndNotify(unittest.TestCase):
         rid = 1   # the general room
         mid = self.call("boss", "POST", f"/api/chat/rooms/{rid}/messages", {"body": "Site visit at 10"})[1]["id"]
         rs = self.call("sara", "GET", "/api/chat/updates?since=0&rsince=0")[1]["reactions_last"]
-        self.assertEqual(self.call("sara", "POST", f"/api/chat/messages/{mid}/react", {"emoji": "👍"}), (200, {"emoji": "👍"}))
+        st, r = self.call("sara", "POST", f"/api/chat/messages/{mid}/react", {"emoji": "👍"})
+        self.assertEqual((st, r["emoji"]), (200, "👍"))
+        # the author's devices are told (through the workspace's push function), with the reactions setting honoured
+        self.assertEqual([(h["kind"], h["to"], h["pref"], h["href"]) for h in r["_push"]], [("notify", ["boss"], "reactions", f"#/chat/{rid}")])
         self.assertEqual(self.call("boss", "POST", f"/api/chat/messages/{mid}/react", {"emoji": "👍"})[0], 200)
         msg = self.call("boss", "GET", f"/api/chat/rooms/{rid}/messages")[1]["messages"][0]
         self.assertEqual(msg["reactions"], [{"emoji": "👍", "count": 2, "users": [2, 1], "mine": True}])
@@ -3965,6 +3968,24 @@ class ChatReactionsAndNotify(unittest.TestCase):
         self.call("boss", "DELETE", f"/api/chat/messages/{mid}")
         self.assertEqual(self.db.one("SELECT COUNT(*) n FROM chat_reactions")["n"], 0)
         self.assertEqual(self.call("sara", "POST", f"/api/chat/messages/{mid}/react", {"emoji": "👍"})[0], 400)
+
+    def test_push_hints(self):
+        """Replies tell the app whom to notify when the app is closed: a follow-up's owner now and on its morning
+        (cancelled when done or deleted), an approval's maker when it is decided; never the person acting."""
+        st, r = self.call("boss", "POST", "/api/crm/followups", {"title": "Call Mona", "due": "2030-01-05", "assigned_to": "sara"})
+        fid = r["id"]
+        self.assertEqual([(h.get("key"), h.get("day"), h["to"], h["title"]) for h in r["_push"]],
+                         [(f"fu:{fid}", "2030-01-05", ["sara"], "Follow-up due today"), (None, None, ["sara"], "New follow-up from boss")])
+        st, r = self.call("boss", "PUT", f"/api/crm/followups/{fid}", {"title": "Call Mona", "due": "2030-01-06", "assigned_to": "sara"})
+        self.assertEqual([(h["key"], h["day"]) for h in r["_push"]], [(f"fu:{fid}", "2030-01-06")])       # rescheduled, no second "new"
+        st, r = self.call("boss", "PUT", f"/api/crm/followups/{fid}", {"done": True})
+        self.assertEqual(r["_push"], [{"cancel": f"fu:{fid}"}])
+        st, r = self.call("boss", "POST", "/api/crm/followups", {"title": "Mine", "due": "2030-01-05"})
+        self.assertEqual([h.get("title") for h in r["_push"]], ["Follow-up due today"])                  # my own: only the reminder
+        st, r = self.call("boss", "DELETE", f"/api/crm/followups/{r['id']}")
+        self.assertEqual(r["_push"][0]["cancel"][:3], "fu:")
+        st, r = self.call("boss", "POST", "/api/chat/messages/999999/react", {"emoji": "👍"})
+        self.assertNotIn("_push", r if isinstance(r, dict) else {})
 
     def test_voice_and_camera_messages(self):
         """A voice note / camera clip is an ordinary file message; the room list and the alerts say what kind it is."""
