@@ -909,7 +909,7 @@ S.GLOBAL_H = {
   // one tap switches between light and dark from what is showing now (device setting by default); the choice is kept
   theme: () => { setMyLook({ mode: isDark() ? "light" : "dark" }, { quiet: true }); applyLook(); renderShell(); route(); },
   logout: async () => { await api("POST", "/api/logout").catch(() => {}); store.set("token", "");
-    if (STATIC && window.BeyondCloud) window.BeyondCloud.signout(); location.hash = ""; S.boot.user = null; renderAuth(); },
+    if (STATIC && window.BeyondCloud) window.BeyondCloud.signout(); location.hash = ""; S.boot.user = null; afterSignOut(); },
   pw: () => drawer(t("change_pw"), form([{ k: "current", l: t("current_pw"), type: "password" }, { k: "new", l: t("new_pw"), type: "password" }]),
     async v => { await api("PUT", "/api/me/password", v); toast(t("saved")); return true; }),
   quicknew: el => newItem(el.dataset.doc),
@@ -1164,7 +1164,7 @@ function renderCompanyGate(info, msg, kind = "err") {
   $("#cowhat").addEventListener("change", pane); pane();
   const open = id => { if (C.chooseCompany(id)) location.reload(); else cloudEnter({ ...info, needs_company: false, is_member: true }).catch(e => show(plainNetErr(e))); };
   S.H = { copick: el => { show(ar ? "جارٍ فتح الشركة…" : "Opening the company…", "info"); open(el.dataset.id); },
-    coout: () => { C.signout(); renderCloudAuth(); } };
+    coout: () => { C.signout(); afterSignOut(); } };
   $("#cojoin").addEventListener("submit", async e => { e.preventDefault(); const code = new FormData(e.target).get("code").trim();
     try { const r = await C.joinCompany(code); if (r.is_member) return open(r.id);
       renderCompanyGate(await C.info(), (ar ? "تم إرسال طلبك إلى مسؤول " : "Request sent to the administrator of ") + r.name + (ar ? ". ستتمكن من الدخول بعد الموافقة." : ". You can open it once they approve."), "ok"); }
@@ -1227,7 +1227,7 @@ async function renderOnboarding() {
       openApi("/api/templates/workbook?" + qs({ type: ty, lang: el.dataset.lang || S.lang })); },
     oblater: () => { S.skipSetup = true; boot(); },
     oblogout: async () => { await api("POST", "/api/logout").catch(() => {}); store.set("token", "");
-      if (STATIC && window.BeyondCloud) window.BeyondCloud.signout(); S.boot.user = null; renderAuth(); },
+      if (STATIC && window.BeyondCloud) window.BeyondCloud.signout(); S.boot.user = null; afterSignOut(); },
     obgo: async () => {
       $("#lerr").innerHTML = "";
       try {
@@ -10748,7 +10748,9 @@ const LP_LINK = () => `<p class="center lp-link"><a href="#" data-lp="1">✦ ${e
 document.addEventListener("click", e => { const a = e.target.closest("[data-lp]"); if (!a) return; e.preventDefault(); S.landingOk = false; renderLanding(); });
 // The first thing a new visitor sees: the night sky, the wordmark rising out of a glowing eclipse, and what BeyondERP
 // does, section by section as they scroll. Pure CSS animation (transform / opacity only) so it stays smooth on phones and
-// light on slow connections; respects "reduce motion". People who have signed in on this device go straight to sign-in.
+// light on slow connections; respects "reduce motion". Shown on a first visit and again after signing out.
+// signing out shows the welcome screen first; its Sign in button leads on to the sign-in page
+function afterSignOut() { S.landingOk = false; scrollTo(0, 0); renderLanding(); }
 function renderLanding(opt = {}) {
   const ar = S.lang === "ar", setup = S.boot && S.boot.needs_setup, inApp = !!opt.inApp;
   const me = inApp && S.boot.user;
