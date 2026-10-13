@@ -211,7 +211,8 @@ def rooms(db, user):
             continue
         members = _members(db, r["id"])
         last = db.one("""SELECT m.id, m.user_id, m.body, m.created_at, m.deleted_at,
-                                (SELECT COUNT(*) FROM chat_files f WHERE f.message_id=m.id) AS files
+                                (SELECT COUNT(*) FROM chat_files f WHERE f.message_id=m.id) AS files,
+                               (SELECT MIN(f.mime) FROM chat_files f WHERE f.message_id=m.id) AS file_mime
                          FROM chat_messages m WHERE m.id=?""", (r["last_id"],)) if r["last_id"] else None
         unread = db.one("SELECT COUNT(*) n FROM chat_messages WHERE room_id=? AND id>? AND COALESCE(user_id,0)<>? "
                         "AND deleted_at IS NULL", (r["id"], r["my_read"], uid))["n"]
@@ -229,7 +230,7 @@ def rooms(db, user):
                     "unread": unread, "mentions": mention, "last_id": r["last_id"] or 0, "my_read": r["my_read"],
                     "last": last and {"user_id": last["user_id"], "at": last["created_at"],
                                       "text": "" if last["deleted_at"] else (last["body"] or "")[:140],
-                                      "files": last["files"], "deleted": bool(last["deleted_at"])}})
+                                      "files": last["files"], "file_mime": last["file_mime"] or "", "deleted": bool(last["deleted_at"])}})
     out.sort(key=lambda x: (x["kind"] != "general", -(x["last_id"] or 0), x["name"].lower()))
     return out
 
@@ -525,7 +526,8 @@ def updates(db, user, since=0, rsince=None):
     if visible:
         ids = list(visible)
         rows = db.q(f"""SELECT id, room_id, user_id, body, mentions, created_at,
-                               (SELECT COUNT(*) FROM chat_files f WHERE f.message_id=m.id) AS files
+                               (SELECT COUNT(*) FROM chat_files f WHERE f.message_id=m.id) AS files,
+                               (SELECT MIN(f.mime) FROM chat_files f WHERE f.message_id=m.id) AS file_mime
                         FROM chat_messages m WHERE id>? AND room_id IN ({','.join('?' * len(ids))})
                           AND COALESCE(user_id,0)<>? AND deleted_at IS NULL ORDER BY id LIMIT 50""",
                     [since, *ids, user["id"]])
@@ -535,7 +537,7 @@ def updates(db, user, since=0, rsince=None):
         men = json.loads(r["mentions"] or "[]")
         room = visible[r["room_id"]]
         out.append({"id": r["id"], "room_id": r["room_id"], "room": room["name"], "kind": room["kind"],
-                    "user_id": r["user_id"], "text": (r["body"] or "")[:200], "files": r["files"],
+                    "user_id": r["user_id"], "text": (r["body"] or "")[:200], "files": r["files"], "file_mime": r["file_mime"] or "",
                     "mention": user["id"] in men or (-1 in men), "at": r["created_at"]})
     res = {}
     if rsince is not None:
@@ -581,7 +583,9 @@ def export_zip(db, user, rid, company=""):
             rows.append(f"<div class='m'><div class='h'><b>{html.escape(who)}</b> <span>{html.escape(m['created_at'])}"
                         f"{' · edited' if m['edited_at'] else ''}</span></div><div class='b'>{html.escape(body).replace(chr(10), '<br>')}</div>"
                         + "".join(f"<div class='f'>📎 <a href='{html.escape(f['path'])}'>{html.escape(f['name'])}</a>"
-                                  + (f"<br><img src='{html.escape(f['path'])}'>" if f["mime"].startswith("image/") else "")
+                                  + (f"<br><img src='{html.escape(f['path'])}'>" if f["mime"].startswith("image/") else
+                                     f"<br><audio controls src='{html.escape(f['path'])}'></audio>" if f["mime"].startswith("audio/") else
+                                     f"<br><video controls src='{html.escape(f['path'])}'></video>" if f["mime"].startswith("video/") else "")
                                   + "</div>" for f in fl) + "</div>")
             data.append({"id": m["id"], "author": who, "author_id": m["user_id"], "at": m["created_at"], "body": body,
                          "edited_at": m["edited_at"], "removed": bool(m["deleted_at"]), "reply_to": m["reply_to"], "files": fl})

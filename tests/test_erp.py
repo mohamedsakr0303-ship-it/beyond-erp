@@ -3952,6 +3952,28 @@ class ChatReactionsAndNotify(unittest.TestCase):
         self.assertEqual(self.db.one("SELECT COUNT(*) n FROM chat_reactions")["n"], 0)
         self.assertEqual(self.call("sara", "POST", f"/api/chat/messages/{mid}/react", {"emoji": "👍"})[0], 400)
 
+    def test_voice_and_camera_messages(self):
+        """A voice note / camera clip is an ordinary file message; the room list and the alerts say what kind it is."""
+        import base64
+        audio = base64.b64encode(b"\x1aE\xdf\xa3" + b"\0" * 300).decode()
+        st, r = self.call("boss", "POST", "/api/chat/rooms/1/messages",
+                          {"body": "", "files": [{"name": "Voice message (0:07).webm", "mime": "audio/webm", "data": audio}]})
+        self.assertEqual(st, 200)
+        room = next(x for x in self.call("sara", "GET", "/api/chat/rooms")[1]["rooms"] if x["id"] == 1)
+        self.assertEqual((room["last"]["files"], room["last"]["file_mime"], room["last"]["text"]), (1, "audio/webm", ""))
+        up = self.call("sara", "GET", "/api/chat/updates?since=0&rsince=0")[1]
+        self.assertEqual([(m["files"], m["file_mime"]) for m in up["messages"]], [(1, "audio/webm")])
+        f = self.call("sara", "GET", "/api/chat/rooms/1/messages")[1]["messages"][0]["files"][0]
+        self.assertEqual((f["name"], f["mime"]), ("Voice message (0:07).webm", "audio/webm"))
+        r = self.handle(self.app, "GET", f"/api/chat/files/{f['id']}", {"x-requested-with": "BeyondERP", "x-session": self.tok["sara"]}, b"")
+        self.assertEqual((r.status, r.body[:4]), (200, b"\x1aE\xdf\xa3"))
+        # a clip with a caption and its still
+        thumb = "data:image/jpeg;base64," + base64.b64encode(b"\xff\xd8jpeg").decode()
+        self.call("boss", "POST", "/api/chat/rooms/1/messages", {"body": "crack in slab B", "files": [
+            {"name": "Clip 2026-10-13.mp4", "mime": "video/mp4", "data": base64.b64encode(b"\0\0\0 ftypmp42").decode(), "thumb": thumb}]})
+        m = self.call("sara", "GET", "/api/chat/rooms/1/messages")[1]["messages"][-1]
+        self.assertEqual((m["body"], m["files"][0]["mime"], m["files"][0]["thumb"]), ("crack in slab B", "video/mp4", thumb))
+
     def test_notify_settings(self):
         import base64
         st, p = self.call("sara", "PUT", "/api/me/profile", {"prefs": {"notify": {"sound": "marimba", "volume": 140, "vibrate": False, "vibe": "pulse",

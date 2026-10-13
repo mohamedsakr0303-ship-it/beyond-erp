@@ -179,6 +179,10 @@ const IC = {
   spark: '<path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>',
   attach: '<path d="M21 11.5l-8.5 8.5a5.5 5.5 0 0 1-7.8-7.8l9-9a3.7 3.7 0 0 1 5.2 5.2l-9 9a1.8 1.8 0 0 1-2.6-2.6l8.3-8.3"/>',
   smile: '<circle cx="12" cy="12" r="9"/><path d="M8.5 14.5a4.5 4.5 0 0 0 7 0"/><path d="M9 9.5h.01M15 9.5h.01"/>',
+  mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M8.5 21h7"/>',
+  camera: '<path d="M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13" r="3.5"/>',
+  flip: '<path d="M4 9a8 8 0 0 1 14-3l2 2M20 15a8 8 0 0 1-14 3l-2-2"/><path d="M20 4v4h-4M4 20v-4h4"/>',
+  trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
   send: '<path d="M4 12l16-8-6 16-2.5-6.5z"/><path d="M11.5 13.5L20 4"/>',
   home: '<path d="M3 10.5 12 3l9 7.5V21a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/>',
   heart: '<path d="M12 20.5s-8-4.7-8-10.6A4.4 4.4 0 0 1 12 7a4.4 4.4 0 0 1 8 2.9c0 5.9-8 10.6-8 10.6z"/><path d="M8.5 12.5h2l1-2 1.5 4 1-2h1.5"/>',
@@ -8334,6 +8338,7 @@ function readFile(file) {
       const url = String(fr.result), data = url.split(",")[1] || "";
       let thumb = "";
       if (/^image\/(png|jpe?g|gif|webp|bmp)/.test(file.type)) { try { thumb = await shrinkPic(url, 420, "image/jpeg", .78); } catch { thumb = ""; } }
+      else if (/^video\//.test(file.type)) thumb = await videoThumb(file);
       ok({ name: file.name || "pasted.png", mime: file.type || "application/octet-stream", size: file.size, data, thumb });
     };
     fr.readAsDataURL(file);
@@ -8598,7 +8603,7 @@ async function pollChat() {
     const want = prefs.level === "all" || (prefs.level === "mentions" && direct) || (prefs.level === "rooms" && (direct || (prefs.rooms || []).includes(m.room_id)));
     if (!want || (String(m.room_id) === open && !document.hidden)) continue;
     const who = personById(m.user_id).name;
-    alertPerson({ title: m.kind === "dm" ? who : `${who} · ${m.room}`, body: m.text || (m.files ? "📎 " + L2("File", "ملف") : ""), href: "#/chat/" + m.room_id, tag: "room" + m.room_id });
+    alertPerson({ title: m.kind === "dm" ? who : `${who} · ${m.room}`, body: m.text || (m.files ? fileWord(m.file_mime) : ""), href: "#/chat/" + m.room_id, tag: "room" + m.room_id });
   }
   store.set(notifyKey(), Math.max(d.last, since));
   setChatBadge(d.unread, d.mentions);
@@ -8649,7 +8654,7 @@ PAGES.chat = async (view, parts, q) => {
   const sec = (title, list, extra = "") => list.length || extra ? `<div class="chl-sec">${esc(title)}${extra}</div>` + list.join("") : "";
   const item = r => { const other = r.kind === "dm" ? personById(r.other) : null;
     const ic = r.kind === "dm" ? avatar(other, 34) : `<span class="chl-ic">${esc(r.icon || (r.kind === "general" ? "#" : "◆"))}</span>`;
-    const last = r.last ? (r.last.deleted ? L2("Message removed", "رسالة محذوفة") : (r.last.user_id === me().id ? L2("You: ", "أنت: ") : "") + (r.last.text || (r.last.files ? "📎 " + L2("File", "ملف") : ""))) : (r.topic || "");
+    const last = r.last ? (r.last.deleted ? L2("Message removed", "رسالة محذوفة") : (r.last.user_id === me().id ? L2("You: ", "أنت: ") : "") + (r.last.text || (r.last.files ? fileWord(r.last.file_mime) : ""))) : (r.topic || "");
     return `<a class="chl-item ${open && open.id === r.id ? "on" : ""}" href="#/chat/${r.id}">${ic}<span class="chl-t"><b>${esc(r.name)}</b><small>${esc(last)}</small></span>${r.unread ? `<span class="chl-n ${r.mentions ? "at" : ""}">${r.mentions ? "@" : r.unread}</span>` : ""}</a>`; };
   const linkItem = l => `<a class="chl-item ${lid === l.id ? "on" : ""}" href="#/chat/link/${l.id}"><span class="chl-ic co">${svg("building")}</span><span class="chl-t"><b>${esc(l.other || L2("Waiting for the other company", "بانتظار الشركة الأخرى"))}</b><small>${esc(l.status === "pending" ? L2("Code not used yet", "الرمز لم يُستخدم بعد") : l.status === "ended" ? L2("Ended — history kept", "انتهت — السجل محفوظ") : L2("Between companies", "بين الشركات"))}</small></span>${l.unread ? `<span class="chl-n">${l.unread}</span>` : ""}</a>`;
   const live = rooms.filter(r => !r.archived);
@@ -8702,6 +8707,7 @@ function msgHtml(m, prev, opts = {}) {
   const day = !prev || dayOf(prev.at) !== dayOf(m.at) ? `<div class="ch-day"><span>${esc(new Date(String(m.at).replace(" ", "T")).toLocaleDateString(S.lang === "ar" ? "ar-EG" : undefined, { weekday: "long", month: "long", day: "numeric" }))}</span></div>` : "";
   const files = (m.files || []).map(f => {
     const key = opts.fileKey ? opts.fileKey(m, f) : "/api/chat/files/" + f.id;
+    if (/^(audio|video)\//.test(f.mime || "")) return mediaHtml(key, f);
     return f.thumb ? `<button class="ch-img" data-a="chfile" data-k="${esc(key)}" data-name="${esc(f.name)}" data-mime="${esc(f.mime)}" title="${esc(f.name)}"><img src="${esc(f.thumb)}" alt="${esc(f.name)}"></button>`
       : `<button class="ch-file" data-a="chfile" data-k="${esc(key)}" data-name="${esc(f.name)}" data-mime="${esc(f.mime)}">${svg("file")}<span><b>${esc(f.name)}</b><small>${esc(sizeTxt(f.size || 0))}</small></span></button>`; }).join("");
   const seen = mine && !m.deleted ? (opts.seenTxt ? opts.seenTxt(m) : m.seen_by && m.seen_by.length ? `<span class="ch-seen" title="${esc(m.seen_by.map(id => personById(id).name).join(", "))}">✓✓ ${esc(L2("Seen", "شوهدت"))}${m.seen_by.length > 1 ? " · " + m.seen_by.length : ""}</span>` : `<span class="ch-seen">✓</span>`) : "";
@@ -8719,21 +8725,42 @@ function msgHtml(m, prev, opts = {}) {
       ${rx}<div class="ch-meta">${grouped && !day ? `<span>${esc(fmtTime(m.at))}</span>` : ""}${m.edited ? `<span>${esc(L2("edited", "معدّلة"))}</span>` : ""}${seen}${tools}${!opts.person && !m.deleted && m.body && can("crm.followups", "add") ? `<span class="ch-tools"><button class="lnk" data-a="chfu" data-id="${m.id}" title="${esc(L2("Make a follow-up from this message", "إنشاء متابعة من هذه الرسالة"))}">⏰ ${esc(L2("Follow-up", "متابعة"))}</button></span>` : ""}</div></div></div>`;
 }
 
+// voice notes and video clips: a play button until opened (the file is fetched only then), a real player after;
+// the length of a voice note travels in its name ("Voice message (0:12).webm") — recorded audio often has no duration
+const fileWord = mime => /^audio\//.test(mime || "") ? "🎤 " + L2("Voice message", "رسالة صوتية") : /^video\//.test(mime || "") ? "🎬 " + L2("Video", "فيديو")
+  : /^image\//.test(mime || "") ? "📷 " + L2("Photo", "صورة") : "📎 " + L2("File", "ملف");
+const voiceLen = name => (String(name).match(/\((\d+:\d\d)\)/) || [])[1] || "";
+function mediaHtml(key, f, autoplay) {
+  const url = CH.media && CH.media.get(key), video = /^video\//.test(f.mime), d = `data-k="${esc(key)}" data-name="${esc(f.name)}" data-mime="${esc(f.mime)}"`;
+  if (url) return video ? `<span class="ch-vid" data-live="${esc(key)}"><video controls playsinline preload="metadata" ${autoplay ? "autoplay" : ""} src="${esc(url)}"${f.thumb ? ` poster="${esc(f.thumb)}"` : ""}></video></span>`
+    : `<span class="ch-voice on" data-live="${esc(key)}"><audio controls preload="metadata" ${autoplay ? "autoplay" : ""} src="${esc(url)}"></audio></span>`;
+  if (video) return `<button type="button" class="ch-vid" data-a="chplay" ${d} title="${esc(f.name)}">${f.thumb ? `<img src="${esc(f.thumb)}" alt="">` : `<span class="ch-vid-blank">${svg("camera")}</span>`}<i class="ch-playic">▶</i><small>${esc(sizeTxt(f.size || 0))}</small></button>`;
+  const voice = /^voice|^رسالة صوتية/i.test(f.name);
+  return `<button type="button" class="ch-voice" data-a="chplay" ${d} title="${esc(f.name)}"><i class="ch-playic">▶</i>${svg("mic")}<span class="ch-wave"></span><small>${esc(voiceLen(f.name) || (voice ? "" : f.name))}</small></button>`;
+}
+
 function composerHtml(canWrite, why) {
   if (!canWrite) return `<div class="ch-closed">${esc(why)}</div>`;
   return `<div class="ch-pending" id="chpend"></div>
     <div class="ch-comp"><div class="dd ch-emo"><button class="btn icbtn" type="button" aria-label="Emoji">${svg("smile")}</button><div class="dd-menu emo-grid">${EMOJIS.map(e => `<button type="button" data-a="chemo" data-e="${e}">${e}</button>`).join("")}</div></div>
       <label class="icbtn" title="${esc(L2("Attach files", "إرفاق ملفات"))}">${svg("attach")}<input type="file" id="chfiles" multiple hidden></label>
+      <button class="icbtn" type="button" data-a="chcam" title="${esc(L2("Camera — take a photo or a clip now", "الكاميرا — التقط صورة أو مقطعاً الآن"))}" aria-label="${esc(L2("Camera", "الكاميرا"))}">${svg("camera")}</button>
       <div class="ch-inbox"><textarea id="chtext" rows="1" placeholder="${esc(L2("Write a message… (@ to mention, drop or paste files)", "اكتب رسالة… (@ للإشارة، اسحب الملفات أو الصقها)"))}"></textarea><div class="ch-at" id="chat" hidden></div></div>
-      <button class="btn pri icbtn ch-send" data-a="chsend" aria-label="${esc(L2("Send", "إرسال"))}">${svg("send")}</button></div>`;
+      <button class="icbtn ch-mic" type="button" data-a="chrec" title="${esc(L2("Record a voice message", "تسجيل رسالة صوتية"))}" aria-label="${esc(L2("Voice message", "رسالة صوتية"))}">${svg("mic")}</button>
+      <button class="btn pri icbtn ch-send" data-a="chsend" aria-label="${esc(L2("Send", "إرسال"))}">${svg("send")}</button>
+      <div class="ch-rec" id="chrecbar" hidden><button class="icbtn" type="button" data-a="chrecx" title="${esc(L2("Discard", "تجاهل"))}" aria-label="${esc(L2("Discard", "تجاهل"))}">${svg("trash")}</button>
+        <span class="ch-recdot"></span><b id="chrect">0:00</b><span class="ch-recwave" id="chrecw"></span><span class="muted small ch-rechint">${esc(L2("Recording…", "جارٍ التسجيل…"))}</span>
+        <button class="btn pri icbtn ch-send" type="button" data-a="chrecok" aria-label="${esc(L2("Send voice message", "إرسال الرسالة الصوتية"))}">${svg("send")}</button></div></div>`;
 }
 
 // the composer: emoji, files (pick / paste / drop), @mentions, Enter to send, editing an unseen message
 function wireComposer(send, people) {
+  S.H.chplay = chPlay;           // also in read-only rooms
   const ta = $("#chtext"); if (!ta) return;
   CH.pending = []; CH.editing = null;
   const grow = () => { ta.style.height = "auto"; ta.style.height = Math.min(ta.scrollHeight, 180) + "px"; };
-  const drawPend = () => { $("#chpend").innerHTML = (CH.editing ? `<span class="chip">${esc(L2("Editing a message", "تعديل رسالة"))} <button class="lnk" data-a="chcancel">×</button></span>` : "") + CH.pending.map((f, i) =>
+  const comp = $(".ch-comp"), sync = () => comp.classList.toggle("typing", !!(ta.value.trim() || CH.pending.length || CH.editing));
+  const drawPend = () => { sync(); $("#chpend").innerHTML = (CH.editing ? `<span class="chip">${esc(L2("Editing a message", "تعديل رسالة"))} <button class="lnk" data-a="chcancel">×</button></span>` : "") + CH.pending.map((f, i) =>
     `<span class="chip">${f.thumb ? `<img src="${esc(f.thumb)}" alt="">` : svg("file")} ${esc(f.name)} · ${esc(sizeTxt(f.size))} <button class="lnk" data-a="chunpend" data-i="${i}">×</button></span>`).join(""); };
   const add = async files => { for (const f of files) { try { CH.pending.push(await readFile(f)); } catch (e) { fail(e); } } drawPend(); };
   $("#chfiles").addEventListener("change", e => { add([...e.target.files]); e.target.value = ""; });
@@ -8751,7 +8778,7 @@ function wireComposer(send, people) {
   };
   const pick = u => { const pos = ta.selectionStart, before = ta.value.slice(0, pos).replace(/@([\w.\-\u0600-\u06FF]*)$/, "@" + u + " "); ta.value = before + ta.value.slice(pos); ta.focus(); ta.selectionStart = ta.selectionEnd = before.length; atBox.hidden = true; };
   S.H.chatpick = el => pick(el.dataset.u);
-  ta.addEventListener("input", () => { grow(); atIdx = 0; showAt(); });
+  ta.addEventListener("input", () => { grow(); sync(); atIdx = 0; showAt(); });
   ta.addEventListener("keydown", e => {
     if (!atBox.hidden) {
       const btns = $$("button", atBox);
@@ -8771,6 +8798,28 @@ function wireComposer(send, people) {
     catch (e) { fail(e); } finally { btn.disabled = false; ta.focus(); }
   };
   CH.startEdit = (id, text) => { CH.editing = id; ta.value = text; grow(); drawPend(); ta.focus(); };
+  // voice message: tap the mic, talk, then send (or bin it); sent on its own, whatever is typed stays in the box
+  const sendFiles = async files => { await send("", files, null); };
+  S.H.chrec = async () => {
+    if (CH.rec) return;
+    try { CH.rec = await startVoice(s => { $("#chrect").textContent = s.time; $("#chrecw").style.setProperty("--lv", s.level); }); }
+    catch (e) { return fail(e); }
+    $("#chrecbar").hidden = false; $(".ch-comp").classList.add("recording");
+  };
+  const endRec = async keep => {
+    const r = CH.rec; if (!r) return; CH.rec = null;
+    $("#chrecbar").hidden = true; $(".ch-comp").classList.remove("recording");
+    const file = await r.stop(); if (!keep || !file) return;
+    try { await sendFiles([await readFile(file)]); } catch (e) { fail(e); }
+  };
+  S.H.chrecx = () => endRec(false);
+  S.H.chrecok = () => endRec(true);
+  // camera: take a photo or a short clip now and send it, with what is typed in the box as its caption
+  S.H.chcam = () => openCamera(async file => {
+    const f = await readFile(file);
+    if (CH.editing) return sendFiles([f]);
+    await send(ta.value.trim(), [f, ...CH.pending], null); ta.value = ""; CH.pending = []; grow(); drawPend();
+  });
   if (matchMedia("(pointer: fine)").matches) ta.focus();
 }
 
@@ -8790,13 +8839,13 @@ async function openRoom(room, rooms) {
         <button data-a="chdelroom" class="danger">${esc(L2("Delete room and history", "حذف الغرفة وسجلها"))}</button>` : ""}</div></div>` : ""}</div>
     <div class="ch-list" id="chlist"><div class="muted" style="padding:20px">${t("loading")}</div></div>
     ${composerHtml(room.can_write, room.archived ? L2("This room is archived — read-only.", "هذه الغرفة مؤرشفة — للقراءة فقط.") : L2("You can read this room but you are not a member.", "يمكنك قراءة هذه الغرفة لكنك لست عضواً فيها."))}`;
-  CH.room = room; CH.msgs = []; CH.more = false;
+  CH.room = room; CH.msgs = []; CH.more = false; CH.media = new Map(); CH.blobOf = apiBlobUrl;
   const list = $("#chlist");
   const draw = keepScroll => {
     const atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 80;
     const h0 = list.scrollHeight;
-    list.innerHTML = (CH.more ? `<div style="text-align:center;padding:8px"><button class="btn" data-a="chmore">${esc(L2("Earlier messages", "رسائل أقدم"))}</button></div>` : "") +
-      (CH.msgs.length ? CH.msgs.map((m, i) => msgHtml(m, CH.msgs[i - 1])).join("") : `<div class="ch-empty small">${esc(L2("No messages yet — say hello 👋", "لا توجد رسائل بعد — ابدأ بالتحية 👋"))}</div>`);
+    keepPlayers(list, () => list.innerHTML = (CH.more ? `<div style="text-align:center;padding:8px"><button class="btn" data-a="chmore">${esc(L2("Earlier messages", "رسائل أقدم"))}</button></div>` : "") +
+      (CH.msgs.length ? CH.msgs.map((m, i) => msgHtml(m, CH.msgs[i - 1])).join("") : `<div class="ch-empty small">${esc(L2("No messages yet — say hello 👋", "لا توجد رسائل بعد — ابدأ بالتحية 👋"))}</div>`));
     if (keepScroll === "top") list.scrollTop = list.scrollHeight - h0; else if (atBottom || keepScroll === "bottom") list.scrollTop = list.scrollHeight;
   };
   const markRead = () => { const last = CH.msgs.length ? CH.msgs[CH.msgs.length - 1].id : 0;
@@ -8870,6 +8919,160 @@ async function openRoom(room, rooms) {
   }, () => (room.kind === "general" ? (C2.people || []).filter(p => p.active) : room.members.map(personById)).filter(p => p.id !== me().id));
   void rooms;
 }
+// ------------------------------------------------------------------ chat: voice notes, camera, playing media
+const mmss = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+const pickType = list => (window.MediaRecorder && MediaRecorder.isTypeSupported ? list.find(t => MediaRecorder.isTypeSupported(t)) : "") || "";
+const extOf = mime => /mp4/.test(mime) ? "mp4" : /ogg/.test(mime) ? "ogg" : "webm";
+function mediaError(e, what) {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.isSecureContext)
+    return new Error(L2(`This browser can't use the ${what} here`, what === "microphone" ? "لا يمكن لهذا المتصفح استخدام الميكروفون هنا" : "لا يمكن لهذا المتصفح استخدام الكاميرا هنا"));
+  if (e && (e.name === "NotAllowedError" || e.name === "SecurityError"))
+    return new Error(L2(`Allow the ${what} for this site (the icon next to the address bar), then try again`, what === "microphone" ? "اسمح باستخدام الميكروفون لهذا الموقع (الأيقونة بجانب شريط العنوان) ثم حاول مرة أخرى" : "اسمح باستخدام الكاميرا لهذا الموقع (الأيقونة بجانب شريط العنوان) ثم حاول مرة أخرى"));
+  if (e && e.name === "NotFoundError") return new Error(L2(`No ${what} found on this device`, what === "microphone" ? "لا يوجد ميكروفون على هذا الجهاز" : "لا توجد كاميرا على هذا الجهاز"));
+  return e instanceof Error ? e : new Error(String(e));
+}
+const VOICE_MAX = 10 * 60;      // seconds — about 2.5 MB at the bit rate below
+
+// starts recording; tick({time, level}) about 10×/s; returns {stop() → File | null}
+async function startVoice(tick) {
+  if (!window.MediaRecorder) throw mediaError(null, "microphone");
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); }
+  catch (e) { throw mediaError(e, "microphone"); }
+  const type = pickType(["audio/webm;codecs=opus", "audio/mp4", "audio/ogg;codecs=opus", "audio/webm"]);
+  const rec = new MediaRecorder(stream, type ? { mimeType: type, audioBitsPerSecond: 32000 } : {});
+  const parts = []; rec.ondataavailable = e => { if (e.data && e.data.size) parts.push(e.data); };
+  const t0 = Date.now(); let ac, an, buf;
+  try { ac = new (window.AudioContext || window.webkitAudioContext)(); an = ac.createAnalyser(); an.fftSize = 256; ac.createMediaStreamSource(stream).connect(an); buf = new Uint8Array(an.fftSize); } catch { an = null; }
+  let done;
+  const finished = new Promise(ok => { done = ok; rec.onstop = () => ok(); });
+  const stop = async () => {
+    clearInterval(timer);
+    if (rec.state !== "inactive") { rec.stop(); await finished; } else done();
+    stream.getTracks().forEach(t => t.stop()); try { ac && ac.close(); } catch { /* already closed */ }
+    const secs = (Date.now() - t0) / 1000;
+    if (secs < 0.7 || !parts.length) return null;              // a tap, not a message
+    const mime = (rec.mimeType || type || "audio/webm").split(";")[0];
+    return new File(parts, `Voice message (${mmss(secs)}).${extOf(mime)}`, { type: mime });
+  };
+  const timer = setInterval(() => {
+    if (!document.getElementById("chrecbar")) { stop(); CH.rec = null; return; }   // left the chat: drop it
+    const s = (Date.now() - t0) / 1000;
+    let level = 0; if (an) { an.getByteTimeDomainData(buf); for (const v of buf) level = Math.max(level, Math.abs(v - 128) / 128); }
+    tick({ time: mmss(s), level: Math.min(1, level * 2.5).toFixed(2) });
+    if (s >= VOICE_MAX) S.H.chrecok && S.H.chrecok();
+  }, 100);
+  rec.start(1000);
+  return { stop };
+}
+
+// a still from a video file (for the bubble), or "" when the browser can't
+function videoThumb(blob) {
+  return new Promise(ok => {
+    const v = document.createElement("video"), u = URL.createObjectURL(blob); let doneT;
+    const end = r => { clearTimeout(doneT); URL.revokeObjectURL(u); ok(r); };
+    v.muted = true; v.playsInline = true; v.preload = "auto";
+    v.onloadeddata = () => { try { v.currentTime = Math.min(0.1, (v.duration || 1) / 2); } catch { end(""); } };
+    v.onseeked = () => { try { const k = Math.min(1, 420 / Math.max(v.videoWidth, v.videoHeight)), c = document.createElement("canvas");
+      c.width = Math.max(1, Math.round(v.videoWidth * k)); c.height = Math.max(1, Math.round(v.videoHeight * k));
+      c.getContext("2d").drawImage(v, 0, 0, c.width, c.height); end(c.toDataURL("image/jpeg", .72)); } catch { end(""); } };
+    v.onerror = () => end(""); doneT = setTimeout(() => end(""), 4000);
+    v.src = u;
+  });
+}
+
+// the camera sheet: live view, Photo / Video, switch camera, then look at it and Send or Retake
+async function openCamera(onSend) {
+  const fallback = () => {          // no camera API here: the phone's own camera through a file input
+    const i = document.createElement("input"); i.type = "file"; i.accept = "image/*,video/*"; i.setAttribute("capture", "environment");
+    i.onchange = () => { if (i.files[0]) onSend(i.files[0]).catch(fail); }; i.click();
+  };
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.isSecureContext) return fallback();
+  const CLIP_MAX = 60, CLIP_BYTES = 13.5 * 1048576;
+  const bg = document.createElement("div"); bg.className = "cam";
+  bg.innerHTML = `<div class="cam-view"><video playsinline muted autoplay></video><img class="cam-shot" alt="" hidden><video class="cam-clip" playsinline controls hidden></video>
+      <div class="cam-top"><button class="cam-b" type="button" data-c="close" aria-label="${esc(t("close"))}">✕</button><b class="cam-time" hidden>0:00</b><button class="cam-b" type="button" data-c="flip" aria-label="${esc(L2("Switch camera", "تبديل الكاميرا"))}" hidden>${svg("flip")}</button></div></div>
+    <div class="cam-bar live"><div class="cam-modes"><button type="button" data-c="photo" class="on">${esc(L2("Photo", "صورة"))}</button><button type="button" data-c="video">${esc(L2("Video", "فيديو"))}</button></div>
+      <button class="cam-shut" type="button" data-c="shoot" aria-label="${esc(L2("Take", "التقاط"))}"><span></span></button></div>
+    <div class="cam-bar review" hidden><button class="btn" type="button" data-c="retake">${esc(L2("Retake", "إعادة"))}</button>
+      <button class="btn pri" type="button" data-c="send">${svg("send")} ${esc(L2("Send", "إرسال"))}</button></div>`;
+  document.body.appendChild(bg);
+  const live = $("video", bg), shot = $(".cam-shot", bg), clip = $(".cam-clip", bg), timeEl = $(".cam-time", bg), shut = $(".cam-shut", bg);
+  let stream = null, facing = "environment", mode = "photo", rec = null, file = null, recTimer = null, prevUrl = "";
+  const stopStream = () => { if (stream) stream.getTracks().forEach(tr => tr.stop()); stream = null; };
+  const close = () => { if (rec && rec.state !== "inactive") { rec.onstop = null; rec.stop(); } clearInterval(recTimer); stopStream(); if (prevUrl) URL.revokeObjectURL(prevUrl); bg.remove(); document.removeEventListener("keydown", esc_); };
+  const esc_ = e => { if (e.key === "Escape") close(); };
+  document.addEventListener("keydown", esc_);
+  const start = async () => {
+    stopStream();
+    try { stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facing, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: mode === "video" }); }
+    catch (e) {
+      if (mode === "video" && e && e.name === "NotAllowedError" && !stream) {      // the microphone was refused: a silent clip is still a clip
+        try { stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facing } }); } catch (e2) { close(); return fail(mediaError(e2, "camera")); }
+      } else { close(); if (e && e.name === "NotFoundError") return fallback(); return fail(mediaError(e, "camera")); }
+    }
+    live.srcObject = stream; live.classList.toggle("mirror", facing === "user");
+    try { const cams = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === "videoinput"); $("[data-c=flip]", bg).hidden = cams.length < 2; } catch { /* unknown */ }
+  };
+  const review = (f, url) => {
+    file = f; if (prevUrl) URL.revokeObjectURL(prevUrl); prevUrl = url;
+    const vid = /^video\//.test(f.type);
+    shot.hidden = vid; clip.hidden = !vid; live.hidden = true;
+    if (vid) clip.src = url; else shot.src = url;
+    $(".cam-bar.live", bg).hidden = true; $(".cam-bar.review", bg).hidden = false; $("[data-c=flip]", bg).hidden = true;
+    stopStream();
+  };
+  const snap = () => {
+    const w = live.videoWidth, h = live.videoHeight; if (!w) return;
+    const k = Math.min(1, 2560 / Math.max(w, h)), c = document.createElement("canvas");
+    c.width = Math.round(w * k); c.height = Math.round(h * k);
+    const g = c.getContext("2d"); if (facing === "user") { g.translate(c.width, 0); g.scale(-1, 1); }     // as seen in the mirror
+    g.drawImage(live, 0, 0, c.width, c.height);
+    c.toBlob(b => { if (b) review(new File([b], `Photo ${new Date().toISOString().slice(0, 19).replace(/[T:]/g, "-")}.jpg`, { type: "image/jpeg" }), URL.createObjectURL(b)); }, "image/jpeg", .88);
+  };
+  const recStart = () => {
+    if (!window.MediaRecorder) return fail(mediaError(null, "camera"));
+    const type = pickType(["video/mp4;codecs=avc1,mp4a", "video/mp4", "video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"]);
+    const parts = []; let bytes = 0;
+    rec = new MediaRecorder(stream, Object.assign(type ? { mimeType: type } : {}, { videoBitsPerSecond: 1500000, audioBitsPerSecond: 64000 }));
+    rec.ondataavailable = e => { if (e.data && e.data.size) { parts.push(e.data); bytes += e.data.size; if (bytes > CLIP_BYTES && rec.state === "recording") rec.stop(); } };
+    rec.onstop = () => { clearInterval(recTimer); timeEl.hidden = true; bg.classList.remove("rec");
+      const mime = (rec.mimeType || type || "video/webm").split(";")[0], b = new Blob(parts, { type: mime }); rec = null;
+      if (b.size) review(new File([b], `Clip ${new Date().toISOString().slice(0, 19).replace(/[T:]/g, "-")}.${extOf(mime)}`, { type: mime }), URL.createObjectURL(b)); };
+    const t0 = Date.now(); timeEl.textContent = "0:00"; timeEl.hidden = false; bg.classList.add("rec");
+    recTimer = setInterval(() => { const s = (Date.now() - t0) / 1000; timeEl.textContent = mmss(s) + " / " + mmss(CLIP_MAX); if (s >= CLIP_MAX && rec && rec.state === "recording") rec.stop(); }, 250);
+    rec.start(1000);
+  };
+  bg.addEventListener("click", async e => {
+    const b = e.target.closest("[data-c]"); if (!b) return;
+    const c = b.dataset.c;
+    if (c === "close") close();
+    else if (c === "flip") { facing = facing === "user" ? "environment" : "user"; await start(); }
+    else if ((c === "photo" || c === "video") && !rec) { mode = c; $$(".cam-modes button", bg).forEach(x => x.classList.toggle("on", x.dataset.c === c)); shut.classList.toggle("vid", c === "video"); await start(); }
+    else if (c === "shoot") { if (mode === "photo") snap(); else if (rec) rec.stop(); else recStart(); }
+    else if (c === "retake") { file = null; shot.hidden = clip.hidden = true; clip.removeAttribute("src"); live.hidden = false; $(".cam-bar.live", bg).hidden = false; $(".cam-bar.review", bg).hidden = true; await start(); }
+    else if (c === "send" && file) { b.disabled = true; try { await onSend(file); close(); } catch (err) { b.disabled = false; fail(err); } }
+  });
+  await start();
+}
+
+// open a voice note / clip in place (the composer hooks it up for each chat view)
+const chPlay = async el => {
+  const k = el.dataset.k; CH.media = CH.media || new Map();
+  try {
+    if (!CH.media.has(k)) CH.media.set(k, await CH.blobOf(k));
+    const tmp = document.createElement("span"); tmp.innerHTML = mediaHtml(k, { name: el.dataset.name, mime: el.dataset.mime, thumb: ($("img", el) || {}).src || "" }, true);
+    const node = tmp.firstElementChild; el.replaceWith(node);
+    const m = $("audio,video", node); if (m) m.play().catch(() => { /* the player is there; a tap starts it */ });
+  } catch (e) { fail(e); }
+};
+// redrawing the list: put the opened players back (same elements, so one that is playing keeps playing)
+function keepPlayers(list, redraw) {
+  const live = new Map($$("[data-live]", list).map(n => [n.dataset.live, n]));
+  redraw();
+  if (live.size) $$("[data-live]", list).forEach(n => { const o = live.get(n.dataset.live); if (o && o !== n) n.replaceWith(o); });
+}
+
 function openViewer(src, name) {
   const bg = document.createElement("div"); bg.className = "viewer";
   bg.innerHTML = `<img src="${esc(src)}" alt="${esc(name)}"><div class="viewer-bar"><a class="btn" href="${esc(src)}" download="${esc(name)}">${svg("download")} ${esc(L2("Download", "تنزيل"))}</a><button class="btn" type="button">${esc(t("close"))}</button></div>`;
@@ -8899,13 +9102,15 @@ async function openLink(l) {
       ${isSuper() && l.status !== "ended" ? `<button class="btn danger" data-a="lnkend">${esc(l.status === "pending" ? L2("Withdraw code", "سحب الرمز") : L2("End connection", "إنهاء الربط"))}</button>` : ""}</div>
     <div class="ch-list" id="chlist"></div>
     ${composerHtml(active, l.status === "pending" ? L2("Waiting for the other company to enter the code.", "بانتظار إدخال الشركة الأخرى للرمز.") : L2("This connection has ended — the history stays readable.", "انتهى هذا الربط — يبقى السجل متاحاً للقراءة."))}`;
-  CH.room = l; CH.msgs = [];
+  CH.room = l; CH.msgs = []; CH.media = new Map();
+  CH.blobOf = async k => { const [mid, i] = k.split(":"); const f = await CloudAPI.call("rpc", "chat_link_file", { p_message: +mid, p_index: +i }); return URL.createObjectURL(b64ToBlob(f.data, f.mime)); };
   const list = $("#chlist");
   const conv = m => ({ id: m.id, user_id: m.mine ? me().id : 0, body: m.body, at: m.at, edited: m.edited, deleted: m.deleted, files: m.files, editable: m.mine && !m.seen && !m.deleted && active, seen: m.seen, ours: m.ours, sender: m.sender_name, mine: m.mine });
   const opts = { person: m => ({ name: (m.sender || "?") + (m.ours ? "" : " · " + (l.other || "")), avatar: "" }), mine: m => m.mine, noSuperDelete: true,
     seenTxt: m => m.seen ? `<span class="ch-seen">✓✓ ${esc(L2("Seen", "شوهدت"))}</span>` : `<span class="ch-seen">✓</span>`, fileKey: (m, f) => `${m.id}:${f.i}` };
-  const draw = () => { const atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 80;
-    list.innerHTML = CH.msgs.length ? CH.msgs.map((m, i) => msgHtml(m, CH.msgs[i - 1], opts)).join("") : `<div class="ch-empty small">${esc(L2("No messages yet.", "لا توجد رسائل بعد."))}</div>`;
+  const draw = () => {
+    const atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 80;
+    keepPlayers(list, () => list.innerHTML = CH.msgs.length ? CH.msgs.map((m, i) => msgHtml(m, CH.msgs[i - 1], opts)).join("") : `<div class="ch-empty small">${esc(L2("No messages yet.", "لا توجد رسائل بعد."))}</div>`);
     if (atBottom) list.scrollTop = list.scrollHeight; };
   const load = async first => {
     if (l.status === "pending") return draw();
