@@ -634,6 +634,8 @@ def export_rows(db):
             "created_by": nm(r["created_by"]), "created_at": r["created_at"], "archived_at": r["archived_at"],
             "archived_by": nm(r["archived_by"]),
             "members": [nm(m["user_id"]) for m in db.q("SELECT user_id FROM chat_members WHERE room_id=?", (r["id"],)) if nm(m["user_id"])],
+            "joined": {nm(m["user_id"]): [nm(m["added_by"]), m["added_at"]] for m in db.q("SELECT * FROM chat_members WHERE room_id=?", (r["id"],))
+                       if nm(m["user_id"])},   # who added each member, and when
             "messages": [{"user": nm(m["user_id"]), "body": m["body"],
                           "mentions": [x if x == -1 else nm(x) for x in json.loads(m["mentions"] or "[]")],
                           "reply_to": pos.get(m["reply_to"]), "created_at": m["created_at"], "edited_at": m["edited_at"],
@@ -642,7 +644,8 @@ def export_rows(db):
                                         for x in db.q("SELECT * FROM chat_reactions WHERE message_id=? ORDER BY id", (m["id"],)) if nm(x["user_id"])]}
                          for m in msgs],
             "reads": {nm(x["user_id"]): pos[x["last_read"]] for x in db.q("SELECT * FROM chat_reads WHERE room_id=?", (r["id"],))
-                      if nm(x["user_id"]) and x["last_read"] in pos}})
+                      if nm(x["user_id"]) and x["last_read"] in pos},
+            "read_at": {nm(x["user_id"]): x["at"] for x in db.q("SELECT * FROM chat_reads WHERE room_id=?", (r["id"],)) if nm(x["user_id"])}})
     return {"profiles": profiles, "rooms": rooms_out}
 
 
@@ -680,7 +683,8 @@ def import_rows(db, data, mode, counts):
                                    r.get("created_at"), r.get("archived_at"), uid(r.get("archived_by")))).lastrowid
         for m in r.get("members") or []:
             if uid(m):
-                db.conn.execute("INSERT OR IGNORE INTO chat_members(room_id,user_id) VALUES (?,?)", (rid, uid(m)))
+                by, at = ((r.get("joined") or {}).get(m) or [None, None])[:2]
+                db.conn.execute("INSERT OR IGNORE INTO chat_members(room_id,user_id,added_by,added_at) VALUES (?,?,?,?)", (rid, uid(m), uid(by), at))
         new_ids = []
         for m in r.get("messages") or []:
             mentions = [x if x == -1 else uid(x) for x in m.get("mentions") or []]
@@ -701,5 +705,6 @@ def import_rows(db, data, mode, counts):
             n += 1
         for who, i in (r.get("reads") or {}).items():
             if uid(who) and isinstance(i, int) and 0 <= i < len(new_ids):
-                db.conn.execute("INSERT OR REPLACE INTO chat_reads(room_id,user_id,last_read) VALUES (?,?,?)", (rid, uid(who), new_ids[i]))
+                db.conn.execute("INSERT OR REPLACE INTO chat_reads(room_id,user_id,last_read,at) VALUES (?,?,?,?)",
+                                (rid, uid(who), new_ids[i], (r.get("read_at") or {}).get(who)))
     counts["Chat messages"] = n

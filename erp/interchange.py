@@ -1251,11 +1251,10 @@ def _entry_meta_export(db):
     reference). The sheets re-create vouchers with new numbers, so these are matched back by date, type, memo,
     party and amount."""
     out = []
-    for e in db.q("SELECT e.id, e.date, e.kind, e.memo, e.party, e.ref, e.meta, (SELECT SUM(debit) FROM journal_lines WHERE entry_id=e.id) total "
-                  "FROM journal_entries e WHERE e.status='posted' ORDER BY e.id"):
-        m = json.loads(e["meta"] or "{}")
-        if m or e["ref"]:
-            out.append({"fp": _entry_fp(e), "ref": e["ref"] or "", "meta": m})
+    for e in db.q("SELECT e.id, e.date, e.kind, e.memo, e.party, e.ref, e.meta, e.created_by, e.created_at, e.history, "
+                  "(SELECT SUM(debit) FROM journal_lines WHERE entry_id=e.id) total FROM journal_entries e WHERE e.status='posted' ORDER BY e.id"):
+        out.append({"fp": _entry_fp(e), "ref": e["ref"] or "", "meta": json.loads(e["meta"] or "{}"),
+                    "by": e["created_by"] or "", "at": e["created_at"] or "", "history": e["history"] or ""})   # who entered it, when, its edits
     return out
 
 
@@ -1282,6 +1281,10 @@ def _entry_meta_import(db, rows):
         meta = {**(r.get("meta") or {}), **{k: v for k, v in cur.items() if v not in (None, "", {}, [])}}
         db.conn.execute("UPDATE journal_entries SET meta=?, ref=?, party=CASE WHEN party='' OR party IS NULL THEN ? ELSE party END WHERE id=?",
                         (json.dumps(meta, ensure_ascii=False), r.get("ref") or e["ref"] or "", r["fp"][3] or "", e["id"]))
+        if r.get("by") or r.get("at"):
+            db.conn.execute("UPDATE journal_entries SET created_by=COALESCE(NULLIF(?,''),created_by), created_at=COALESCE(NULLIF(?,''),created_at), "
+                            "history=COALESCE(NULLIF(?,''),history) WHERE id=?", (acc.text(r.get("by"), maxlen=120), acc.text(r.get("at"), maxlen=40),
+                                                                                    r.get("history") if isinstance(r.get("history"), str) else "", e["id"]))
         n += 1
     return n
 
