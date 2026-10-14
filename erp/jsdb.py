@@ -118,3 +118,11 @@ def scratch():
     import js
     h = js.globalThis.beyondSqlScratch()
     return Connection(h.run, h.close)
+
+
+def image(raw: bytes):
+    """A database file's bytes opened as its own in-memory database (a backup being restored)."""
+    import js
+    from pyodide.ffi import to_js
+    h = js.globalThis.beyondSqlScratch(to_js(raw))
+    return Connection(h.run, h.close)

@@ -102,8 +102,8 @@ window.BEYOND_STATIC = true;
     };
     globalThis.beyondSqlRun = runOn(() => db);
     // Python's Database(":memory:") — templates for a business type, the demo company… — gets its own empty database
-    globalThis.beyondSqlScratch = () => {
-      const tmp = new SQL.Database(); tmp.run("PRAGMA foreign_keys = ON");
+    globalThis.beyondSqlScratch = bytes => {     // bytes: a database file to open (a backup being restored)
+      const tmp = bytes ? new SQL.Database(bytes) : new SQL.Database(); tmp.run("PRAGMA foreign_keys = ON");
       return { run: runOn(() => tmp), close: () => { try { tmp.close(); } catch { /* already closed */ } } };
     };
     const exportDb = () => { const bytes = db.export(); db.run("PRAGMA foreign_keys = ON"); return bytes; };
@@ -616,7 +616,7 @@ def cloud_new_books(name, email):
               } catch (err) { return JSON.stringify({ error: String(err && err.message || err) }); }
             };
             self.beyondSqlExport = () => db.export();      // "Database backup file": the image this download works on
-            self.beyondSqlScratch = () => { const tmp = new SQL.Database(); tmp.run("PRAGMA foreign_keys = ON");
+            self.beyondSqlScratch = bytes => { const tmp = bytes ? new SQL.Database(bytes) : new SQL.Database(); tmp.run("PRAGMA foreign_keys = ON");
               const runTmp = (sql, pj) => { const keep = db; db = tmp; try { return self.beyondSqlRun(sql, pj); } finally { db = keep; } };
               return { run: runTmp, close: () => { try { tmp.close(); } catch { /* closed */ } } }; };
             importScripts(m.base + "pyodide/pyodide.js");

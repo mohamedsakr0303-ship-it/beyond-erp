@@ -4234,18 +4234,33 @@ PAGES.data = async (view) => {
       <a class="btn pri" href="/api/export/workbook?files=1&lang=${S.lang}" title="${esc(L2("The workbook plus every attached bill, receipt and contract, in a folder per month (2026-03 March 2026…). Import the .zip back to restore the files too.", "الملف مع كل الفواتير والإيصالات والعقود المرفقة، في مجلد لكل شهر. استورد ملف الـ zip لاستعادة الملفات أيضاً."))}">⬇ ${esc(L2("Excel + attached files (.zip, a folder per month)", "Excel + الملفات المرفقة (zip، مجلد لكل شهر)"))}</a>
       <a class="btn" href="/api/templates/workbook?lang=${S.lang}">⬇ ${t("empty_tpl")}</a>
       <a class="btn" href="/api/demo/workbook">⬇ ${L2("Import template filled with demo data (Excel)", "قالب الاستيراد مملوء ببيانات تجريبية (Excel)")}</a>
-      <a class="btn" href="/api/export/json">⬇ ${t("json_backup")}</a>${can("settings.system", "edit") ? `<a class="btn" href="/api/backup">⬇ ${t("db_backup")}</a>` : ""}
+      <a class="btn" href="/api/export/json">⬇ ${t("json_backup")}</a>${S.boot.user.is_super ? `<a class="btn" href="/api/backup" title="${esc(L2("The whole database as one file (.sqlite3) — restore it from Import data on the right.", "قاعدة البيانات كاملة في ملف واحد (.sqlite3) — استعدها من «استيراد البيانات».")) }">⬇ ${t("db_backup")}</a>` : ""}
+      ${S.boot.user.is_super ? `<label class="f chk" title="${esc(L2("API keys made for outside tools, the e-invoice / e-receipt (ETA) credentials and the AI provider key (desktop app). Keep a backup with keys somewhere safe.", "مفاتيح API للأدوات الخارجية، وبيانات دخول الفاتورة / الإيصال الإلكتروني، ومفتاح مزوّد الذكاء الاصطناعي (تطبيق سطح المكتب). احفظ النسخة التي بها مفاتيح في مكان آمن."))}"><input type="checkbox" id="expsec" checked>${esc(L2("Include the keys of connected tools (API keys, e-invoice credentials, AI key) — keep the file safe", "تضمين مفاتيح الأدوات المتصلة (مفاتيح API، بيانات الفاتورة الإلكترونية، مفتاح الذكاء الاصطناعي) — احفظ الملف بأمان"))}</label>` : ""}
       <div class="row"><select id="csvs">${sheets.map(s => `<option value="${esc(s.name)}">${esc(S.lang === "ar" ? s.ar : s.name)}</option>`).join("")}</select>
         <button class="btn" data-a="csv">${t("csv_sheet")}</button><button class="btn" data-a="csvt">${t("csv_tpl")}</button></div></div>
       <p class="muted" style="font-size:.85em">${S.lang === "ar" ? "المصنف الكامل هو نفسه قالب الاستيراد: نفس أسماء الأوراق والأعمدة، مع قوائم مالية وتسعير سريع وحاسبة سقالات تُحسب تلقائياً داخل Excel." : "The full workbook is also the import template: same sheet and column names, with statements, a quick estimator and a scaffold calculator that calculate inside Excel."}</p></div>
     <div class="card"><h2>${t("imp_title")}</h2>${ed ? `<div class="grid">
-      <div class="f">${t("file")}<input type="file" id="impf" accept=".xlsx,.json,.csv,.zip"></div>
+      <div class="f">${t("file")}<input type="file" id="impf" accept=".xlsx,.xlsm,.json,.csv,.zip,.sqlite3,.sqlite,.db"></div>
       <label class="f spanall">${L2("…or a Google Sheets link", "…أو رابط Google Sheets")}<input id="impurl" type="url" placeholder="https://docs.google.com/spreadsheets/d/…" dir="ltr"></label>
-      <label class="f">${t("format")}<select id="impfmt"><option value="xlsx">Excel (.xlsx)</option><option value="json">JSON</option><option value="csv">CSV</option></select></label>
+      <label class="f">${t("format")}<select id="impfmt"><option value="xlsx">${esc(L2("Excel workbook or sheet (.xlsx)", "مصنف أو ورقة Excel (.xlsx)"))}</option><option value="zip">${esc(L2("Excel + attached files (.zip)", "Excel + الملفات المرفقة (.zip)"))}</option><option value="json">${esc(L2("JSON backup (.json)", "نسخة JSON (.json)"))}</option><option value="csv">${esc(L2("CSV — one sheet (.csv)", "CSV — ورقة واحدة (.csv)"))}</option>${S.boot.user.is_super ? `<option value="sqlite">${esc(L2("Database backup file (.sqlite3)", "ملف النسخة الاحتياطية لقاعدة البيانات (.sqlite3)"))}</option>` : ""}<option value="legacy">${esc(L2("Older BEYOND workbook (v0.6 – v1.4)", "مصنف BEYOND قديم (v0.6 – v1.4)"))}</option></select></label>
       <label class="f" id="impsheetl" style="display:none">CSV → <select id="impsheet">${sheets.map(s => `<option value="${esc(s.name)}">${esc(s.name)}</option>`).join("")}</select></label>
       <label class="f">${t("mode")}<select id="impmode"><option value="new">${esc(L2("New rows only — skip what is already in the books", "الجديد فقط — تخطي الموجود بالفعل"))}</option><option value="append">${t("append")}</option>${S.boot.user.is_super ? `<option value="replace">${t("replace")}</option>` : ""}</select></label>
       <label class="f chk"><input type="checkbox" id="impdry" checked>${t("dry_run")}</label>
-      <button class="btn pri" data-a="imp">${t("import_btn")}</button></div><div id="impres" style="margin-top:12px"></div>` : `<div class="muted">${t("view_only")}</div>`}</div></div>`;
+      <button class="btn pri" data-a="imp">${t("import_btn")}</button></div><div id="impres" style="margin-top:12px"></div>
+      <details class="impfmts"><summary>${esc(L2("Everything you can import", "كل ما يمكن استيراده"))}</summary><ul class="muted">
+        <li><b>${esc(L2("Full Excel workbook (.xlsx)", "مصنف Excel الكامل (.xlsx)"))}</b> — ${esc(L2("exported from BeyondERP (English or Arabic): restores everything, like a JSON backup", "المُصدَّر من BeyondERP (عربي أو إنجليزي): يستعيد كل شيء مثل نسخة JSON"))}</li>
+        <li><b>${esc(L2("Excel + attached files (.zip)", "Excel + الملفات المرفقة (.zip)"))}</b> — ${esc(L2("the workbook plus every attached file, each put back on its record", "المصنف مع كل الملفات المرفقة، كل ملف يعود لسجله"))}</li>
+        <li><b>${esc(L2("JSON backup (.json)", "نسخة JSON (.json)"))}</b> — ${esc(L2("everything: books, every module, settings and looks, files, chats, people, history", "كل شيء: الدفاتر وكل الوحدات والإعدادات والمظهر والملفات والمحادثات والأشخاص والسجل"))}</li>
+        ${S.boot.user.is_super ? `<li><b>${esc(L2("Database backup file (.sqlite3)", "ملف قاعدة البيانات (.sqlite3)"))}</b> — ${esc(L2("from “Database backup file” or the automatic backups folder; an older version's file is upgraded first", "من «ملف النسخة الاحتياطية لقاعدة البيانات» أو مجلد النسخ التلقائية؛ ملف الإصدار الأقدم يُحدَّث أولاً"))}</li>` : ""}
+        <li><b>${esc(L2("Import templates (.xlsx / .csv)", "قوالب الاستيراد (.xlsx / .csv)"))}</b> — ${esc(L2("the empty or demo-filled workbook, and the template of each screen below (55 kinds of records)", "المصنف الفارغ أو المملوء ببيانات تجريبية، وقالب كل شاشة بالأسفل (55 نوعاً من السجلات)"))}</li>
+        <li><b>${esc(L2("Your own sheets (.xlsx / .csv)", "ملفاتك الخاصة (.xlsx / .csv)"))}</b> — ${esc(L2("from any screen's ⇅ Import: columns matched by English / Arabic names, adjustable by hand", "من زر ⇅ استيراد في أي شاشة: الأعمدة تُطابق بالأسماء العربية / الإنجليزية ويمكن تعديلها يدوياً"))}</li>
+        <li><b>${esc(L2("A Google Sheets link", "رابط Google Sheets"))}</b> — ${esc(L2("shared as “Anyone with the link”", "مُشارك لـ «أي شخص لديه الرابط»"))}</li>
+        <li><b>${esc(L2("Older BEYOND workbooks", "مصنفات BEYOND القديمة"))}</b> — ${esc(L2("v0.6 to v1.4, including invoices on “Invoice N” sheets", "من v0.6 إلى v1.4، بما فيها الفواتير على أوراق «Invoice N»"))}</li></ul></details>` : `<div class="muted">${t("view_only")}</div>`}</div></div>`;
+  const sec = $("#expsec");   // keys of connected tools: in the full backups unless unticked
+  const secLinks = () => $$('a[href^="/api/export/json"], a[href^="/api/export/workbook"]', view).forEach(a => {
+    const u = new URL(a.getAttribute("href"), location.href); if (sec && !sec.checked) u.searchParams.set("secrets", "0"); else u.searchParams.delete("secrets");
+    a.setAttribute("href", u.pathname + u.search); });
+  if (sec) { sec.addEventListener("change", secLinks); secLinks(); }
   await impSheets();
   const tplCard = document.createElement("div"); tplCard.className = "card";
   tplCard.innerHTML = `<h2>${L2("Templates for every screen", "قوالب لكل شاشة")}</h2><p class="muted" style="margin-top:0">${L2("Each screen also has an ⇅ Import button. Download the layout the app fully supports, or import your own sheet and match its columns.", "كل شاشة بها زر ⇅ استيراد. حمّل التنسيق المدعوم بالكامل، أو استورد ملفك الخاص وطابق أعمدته.")}</p>
@@ -4273,7 +4288,8 @@ PAGES.data = async (view) => {
   if (fmtSel) {
     fmtSel.addEventListener("change", () => { $("#impsheetl").style.display = fmtSel.value === "csv" ? "" : "none"; });
     $("#impf").addEventListener("change", e => { const n = (e.target.files[0] || {}).name || ""; const ext = n.split(".").pop().toLowerCase();
-      if (["json", "csv"].includes(ext)) fmtSel.value = ext; else fmtSel.value = "xlsx"; fmtSel.dispatchEvent(new Event("change")); });
+      fmtSel.value = ["json", "csv", "zip"].includes(ext) ? ext : ["sqlite3", "sqlite", "db"].includes(ext) && $('option[value="sqlite"]', fmtSel) ? "sqlite" : "xlsx";
+      fmtSel.dispatchEvent(new Event("change")); });
   }
   S.H.imp = async () => {
     const out = $("#impres"), link = ($("#impurl") || {}).value?.trim();

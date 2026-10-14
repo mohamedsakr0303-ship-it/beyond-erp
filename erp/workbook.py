@@ -117,12 +117,12 @@ def _cached(cls):
 EXTRAS_SHEET = "_BeyondData"
 
 
-def _embed_extras(wb, db, files=True):
+def _embed_extras(wb, db, files=True, secrets=False):
     """What the sheets cannot hold (logos and icons, offers, loans, custody, rentals, sales, payroll, bank
     reconciliation, recurring entries, purchase orders, services, ownership history, files…), as JSON in a very
     hidden sheet, so importing this workbook back restores everything — exactly like a JSON backup."""
     from . import interchange
-    blob = json.dumps(interchange.export_extras(db, files=files), ensure_ascii=False, default=str)
+    blob = json.dumps(interchange.export_extras(db, files=files, secrets=secrets), ensure_ascii=False, default=str)
     ws = wb.create_sheet(EXTRAS_SHEET)
     ws["A1"] = "beyond-erp-extras-1"
     for i in range(0, len(blob), 32000):          # an Excel cell holds 32,767 characters
@@ -135,7 +135,7 @@ GENERIC_SETTING_KEYS = ("report_from", "report_to", "currency", "fiscal_year_sta
                         "legal_reserve_cap", "units", "offer_digits", "offer_prefix", "offer_validity_days")
 
 
-def build_workbook(db, template=False, data=None, hide=None, lang="en", extend=None, cover_extra=None, identity=None, files=True):
+def build_workbook(db, template=False, data=None, hide=None, lang="en", extend=None, cover_extra=None, identity=None, files=True, secrets=False):
     """The Excel workbook. lang="ar": right-to-left with Arabic sheet names and labels (imports back the same).
     A template is branded by branding.template_identity (the universal BeyondERP one unless the company chose its own);
     identity= gives it explicitly (e.g. a business-type template built in a scratch book for this company).
@@ -1028,7 +1028,7 @@ def build_workbook(db, template=False, data=None, hide=None, lang="en", extend=N
         from . import workbook_ar
         workbook_ar.localize(wb)
     if not template:
-        _embed_extras(wb, db, files=files)   # files=False: they travel next to the workbook (see interchange.workbook_zip)
+        _embed_extras(wb, db, files=files, secrets=secrets)   # files=False: they travel next to the workbook (see interchange.workbook_zip)
     wb.calculation.fullCalcOnLoad = True
     check_formula_limits(wb)
     buf = io.BytesIO()

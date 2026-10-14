@@ -2706,6 +2706,41 @@ class Documents(unittest.TestCase):
         self.assertIsNone(dst.one("SELECT 1 FROM api_keys"))
         self.assertEqual(dst.one("SELECT pw_hash FROM users WHERE username='boss'")["pw_hash"][:1] != "!", True)   # the restorer keeps their sign-in
 
+    def test_backups_keep_connected_tools_keys_and_restore_from_sqlite(self):
+        """A super administrator's backup keeps API keys (the same key works after a restore), the ETA credentials and
+        the AI key; without the flag they stay out. A database backup file restores through the normal import."""
+        import tempfile as _tf
+        from erp import cloud
+        src = seeded()
+        auth.create_user(src, {"username": "boss", "password": "Passw0rd!long1"}, first=True)
+        boss = src.one("SELECT * FROM users WHERE username='boss'")
+        key = auth.create_api_key(src, boss["id"], "Power BI", True, "boss")
+        key = key[1]
+        src.set_setting("eta_client_secret", "eta-secret-1")
+        cloud.local_set(src, "ai_key", "sk-test-0123456789abcdefghij")
+        plain = interchange.to_json(src)
+        self.assertNotIn("eta-secret-1", plain)
+        self.assertNotIn("sk-test-0123456789", plain)
+        dst = Database(":memory:")
+        auth.create_user(dst, {"username": "boss", "password": "another-long-pw"}, first=True)
+        interchange.import_data(dst, interchange.read_json(interchange.to_json(src, secrets=True).encode()), mode="replace", user="boss")
+        self.assertEqual(auth.user_for_api_key(dst, key)[0]["username"], "boss")
+        self.assertEqual(dst.setting("eta_client_secret"), "eta-secret-1")
+        self.assertEqual(cloud.local_get(dst, "ai_key"), "sk-test-0123456789abcdefghij")
+        # the database file itself
+        with _tf.TemporaryDirectory() as d:
+            p = Path(d) / "b.sqlite3"
+            src.backup_to(p)
+            raw = p.read_bytes()
+        dst2 = Database(":memory:")
+        auth.create_user(dst2, {"username": "boss", "password": "another-long-pw"}, first=True)
+        interchange.import_data(dst2, interchange.read_sqlite(raw), mode="replace", user="boss")
+        tb = lambda db: {r["code"]: (r["debit"], r["credit"]) for r in a.trial_balance(db)["rows"]}   # noqa: E731
+        self.assertEqual(tb(src), tb(dst2))
+        self.assertEqual(auth.user_for_api_key(dst2, key)[0]["username"], "boss")
+        with self.assertRaises(a.ValidationError):
+            interchange.read_sqlite(b"not a database at all")
+
     def test_lock_date_and_json_extras(self):
         self.db.set_setting("lock_date", "2026-03-31")
         with self.assertRaises(a.ValidationError):
@@ -3881,6 +3916,38 @@ class SpecialRights(unittest.TestCase):
         db2._brand_v3()
         ap = json.loads(db2.one("SELECT value FROM settings WHERE key='appearance'")["value"])
         self.assertEqual(ap, {"accent": "#123456"})
+
+
+class BackupSecretsAccess(unittest.TestCase):
+    """Keys of connected tools travel only in a super administrator's backups and imports; the database file is theirs only."""
+
+    def setUp(self):
+        from erp.server import handle
+        self.handle = handle
+        self.app = type("App", (), {"static": False})()
+        self.app.db = self.db = seeded()
+        auth.create_user(self.db, {"username": "boss", "password": "secret123"}, first=True)
+        auth.create_user(self.db, {"username": "admin2", "password": "secret123", "is_admin": True})
+        self.tok = {u: auth.login(self.db, u, "secret123")[0] for u in ("boss", "admin2")}
+        auth.create_api_key(self.db, self.db.one("SELECT id FROM users WHERE username='boss'")["id"], "BI", True, "boss")
+
+    def call(self, who, method, url, raw=b"", ctype="application/json"):
+        h = {"x-requested-with": "BeyondERP", "x-session": self.tok[who], "content-type": ctype}
+        return self.handle(self.app, method, url, h, raw)
+
+    def test_secrets_only_for_super_administrators(self):
+        boss = json.loads(self.call("boss", "GET", "/api/export/json").body)
+        self.assertEqual(len(boss["extras"]["secrets"]["api_keys"]), 1)
+        self.assertNotIn("secrets", json.loads(self.call("boss", "GET", "/api/export/json?secrets=0").body)["extras"])
+        self.assertNotIn("secrets", json.loads(self.call("admin2", "GET", "/api/export/json").body)["extras"])
+        self.assertEqual(self.call("admin2", "GET", "/api/backup").status, 403)
+        # an administrator's import cannot plant a key for someone else
+        boss["extras"]["secrets"] = {"api_keys": [{"user": "boss", "name": "planted", "key_hash": "0" * 64, "prefix": "berp_x", "read_only": 0}]}
+        r = self.call("admin2", "POST", "/api/import?format=json&mode=append", json.dumps(boss).encode(), "application/octet-stream")
+        self.assertEqual(r.status, 200, r.body[:300])
+        self.assertIsNone(self.db.one("SELECT 1 FROM api_keys WHERE name='planted'"))
+        self.assertEqual(self.call("admin2", "POST", "/api/import?format=sqlite&mode=append", b"SQLite format 3\x00" + b"\0" * 100,
+                                   "application/octet-stream").status, 403)
 
 
 class CalculatorBuilder(unittest.TestCase):

@@ -926,7 +926,7 @@ def site_extras_import(db, ex, counts):
         from . import labour
         labour.import_rows(db, ex["attendance"], counts)
 
-def export_extras(db, files=True):
+def export_extras(db, files=True, secrets=False):
     """What the sheets cannot hold: letterhead images, offer types and offers (JSON backups only). files=False: the
     attached files are left out (a zipped export carries them in its Attachments folders instead)."""
     return {"assets": db.q("SELECT key, mime, w, h, data FROM assets ORDER BY key"),
@@ -940,7 +940,92 @@ def export_extras(db, files=True):
             "dashboard_groups": db.q("SELECT key, name, name_ar, layout, sort, look FROM user_groups ORDER BY sort, id"),
             "line_styles": _line_styles_export(db), "crm": _crm_export(db), "care": _care_export(db), "desk": _desk_export(db), "automations": {t: db.q(f"SELECT * FROM {t} ORDER BY id") for t in ("automations", "automation_log")}, "workdays": db.q("SELECT * FROM workdays ORDER BY id"), "kb_pages": db.q("SELECT * FROM kb_pages ORDER BY id"), "entry_tags": _tags_export(db),
             "bu_groups": {r["code"]: r["grp"] for r in db.q("SELECT code, grp FROM business_units WHERE grp<>''")}, "site": site_extras(db),
-            "people": _people_export(db), "approvals": _approvals_export(db), "history": _history_export(db)}
+            "people": _people_export(db), "approvals": _approvals_export(db), "history": _history_export(db),
+            **({"secrets": _secrets_export(db)} if secrets else {})}
+
+
+def _secrets_export(db):
+    """Keys of connected tools — only in a super administrator's backup: the API keys people made for outside tools (each
+    kept as its fingerprint, so the same key keeps working after a restore), the e-invoice / e-receipt (ETA) credentials
+    and, on the desktop app, the AI provider key. (On the hosted app the AI and ETA secrets live in the workspace server,
+    not in these books.)"""
+    from . import cloud
+    from .db import ETA_SECRETS
+    names = {u["id"]: u["username"] for u in db.q("SELECT id, username FROM users")}
+    return {"api_keys": [{**{k: r[k] for k in r.keys() if k not in ("id", "user_id")}, "user": names.get(r["user_id"], "")}
+                         for r in db.q("SELECT * FROM api_keys ORDER BY id")],
+            "settings": {k: db.setting(k) for k in ETA_SECRETS if db.setting(k)},
+            "device": {k: cloud.local_get(db, k) for k in ("ai_key",) if cloud.local_get(db, k)}}
+
+
+def _secrets_import(db, sec, mode, counts):
+    """Only from a super administrator's import (the import route drops this part for anyone else)."""
+    from . import cloud
+    from .db import ETA_SECRETS
+    ids = {u["username"]: u["id"] for u in db.q("SELECT id, username FROM users")}
+    cols = {r["name"] for r in db.q("PRAGMA table_info(api_keys)")} - {"id"}
+    n = 0
+    for r in sec.get("api_keys") or []:
+        if not isinstance(r, dict) or not ids.get(r.get("user")) or not r.get("key_hash") \
+                or db.one("SELECT 1 FROM api_keys WHERE key_hash=?", (r["key_hash"],)):
+            continue
+        vals = {k: r[k] for k in r if k in cols}
+        vals["user_id"] = ids[r["user"]]
+        db.conn.execute(f"INSERT INTO api_keys({','.join(vals)}) VALUES ({','.join('?' * len(vals))})", list(vals.values()))
+        n += 1
+    if n:
+        counts["API keys"] = n
+    m = 0
+    for k, v in (sec.get("settings") or {}).items():
+        if k in ETA_SECRETS and v and (mode == "replace" or not db.setting(k)):
+            db.set_setting(k, str(v))
+            m += 1
+    for k, v in (sec.get("device") or {}).items():
+        if k == "ai_key" and v and (mode == "replace" or not cloud.local_get(db, k)):
+            cloud.local_set(db, k, str(v))
+            m += 1
+    if m:
+        counts["Connected tools' keys"] = m
+
+
+def read_sqlite(raw):
+    """A database backup file (.sqlite3, "Database backup file") → the same data a JSON backup holds, so it imports
+    through the normal path: checked first, and in the shared workspace it reaches every device. An older backup is
+    upgraded on a temporary copy first."""
+    import tempfile
+    from pathlib import Path
+    from . import db as _dbm
+    if not raw[:16] == b"SQLite format 3\x00":
+        raise acc.ValidationError("That is not a database backup file (.sqlite3)")
+    tmpdir = None
+    if _dbm.sqlite3 is None:                     # browser: open the image with sql.js
+        from . import jsdb
+        src = _dbm.Database(":memory:", connection=jsdb.image(raw))
+    else:
+        tmpdir = tempfile.TemporaryDirectory()
+        p = Path(tmpdir.name) / "restore.sqlite3"
+        p.write_bytes(raw)
+        try:
+            pre = _dbm.sqlite3.connect(str(p))
+            ok = pre.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='journal_entries'").fetchone()
+            pre.close()
+        except _dbm.sqlite3.DatabaseError:
+            ok = None
+        if not ok:
+            tmpdir.cleanup()
+            raise acc.ValidationError("That database file is not a BeyondERP backup")
+        src = _dbm.Database(str(p))
+    try:
+        if not src.one("SELECT 1 FROM users"):
+            raise acc.ValidationError("That database file is not a BeyondERP backup")
+        return read_json(to_json(src, secrets=True).encode("utf-8"))
+    finally:
+        try:
+            src.conn.close()
+        except Exception:   # noqa: BLE001 — already closed
+            pass
+        if tmpdir:
+            tmpdir.cleanup()
 
 
 def _history_export(db):
@@ -1133,7 +1218,7 @@ def _safe(name, n=90):
     return (re.sub(r'[\\/:*?"<>|\x00-\x1f]+', " ", str(name or "")).strip() or "file")[:n].rstrip(" .")
 
 
-def workbook_zip(db, lang="en"):
+def workbook_zip(db, lang="en", secrets=False):
     """The whole books as an Excel workbook plus every attached file, in one .zip:
       BEYOND_ERP_<date>.xlsx
       Attachments/2026-03 March 2026/<record> — <file name>      (by the month of the entry, or when the file was added)
@@ -1147,7 +1232,7 @@ def workbook_zip(db, lang="en"):
     buf = io.BytesIO()
     rows, used, links = attachments.export_rows(db), set(), []
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-        z.writestr(f"BEYOND_ERP_{acc.today()}{'_AR' if lang == 'ar' else ''}.xlsx", workbook.build_workbook(db, template=False, lang=lang, files=False))
+        z.writestr(f"BEYOND_ERP_{acc.today()}{'_AR' if lang == 'ar' else ''}.xlsx", workbook.build_workbook(db, template=False, lang=lang, files=False, secrets=secrets))
         manifest = []
         for r in rows:
             day = (r["key"][0] if r["owner"] == "entry" and isinstance(r.get("key"), list) else "") or str(r.get("created_at") or "")[:10] or acc.today()
@@ -1454,6 +1539,8 @@ def _imp_extras(db, ex, mode, counts):
         chat.import_rows(db, ex["chat"], mode, counts)
     if isinstance(ex.get("history"), dict):
         _history_import(db, ex["history"], mode, counts)
+    if isinstance(ex.get("secrets"), dict):
+        _secrets_import(db, ex["secrets"], mode, counts)
     if ex.get("ownership_changes"):
         if mode == "replace":
             db.conn.execute("DELETE FROM ownership_changes")
@@ -1474,10 +1561,10 @@ def _imp_extras(db, ex, mode, counts):
                                                       acc.text(ch.get("created_by")), acc.text(ch.get("created_at"))))
 
 
-def to_json(db):
+def to_json(db, secrets=False):
     return json.dumps({"format": FORMAT, "version": FORMAT_VERSION,
                        "exported_at": _dt.datetime.now().isoformat(timespec="seconds"),
-                       "sheets": export_data(db), "extras": export_extras(db)}, ensure_ascii=False, indent=1, default=str)
+                       "sheets": export_data(db), "extras": export_extras(db, secrets=secrets)}, ensure_ascii=False, indent=1, default=str)
 
 
 def to_csv(db, sheet_name, template=False):

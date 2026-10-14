@@ -4035,9 +4035,9 @@ def export_workbook(ctx):
     from . import workbook
     lang = "ar" if ctx.q.get("lang") == "ar" else "en"
     if ctx.q.get("files") == "1":     # the workbook plus every attached file, in month folders, as one .zip
-        return download(interchange.workbook_zip(ctx.db, lang), f"BEYOND_ERP_{acc.today()}{'_AR' if lang == 'ar' else ''}_with_files.zip",
+        return download(interchange.workbook_zip(ctx.db, lang, secrets=_with_secrets(ctx)), f"BEYOND_ERP_{acc.today()}{'_AR' if lang == 'ar' else ''}_with_files.zip",
                         "application/zip")
-    data = workbook.build_workbook(ctx.db, template=False, lang=lang)
+    data = workbook.build_workbook(ctx.db, template=False, lang=lang, secrets=_with_secrets(ctx))
     return download(data, f"BEYOND_ERP_{acc.today()}{'_AR' if lang == 'ar' else ''}.xlsx", XLSX)
 
 
@@ -4072,9 +4072,14 @@ def industries_apply(ctx):
     return ok(r)
 
 
+def _with_secrets(ctx):
+    """A super administrator's full backup carries the keys of connected tools too (unless they untick it)."""
+    return bool(ctx.user.get("is_super")) and ctx.q.get("secrets") != "0"
+
+
 @route("GET", "/api/export/json", "import_export.export")
 def export_json(ctx):
-    return download(interchange.to_json(ctx.db).encode("utf-8"), f"BEYOND_ERP_{acc.today()}.json",
+    return download(interchange.to_json(ctx.db, secrets=_with_secrets(ctx)).encode("utf-8"), f"BEYOND_ERP_{acc.today()}.json",
                     "application/json; charset=utf-8")
 
 
@@ -4250,6 +4255,10 @@ def do_import(ctx):
         ctx.server.backup("before-import")
     if fmt == "json":
         data = interchange.read_json(raw)
+    elif fmt == "sqlite" or raw[:16] == b"SQLite format 3\x00":     # a "Database backup file"
+        if not ctx.user.get("is_super"):
+            raise PermissionError("Only a super administrator can restore a database backup file")
+        data = interchange.read_sqlite(raw)
     elif fmt == "csv":
         data = interchange.read_csv(ctx.q.get("sheet"), raw)
     elif fmt in ("xlsx", "legacy", "zip") and interchange.is_files_zip(raw):   # a workbook with its files (export "with files")
@@ -4267,10 +4276,12 @@ def do_import(ctx):
         finally:
             Path(tmp).unlink(missing_ok=True)
     else:
-        raise acc.ValidationError("format must be xlsx, json, csv or legacy")
+        raise acc.ValidationError("format must be xlsx, zip, json, csv, sqlite or legacy")
     if not any(data.values()):
         raise acc.ValidationError("No recognisable sheets or rows found in the file")
     try:
+        if not ctx.user.get("is_super") and isinstance(data.get("_extras"), dict):
+            data["_extras"].pop("secrets", None)      # keys of connected tools: only a super administrator brings them in
         res = interchange.import_data(ctx.db, data, mode=mode, dry_run=dry, user=ctx.user["username"])
     except interchange.ImportErrors as e:
         return ok({"ok": False, "error": str(e), "errors": e.errors}, 400)
@@ -4886,6 +4897,8 @@ def _erase(db, scope):
 # =================================================================== system
 @route("GET", "/api/backup", "settings.system", "edit")
 def backup_download(ctx):
+    # the whole database file: password fingerprints and connected tools' keys included, so super administrators only
+    _need_super(ctx, "download the database file")
     path = ctx.server.backup("download")
     return download(path.read_bytes(), path.name, "application/octet-stream")
 
