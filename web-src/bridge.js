@@ -615,6 +615,7 @@ def cloud_new_books(name, email):
                 } finally { st.free(); }
               } catch (err) { return JSON.stringify({ error: String(err && err.message || err) }); }
             };
+            self.beyondSqlExport = () => db.export();      // "Database backup file": the image this download works on
             self.beyondSqlScratch = () => { const tmp = new SQL.Database(); tmp.run("PRAGMA foreign_keys = ON");
               const runTmp = (sql, pj) => { const keep = db; db = tmp; try { return self.beyondSqlRun(sql, pj); } finally { db = keep; } };
               return { run: runTmp, close: () => { try { tmp.close(); } catch { /* closed */ } } }; };
@@ -637,6 +638,11 @@ class WorkerApp:
     db = None
     def backups(self):
         return []
+    def backup(self, reason="auto"):
+        from pathlib import Path
+        p = Path("/tmp/beyond-erp-backup.sqlite3")
+        self.db.backup_to(p)
+        return p
 
 APP = WorkerApp()
 

@@ -2678,6 +2678,34 @@ class Documents(unittest.TestCase):
         self.assertIn("999", out)
         self.assertNotIn("333", out)
 
+    def test_full_restore_brings_back_people_approvals_and_history(self):
+        """A full JSON restore onto a new install: the other people (without passwords), their chats, approval
+        requests, AI conversations and the activity log all come back; API keys stay out."""
+        from erp import approvals, chat
+        src = seeded()
+        auth.create_user(src, {"username": "boss", "password": "Passw0rd!long1"}, first=True)
+        auth.create_user(src, {"username": "sara", "password": "Passw0rd!long1", "full_name": "Sara", "perms": {"journal": "add"}})
+        boss, sara = (src.one("SELECT * FROM users WHERE username=?", (n,)) for n in ("boss", "sara"))
+        dm = chat.direct(src, boss, sara["id"])
+        chat.send(src, sara, dm["id"] if isinstance(dm, dict) else dm, {"body": "hello"})
+        approvals.submit(src, sara, "journal", {"date": "2026-03-01", "description": "Fuel", "lines": []}, module="journal")
+        src.x("INSERT INTO ai_threads(user_id,title,messages) VALUES (?,?,?)", (sara["id"], "VAT", "[]"))
+        auth.create_api_key(src, boss["id"], "BI", True, "boss")
+        src.log("boss", "test.action", "kept")
+        dst = Database(":memory:")
+        auth.create_user(dst, {"username": "boss", "password": "another-long-pw"}, first=True)
+        interchange.import_data(dst, interchange.read_json(interchange.to_json(src).encode()), mode="replace", user="boss")
+        sara2 = dst.one("SELECT * FROM users WHERE username='sara'")
+        self.assertEqual((sara2["full_name"], sara2["pw_hash"]), ("Sara", "!"))
+        with self.assertRaises(Exception):
+            auth.login(dst, "sara", "")
+        self.assertEqual(dst.one("SELECT body FROM chat_messages")["body"], "hello")
+        self.assertEqual(dst.one("SELECT created_by, status FROM approvals"), {"created_by": "sara", "status": "pending"})
+        self.assertEqual(dst.one("SELECT title FROM ai_threads WHERE user_id=?", (sara2["id"],))["title"], "VAT")
+        self.assertTrue(dst.one("SELECT 1 FROM audit_log WHERE action='test.action'"))
+        self.assertIsNone(dst.one("SELECT 1 FROM api_keys"))
+        self.assertEqual(dst.one("SELECT pw_hash FROM users WHERE username='boss'")["pw_hash"][:1] != "!", True)   # the restorer keeps their sign-in
+
     def test_lock_date_and_json_extras(self):
         self.db.set_setting("lock_date", "2026-03-31")
         with self.assertRaises(a.ValidationError):

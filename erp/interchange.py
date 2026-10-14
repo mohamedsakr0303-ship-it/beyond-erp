@@ -939,7 +939,117 @@ def export_extras(db, files=True):
             "purchase_orders": _po_export(db), "services": _svc_export(db), "chat": _chat_export(db),
             "dashboard_groups": db.q("SELECT key, name, name_ar, layout, sort, look FROM user_groups ORDER BY sort, id"),
             "line_styles": _line_styles_export(db), "crm": _crm_export(db), "care": _care_export(db), "desk": _desk_export(db), "automations": {t: db.q(f"SELECT * FROM {t} ORDER BY id") for t in ("automations", "automation_log")}, "workdays": db.q("SELECT * FROM workdays ORDER BY id"), "kb_pages": db.q("SELECT * FROM kb_pages ORDER BY id"), "entry_tags": _tags_export(db),
-            "bu_groups": {r["code"]: r["grp"] for r in db.q("SELECT code, grp FROM business_units WHERE grp<>''")}, "site": site_extras(db)}
+            "bu_groups": {r["code"]: r["grp"] for r in db.q("SELECT code, grp FROM business_units WHERE grp<>''")}, "site": site_extras(db),
+            "people": _people_export(db), "approvals": _approvals_export(db), "history": _history_export(db)}
+
+
+def _history_export(db):
+    """The activity log, support reports and each person's AI assistant conversations (by username)."""
+    names = {u["id"]: u["username"] for u in db.q("SELECT id, username FROM users")}
+    return {"audit_log": db.q("SELECT ts, username, action, detail FROM audit_log ORDER BY id"),
+            "support_tickets": [{k: r[k] for k in r.keys() if k != "id"} for r in db.q("SELECT * FROM support_tickets ORDER BY id")],
+            "ai_threads": [{**{k: r[k] for k in r.keys() if k not in ("id", "user_id")}, "user": names.get(r["user_id"], "")}
+                           for r in db.q("SELECT * FROM ai_threads ORDER BY id") if names.get(r["user_id"])]}
+
+
+def _history_import(db, h, mode, counts):
+    def put(table, rows):
+        cols = {r["name"] for r in db.q(f"PRAGMA table_info({table})")} - {"id"}
+        n = 0
+        for r in rows:
+            if isinstance(r, dict):
+                vals = {k: r[k] for k in r if k in cols}
+                if vals:
+                    db.conn.execute(f"INSERT INTO {table}({','.join(vals)}) VALUES ({','.join('?' * len(vals))})", list(vals.values()))
+                    n += 1
+        return n
+    if isinstance(h.get("audit_log"), list) and h["audit_log"] and mode == "replace":
+        have = {(r["ts"], r["username"], r["action"], r["detail"]) for r in db.q("SELECT ts, username, action, detail FROM audit_log")}
+        n = put("audit_log", [r for r in h["audit_log"] if isinstance(r, dict)        # lines this log already has stay single
+                              and (r.get("ts"), r.get("username"), r.get("action"), r.get("detail")) not in have])
+        if n:
+            counts["Activity log lines"] = n
+    if isinstance(h.get("support_tickets"), list) and h["support_tickets"] and (mode == "replace" or not db.one("SELECT 1 FROM support_tickets")):
+        db.conn.execute("DELETE FROM support_tickets")
+        put("support_tickets", h["support_tickets"])
+    if isinstance(h.get("ai_threads"), list) and h["ai_threads"] and (mode == "replace" or not db.one("SELECT 1 FROM ai_threads")):
+        ids = {u["username"]: u["id"] for u in db.q("SELECT id, username FROM users")}
+        db.conn.execute("DELETE FROM ai_threads")
+        n = put("ai_threads", [{**{k: v for k, v in r.items() if k != "user"}, "user_id": ids[r["user"]]}
+                               for r in h["ai_threads"] if isinstance(r, dict) and ids.get(r.get("user"))])
+        if n:
+            counts["AI assistant conversations"] = n
+
+
+PEOPLE_COLS = ("username", "full_name", "email", "is_admin", "is_super", "perms", "group_key", "needs_approval", "grants", "active")
+
+
+def _people_export(db):
+    """Who works in these books, with their roles and permissions — never their passwords (API keys stay out too)."""
+    have = {r["name"] for r in db.q("PRAGMA table_info(users)")}
+    return [{k: u[k] for k in PEOPLE_COLS if k in have} for u in db.q("SELECT * FROM users ORDER BY id")]
+
+
+def _people_import(db, rows):
+    """A full restore brings back the people who are not in these books yet, without a password: an administrator
+    sets one (Users → edit), or they sign in through the shared workspace. People already here are left as they are."""
+    have = {r["name"] for r in db.q("PRAGMA table_info(users)")}
+    n = 0
+    for r in rows:
+        if not isinstance(r, dict) or not acc.text(r.get("username")):
+            continue
+        name = acc.text(r["username"], maxlen=60)
+        if db.one("SELECT 1 FROM users WHERE username=?", (name,)):
+            continue
+        email = acc.text(r.get("email"), maxlen=200).lower()
+        if email and db.one("SELECT 1 FROM users WHERE lower(email)=?", (email,)):
+            email = ""
+        perms = r.get("perms") if isinstance(r.get("perms"), str) else json.dumps(r.get("perms") or {})
+        grants = r.get("grants") if isinstance(r.get("grants"), str) else json.dumps(r.get("grants") or [])
+        vals = {"username": name, "full_name": acc.text(r.get("full_name"), maxlen=120), "pw_hash": "!", "email": email,
+                "is_admin": 1 if r.get("is_admin") else 0, "is_super": 1 if r.get("is_super") else 0, "perms": perms,
+                "group_key": acc.text(r.get("group_key"), maxlen=60), "needs_approval": 1 if r.get("needs_approval") else 0,
+                "grants": grants, "active": 0 if r.get("active") in (0, False, "0") else 1}
+        vals = {k: v for k, v in vals.items() if k in have}
+        db.conn.execute(f"INSERT INTO users({','.join(vals)}) VALUES ({','.join('?' * len(vals))})", list(vals.values()))
+        n += 1
+    return n
+
+
+def _approvals_export(db):
+    """Entries waiting for approval (and the decided ones, for their history). The entry an edit changes, and the
+    entry an approval posted, are named by their fingerprint: restored entries get new numbers."""
+    from . import attachments
+    out = []
+    for a in db.q("SELECT * FROM approvals ORDER BY id"):
+        row = {k: a[k] for k in a.keys() if k not in ("id", "target_id", "entry_id")}
+        row["target"] = attachments._fp(db, a["target_id"]) if a["target_id"] else None
+        row["entry"] = attachments._fp(db, a["entry_id"]) if a["entry_id"] else None
+        out.append(row)
+    return out
+
+
+def _approvals_import(db, rows):
+    from . import attachments
+    pool = {}
+    for e in db.q("SELECT id FROM journal_entries ORDER BY id"):
+        fp = attachments._fp(db, e["id"])
+        if fp:
+            pool.setdefault(tuple(fp), e["id"])
+    cols = {r["name"] for r in db.q("PRAGMA table_info(approvals)")}
+    n = 0
+    for r in rows:
+        if not isinstance(r, dict) or not r.get("dtype") or not r.get("created_by"):
+            continue
+        target = pool.get(tuple(r["target"])) if isinstance(r.get("target"), list) else None
+        if r.get("target") and not target and r.get("status") == "pending":
+            continue          # an edit of an entry that is not in these books: approving it would post a new one
+        vals = {k: r[k] for k in r if k in cols and k not in ("id", "target_id", "entry_id")}
+        vals["target_id"] = target
+        vals["entry_id"] = pool.get(tuple(r["entry"])) if isinstance(r.get("entry"), list) else None
+        db.conn.execute(f"INSERT INTO approvals({','.join(vals)}) VALUES ({','.join('?' * len(vals))})", list(vals.values()))
+        n += 1
+    return n
 
 
 def _tags_export(db):
@@ -1327,9 +1437,20 @@ def _imp_extras(db, ex, mode, counts):
         n = _line_styles_import(db, ex["line_styles"])
         if n:
             counts["Styled lines"] = n
+    if mode == "replace" and isinstance(ex.get("people"), list):    # before the chat, so everyone's messages find them
+        n = _people_import(db, ex["people"])
+        if n:
+            counts["People (set their passwords in Users)"] = n
+    if isinstance(ex.get("approvals"), list) and ex["approvals"] and (mode == "replace" or not db.one("SELECT 1 FROM approvals")):
+        db.conn.execute("DELETE FROM approvals")
+        n = _approvals_import(db, ex["approvals"])
+        if n:
+            counts["Approval requests"] = n
     if isinstance(ex.get("chat"), dict):
         from . import chat
         chat.import_rows(db, ex["chat"], mode, counts)
+    if isinstance(ex.get("history"), dict):
+        _history_import(db, ex["history"], mode, counts)
     if ex.get("ownership_changes"):
         if mode == "replace":
             db.conn.execute("DELETE FROM ownership_changes")
