@@ -587,6 +587,9 @@ function parseHash() {
 function setQ(q) { const { parts } = parseHash(); location.hash = "#/" + parts.join("/") + (qs(q) ? "?" + qs(q) : ""); }
 
 const PAGES = {};
+// the page's scroll position, wherever the browser keeps it (the window, or the body on some layouts)
+const pageY = () => Math.max(scrollY, document.body ? document.body.scrollTop : 0);
+function pageTo(y) { scrollTo(0, y); if (document.body && document.body.scrollTop !== y) document.body.scrollTop = y; }
 async function route() {
   // "Discover BeyondERP" from the profile menu: the welcome story while signed in; any other address returns to the app
   if (S.boot && S.boot.user && !S.boot.needs_setup) {
@@ -617,7 +620,7 @@ async function route() {
   if (view.isConnected) { if ($("[data-a=xsave]", view)) Drafts.track(view, $("h1,h2", view)?.textContent || t("m_invoices"), { page: true }); Drafts.banner(view); }
   if (parts.length === 1) addImportMenu(view, parts[0]).catch(() => {});
   stackify(view);
-  if (view.isConnected) window.scrollTo(0, 0);
+  if (view.isConnected) pageTo(0);                       // every screen opens at its top
   if (view.isConnected) tabsAfterRoute();
 }
 
@@ -11436,13 +11439,13 @@ function tabOpen(hash) {
   if (TABS.uid !== (S.boot && S.boot.user && S.boot.user.id)) tabsLoad();
   if (TABS.list.length >= TAB_MAX) { tabsDraw(); $$("#etabs .etab-x").forEach(x => { x.classList.add("nudge"); setTimeout(() => x.classList.remove("nudge"), 1600); });
     uiAlert(L2(`You already have ${TAB_MAX} tabs open, the most at once. Close a tab (its ×) to open another.`, `لديك ${TAB_MAX} تبويبات مفتوحة، وهذا هو الحد الأقصى. أغلق تبويباً (من علامة ×) لتفتح غيره.`)); return false; }
-  TABS.list[TABS.on].scroll = scrollY;
+  TABS.list[TABS.on].scroll = pageY();
   TABS.list.push({ hash: hash || "#/dashboard", title: "" }); TABS.on = TABS.list.length - 1; tabsSave(); tabsDraw();
   if (location.hash === hash) route(); else location.hash = hash || "#/dashboard";
 }
 function tabGo(i) {
   if (i === TABS.on || !TABS.list[i]) return;
-  TABS.list[TABS.on].scroll = scrollY; TABS.on = i; tabsSave(); tabsDraw();
+  TABS.list[TABS.on].scroll = pageY(); TABS.on = i; tabsSave(); tabsDraw();
   S.tabScroll = TABS.list[i].scroll || 0;
   if (location.hash === TABS.list[i].hash) route(); else location.hash = TABS.list[i].hash;
 }
@@ -11457,7 +11460,7 @@ function tabsAfterRoute() {
   if (TABS.uid !== (S.boot && S.boot.user && S.boot.user.id) || !TABS.list.length) tabsLoad();
   const tb = TABS.list[TABS.on]; tb.hash = location.hash || "#/dashboard"; tb.title = (($("#ttl") || {}).textContent || "").trim().slice(0, 40);
   tabsSave(); tabsDraw();
-  if (S.tabScroll) { const y = S.tabScroll; S.tabScroll = 0; requestAnimationFrame(() => scrollTo(0, y)); }
+  if (S.tabScroll) { const y = S.tabScroll; S.tabScroll = 0; requestAnimationFrame(() => pageTo(y)); }
 }
 document.addEventListener("click", e => {
   const x = e.target.closest(".etab-x"); if (x) { e.preventDefault(); tabClose(+x.dataset.i); return; }
