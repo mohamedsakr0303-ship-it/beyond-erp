@@ -1356,6 +1356,7 @@ function drawer(title, html, onSubmit, opts = {}) {
 }
 function closeDrawer(keepEntry) {
   $$(".drawer-bg").forEach(d => d.remove());
+  floatersClose();
   setTimeout(() => Drafts.badge(), 0);
   if (keepEntry === true || drawerEntry === null) return;
   const was = drawerEntry; drawerEntry = null;
@@ -1486,7 +1487,7 @@ const waNumber = n => { let d = String(n || "").replace(/[^\d+]/g, "").replace(/
 // Searchable drop-down for name inputs whose <datalist> is marked data-combo. Typing a new name is always allowed.
 const combo = { inp: null, box: null, items: [], i: -1 };
 function comboClose() { if (combo.box) combo.box.remove(); combo.box = null; combo.inp = null; combo.i = -1; }
-function comboPlace() { if (!combo.box || !combo.inp) return; const r = combo.inp.getBoundingClientRect(), below = innerHeight - r.bottom;
+function comboPlace() { if (!combo.box || !combo.inp) return; if (!combo.inp.isConnected) { comboClose(); return; } const r = combo.inp.getBoundingClientRect(), below = innerHeight - r.bottom;
   const up = below < 220 && r.top > below; Object.assign(combo.box.style, { left: Math.max(4, r.left) + "px", width: Math.min(innerWidth - 8, Math.max(r.width, 240)) + "px",
     top: up ? "" : r.bottom + 2 + "px", bottom: up ? innerHeight - r.top + 2 + "px" : "", maxHeight: Math.min(320, (up ? r.top : below) - 12) + "px" }); }
 function comboRender() { const inp = combo.inp; if (!inp) return; const all = combo.all, qv = inp.value.trim().toLowerCase(), words = qv.split(/\s+/).filter(Boolean);
@@ -10933,6 +10934,7 @@ function pickShow(inp, items, onPick, cur) {
   document.body.appendChild(list);
   const st = pickOpen = { list, inp, items: [], i: 0, onPick };
   const draw = () => {
+    if (!inp.isConnected) { pickClose(); return; }
     const m = pickMatch(inp.dataset.q || "", items); st.items = m.slice(0, 80);
     if (st.i >= st.items.length) st.i = 0;
     list.innerHTML = st.items.length ? st.items.map((it, k) => `<div class="pick-o ${k === st.i ? "on" : ""} ${String(it.v) === String(cur) ? "sel" : ""}" data-k="${k}" role="option">${esc(it.l)}</div>`).join("")
@@ -10948,6 +10950,20 @@ function pickShow(inp, items, onPick, cur) {
 }
 addEventListener("scroll", e => { if (pickOpen && !pickOpen.list.contains(e.target)) pickOpen.draw(); }, true);
 addEventListener("resize", () => pickOpen && pickOpen.draw());
+// Lists that float over the page (the searchable pickers here, the name drop-down above) never outlive their field:
+// they close when the field leaves the page (a form cancelled or closed — a removed field gets no "blur"), when the
+// screen changes, and on a tap anywhere else.
+function floatersClose() { pickClose(); comboClose(); }
+function floatersCheck() {
+  if (pickOpen && !pickOpen.inp.isConnected) pickClose();
+  if (combo.inp && !combo.inp.isConnected) comboClose();
+}
+new MutationObserver(() => { if (pickOpen || combo.box) floatersCheck(); }).observe(document.body, { childList: true, subtree: true });
+addEventListener("hashchange", floatersClose);
+document.addEventListener("pointerdown", e => {
+  if (pickOpen && !pickOpen.list.contains(e.target) && e.target !== pickOpen.inp) pickClose();
+  if (combo.box && !combo.box.contains(e.target) && e.target !== combo.inp) comboClose();
+}, true);
 function pickKeys(e, inp) {
   const st = pickOpen; if (!st || st.inp !== inp) return false;
   if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); st.i = Math.max(0, Math.min(st.items.length - 1, st.i + (e.key === "ArrowDown" ? 1 : -1))); st.draw(); return true; }
