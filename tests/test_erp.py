@@ -132,6 +132,18 @@ class Interchange(unittest.TestCase):
         self.assertEqual((b["client_paid"], b["actual_costs"], b["to_collect"]), (9000.0, b["cogs"] + b["direct_overhead"], 0.0))
         self.assertAlmostEqual(b["live_fee"], round((9000 - b["actual_costs"]) / b["actual_costs"], 4))
         self.assertEqual(b["expected_billing"], 9000.0)
+        # books where the funding partner's account replaces the bank: the client's money lands there, and still counts
+        fdb = Database(":memory:")
+        fdb.x("INSERT INTO business_units(code,name,basis) VALUES ('LF-3','Flat',?)", (a.LIVE_FEE,))
+        fdb.x("INSERT INTO partners(name,default_share) VALUES ('Funder',1)")
+        fdb.set_setting("funding_partner", "Funder")
+        a.record_project_cost(fdb, {"bu_code": "LF-3", "description": "Tiles", "vendor": "Sup", "qty": 1, "rate": 5000, "paid": 5000, "date": "2026-03-01"})
+        a.record_collection(fdb, {"bu_code": "LF-3", "amount": 6000, "date": "2026-03-05"})
+        landed = fdb.q("SELECT a.role, a.subtype FROM journal_lines l JOIN accounts a ON a.code=l.account JOIN journal_entries e ON e.id=l.entry_id "
+                       "WHERE e.kind='Receipt Voucher' AND l.debit>0")
+        self.assertTrue(any(r["role"] == "funding_partner" for r in landed), landed)
+        f = a.bu_summaries(fdb)[0]
+        self.assertEqual((f["client_paid"], f["live_fee"]), (6000.0, 0.2))
         empty = Database(":memory:")
         empty.x("INSERT INTO business_units(code,name,basis) VALUES ('LF-2','New',?)", (a.LIVE_FEE,))
         self.assertIsNone(a.bu_summaries(empty)[0]["live_fee"])        # no costs yet: no fee to show

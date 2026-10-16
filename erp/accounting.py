@@ -1555,13 +1555,17 @@ def bu_summaries(db, date_from=None, date_to=None, status=None, q=None):
           SUM(CASE WHEN e.kind='Receipt Voucher' AND a.subtype='cash' THEN l.debit ELSE 0 END) AS collected
         FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id JOIN accounts a ON a.code=l.account
         WHERE {w} AND e.bu_id IS NOT NULL GROUP BY e.bu_id""", p)}
-    # money the client actually paid into the project: cash in on entries settled with the client (receipts against
-    # invoices, advances, sales paid on the spot, cheques when they clear), less refunds to them; not partner money,
-    # loans, refundable deposits or supplier payments
-    paid = {r["bid"]: r["n"] for r in db.q(f"""
-        SELECT x.bid, SUM(x.cash) AS n FROM (
+    # money the client actually paid into the project: money in on entries settled with the client (receipts against
+    # invoices, advances, sales paid on the spot, cheques when they clear), less refunds to them — whether it landed in
+    # cash / a bank, the funding partner's account (when it replaces the bank) or with a partner personally; not
+    # partner money, loans, refundable deposits or supplier payments
+    paid = {r["bid"]: r for r in db.q(f"""
+        SELECT x.bid, SUM(x.cash) AS n, SUM(x.bank) AS bank, SUM(x.funder) AS funder, SUM(x.partner) AS partner FROM (
           SELECT e.bu_id AS bid, e.id,
-            SUM(CASE WHEN a.subtype='cash' THEN l.debit-l.credit ELSE 0 END) AS cash,
+            SUM(CASE WHEN a.subtype IN ('cash','partner_current') OR a.role='funding_partner' THEN l.debit-l.credit ELSE 0 END) AS cash,
+            SUM(CASE WHEN a.subtype='cash' THEN l.debit-l.credit ELSE 0 END) AS bank,
+            SUM(CASE WHEN a.role='funding_partner' THEN l.debit-l.credit ELSE 0 END) AS funder,
+            SUM(CASE WHEN a.subtype='partner_current' AND COALESCE(a.role,'')<>'funding_partner' THEN l.debit-l.credit ELSE 0 END) AS partner,
             MAX(CASE WHEN a.subtype IN ('receivable','deferred_revenue','operating_revenue','sales_discount') AND a.code<>? THEN 1 ELSE 0 END) AS client
           FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id JOIN accounts a ON a.code=l.account
           WHERE {w} AND e.bu_id IS NOT NULL GROUP BY e.bu_id, e.id) x
@@ -1592,7 +1596,8 @@ def bu_summaries(db, date_from=None, date_to=None, status=None, q=None):
             expected = b["contract_value"] or 0
         else:
             expected = collected
-        client_paid, actual = paid.get(b["id"]) or 0, cogs + ovh   # the project's own costs, not the shared overhead
+        pr = paid.get(b["id"]) or {}
+        client_paid, actual = pr.get("n") or 0, cogs + ovh   # the project's own costs, not the shared overhead
         if b["basis"] == LIVE_FEE:
             expected = client_paid       # billed as paid: nothing waits to be collected
         net = rev - cogs - ovh - alloc
@@ -1604,6 +1609,7 @@ def bu_summaries(db, date_from=None, date_to=None, status=None, q=None):
                     "expected_billing": to_major(expected), "to_collect": 0.0 if b["basis"] == LIVE_FEE else to_major(max(expected - collected, 0)),
                     "savings": to_major(savings.get(b["id"], 0)), "savings_kept": to_major(kept.get(b["id"], 0)),
                     "client_paid": to_major(client_paid), "actual_costs": to_major(actual),
+                    "paid_into": {k: to_major(pr.get(k) or 0) for k in ("bank", "funder", "partner")},   # where it landed
                     "live_gap": to_major(client_paid - actual),
                     "live_fee": round((client_paid - actual) / actual, 4) if actual > 0 else None,
                     "live_margin": round((client_paid - actual) / client_paid, 4) if client_paid > 0 else None})
