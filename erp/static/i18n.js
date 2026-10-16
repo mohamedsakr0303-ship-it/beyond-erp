@@ -7,7 +7,7 @@ window.I18N = {
   g_care: ["Healthcare", "الرعاية الصحية"], mod_care: ["Healthcare", "الرعاية الصحية"], m_care_visits: ["Appointments & Visits", "المواعيد والزيارات"],
   m_care_patients: ["Patients", "المرضى"], m_care_services: ["Medical Services & Prices", "الخدمات الطبية والأسعار"], m_care_packages: ["Care Packages", "باقات الرعاية"],
   m_care_claims: ["Insurance Claims", "مطالبات التأمين"], m_care_reports: ["Healthcare Reports", "تقارير الرعاية الصحية"],
-  m_deals: ["Deals Pipeline", "مسار الصفقات"], m_crm_contacts: ["Contacts & Timeline", "جهات الاتصال والسجل"], m_followups: ["Follow-ups", "المتابعات"], m_desk: ["Online Booking & Forms", "الحجز والنماذج الإلكترونية"], m_automations: ["Automations", "القواعد التلقائية"], m_kb: ["Knowledge Base", "قاعدة المعرفة"], m_api: ["API Keys & Integrations", "مفاتيح الربط البرمجي"], m_workdays: ["Team Days & Field Reports", "أيام العمل والتقارير الميدانية"],
+  m_deals: ["Deals Pipeline", "مسار الصفقات"], m_crm_contacts: ["Contacts & Timeline", "جهات الاتصال والسجل"], m_followups: ["Follow-ups", "المتابعات"], m_desk: ["Online Booking & Forms", "الحجز والنماذج الإلكترونية"], m_automations: ["Automations", "القواعد التلقائية"], m_bills: ["Subscriptions & Recurring Bills", "الاشتراكات والفواتير الدورية"], m_alerts: ["My Alerts", "تنبيهاتي"], m_kb: ["Knowledge Base", "قاعدة المعرفة"], m_api: ["API Keys & Integrations", "مفاتيح الربط البرمجي"], m_workdays: ["Team Days & Field Reports", "أيام العمل والتقارير الميدانية"],
   mod_crm: ["Customers & deals (CRM)", "العملاء والصفقات (CRM)"], g_bu: ["Business Units", "وحدات الأعمال"], g_sales: ["Sales & Receivables", "المبيعات والمدينون"],
   g_est: ["Estimating & Tendering", "التسعير والعطاءات"], g_buy: ["Procurement & Payables", "المشتريات والدائنون"],
   g_stock: ["Inventory", "المخزون"], g_hr: ["Human Resources & Payroll", "الموارد البشرية والرواتب"], g_equity: ["Owners' Equity", "حقوق الملكية"],
@@ -210,7 +210,7 @@ window.SUBTYPE_LABELS = {
 };
 // sidebar: [group, [ [menuKey, route, module, icon], ... ]]
 window.MENU = [
-  ["g_home", [["m_dashboard", "dashboard", "dashboard", "◧"], ["m_chat", "chat", "chat", "💬"], ["m_kb", "kb", "team.kb", "📖"], ["m_assistant", "assistant", "chat.ai", "✦"], ["m_calcs", "calculators", "dashboard", "🧮"]]],
+  ["g_home", [["m_dashboard", "dashboard", "dashboard", "◧"], ["m_chat", "chat", "chat", "💬"], ["m_kb", "kb", "team.kb", "📖"], ["m_alerts", "alerts", "team.alerts", "🔔"], ["m_assistant", "assistant", "chat.ai", "✦"], ["m_calcs", "calculators", "dashboard", "🧮"]]],
   ["g_bu", [["m_bus", "bus", "business_units.units", "▦"]]],
   ["g_care", [["m_care_visits", "care-visits", "care.visits", "✚"], ["m_care_patients", "care-patients", "care.patients", "☺"], ["m_care_services", "care-services", "care.services", "₤"],
              ["m_care_packages", "care-packages", "care.packages", "▦"], ["m_care_claims", "care-claims", "care.claims", "⇲"], ["m_care_reports", "care-reports", "care.reports", "◔"]]],
@@ -220,7 +220,7 @@ window.MENU = [
   ["g_sales", [["m_offers", "offers", "sales.offers", "✉"], ["m_receipts", "receipts", "sales.receipts", "↘"], ["m_invoices", "invoices", "sales.invoices", "▤"], ["m_extracts", "extracts", "sales.extracts", "▦"], ["m_receivables", "receivables", "sales.receivables", "⇲"]]],
   ["g_shop", [["m_products", "products", "shop.products", "◫"], ["m_sales_orders", "sales", "shop.orders", "⛁"], ["m_installments", "installments", "shop.installments", "⏲"], ["m_subs", "subs", "shop.subscriptions", "↻"]]],
   ["g_est", [["m_boqs", "boqs", "estimating.boqs", "☰"], ["m_prices", "prices", "estimating.prices", "₤"]]],
-  ["g_buy", [["m_prq", "purchase-requests", "purchasing.requests", "☐"], ["m_pos", "pos", "purchasing.orders", "⎘"], ["m_costs", "costs", "purchasing.costs", "⚒"], ["m_expenses", "expenses", "purchasing.expenses", "◔"], ["m_payments", "payments", "purchasing.payments", "↗"], ["m_payables", "payables", "purchasing.payables", "⇱"], ["m_contacts", "contacts", "purchasing.contacts|sales.parties", "☏"], ["m_nego", "negotiations", "purchasing.negotiations", "⚖"]]],
+  ["g_buy", [["m_prq", "purchase-requests", "purchasing.requests", "☐"], ["m_pos", "pos", "purchasing.orders", "⎘"], ["m_costs", "costs", "purchasing.costs", "⚒"], ["m_expenses", "expenses", "purchasing.expenses", "◔"], ["m_bills", "bills", "purchasing.bills", "↻"], ["m_payments", "payments", "purchasing.payments", "↗"], ["m_payables", "payables", "purchasing.payables", "⇱"], ["m_contacts", "contacts", "purchasing.contacts|sales.parties", "☏"], ["m_nego", "negotiations", "purchasing.negotiations", "⚖"]]],
   ["g_stock", [["m_stock", "stock", "stock.balances", "▣"], ["m_moves", "moves", "stock.moves", "⇄"], ["m_warehouses", "warehouses", "stock.warehouses", "⌂"], ["m_counts", "stock-counts", "stock.counts", "✓"]]],
   ["g_eq", [["m_equipment", "equipment", "equipment.register", "⚙"], ["m_equsage", "equipment-usage", "equipment.usage", "⏱"], ["m_maint", "maintenance", "equipment.maintenance", "🔧"]]],
   ["g_rent", [["m_rentals", "rentals", "rentals.contracts", "⌸"], ["m_rentfleet", "rentfleet", "rentals.fleet", "▤"], ["m_rentcalc", "rentcalc", "rentals.calculator", "⊞"]]],
@@ -255,7 +255,7 @@ window.SUBPERM = {
   "import_export.export": "p_export", "import_export.import": "p_import",
   "settings.company": "p_company", "settings.branding": "p_branding", "settings.menus": "menu_names", "settings.layout": "p_layout", "settings.system": "p_system", "settings.dashboards": "p_dashboards",
   "users.users": "m_users", "users.audit": "m_audit",
-  "settings.api": "m_api", "team.kb": "m_kb", "team.myday": "m_myday", "settings.workspace": "tab_workspace", "reports.forecast": "m_forecast",
+  "settings.api": "m_api", "team.kb": "m_kb", "team.alerts": "m_alerts", "purchasing.bills": "m_bills", "team.myday": "m_myday", "settings.workspace": "tab_workspace", "reports.forecast": "m_forecast",
 };
 
 Object.assign(window.I18N, {

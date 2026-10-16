@@ -1532,7 +1532,8 @@ def shared_overhead_total(db, date_from=None, date_to=None):
     w, p = _where(date_from=date_from, date_to=date_to, bu_id="none")
     r = db.one(f"""SELECT COALESCE(SUM(l.debit-l.credit),0) AS n FROM journal_lines l
                    JOIN journal_entries e ON e.id=l.entry_id JOIN accounts a ON a.code=l.account
-                   WHERE {w} AND a.subtype IN ('employee','general_admin','marketing','utilities','other_operating')""",
+                   WHERE {w} AND a.subtype IN ('employee','general_admin','marketing','utilities','other_operating')
+                     AND COALESCE(json_extract(e.meta,'$.no_alloc'),0)<>1""",   # company costs kept out of the projects
                p)
     return to_major(r["n"])
 

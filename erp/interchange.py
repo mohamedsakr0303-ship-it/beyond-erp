@@ -941,6 +941,7 @@ def export_extras(db, files=True, secrets=False):
             "line_styles": _line_styles_export(db), "crm": _crm_export(db), "care": _care_export(db), "desk": _desk_export(db), "automations": {t: db.q(f"SELECT * FROM {t} ORDER BY id") for t in ("automations", "automation_log")}, "workdays": db.q("SELECT * FROM workdays ORDER BY id"), "kb_pages": db.q("SELECT * FROM kb_pages ORDER BY id"), "entry_tags": _tags_export(db),
             "bu_groups": {r["code"]: r["grp"] for r in db.q("SELECT code, grp FROM business_units WHERE grp<>''")}, "site": site_extras(db),
             "people": _people_export(db), "approvals": _approvals_export(db), "history": _history_export(db),
+            "bills": __import__("erp.billsubs", fromlist=["x"]).export_rows(db),
             **({"secrets": _secrets_export(db)} if secrets else {})}
 
 
@@ -1033,6 +1034,7 @@ def _history_export(db):
     names = {u["id"]: u["username"] for u in db.q("SELECT id, username FROM users")}
     return {"audit_log": db.q("SELECT ts, username, action, detail FROM audit_log ORDER BY id"),
             "support_tickets": [{k: r[k] for k in r.keys() if k != "id"} for r in db.q("SELECT * FROM support_tickets ORDER BY id")],
+            "alert_feed": [{k: r[k] for k in r.keys() if k != "id"} for r in db.q("SELECT * FROM alert_feed ORDER BY id")],
             "ai_threads": [{**{k: r[k] for k in r.keys() if k not in ("id", "user_id")}, "user": names.get(r["user_id"], "")}
                            for r in db.q("SELECT * FROM ai_threads ORDER BY id") if names.get(r["user_id"])]}
 
@@ -1057,6 +1059,9 @@ def _history_import(db, h, mode, counts):
     if isinstance(h.get("support_tickets"), list) and h["support_tickets"] and (mode == "replace" or not db.one("SELECT 1 FROM support_tickets")):
         db.conn.execute("DELETE FROM support_tickets")
         put("support_tickets", h["support_tickets"])
+    if isinstance(h.get("alert_feed"), list) and h["alert_feed"] and (mode == "replace" or not db.one("SELECT 1 FROM alert_feed")):
+        db.conn.execute("DELETE FROM alert_feed")
+        put("alert_feed", h["alert_feed"])
     if isinstance(h.get("ai_threads"), list) and h["ai_threads"] and (mode == "replace" or not db.one("SELECT 1 FROM ai_threads")):
         ids = {u["username"]: u["id"] for u in db.q("SELECT id, username FROM users")}
         db.conn.execute("DELETE FROM ai_threads")
@@ -1539,6 +1544,11 @@ def _imp_extras(db, ex, mode, counts):
         chat.import_rows(db, ex["chat"], mode, counts)
     if isinstance(ex.get("history"), dict):
         _history_import(db, ex["history"], mode, counts)
+    if isinstance(ex.get("bills"), list) and ex["bills"] and (mode == "replace" or not db.one("SELECT 1 FROM cost_subs")):
+        from . import billsubs
+        n = billsubs.import_rows(db, ex["bills"], replace=mode == "replace")
+        if n:
+            counts["Subscriptions & bills"] = n
     if isinstance(ex.get("secrets"), dict):
         _secrets_import(db, ex["secrets"], mode, counts)
     if ex.get("ownership_changes"):
@@ -1579,7 +1589,7 @@ def to_csv(db, sheet_name, template=False):
     return ("﻿" + buf.getvalue()).encode("utf-8")
 
 
-WIPE_ORDER = ("entry_tags", "kb_pages", "workdays", "automation_log", "automations", "desk_rows", "desk_threads", "care_visit_lines", "care_visits", "care_claims", "care_packages", "care_services", "care_patients", "crm_followups", "crm_activities", "crm_deals", "sub_cert_lines", "sub_certificates", "variation_orders", "contract_lines", "contracts", "pr_quote_lines", "pr_quotes",
+WIPE_ORDER = ("cost_subs", "entry_tags", "kb_pages", "workdays", "automation_log", "automations", "desk_rows", "desk_threads", "care_visit_lines", "care_visits", "care_claims", "care_packages", "care_services", "care_patients", "crm_followups", "crm_activities", "crm_deals", "sub_cert_lines", "sub_certificates", "variation_orders", "contract_lines", "contracts", "pr_quote_lines", "pr_quotes",
               "pr_lines", "purchase_requests", "stock_count_lines", "stock_counts", "equipment_usage", "maintenance_logs", "maintenance_plans",
               "equipment", "attendance", "ereceipts", "project_tasks", "project_phases", "payroll_lines", "payroll_runs", "crew_sheets", "employees", "sub_recognitions", "sub_visits", "sub_invoices", "subscriptions", "service_plans", "attachments", "po_receipts", "po_lines", "purchase_orders", "budgets", "bank_lines", "bank_statements", "bank_rules", "recurring_runs", "recurring", "sale_cheques", "sale_installments", "sale_lines", "sales_orders", "product_media", "products", "rent_moves", "rental_invoices", "rental_charges", "rental_handovers", "rental_lines", "rentals", "rent_lots",
               "rent_kit_lines", "rent_kits", "rent_models", "rent_items", "loans", "custodies", "parties", "ownership_changes", "fixed_assets", "stock_moves", "stock_levels", "stock_items", "extract_lines", "extracts", "boq_lines", "boqs",

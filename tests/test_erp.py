@@ -3985,6 +3985,64 @@ class BackupSecretsAccess(unittest.TestCase):
                                    "application/octet-stream").status, 403)
 
 
+class BillsAndAlerts(unittest.TestCase):
+    """Company subscriptions: paying books expenses by their allocation and moves the due date; reminders carry their
+    own time. Alerts: a person's own "notify" rules, checked after their time of day, land in their bell."""
+
+    def setUp(self):
+        from erp import demo
+        from erp.server import handle
+        self.handle = handle
+        self.app = type("App", (), {"static": False})()
+        self.app.db = self.db = Database(":memory:")
+        demo.load(self.db, "boss")
+        auth.create_user(self.db, {"username": "boss", "password": "secret123"}, first=True)
+        auth.create_user(self.db, {"username": "eng", "password": "secret123", "perms": {"team": "add", "projects": "view"}})
+        self.tok = {u: auth.login(self.db, u, "secret123")[0] for u in ("boss", "eng")}
+
+    def call(self, who, method, url, body=None):
+        h = {"x-requested-with": "BeyondERP", "x-session": self.tok[who], "content-type": "application/json"}
+        r = self.handle(self.app, method, url, h, json.dumps(body).encode() if body is not None else b"")
+        return r.status, json.loads(r.body)
+
+    def test_subscription_pay_split_and_company_cost(self):
+        from erp import billsubs
+        st, r = self.call("boss", "POST", "/api/bills", {"name": "Claude Pro", "vendor": "Anthropic", "amount": 1000, "next_due": "2026-01-31",
+                                                         "alloc": "split", "split": [{"bu_code": "PRJ-D01", "pct": 60}, {"bu_code": "PRJ-D02", "pct": 40}],
+                                                         "remind_days": 2, "remind_time": "10:30"})
+        self.assertEqual(st, 200, r)
+        hint = r["_push"][0]
+        self.assertEqual((hint["day"] >= "2026-01-29", hint["time"], hint["to"], hint["pref"]), (True, "10:30", ["boss"], "reminders"))
+        st, p = self.call("boss", "POST", f"/api/bills/{r['id']}/pay", {"date": "2026-01-31"})
+        self.assertEqual((st, p["next_due"]), (200, "2026-02-28"))
+        shares = sorted(x["amount"] for x in billsubs.get(self.db, r["id"])["payments"])
+        self.assertEqual(shares, [400.0, 600.0])
+        self.assertEqual(billsubs.next_after("2026-02-28", "monthly", 31), "2026-03-31")   # back to the 31st
+        pool = a.shared_overhead_total(self.db)
+        st, c = self.call("boss", "POST", "/api/bills", {"name": "ChatGPT Pro", "amount": 10000, "next_due": "2026-02-10", "alloc": "company"})
+        self.call("boss", "POST", f"/api/bills/{c['id']}/pay", {"date": "2026-02-10"})
+        self.assertEqual(a.shared_overhead_total(self.db), pool)            # a company cost stays out of the projects
+        self.assertEqual(self.call("eng", "GET", "/api/bills")[0], 403)      # not his screen
+
+    def test_alerts_after_time_feed_and_permissions(self):
+        st, r = self.call("boss", "POST", "/api/my-alerts", {"name": "Attendance", "trigger": "attendance_missing", "settings": {"at": "09:30"}})
+        self.assertEqual(st, 200, r)
+        day = a.today()
+        st, early = self.call("boss", "POST", "/api/automations/run", {"local": day + "T08:00"})
+        self.assertEqual(early["done"], [])
+        st, late = self.call("boss", "POST", "/api/automations/run", {"local": day + "T09:45"})
+        self.assertEqual(late["done"][0]["acted"], 1)
+        self.assertEqual(late["_push"][0]["to"], ["boss"])
+        st, bell = self.call("boss", "GET", "/api/alerts")
+        fid = bell["feed"][0]
+        self.call("boss", "POST", "/api/my-alerts/read", {"ids": [fid]})
+        self.assertNotIn(fid, self.call("boss", "GET", "/api/alerts")[1]["feed"])
+        # someone without HR access can't be alerted about attendance, and can only alert himself
+        self.assertEqual(self.call("eng", "POST", "/api/my-alerts", {"name": "x", "trigger": "attendance_missing"})[0], 403)
+        st, mine = self.call("eng", "GET", "/api/my-alerts")
+        self.assertNotIn("attendance_missing", [t["key"] for t in mine["catalog"]["triggers"]])
+
+
 class CalculatorBuilder(unittest.TestCase):
     """Rental and general calculators: charges (installation, transport…) and results are formulas; only super
     administrators and the people they allow build or change formulas; anyone may open a general calculator."""

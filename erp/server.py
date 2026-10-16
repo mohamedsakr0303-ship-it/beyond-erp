@@ -945,6 +945,55 @@ def kb_get(ctx, kid):
     return ok(kb.get(ctx.db, kid))
 
 
+# ============================================================= company subscriptions & recurring bills (billsubs.py)
+@route("GET", "/api/bills", "purchasing.bills")
+def bills_list(ctx):
+    from . import billsubs
+    return ok(billsubs.listing(ctx.db))
+
+
+@route("GET", "/api/bills/<sid>", "purchasing.bills")
+def bills_get(ctx, sid):
+    from . import billsubs
+    return ok(billsubs.get(ctx.db, sid))
+
+
+@route("POST", "/api/bills", "purchasing.bills", "add")
+def bills_add(ctx):
+    from . import billsubs
+    sid = billsubs.save(ctx.db, ctx.body, ctx.user["username"])
+    ctx.log("bill.add", ctx.body.get("name"))
+    return ok(push_hint({"id": sid}, *billsubs.reminder(ctx.db, sid)))
+
+
+@route("PUT", "/api/bills/<sid>", "purchasing.bills", "edit")
+def bills_edit(ctx, sid):
+    from . import billsubs
+    billsubs.save(ctx.db, ctx.body, ctx.user["username"], sid)
+    ctx.log("bill.edit", sid)
+    return ok(push_hint({"id": int(sid)}, *billsubs.reminder(ctx.db, sid)))
+
+
+@route("DELETE", "/api/bills/<sid>", "purchasing.bills", "edit")
+def bills_delete(ctx, sid):
+    from . import billsubs
+    billsubs.delete(ctx.db, sid)
+    ctx.log("bill.delete", sid)
+    return ok(push_hint(None, {"cancel": f"bill:{sid}"}))
+
+
+@route("POST", "/api/bills/<sid>/pay", "purchasing.bills", "add")
+def bills_pay(ctx, sid):
+    """Record a payment: operating expense(s) by the subscription's allocation; the next due date moves on a cycle."""
+    from . import approvals, billsubs
+    ctx.require("purchasing.expenses", "add")
+    if approvals.needs_approval(ctx.db, ctx.user):
+        raise PermissionError("Your entries wait for approval — ask someone who can post entries to record this payment")
+    r = billsubs.pay(ctx.db, sid, ctx.body, ctx.user["username"])
+    ctx.log("bill.pay", sid)
+    return ok(push_hint(r, *billsubs.reminder(ctx.db, sid)))
+
+
 @route("POST", "/api/kb", "team.kb", "add")
 def kb_add(ctx):
     """Write a knowledge base article: {title, body, category, pinned}."""
@@ -1043,14 +1092,87 @@ def automations_preview(ctx):
     return ok({"rows": automations.preview(ctx.db, ctx.body)})
 
 
-@route("POST", "/api/automations/run", "settings.automations|crm.followups|dashboard")
+@route("POST", "/api/automations/run", "settings.automations|crm.followups|dashboard|team.alerts")
 def automations_run(ctx):
-    """Run the signed-in person's own rules now (the app calls this every few minutes)."""
+    """Run the signed-in person's own rules and alerts now (the app calls this every few minutes, with its local time)."""
     from . import automations
     only = ctx.body.get("id")
-    if only and not ctx.can("settings.automations", "edit"):
+    if only:
+        r = ctx.db.one("SELECT created_by FROM automations WHERE id=?", (int(only),))
+        if not (ctx.can("settings.automations", "edit") or (r and r["created_by"] == ctx.user["username"])):
+            raise PermissionError()
+    pushes = []
+    done = automations.run(ctx.db, only=only, owner=None if only else ctx.user["username"], local=ctx.body.get("local"), pushes=pushes)
+    return ok(push_hint({"done": done}, *pushes))
+
+
+# ---------------------------------------------------------------- my alerts: what each person wants to be told about
+def _alert_body(ctx):
+    """An alert is a rule whose action is "notify". People who manage automations may alert others; everyone else
+    alerts themselves, and only about what they are allowed to see."""
+    from . import automations
+    b = dict(ctx.body or {})
+    b["action"] = "notify"
+    params = b.get("params") if isinstance(b.get("params"), dict) else {}
+    if not ctx.can("settings.automations", "edit"):
+        params = {"to": ctx.user["username"]}
+    b["params"] = params
+    if not automations.allowed(ctx.user, b.get("trigger")):
+        raise PermissionError("You can't see what that alert watches")
+    return b
+
+
+def _own_alert(ctx, rid):
+    r = ctx.db.one("SELECT created_by, action FROM automations WHERE id=?", (int(rid),))
+    if not r or r["action"] != "notify" or (r["created_by"] != ctx.user["username"] and not ctx.can("settings.automations", "edit")):
         raise PermissionError()
-    return ok({"done": automations.run(ctx.db, only=only, owner=None if only else ctx.user["username"])})
+
+
+@route("GET", "/api/my-alerts", "team.alerts")
+def my_alerts(ctx):
+    from . import automations
+    mine = [r for r in automations.listing(ctx.db) if r["action"] == "notify" and r["created_by"] == ctx.user["username"]]
+    cat = automations.catalog()
+    cat["triggers"] = [t for t in cat["triggers"] if automations.allowed(ctx.user, t["key"])]
+    return ok({"rows": mine, "catalog": cat, "feed": automations.feed(ctx.db, ctx.user["username"]),
+               "can_others": ctx.can("settings.automations", "edit")})
+
+
+@route("POST", "/api/my-alerts", "team.alerts", "add")
+def my_alert_add(ctx):
+    from . import automations
+    return ok({"id": automations.save(ctx.db, _alert_body(ctx), ctx.user)})
+
+
+@route("PUT", "/api/my-alerts/<rid>", "team.alerts", "add")
+def my_alert_edit(ctx, rid):
+    from . import automations
+    _own_alert(ctx, rid)
+    return ok({"id": automations.save(ctx.db, _alert_body(ctx), ctx.user, rid)})
+
+
+@route("DELETE", "/api/my-alerts/<rid>", "team.alerts", "add")
+def my_alert_delete(ctx, rid):
+    from . import automations
+    _own_alert(ctx, rid)
+    automations.delete(ctx.db, rid)
+    return ok()
+
+
+@route("POST", "/api/my-alerts/preview", "team.alerts")
+def my_alert_preview(ctx):
+    from . import automations
+    if not automations.allowed(ctx.user, ctx.body.get("trigger")):
+        raise PermissionError()
+    return ok({"rows": automations.preview(ctx.db, ctx.body)})
+
+
+@route("POST", "/api/my-alerts/read", "team.alerts")
+def my_alerts_read(ctx):
+    from . import automations
+    ids = ctx.body.get("ids")
+    automations.feed_read(ctx.db, ctx.user["username"], [int(i) for i in ids] if isinstance(ids, list) else None)
+    return ok()
 
 
 # ================================================================= the public desk (desk.py): online booking, web forms, e-signing, guests
@@ -3025,7 +3147,21 @@ def alerts(ctx):
         if u["errors"]:
             out.insert(0, {"level": "bad", "en": f"Online desk items that could not be added: {u['errors']}",
                            "ar": f"طلبات من الصفحات العامة لم تُضف: {u['errors']}", "href": "#/desk?tab=other", "count": u["errors"], "kind": "desk_err"})
-    return ok({"rows": out, "count": len(out), "approvals": [w["id"] for w in waiting], "followups": [f["id"] for f in follow]})
+    if ctx.can("purchasing.bills"):
+        from . import billsubs
+        bills = billsubs.due_for(ctx.db, ctx.user["username"])
+        if bills:
+            late = sum(1 for b in bills if b["days_left"] < 0)
+            out.insert(0, {"level": "bad" if late else "warn", "en": f"Subscriptions & bills due: {len(bills)}" + (f" ({late} overdue)" if late else ""),
+                           "ar": f"اشتراكات وفواتير مستحقة: {len(bills)}" + (f" ({late} متأخرة)" if late else ""), "href": "#/bills",
+                           "count": len(bills), "kind": "bills"})
+    feed = ctx.db.q("SELECT id, title, body, href FROM alert_feed WHERE username=? AND read_at IS NULL ORDER BY id DESC LIMIT 20",
+                    (ctx.user["username"],)) if ctx.can("team.alerts") else []
+    for f in reversed(feed):
+        out.insert(0, {"level": "warn", "en": f"{f['title']}: {f['body']}", "ar": f"{f['title']}: {f['body']}", "href": f["href"] or "#/alerts",
+                       "kind": "feed", "id": f["id"]})
+    return ok({"rows": out, "count": len(out), "approvals": [w["id"] for w in waiting], "followups": [f["id"] for f in follow],
+               "feed": [f["id"] for f in feed]})
 
 
 @route("GET", "/api/assets-overview", "assets.overview")

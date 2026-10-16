@@ -976,6 +976,47 @@ CREATE TABLE IF NOT EXISTS workdays (
     report     TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS workdays_user_date ON workdays(username, date);
+-- Company subscriptions & recurring bills (billsubs.py): what the company pays every week / month / year, how its cost
+-- is carried (shared overhead, company cost not allocated, one project, split) and who is reminded when
+CREATE TABLE IF NOT EXISTS cost_subs (
+    id            INTEGER PRIMARY KEY,
+    name          TEXT NOT NULL,
+    vendor        TEXT NOT NULL DEFAULT '',
+    plan          TEXT NOT NULL DEFAULT '',
+    cycle         TEXT NOT NULL DEFAULT 'monthly',
+    amount        INTEGER NOT NULL DEFAULT 0,
+    currency_note TEXT NOT NULL DEFAULT '',      -- e.g. "USD 200" (the books hold what was paid in the company's currency)
+    next_due      TEXT NOT NULL,
+    anchor_day    INTEGER NOT NULL DEFAULT 0,
+    account       TEXT NOT NULL DEFAULT '6020',
+    alloc         TEXT NOT NULL DEFAULT 'shared',
+    bu_id         INTEGER REFERENCES business_units(id) ON DELETE SET NULL,
+    split         TEXT NOT NULL DEFAULT '[]',
+    paid_from     TEXT NOT NULL DEFAULT '',
+    method        TEXT NOT NULL DEFAULT '',
+    remind_days   INTEGER NOT NULL DEFAULT 3,
+    remind_time   TEXT NOT NULL DEFAULT '09:00',
+    remind_to     TEXT NOT NULL DEFAULT '[]',
+    active        INTEGER NOT NULL DEFAULT 1,
+    last_paid     TEXT NOT NULL DEFAULT '',
+    last_amount   INTEGER NOT NULL DEFAULT 0,
+    notes         TEXT NOT NULL DEFAULT '',
+    created_by    TEXT NOT NULL DEFAULT '',
+    created_at    TEXT NOT NULL DEFAULT '',
+    updated_at    TEXT NOT NULL DEFAULT ''
+);
+-- Alerts that reached a person (an automation's "notify" action): their bell keeps them until read
+CREATE TABLE IF NOT EXISTS alert_feed (
+    id         INTEGER PRIMARY KEY,
+    username   TEXT NOT NULL,
+    title      TEXT NOT NULL,
+    body       TEXT NOT NULL DEFAULT '',
+    href       TEXT NOT NULL DEFAULT '',
+    level      TEXT NOT NULL DEFAULT 'warn',
+    at         TEXT NOT NULL,
+    read_at    TEXT
+);
+CREATE INDEX IF NOT EXISTS alert_feed_user ON alert_feed(username, read_at);
 -- Automations (automations.py): "when this happens, do that" rules, and what each already acted on (once per item)
 CREATE TABLE IF NOT EXISTS automations (
     id          INTEGER PRIMARY KEY,
@@ -1813,7 +1854,7 @@ SUBMODULES = {
     "estimating": ["boqs", "prices"],
     "projects": ["overview", "tasks"],
     "contracts": ["contracts", "variations", "certificates"],
-    "purchasing": ["requests", "orders", "costs", "expenses", "payments", "payables", "contacts", "negotiations", "custody"],
+    "purchasing": ["requests", "orders", "costs", "expenses", "payments", "payables", "contacts", "negotiations", "custody", "bills"],
     "equipment": ["register", "usage", "maintenance"],
     "shop": ["products", "orders", "installments", "subscriptions"],
     "stock": ["balances", "moves", "warehouses", "counts"],
@@ -1827,7 +1868,7 @@ SUBMODULES = {
     "import_export": ["export", "import"],
     "settings": ["company", "branding", "menus", "layout", "system", "dashboards", "workspace", "automations", "api"],
     "users": ["users", "audit"],
-    "team": ["kb", "myday"],        # everyone's workplace tools: knowledge base, my day (open to all until set)
+    "team": ["kb", "myday", "alerts"],   # everyone's workplace tools: knowledge base, my day, my alerts (open to all until set)
 }
 
 # Third level: tabs inside a screen ("section.screen.tab"); each falls back to its screen's level.

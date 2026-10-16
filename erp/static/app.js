@@ -254,7 +254,7 @@ const IC = {
   alert: '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0zM12 9v4M12 17h.01"/>',
   check: '<path d="M20 6 9 17l-5-5"/>', x: '<path d="M18 6 6 18M6 6l12 12"/>',
 };
-const ROUTE_IC = { deals: "target", "crm-contacts": "phone", followups: "clock", dashboard: "grid", chat: "chat", assistant: "spark", profile: "user", bus: "brief", offers: "mail", receipts: "in", invoices: "file", receivables: "inbox", parties: "users",
+const ROUTE_IC = { bills: "repeat", alerts: "bell", deals: "target", "crm-contacts": "phone", followups: "clock", dashboard: "grid", chat: "chat", assistant: "spark", profile: "user", bus: "brief", offers: "mail", receipts: "in", invoices: "file", receivables: "inbox", parties: "users",
   products: "box", sales: "cart", installments: "clock", subs: "repeat", boqs: "list", prices: "tag", pos: "clip", costs: "hammer", expenses: "receipt",
   payments: "out", payables: "wallet", contacts: "phone", negotiations: "scale", stock: "boxes", moves: "swap", warehouses: "store", rentals: "building",
   rentfleet: "layers", rentcalc: "calc", payruns: "cash", employees: "user", crew: "ruler", payroll: "pen", payset: "gear", "assets-overview": "pie",
@@ -780,9 +780,11 @@ async function loadAlerts(force) {
   approvalNotices(d);
   ["#bellc", "#bellc2"].forEach(id => { const b = $(id); if (b) { b.hidden = !n; b.textContent = n > 9 ? "9+" : n; } });
   const m = $("#bellmenu"); if (!m) return;
-  m.innerHTML = `<div class="dd-head">${esc(L2("Needs attention", "يحتاج متابعة"))}</div>` + (n ? d.rows.map(r => `<a class="alert-row" href="${esc(r.href)}"><span class="dot ${r.level}">${svg(r.level === "bad" ? "alert" : r.level === "warn" ? "clock" : "bell")}</span><span>${esc(ar ? r.ar : r.en)}</span></a>`).join("")
+  m.innerHTML = `<div class="dd-head">${esc(L2("Needs attention", "يحتاج متابعة"))}</div>` + (n ? d.rows.map(r => `<a class="alert-row" href="${esc(r.href)}" ${r.kind === "feed" ? `data-feed="${r.id}"` : ""}><span class="dot ${r.level}">${svg(r.level === "bad" ? "alert" : r.level === "warn" ? "clock" : "bell")}</span><span>${esc(ar ? r.ar : r.en)}</span></a>`).join("")
     : `<div class="empty" style="padding:18px">${svg("check")}<div>${esc(L2("All clear", "لا يوجد ما يحتاج متابعة"))}</div></div>`);
 }
+// an alert in the bell is read once it is opened
+document.addEventListener("click", e => { const a = e.target.closest("[data-feed]"); if (a) api("POST", "/api/my-alerts/read", { ids: [+a.dataset.feed] }).then(() => loadAlerts(true)).catch(() => {}); });
 // a draft newly waiting for this person's approval (or one of theirs sent back): a task in the bell plus a desktop /
 // phone notification — once per draft, remembered on this device
 function approvalNotices(d) {
@@ -792,6 +794,10 @@ function approvalNotices(d) {
   store.set(key, d.approvals || []); store.set(backKey, back);
   if (fresh.length && !first) alertPerson({ title: L2("Entries waiting for your approval", "قيود في انتظار اعتمادك"),
     body: L2(`${fresh.length} new — review and post them`, `${fresh.length} جديد — راجعها ورحّلها`), href: "#/approvals", tag: "berp-approvals", force: true, kind: "alert", cat: "approvals" });
+  const akey = "feedSeen:" + uid, afirst = store.get(akey, null) === null, aseen = new Set(store.get(akey, [])), anew = (d.rows || []).filter(r => r.kind === "feed" && !aseen.has(r.id));
+  store.set(akey, (d.feed || []));
+  if (anew.length && !afirst) alertPerson({ title: anew.length === 1 ? anew[0].en.split(": ")[0] : L2(`${anew.length} new alerts`, `${anew.length} تنبيهات جديدة`),
+    body: anew.length === 1 ? anew[0].en.split(": ").slice(1).join(": ") : anew.map(x => x.en.split(": ")[0]).join(" · "), href: anew[0].href || "#/alerts", tag: "berp-alert", force: true, kind: "alert", cat: "reminders" });
   const fkey = "fuSeen:" + uid, ffirst = store.get(fkey, null) === null, fseen = new Set(store.get(fkey, [])), fnew = (d.followups || []).filter(id => !fseen.has(id));
   store.set(fkey, d.followups || []);
   if (fnew.length && !ffirst) alertPerson({ title: L2("Follow-ups due", "متابعات مستحقة"), body: L2(`${fnew.length} to do today — open Follow-ups`, `${fnew.length} مطلوبة اليوم — افتح المتابعات`),
@@ -3802,7 +3808,7 @@ PAGES.automations = async (view) => {
 // run my own rules every few minutes while the app is open
 let autoLast = 0;
 setInterval(() => { if (document.visibilityState !== "visible" || !S.boot || !S.boot.user || Date.now() - autoLast < 4.5 * 60e3) return; autoLast = Date.now();
-  api("POST", "/api/automations/run", {}).then(r => { if ((r.done || []).some(x => x.acted)) loadAlerts(true); }).catch(() => {}); }, 30e3);
+  api("POST", "/api/automations/run", { local: localStamp() }).then(r => { if ((r.done || []).some(x => x.acted)) loadAlerts(true); }).catch(() => {}); }, 30e3);
 // ---------------------------------------------------------- my day (workdays.py): start / end the working day, with the place and a short report
 const mapLink = (lat, lng) => lat != null && lng != null ? `<a href="https://maps.google.com/?q=${lat},${lng}" target="_blank" rel="noopener">📍 ${esc(L2("Map", "الخريطة"))}</a>` : "";
 const hhmm = iso => iso ? String(iso).slice(11, 16) : "—";
@@ -3859,6 +3865,158 @@ function kbForm(a) {
     datalist("kbcats", S.cache.kbcats || []) + `<style>.drawer textarea[name=body]{min-height:320px;font-family:ui-monospace,monospace;font-size:.9em}</style>`,
   async v => { const r = a.id ? await api("PUT", "/api/kb/" + a.id, v) : await api("POST", "/api/kb", v); toast(t("saved")); location.hash = "#/kb/" + r.id; }, { wide: true });
 }
+// ---------------------------------------------------------- company subscriptions & recurring bills (billsubs.py)
+const BILL_CYCLES = () => [["monthly", L2("Every month", "كل شهر")], ["yearly", L2("Every year", "كل سنة")], ["quarterly", L2("Every 3 months", "كل 3 أشهر")], ["weekly", L2("Every week", "كل أسبوع")]];
+const BILL_ALLOC = () => [["shared", L2("Shared overhead — spread over the projects by their overhead %", "مصروفات عامة مشتركة — تُوزّع على المشروعات بنسبها")],
+  ["company", L2("Company cost — NOT allocated to projects", "تكلفة على الشركة — لا تُوزّع على المشروعات")],
+  ["project", L2("One project", "مشروع واحد")], ["split", L2("Split between projects (by %)", "مقسّمة على مشروعات (بالنسب)")]];
+const billAllocTxt = r => r.alloc === "project" ? `${L2("Project", "مشروع")} ${r.bu_code}` : r.alloc === "split" ? r.split.map(s => `${s.bu_code} ${s.pct}%`).join(" · ")
+  : r.alloc === "company" ? L2("Company cost (not allocated)", "على الشركة (غير موزعة)") : L2("Shared overhead", "مصروفات عامة مشتركة");
+const billState = r => r.state === "off" ? `<span class="chip">${esc(L2("Paused", "متوقف"))}</span>` : r.state === "overdue" ? `<span class="chip bad">${esc(L2(`${-r.days_left} day(s) late`, `متأخر ${-r.days_left} يوم`))}</span>`
+  : r.days_left === 0 ? `<span class="chip warn">${esc(L2("Due today", "مستحق اليوم"))}</span>` : `<span class="chip ${r.state === "due" ? "warn" : "ok"}">${esc(L2(`in ${r.days_left} day(s)`, `بعد ${r.days_left} يوم`))}</span>`;
+async function billForm(b) {
+  b = b || { cycle: "monthly", alloc: "shared", remind_days: 3, remind_time: "09:00", account: "6020", active: 1, remind_to: [me().username], split: [] };
+  let people = []; try { people = (await api("GET", "/api/people")).filter(p => p.active !== 0 && p.active !== false); } catch { people = [{ username: me().username, full_name: me().full_name }]; }
+  const splitRow = (s = {}) => `<div class="row bsplit" style="gap:6px;margin-bottom:6px"><select data-sp="bu" style="flex:1">${optHtml(S.boot.bus.map(x => [x.code, `${x.code} — ${x.name}`]), s.bu_code || "")}</select>
+    <input data-sp="pct" type="number" step="any" value="${esc(s.pct ?? "")}" placeholder="%" style="width:90px" class="num"><button type="button" class="btn sm" data-a="bsdel">✕</button></div>`;
+  const html = form([
+    { k: "name", l: L2("Name", "الاسم"), v: b.name, req: 1, ph: L2("e.g. ChatGPT Pro", "مثال: ChatGPT Pro") }, { k: "vendor", l: L2("Supplier", "المورّد"), v: b.vendor, ph: "OpenAI" },
+    { k: "plan", l: L2("Plan / what it covers", "الباقة / ما تغطيه"), v: b.plan }, { k: "cycle", l: L2("Paid", "يُدفع"), type: "select", opts: BILL_CYCLES(), v: b.cycle },
+    { k: "amount", l: L2("Amount (company currency)", "المبلغ (بعملة الشركة)"), type: "number", v: b.amount, req: 1 },
+    { k: "currency_note", l: L2("Price in its own currency (note)", "السعر بعملته (ملاحظة)"), v: b.currency_note, ph: "USD 200" },
+    { k: "next_due", l: L2("Next due date", "تاريخ الاستحقاق القادم"), type: "date", v: b.next_due || today(), req: 1 },
+    { k: "account", l: L2("Expense account", "حساب المصروف"), type: "select", opts: accts(["Expense"]), v: b.account || "6020" },
+    { k: "alloc", l: L2("Who carries the cost", "على من تُحمَّل التكلفة"), type: "select", opts: BILL_ALLOC(), v: b.alloc, span: "spanall", change: "balloc" },
+    { k: "bu_id", l: L2("Project", "المشروع"), type: "select", opts: buOpts(), v: b.bu_id || "" },
+    { html: `<div id="bsplit"><span class="fl">${esc(L2("Split (must add up to 100%)", "التقسيم (يجب أن يساوي 100%)"))}</span><div id="bsrows">${(b.split.length ? b.split : [{}, {}]).map(splitRow).join("")}</div>
+      <button type="button" class="btn sm" data-a="bsadd">+ ${esc(L2("Project", "مشروع"))}</button> <small class="muted" id="bstot"></small></div>`, span: "spanall" },
+    { k: "paid_from", l: L2("Usually paid from", "يُدفع عادةً من"), type: "select", opts: [["", L2("— by payment method —", "— حسب طريقة الدفع —")], ...moneyAccts(), ...accts(null, ["short_term_debt"])], v: b.paid_from || "" },
+    { k: "method", l: t("method"), type: "select", opts: ["", ...S.boot.enums.methods], v: b.method || "" },
+    { html: `<h4 class="fsec">${esc(L2("Reminder", "التذكير"))}</h4>`, span: "spanall" },
+    { k: "remind_days", l: L2("Days before it is due", "قبل الاستحقاق بـ (أيام)"), type: "number", v: b.remind_days },
+    { k: "remind_time", l: L2("At", "في الساعة"), type: "time", v: b.remind_time },
+    { html: `<span class="fl">${esc(L2("Remind", "تذكير"))}</span><div class="row" style="flex-wrap:wrap;gap:4px 14px">${people.map(p => `<label class="chk"><input type="checkbox" data-rt="${esc(p.username)}" ${(b.remind_to || []).includes(p.username) ? "checked" : ""}> ${esc(p.full_name || p.display_name || p.username)}</label>`).join("")}</div>
+      <small class="muted">${esc(L2("In the bell, and as a phone / computer notification even with the app closed (shared workspace, notifications allowed on that device).", "في الجرس، وكإشعار على الهاتف / الكمبيوتر حتى والتطبيق مغلق (مساحة العمل المشتركة، مع السماح بالإشعارات على الجهاز)."))}</small>`, span: "spanall" },
+    { k: "active", l: L2("Active", "نشط"), type: "switch", v: b.active },
+    { k: "notes", l: t("notes"), type: "textarea", v: b.notes, span: "spanall" }]);
+  drawer((b.id ? t("edit") : t("new")) + " — " + L2("Subscription / bill", "اشتراك / فاتورة"), html, async v => {
+    v.remind_to = $$("[data-rt]").filter(x => x.checked).map(x => x.dataset.rt);
+    v.split = $$(".bsplit").map(r => ({ bu_code: $("[data-sp=bu]", r).value, pct: +$("[data-sp=pct]", r).value || 0 })).filter(s => s.bu_code && s.pct);
+    const r = b.id ? await api("PUT", "/api/bills/" + b.id, v) : await api("POST", "/api/bills", v);
+    toast(t("saved")); loadAlerts(true); void r;
+    if (!b.id && location.hash.split("?")[0] !== "#/bills") location.hash = "#/bills"; else setTimeout(route, 0);   // the list again, with it
+  });
+  const sync = () => { const a = ($("[name=alloc]") || {}).value; const bu = $("[name=bu_id]"); if (bu) bu.closest(".f").hidden = a !== "project"; const sp = $("#bsplit"); if (sp) sp.hidden = a !== "split";
+    const tot = $$("[data-sp=pct]").reduce((s, x) => s + (+x.value || 0), 0); const tt = $("#bstot"); if (tt) tt.textContent = `${L2("Total", "الإجمالي")}: ${tot}%`; };
+  S.H.balloc = sync; S.H.bsadd = () => { $("#bsrows").insertAdjacentHTML("beforeend", splitRow()); sync(); }; S.H.bsdel = el => { el.closest(".bsplit").remove(); sync(); };
+  document.addEventListener("input", e => { if (e.target.dataset && e.target.dataset.sp) sync(); });
+  sync();
+}
+function billPay(r) {
+  drawer(`${L2("Record payment", "تسجيل دفعة")} — ${r.name}`, `<p class="muted">${esc(L2(`Booked as an operating expense (${billAllocTxt(r)}); the next due date moves to the following ${r.cycle === "weekly" ? "week" : r.cycle === "yearly" ? "year" : r.cycle === "quarterly" ? "quarter" : "month"}.`,
+      `تُسجّل كمصروف تشغيلي (${billAllocTxt(r)})؛ ويتحرك تاريخ الاستحقاق للدورة التالية.`))}</p>` + form([
+    { k: "date", l: t("date"), type: "date", v: today() }, { k: "amount", l: L2("Amount paid", "المبلغ المدفوع"), type: "number", v: r.amount, help: r.currency_note ? `${L2("Price", "السعر")}: ${r.currency_note}` : "" },
+    { k: "paid_from", l: L2("Paid from", "دُفع من"), type: "select", opts: [["", L2("— by payment method —", "— حسب طريقة الدفع —")], ...moneyAccts(), ...accts(null, ["short_term_debt"])], v: r.paid_from || "" },
+    { k: "method", l: t("method"), type: "select", opts: ["", ...S.boot.enums.methods], v: r.method || "" },
+    { k: "update_amount", l: L2("Use this amount from now on (the price changed)", "استخدم هذا المبلغ من الآن (تغيّر السعر)"), type: "checkbox", span: "spanall" }]),
+  async v => { const x = await api("POST", `/api/bills/${r.id}/pay`, v); toast(L2(`Paid — next due ${x.next_due}`, `تم الدفع — الاستحقاق القادم ${x.next_due}`)); loadAlerts(true); route(); });
+}
+PAGES.bills = async (view, parts) => {
+  const ed = can("purchasing.bills", "edit"), add = can("purchasing.bills", "add");
+  if (parts[1]) {
+    const r = await api("GET", "/api/bills/" + parts[1]);
+    $("#ttl").textContent = r.name;
+    S.H.bpay = () => billPay(r); S.H.bedit = () => billForm(r);
+    S.H.bdel = async () => { if (!await uiConfirm(t("confirm_delete"))) return; await api("DELETE", "/api/bills/" + r.id); location.hash = "#/bills"; };
+    view.innerHTML = `<div class="toolbar">${add && r.active ? `<button class="btn pri" data-a="bpay">✓ ${esc(L2("Record payment", "تسجيل دفعة"))}</button>` : ""}${ed ? `<button class="btn" data-a="bedit">${t("edit")}</button><button class="btn danger" data-a="bdel">${t("delete")}</button>` : ""}</div>
+      <div class="kpis">${kpiBox(L2("Amount", "المبلغ"), r.amount, "", esc(r.currency_note || ""))}${kpiBox(L2("Next due", "الاستحقاق القادم"), `${esc(r.next_due)}`, "", billState(r))}
+        ${kpiBox(L2("Per month", "شهرياً"), r.per_month)}${kpiBox(L2("Reminder", "التذكير"), esc(`${r.remind_days}d · ${r.remind_time}`), "", esc(r.remind_to.join(", ")))}</div>
+      <div class="card"><p><b>${esc(r.vendor || "")}</b> ${esc(r.plan || "")} · ${esc(BILL_CYCLES().find(c => c[0] === r.cycle)[1])} · ${esc(billAllocTxt(r))}</p>${r.notes ? `<p class="muted">${esc(r.notes)}</p>` : ""}</div>
+      <div class="card"><h2>${esc(L2("Payments", "المدفوعات"))}</h2>${r.payments.length ? `<div class="tbl stack"><table><thead><tr><th>${t("date")}</th><th>${t("description")}</th><th>${t("bu")}</th><th class="num">${t("amount")}</th></tr></thead><tbody>
+        ${r.payments.map(p => `<tr class="click" data-href="#/entry/${p.id}"><td>${fd(p.date)}</td><td>${esc(p.memo)}</td><td>${esc(p.bu_code || L2("—", "—"))}</td><td class="num">${money(p.amount)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${t("nothing")}</div>`}</div>`;
+    return;
+  }
+  const d = await api("GET", "/api/bills");
+  S.H.bnew = () => billForm(); S.H.bpayl = el => billPay(d.rows.find(x => String(x.id) === el.dataset.id));
+  view.innerHTML = `<div class="toolbar">${add ? `<button class="btn pri" data-a="bnew">+ ${esc(L2("Subscription / bill", "اشتراك / فاتورة"))}</button>` : ""}</div>
+    <div class="kpis">${kpiBox(L2("Per month", "شهرياً"), d.per_month)}${kpiBox(L2("Per year", "سنوياً"), d.per_year)}${kpiBox(L2("Due soon / late", "مستحقة قريباً / متأخرة"), String(d.due_soon.length), d.due_soon.length ? "neg" : "")}</div>
+    <div class="card">${d.rows.length ? `<div class="tbl stack"><table><thead><tr><th>${t("name")}</th><th>${esc(L2("Paid", "يُدفع"))}</th><th class="num">${t("amount")}</th><th>${esc(L2("Next due", "الاستحقاق"))}</th><th>${esc(L2("Cost carried by", "تُحمَّل على"))}</th><th>${esc(L2("Reminder", "التذكير"))}</th><th></th></tr></thead><tbody>
+      ${d.rows.map(r => `<tr class="click" data-href="#/bills/${r.id}"><td><b>${esc(r.name)}</b><div class="lines">${esc([r.vendor, r.plan].filter(Boolean).join(" · "))}</div></td>
+        <td>${esc(BILL_CYCLES().find(c => c[0] === r.cycle)[1])}</td><td class="num">${money(r.amount)}${r.currency_note ? `<div class="lines">${esc(r.currency_note)}</div>` : ""}</td>
+        <td>${fd(r.next_due)} ${billState(r)}</td><td>${esc(billAllocTxt(r))}</td><td><small>${esc(`${r.remind_days}d · ${r.remind_time}`)}</small><div class="lines">${esc(r.remind_to.join(", "))}</div></td>
+        <td onclick="event.stopPropagation()">${add && r.active ? `<button class="btn sm pri" data-a="bpayl" data-id="${r.id}">✓ ${esc(L2("Paid", "دُفع"))}</button>` : ""}</td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="empty">${svg("repeat")}<div>${esc(L2("Add what the company pays every month or year — ChatGPT, Claude, software, internet… — with a reminder before each is due.", "أضف ما تدفعه الشركة كل شهر أو سنة — ChatGPT وClaude والبرامج والإنترنت… — مع تذكير قبل كل استحقاق."))}</div></div>`}</div>`;
+};
+
+// ---------------------------------------------------------- my alerts: what each person wants to be told, and when
+const ALERT_PRESETS = () => [
+  ["attendance_missing", L2("Attendance not recorded by 09:30", "لم يُسجَّل الحضور حتى 09:30"), { at: "09:30" }],
+  ["absences", L2("Who is absent / sick / on leave today", "الغائبون / المرضى / في إجازة اليوم"), { at: "10:00" }],
+  ["myday_not_started", L2("Field team hasn't started “My day” by 09:00", "الفريق الميداني لم يبدأ «يومي» حتى 09:00"), { at: "09:00" }],
+  ["bill_due", L2("Subscriptions & bills due in 3 days", "اشتراكات وفواتير مستحقة خلال 3 أيام"), { days: 3 }],
+  ["cheque_due", L2("Customer cheques due in 2 days", "شيكات عملاء تستحق خلال يومين"), { days: 2 }],
+  ["loan_due", L2("Loan instalments due in 3 days", "أقساط قروض تستحق خلال 3 أيام"), { days: 3 }],
+  ["receivable_overdue", L2("Customers late more than 30 days", "عملاء متأخرون أكثر من 30 يوماً"), { days: 30 }],
+  ["cash_low", L2("Cash & bank below 50,000", "النقدية والبنوك أقل من 50,000"), { below: 50000 }],
+  ["approvals_waiting", L2("Entries waiting for approval over 24 h", "قيود تنتظر الاعتماد أكثر من 24 ساعة"), { hours: 24 }],
+  ["project_over_cost", L2("Project costs ahead of client payments", "تكاليف مشروع تتجاوز مدفوعات العميل"), {}],
+  ["budget_over", L2("A cost passed 90% of its budget", "تكلفة تجاوزت 90% من موازنتها"), { pct: 90 }],
+  ["payroll_not_run", L2("Payroll not posted by the 25th", "الرواتب لم تُرحّل حتى يوم 25"), { day: 25 }],
+  ["maintenance_due", L2("Equipment maintenance due", "صيانة معدات مستحقة"), {}],
+  ["stock_low", L2("Stock at reorder level", "مخزون عند حد إعادة الطلب"), {}],
+  ["contract_expiring", L2("Contracts ending in 30 days", "عقود تنتهي خلال 30 يوماً"), { days: 30 }]];
+const SET_LABEL = () => ({ days: L2("Days", "أيام"), min_amount: L2("Minimum amount", "أقل مبلغ"), days_before: L2("Days before", "قبل بـ (أيام)"), min_count: L2("At least (people)", "على الأقل (أشخاص)"),
+  people: L2("People (usernames, comma separated)", "الأشخاص (أسماء المستخدمين مفصولة بفاصلة)"), below: L2("Below", "أقل من"), hours: L2("Hours", "ساعات"), pct: L2("Percent of budget", "نسبة من الموازنة"),
+  day: L2("Day of the month", "يوم الشهر"), by: L2("By more than", "بأكثر من") });
+function alertForm(d, a) {
+  const cat = d.catalog, trig = a ? a.trigger : (cat.triggers[0] || {}).key;
+  const tdef = k => cat.triggers.find(x => x.key === k) || { settings: {} };
+  const setFields = (k, cur = {}) => Object.entries(tdef(k).settings).map(([s, v]) => ({ k: "set_" + s, l: SET_LABEL()[s] || s, type: s === "people" ? "text" : "number", v: cur[s] ?? v }));
+  const body = () => form([{ k: "name", l: L2("Alert name", "اسم التنبيه"), v: a ? a.name : "", req: 1 },
+    { k: "trigger", l: L2("Tell me when", "نبّهني عندما"), type: "select", opts: cat.triggers.map(x => [x.key, S.lang === "ar" ? x.does_ar : x.does]), v: trig, change: "altrig" },
+    ...setFields(trig, a ? a.settings : {}),
+    { k: "at", l: L2("Check after (time of day, optional)", "تحقق بعد الساعة (اختياري)"), type: "time", v: a ? a.settings.at || "" : "" },
+    { k: "repeat_days", l: L2("Remind again after (days, 0 = once per item)", "كرر التذكير بعد (أيام، 0 = مرة لكل عنصر)"), type: "number", v: a ? a.repeat_days : 0 },
+    ...(d.can_others ? [{ k: "to", l: L2("Notify (usernames, blank = me)", "تنبيه (أسماء المستخدمين، فارغ = أنا)"), v: a ? (a.params.to || "") : "" }] : []),
+    { k: "active", l: L2("On", "مفعّل"), type: "switch", v: a ? a.active : 1 }]);
+  drawer((a ? t("edit") : t("new")) + " — " + L2("Alert", "تنبيه"), `<div id="alform">${body()}</div><div id="alprev" class="muted" style="margin-top:8px"></div>`, async v => {
+    const settings = {}; Object.keys(v).filter(k => k.startsWith("set_")).forEach(k => { settings[k.slice(4)] = v[k]; });
+    if (v.at) settings.at = v.at;
+    const out = { name: v.name, trigger: v.trigger, settings, repeat_days: +v.repeat_days || 0, active: v.active, params: { to: v.to || "" } };
+    if (a) await api("PUT", "/api/my-alerts/" + a.id, out); else await api("POST", "/api/my-alerts", out);
+    toast(t("saved")); route();
+  });
+  S.H.altrig = el => { const k = el.value, name = $("[name=name]").value; $("#alform").innerHTML = form([{ k: "name", l: L2("Alert name", "اسم التنبيه"), v: name || (cat.triggers.find(x => x.key === k) || {})[S.lang === "ar" ? "does_ar" : "does"] || "", req: 1 },
+      { k: "trigger", l: L2("Tell me when", "نبّهني عندما"), type: "select", opts: cat.triggers.map(x => [x.key, S.lang === "ar" ? x.does_ar : x.does]), v: k, change: "altrig" }, ...setFields(k),
+      { k: "at", l: L2("Check after (time of day, optional)", "تحقق بعد الساعة (اختياري)"), type: "time", v: "" },
+      { k: "repeat_days", l: L2("Remind again after (days, 0 = once per item)", "كرر التذكير بعد (أيام، 0 = مرة لكل عنصر)"), type: "number", v: 0 },
+      ...(d.can_others ? [{ k: "to", l: L2("Notify (usernames, blank = me)", "تنبيه (أسماء المستخدمين، فارغ = أنا)"), v: "" }] : []), { k: "active", l: L2("On", "مفعّل"), type: "switch", v: 1 }]); };
+}
+PAGES.alerts = async (view) => {
+  const d = await api("GET", "/api/my-alerts");
+  const keys = new Set(d.catalog.triggers.map(x => x.key));
+  const presets = ALERT_PRESETS().filter(([k]) => keys.has(k) && !d.rows.some(r => r.trigger === k));
+  const add = can("team.alerts", "add");
+  S.H.alnew = () => alertForm(d); S.H.aledit = el => alertForm(d, d.rows.find(r => String(r.id) === el.dataset.id));
+  S.H.alpreset = async el => { const [k, name, set] = ALERT_PRESETS().find(p => p[0] === el.dataset.k);
+    try { await api("POST", "/api/my-alerts", { name, trigger: k, settings: set, repeat_days: 0, active: true, params: {} }); toast(L2("Alert on ✓", "تم تفعيل التنبيه ✓")); route(); } catch (e) { fail(e); } };
+  S.H.altoggle = async el => { const r = d.rows.find(x => String(x.id) === el.dataset.id); await api("PUT", "/api/my-alerts/" + r.id, { ...r, active: !r.active }); route(); };
+  S.H.aldel = async el => { if (!await uiConfirm(t("confirm_delete"))) return; await api("DELETE", "/api/my-alerts/" + el.dataset.id); route(); };
+  S.H.altest = async el => { try { const r = await api("POST", "/api/automations/run", { id: +el.dataset.id, local: localStamp() }); const x = r.done[0];
+    toast(x && x.acted ? L2(`Sent ${x.acted} alert(s) — see the bell`, `أُرسل ${x.acted} تنبيه — انظر الجرس`) : x && x.error ? x.error : L2("Nothing to report right now", "لا شيء للتنبيه الآن")); loadAlerts(true); route(); } catch (e) { fail(e); } };
+  S.H.alread = async () => { await api("POST", "/api/my-alerts/read", {}); loadAlerts(true); route(); };
+  const trigName = k => { const x = d.catalog.triggers.find(t2 => t2.key === k); return x ? (S.lang === "ar" ? x.does_ar : x.does) : k; };
+  view.innerHTML = `<div class="toolbar">${add ? `<button class="btn pri" data-a="alnew">+ ${esc(L2("Alert", "تنبيه"))}</button>` : ""}<span class="spacer"></span><a class="btn" href="#/settings?tab=notify">${esc(L2("How I'm notified", "طريقة إشعاري"))}</a></div>
+    ${presets.length && add ? `<div class="card"><h2>${esc(L2("Suggested — one tap to switch on", "مقترحة — ضغطة واحدة للتفعيل"))}</h2><div class="row" style="flex-wrap:wrap;gap:6px">${presets.map(([k, n]) => `<button class="btn sm" data-a="alpreset" data-k="${k}">＋ ${esc(n)}</button>`).join("")}</div></div>` : ""}
+    <div class="card"><h2>${esc(L2("My alerts", "تنبيهاتي"))}</h2>${d.rows.length ? `<div class="tbl stack"><table><tbody>${d.rows.map(r => `<tr><td><b>${esc(r.name)}</b>${r.active ? "" : ` <span class="chip">${esc(L2("Off", "متوقف"))}</span>`}<div class="lines">${esc(trigName(r.trigger))}${r.settings.at ? ` · ${esc(L2("after", "بعد"))} ${esc(r.settings.at)}` : ""}${r.params && r.params.to ? ` · → ${esc(r.params.to)}` : ""}</div>${r.last_error ? `<div class="neg">⚠ ${esc(r.last_error)}</div>` : ""}</td>
+      <td class="num">${r.fired}<div class="lines">${esc(L2("times", "مرة"))}</div></td><td style="white-space:nowrap"><button class="btn sm" data-a="altest" data-id="${r.id}" title="${esc(L2("Check now", "تحقق الآن"))}">▶</button><button class="btn sm" data-a="altoggle" data-id="${r.id}">${esc(r.active ? L2("Pause", "إيقاف") : L2("Turn on", "تشغيل"))}</button><button class="btn sm" data-a="aledit" data-id="${r.id}">${t("edit")}</button><button class="btn sm danger" data-a="aldel" data-id="${r.id}">✕</button></td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="empty">${svg("bell")}<div>${esc(L2("No alerts yet — pick a suggestion above or make your own.", "لا توجد تنبيهات — اختر من المقترحات أو أنشئ تنبيهاً."))}</div></div>`}
+      <p class="muted" style="font-size:.82em">${esc(L2("Alerts are checked every few minutes while BeyondERP is open on one of your devices, and reach all your devices — the bell, and phone / computer notifications even when closed (shared workspace). Subscription reminders are scheduled ahead, so they arrive even if nobody opens the app.", "تُفحص التنبيهات كل بضع دقائق طالما BeyondERP مفتوح على أحد أجهزتك، وتصل لكل أجهزتك — الجرس وإشعارات الهاتف / الكمبيوتر حتى وهو مغلق (مساحة العمل المشتركة). تذكيرات الاشتراكات مجدولة مسبقاً فتصل حتى لو لم يفتح أحد التطبيق."))}</p></div>
+    <div class="card"><h2 class="row" style="gap:8px">${esc(L2("Recent alerts", "آخر التنبيهات"))}<span class="spacer"></span>${d.feed.some(f => !f.read_at) ? `<button class="btn sm" data-a="alread">${esc(L2("Mark all read", "تعليم الكل كمقروء"))}</button>` : ""}</h2>
+      ${d.feed.length ? d.feed.slice(0, 60).map(f => `<a class="alert-row" href="${esc(f.href || "#/alerts")}" style="${f.read_at ? "opacity:.6" : ""}"><span class="dot warn">${svg("bell")}</span><span><b>${esc(f.title)}</b> — ${esc(f.body)}<br><small class="muted">${esc(f.at.slice(0, 16).replace("T", " "))}</small></span></a>`).join("")
+        : `<div class="empty">${t("nothing")}</div>`}</div>`;
+};
+const localStamp = () => { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };
 PAGES.kb = async (view, parts, q) => {
   if (parts[1]) {
     const a = await api("GET", "/api/kb/" + parts[1]), mine = (a.created_by === S.boot.user.username && can("team.kb", "add")) || can("team.kb", "edit");
@@ -8515,10 +8673,10 @@ PAGES.notifications = view => notifPage(view, "");
 const NOTIFY_PRESETS = () => [["all", L2("Everything", "كل شيء"), "🔔"], ["mine", L2("Only what's for me", "ما يخصني فقط"), "🎯"],
   ["mentions", L2("Mentions only", "الإشارات فقط"), "@"], ["none", L2("Nothing", "لا شيء"), "🔕"]];
 const NOTIFY_PRESET_SET = {
-  all: { level: "all", links: true, reactions: true, approvals: true, decisions: true, fu_new: true, fu_due: true, desk: true, bell: true },
-  mine: { level: "mentions", links: true, reactions: false, approvals: true, decisions: true, fu_new: true, fu_due: true, desk: false, bell: false },
-  mentions: { level: "mentions", links: false, reactions: false, approvals: false, decisions: false, fu_new: false, fu_due: false, desk: false, bell: false },
-  none: { level: "none", links: false, reactions: false, approvals: false, decisions: false, fu_new: false, fu_due: false, desk: false, bell: false },
+  all: { level: "all", links: true, reactions: true, approvals: true, decisions: true, fu_new: true, fu_due: true, reminders: true, desk: true, bell: true },
+  mine: { level: "mentions", links: true, reactions: false, approvals: true, decisions: true, fu_new: true, fu_due: true, reminders: true, desk: false, bell: false },
+  mentions: { level: "mentions", links: false, reactions: false, approvals: false, decisions: false, fu_new: false, fu_due: false, reminders: false, desk: false, bell: false },
+  none: { level: "none", links: false, reactions: false, approvals: false, decisions: false, fu_new: false, fu_due: false, reminders: false, desk: false, bell: false },
 };
 const whatPreset = p => Object.keys(NOTIFY_PRESET_SET).find(k => Object.entries(NOTIFY_PRESET_SET[k]).every(([x, v]) =>
   x === "level" ? (p.level || "all") === v : x === "links" ? (p.links !== false) === v : x === "reactions" ? (p.reactions !== false) === v : notifyOn(p, x) === v)) || "";
@@ -8573,6 +8731,7 @@ async function notifPage(view, head) {
         ${sw("fu_new", L2("Follow-ups given to me", "متابعات أُسندت إليّ"), L2("When someone assigns me a follow-up", "عندما يسند إليّ أحدهم متابعة"), notifyOn(p, "fu_new"))}
         ${sw("fu_due", L2("Follow-up reminders", "تذكير المتابعات"), L2("On the morning they are due", "صباح يوم الاستحقاق"), notifyOn(p, "fu_due"))}
         ${notifyOn(p, "fu_due") ? `<label class="f nt-time">${esc(L2("Remind me at", "ذكّرني الساعة"))}<input type="time" value="${esc(p.fu_time || "09:00")}" data-change="nttime" data-k="fu_time"></label>` : ""}
+        ${sw("reminders", L2("My alerts & bill reminders", "تنبيهاتي وتذكير الفواتير"), L2("The alerts you set in My Alerts, and subscriptions coming due — at the time set on each", "التنبيهات التي ضبطتها في «تنبيهاتي» واستحقاق الاشتراكات — في الوقت المحدد لكل منها"), notifyOn(p, "reminders"))}
         ${can("crm.desk") || S.boot.user.is_admin ? sw("desk", L2("Bookings and messages from our public pages", "الحجوزات والرسائل من صفحاتنا العامة"), L2("New bookings, changes, enquiries, guest chats, signed offers", "حجوزات جديدة وتعديلات واستفسارات ودردشات وعروض موقّعة"), notifyOn(p, "desk")) : ""}
         ${sw("bell", L2("Other alerts", "تنبيهات أخرى"), L2("Contracts ending, overdue payments, low stock… — while BeyondERP is open", "عقود تنتهي ومدفوعات متأخرة ومخزون منخفض… — أثناء فتح BeyondERP"), notifyOn(p, "bell"))}
         <h3 class="nt-h">${esc(L2("Quiet hours", "ساعات الهدوء"))}</h3>
@@ -8640,7 +8799,7 @@ async function notifPage(view, head) {
 const NOTIFY_DEFAULTS = { level: "all", rooms: [], muted: [], mode: "sound", desktop: true, sound: "chime", volume: 70, vibrate: true, vibe: "double", banner: true,
   preview: true, reactions: true, alerts: true, links: true, fu_time: "09:00", quiet: false, quiet_from: "22:00", quiet_to: "07:00", quiet_days: [], ask: "" };
 // one notification type the person can switch off — the older single "approvals and follow-ups" switch still counts
-const NOTIFY_TYPES = ["approvals", "decisions", "fu_new", "fu_due", "desk", "bell"];
+const NOTIFY_TYPES = ["approvals", "decisions", "fu_new", "fu_due", "reminders", "desk", "bell"];
 const notifyOn = (p, k) => k === "reactions" ? p.reactions !== false : k === "links" ? p.links !== false : (p[k] ?? (p.alerts !== false));
 const notifyPrefs = () => ({ ...NOTIFY_DEFAULTS, ...(((S.boot && S.boot.profile) || {}).prefs || {}).notify });
 const notifPerm = () => (typeof Notification === "undefined" ? "unsupported" : Notification.permission);
@@ -8976,7 +9135,7 @@ function pushHints(list) {
     if (h.day) {     // queued from the earliest time zone's start of that day; each device rings at its own reminder time
       const start = Date.parse(h.day + "T00:00:00Z") - 14 * 3600000;
       if (isNaN(start) || h.day < today()) continue;                 // already past: the bell shows it
-      CloudAPI.call("fn", "push", { action: "schedule", key: h.key, at: new Date(Math.max(start, Date.now() + 60000)).toISOString(), day: h.day, pref: h.pref,
+      CloudAPI.call("fn", "push", { action: "schedule", key: h.key, at: new Date(Math.max(start, Date.now() + 60000)).toISOString(), day: h.day, pref: h.pref, time: h.time,
         to: h.to, title: h.title, body: h.body, href: h.href, tag: h.tag }).catch(() => {});
       continue;
     }

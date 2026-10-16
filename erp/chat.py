@@ -119,7 +119,7 @@ def save_profile(db, uid, d):
             if "desktop" in n:
                 prefs["notify"]["desktop"] = bool(n["desktop"])
             for k in ("vibrate", "banner", "preview", "reactions", "alerts", "quiet", "push", "links",
-                      "approvals", "decisions", "fu_new", "fu_due", "desk", "bell"):     # each kind of notification
+                      "approvals", "decisions", "fu_new", "fu_due", "reminders", "desk", "bell"):     # each kind of notification
                 if k in n:
                     prefs["notify"][k] = bool(n[k])
             if n.get("sound") in SOUNDS:

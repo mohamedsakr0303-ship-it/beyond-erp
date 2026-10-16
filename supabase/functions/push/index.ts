@@ -4,7 +4,8 @@
 //   POST {action: "send", company, kind: "chat", room, dm, to: [usernames], mentions: [usernames], title, body, href, tag}
 //   POST {action: "send", company, kind: "approval", title, body, href}        -> the company's administrators
 //   POST {action: "send", company, kind: "link", link, title, body, href}      -> everyone in the other company
-//   POST {action: "send", company, kind: "notify", to: [usernames], title, body, href, tag, pref}  follow-ups, decisions…
+//   POST {action: "send", company, kind: "notify", to: [usernames], title, body, href, tag, pref}  follow-ups, decisions, alerts…
+//   POST {action: "schedule", …, day, time?, pref}   a reminder that day at that time (bills due, alerts) — or the person's own
 //   POST {action: "schedule", company, key, at, to, title, body, href, tag} / {action: "cancel", company, key}  reminders
 //   POST {action: "flush"}                                  send the reminders whose time has come (scheduled job)
 //   POST {action: "visitor", token}                         a public page received something (no sign-in)
@@ -170,11 +171,12 @@ Deno.serve(async (req) => {
     for (const q of (due.ok ? due.data : []) || []) {
       const m = q.msg || {}, later: string[] = [];
       const emails = Array.isArray(m.emails) ? m.emails : await emailsFor(q.company_id, m.to);
-      // ready when that device's own day has come and its reminder time has passed (each person picks theirs)
+      // ready when that device's own day has come and the reminder's time has passed — the time set on the reminder
+      // (a bill due, an alert), else the person's own follow-up time
       const ready = (p: any) => {
         if (!m.day) return true;
         const d = localDay(p.tz).toISOString().slice(0, 10);
-        return d > m.day || (d === m.day && localMinutes(p.tz) >= hm(p.fu_time || "09:00"));
+        return d > m.day || (d === m.day && localMinutes(p.tz) >= hm(m.time || p.fu_time || "09:00"));
       };
       sent += await deliver(q.company_id, emails, { title: m.title, body: m.body, href: m.href, tag: m.tag, kind: "notify", pref: m.pref || "fu_due" },
                             { kind: "notify", ready, later });
@@ -207,7 +209,9 @@ Deno.serve(async (req) => {
     const to = (Array.isArray(b.to) ? b.to : []).map((x: any) => clip(x, 80)).slice(0, 50);
     await call("POST", "/rest/v1/push_queue?on_conflict=company_id,key", { company_id: company, key, at: at.toISOString(), sender: caller,
       msg: { to, title: clip(b.title, 80), body: clip(b.body, 180), href: String(b.href || "#/").slice(0, 120), tag: clip(b.tag, 40),
-             day: /^\d{4}-\d{2}-\d{2}$/.test(String(b.day || "")) ? b.day : undefined, pref: ["fu_due"].includes(b.pref) ? b.pref : "fu_due" } },
+             day: /^\d{4}-\d{2}-\d{2}$/.test(String(b.day || "")) ? b.day : undefined,
+             time: /^\d{1,2}:\d{2}$/.test(String(b.time || "")) ? b.time : undefined,
+             pref: ["fu_due", "reminders"].includes(b.pref) ? b.pref : "fu_due" } },
       { ...svc, Prefer: "resolution=merge-duplicates" });
     return reply(200, { ok: true });
   }
@@ -221,8 +225,9 @@ Deno.serve(async (req) => {
     const direct = new Set<string>(b.dm ? emails : emails.filter((e: string) => ment.has(e)));
     sent = await deliver(company, emails, msg, { kind: "chat", room: Number(b.room) || 0, direct });
   } else if (b.kind === "notify") {        // follow-ups, approval decisions, reactions… (named by username)
-    const pref = ["reactions", "decisions", "fu_new", "fu_due"].includes(b.pref) ? b.pref : "";
-    sent = await deliver(company, await emailsFor(company, b.to, caller), { ...msg, pref }, { kind: "notify" });
+    const pref = ["reactions", "decisions", "fu_new", "fu_due", "reminders"].includes(b.pref) ? b.pref : "";
+    // an alert can be for the person whose app noticed it too (their other devices); everything else skips the sender
+    sent = await deliver(company, await emailsFor(company, b.to, pref === "reminders" ? undefined : caller), { ...msg, pref }, { kind: "notify" });
   } else if (b.kind === "approval") {
     const adm = await call("GET", `/rest/v1/members?select=email&company_id=eq.${enc(company)}&active=is.true&pending=is.false&is_admin=is.true`);
     sent = await deliver(company, (adm.data || []).map((m: any) => String(m.email).toLowerCase()).filter((e: string) => e !== caller), msg, { kind: "approval" });
