@@ -120,6 +120,22 @@ class Engine(unittest.TestCase):
 
 
 class Interchange(unittest.TestCase):
+    def test_live_fee_is_paid_against_actual_costs(self):
+        """Live fee: what the client paid so far over what the project cost so far — advances count, a negotiated
+        supplier discount and a refundable deposit do not; nothing is left "to collect"."""
+        db = Database(":memory:")
+        db.x("INSERT INTO business_units(code,name,basis,fee_pct) VALUES ('LF-1','Villa',?,0.2)", (a.LIVE_FEE,))
+        a.record_project_cost(db, {"bu_code": "LF-1", "description": "Steel", "vendor": "Sup", "qty": 1, "rate": 10000,
+                                   "paid": 9000, "savings": 1000, "date": "2026-03-01"})
+        a.record_collection(db, {"bu_code": "LF-1", "amount": 9000, "date": "2026-03-05"})
+        b = next(x for x in a.bu_summaries(db) if x["code"] == "LF-1")
+        self.assertEqual((b["client_paid"], b["actual_costs"], b["to_collect"]), (9000.0, b["cogs"] + b["direct_overhead"], 0.0))
+        self.assertAlmostEqual(b["live_fee"], round((9000 - b["actual_costs"]) / b["actual_costs"], 4))
+        self.assertEqual(b["expected_billing"], 9000.0)
+        empty = Database(":memory:")
+        empty.x("INSERT INTO business_units(code,name,basis) VALUES ('LF-2','New',?)", (a.LIVE_FEE,))
+        self.assertIsNone(a.bu_summaries(empty)[0]["live_fee"])        # no costs yet: no fee to show
+
     def test_json_round_trip_is_exact(self):
         db = seeded()
         a.save_account(db, {"code": "1025", "name": "Bank CIB", "type": "Asset", "subtype": "cash"}, old_code="1020")

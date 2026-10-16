@@ -180,7 +180,7 @@ window.I18N = {
   "Stock Adjustment": ["Stock Adjustment", "تسوية جرد"], "Reversing Entry": ["Reversing Entry", "قيد عكسي"],
   Asset: ["Asset", "أصول"], Liability: ["Liability", "التزامات"], Equity: ["Equity", "حقوق ملكية"], Revenue: ["Revenue", "إيرادات"],
   COGS: ["Cost of sales", "تكلفة المبيعات"], Expense: ["Expense", "مصروفات"],
-  "Cost-Plus %": ["Cost-plus %", "التكلفة + نسبة"], "Fixed Price": ["Fixed price (lump sum)", "سعر ثابت (مقطوعية)"], "Flexible / Settled": ["Flexible / settled", "مرن / بالتسوية"],
+  "Cost-Plus %": ["Cost-plus %", "التكلفة + نسبة"], "Fixed Price": ["Fixed price (lump sum)", "سعر ثابت (مقطوعية)"], "Flexible / Settled": ["Flexible / settled", "مرن / بالتسوية"], "Live Fee (Paid vs Costs)": ["Live fee — client payments vs actual costs", "نسبة حية — مدفوعات العميل مقابل التكاليف الفعلية"],
   "Direct Labour (Cost of Revenue)": ["Direct labour (cost of revenue)", "عمالة مباشرة (تكلفة إيراد)"],
   "Indirect Labour (Cost-Centre Overhead)": ["Indirect labour (cost-centre overhead)", "عمالة غير مباشرة (مصروفات مركز تكلفة)"],
   "Administrative Salaries (Shared Overhead)": ["Administrative salaries (shared overhead)", "رواتب إدارية (مصروفات مشتركة)"],

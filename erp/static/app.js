@@ -2427,10 +2427,24 @@ function groupsDrawer(d) {
   S.H.gdel = async el => { if (!await uiConfirm(L2(`Delete the group “${el.dataset.n}”? Its people move to General.`, `حذف مجموعة «${el.dataset.n}»؟ ينتقل أفرادها إلى «عام».`))) return;
     try { await api("DELETE", "/api/dashboard/groups/" + el.dataset.k); closeDrawer(); if (store.get("dashGroup", "") === el.dataset.k) store.set("dashGroup", ""); DASH.edit = null; route(); } catch (e) { fail(e); } };
 }
+// "Live fee": the fee the client is really paying right now — what they have paid so far over what the project has cost
+const LIVE_FEE = "Live Fee (Paid vs Costs)";
+const liveFeeTxt = b => b.live_fee == null ? L2("no costs yet", "لا تكاليف بعد") : pct(b.live_fee);
+const liveFeeChip = b => `<span class="chip ${b.live_fee == null ? "" : b.live_fee < 0 ? "bad" : b.fee_pct && b.live_fee < b.fee_pct ? "warn" : "ok"}" title="${esc(L2("Paid by the client so far vs actual costs so far", "ما دفعه العميل حتى الآن مقابل التكاليف الفعلية حتى الآن"))}">${esc(L2("Live fee", "نسبة حية"))} ${esc(liveFeeTxt(b))}</span>`;
+function liveFeeCard(b) {
+  const target = b.fee_pct ? `<div class="muted" style="margin-top:6px">${esc(L2("Target fee", "النسبة المستهدفة"))} ${pct(b.fee_pct)} — ${b.live_fee == null ? "" : b.live_fee >= b.fee_pct
+    ? esc(L2("on or above target", "عند الهدف أو أعلى")) : esc(L2(`below target: the client would need to pay ${money(b.actual_costs * (1 + b.fee_pct) - b.client_paid)} more to reach it`, `أقل من الهدف: يحتاج العميل لدفع ${money(b.actual_costs * (1 + b.fee_pct) - b.client_paid)} إضافية للوصول إليه`))}</div>` : "";
+  return `<div class="card"><h2 class="row" style="gap:8px">${esc(L2("Live fee — client payments vs actual costs", "النسبة الحية — مدفوعات العميل مقابل التكاليف الفعلية"))}<span class="spacer"></span>${liveFeeChip(b)}</h2>
+    <div class="kpis"><div class="kpi"><div class="l">${esc(L2("Paid by the client so far", "ما دفعه العميل حتى الآن"))}</div><div class="v">${money(b.client_paid)}</div><div class="muted" style="font-size:.78em">${esc(L2("receipts, advances and cash sales; refunds deducted", "تحصيلات ودفعات مقدمة ومبيعات نقدية؛ بعد خصم المرتجعات"))}</div></div>
+      <div class="kpi"><div class="l">${esc(L2("Actual costs so far", "التكاليف الفعلية حتى الآن"))}</div><div class="v">${money(b.actual_costs)}</div><div class="muted" style="font-size:.78em">${esc(L2("direct costs + overheads booked to this project", "التكاليف المباشرة + المصروفات المحمّلة على المشروع"))}</div></div>
+      <div class="kpi"><div class="l">${esc(L2("Difference", "الفرق"))}</div><div class="v ${b.live_gap < 0 ? "neg" : "pos"}">${money(b.live_gap)}</div><div class="muted" style="font-size:.78em">${esc(b.live_gap < 0 ? L2("the company is funding the project", "الشركة تموّل المشروع") : L2("ahead of the costs", "متقدم على التكاليف"))}</div></div>
+      <div class="kpi"><div class="l">${esc(L2("Live fee % (on costs)", "النسبة الحية (على التكلفة)"))}</div><div class="v ${b.live_fee < 0 ? "neg" : "pos"}">${esc(liveFeeTxt(b))}</div><div class="muted" style="font-size:.78em">${esc(L2("margin of what was paid", "هامش من المدفوع"))}: ${b.live_margin == null ? "—" : pct(b.live_margin)}</div></div></div>
+    ${target}<p class="muted" style="font-size:.82em;margin:6px 0 0">${esc(L2("Live fee = (paid − costs) ÷ costs. Only money already received counts — no invoices waiting to be paid, nothing expected later. The shared company overhead is left out (see Allocated overhead above). Use the dates above to see any period.", "النسبة الحية = (المدفوع − التكاليف) ÷ التكاليف. يُحتسب ما وصل فعلاً فقط — لا فواتير تنتظر السداد ولا مبالغ متوقعة لاحقاً. المصروفات العامة المشتركة غير محتسبة (انظر المصروفات الموزعة أعلاه). استخدم التواريخ لعرض أي فترة."))}</p></div>`;
+}
 function buTable(rows) {
   if (!rows.length) return `<div class="empty">${t("nothing")}</div>`;
   return `<div class="tbl stack"><table><thead><tr><th>${t("code")}</th><th>${t("name")}</th><th>${t("basis")}</th><th class="num">${t("rev")}</th><th class="num">${t("direct_costs")}</th><th class="num">${t("direct_overhead")}</th><th class="num">${t("allocated_overhead")}</th><th class="num">${t("net_profit")}</th><th class="num">${t("margin")}</th><th class="num">${t("to_collect")}</th></tr></thead><tbody>
-    ${rows.map(b => `<tr class="click" data-href="#/bu/${b.id}"><td><b>${esc(b.code)}</b><div class="lines">${esc(tl(b.status))}</div></td><td>${esc(b.name)}</td><td><span class="chip">${esc(tl(b.basis))}${b.basis === "Cost-Plus %" ? " " + pct(b.fee_pct) : ""}</span></td>
+    ${rows.map(b => `<tr class="click" data-href="#/bu/${b.id}"><td><b>${esc(b.code)}</b><div class="lines">${esc(tl(b.status))}</div></td><td>${esc(b.name)}</td><td>${b.basis === LIVE_FEE ? liveFeeChip(b) : `<span class="chip">${esc(tl(b.basis))}${b.basis === "Cost-Plus %" ? " " + pct(b.fee_pct) : ""}</span>`}</td>
       <td class="num">${money(b.revenue)}</td><td class="num">${money(b.cogs)}</td><td class="num">${money(b.direct_overhead)}</td><td class="num">${money(b.allocated_overhead)}<div class="lines">${pct(b.overhead_pct)}</div></td>
       <td class="num ${b.net_profit < 0 ? "neg" : "pos"}"><b>${money(b.net_profit)}</b></td><td class="num">${pct(b.margin)}</td><td class="num">${money(b.to_collect)}</td></tr>`).join("")}</tbody></table></div>`;
 }
@@ -2478,8 +2492,9 @@ function buForm(b) {
     { k: "grp", l: L2("Project group", "مجموعة المشروعات"), v: b.grp || "", list: "bugroups", help: L2("Optional — e.g. “New Cairo villas”; filter the journal by the whole group.", "اختياري — مثل «فيلات القاهرة الجديدة»؛ لفلترة القيود بالمجموعة كلها.") },
     { k: "area", l: t("area"), type: "number", v: b.area }, { k: "start_date", l: t("start_date"), type: "date", v: b.start_date },
     { k: "status", l: t("status"), type: "select", opts: ["Tendering", "In Progress", "On Hold", "Completed", "Closed"], v: b.status },
-    { k: "basis", l: t("basis"), type: "select", opts: S.boot.enums.billing_bases, v: b.basis },
-    { k: "fee_pct", l: t("fee_pct"), type: "number", v: b.fee_pct ? +(b.fee_pct * 100).toFixed(4) : "" },
+    { k: "basis", l: t("basis"), type: "select", opts: S.boot.enums.billing_bases, v: b.basis,
+      help: L2("Live fee: no fee is billed ahead — the project shows, at any moment, what the client has paid so far against what it has cost so far, as a fee %.", "النسبة الحية: لا تُفوتر نسبة مقدماً — يعرض المشروع في أي لحظة ما دفعه العميل حتى الآن مقابل ما تكلّفه حتى الآن كنسبة.") },
+    { k: "fee_pct", l: t("fee_pct"), type: "number", v: b.fee_pct ? +(b.fee_pct * 100).toFixed(4) : "", help: L2("With Live fee: optional target to compare against.", "مع النسبة الحية: هدف اختياري للمقارنة.") },
     { k: "contract_value", l: t("contract_value"), type: "number", v: b.contract_value || "" },
     { k: "negotiation", l: L2("Negotiation discounts", "خصومات التفاوض"), type: "select", opts: NEGO_OPTS(), v: b.negotiation || "keep",
       help: L2("Default for this project's costs. Earnings: the cost stays at the supplier's full price (cost-plus bills the client on it) and the discount shows as Negotiation Earnings.",
@@ -2511,6 +2526,7 @@ PAGES.bu = async (view, parts, q) => {
     <div class="kpis">${k(t("rev"), b.revenue)}${k(t("direct_costs"), b.cogs)}${k(t("direct_overhead"), b.direct_overhead)}${k(t("allocated_overhead"), b.allocated_overhead)}
       ${k(t("net_profit"), b.net_profit, b.net_profit < 0 ? "neg" : "pos")}${k(t("receivable"), b.receivable)}${k(t("expected_billing"), b.expected_billing)}${k(t("to_collect"), b.to_collect)}
       ${b.savings ? `<a class="kpi" href="#/negotiations?bu_id=${b.id}" style="text-decoration:none;color:inherit"><div class="l">${esc(t("m_nego"))}</div><div class="v pos">${money(b.savings_kept)}</div><div class="muted" style="font-size:.78em">${L2("of", "من")} ${money(b.savings)} ${L2("negotiated", "خصومات")}</div></a>` : ""}</div>` +
+    (b.basis === LIVE_FEE ? liveFeeCard(b) : "") +
     filterBar(q, ["dates", ["kind", S.boot.enums.entry_kinds], "qv", "party", "account", "status"]) +
     `<div class="card"><h2>${t("transactions")}</h2>${voucherRows(tx.rows)}${pager(tx.total, { ...q, limit: Math.min(100, +(q.limit || pageSize())) })}</div>`;
   bulkify($("table.vtbl", view), BULKS.entries("accounting.journal"));

@@ -16,7 +16,10 @@ import weakref
 
 from .db import SUBTYPES, normal_for, to_major, to_minor
 
-BILLING_BASES = ["Cost-Plus %", "Fixed Price", "Flexible / Settled"]
+BILLING_BASES = ["Cost-Plus %", "Fixed Price", "Flexible / Settled", "Live Fee (Paid vs Costs)"]
+# "Live Fee": nothing is billed ahead — the fee is whatever the client has actually paid so far over what the project has
+# actually cost so far (see bu_summaries: client_paid, actual_costs, live_fee)
+LIVE_FEE = "Live Fee (Paid vs Costs)"
 PAYMENT_METHODS = ["Bank Transfer", "Cash", "Cheque", "Credit Card", "Instapay"]
 PAYROLL_TYPES = {  # cost type -> (account role, business unit required?)
     "Direct Labour (Cost of Revenue)": ("direct_labour", True),
@@ -1552,6 +1555,17 @@ def bu_summaries(db, date_from=None, date_to=None, status=None, q=None):
           SUM(CASE WHEN e.kind='Receipt Voucher' AND a.subtype='cash' THEN l.debit ELSE 0 END) AS collected
         FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id JOIN accounts a ON a.code=l.account
         WHERE {w} AND e.bu_id IS NOT NULL GROUP BY e.bu_id""", p)}
+    # money the client actually paid into the project: cash in on entries settled with the client (receipts against
+    # invoices, advances, sales paid on the spot, cheques when they clear), less refunds to them; not partner money,
+    # loans, refundable deposits or supplier payments
+    paid = {r["bid"]: r["n"] for r in db.q(f"""
+        SELECT x.bid, SUM(x.cash) AS n FROM (
+          SELECT e.bu_id AS bid, e.id,
+            SUM(CASE WHEN a.subtype='cash' THEN l.debit-l.credit ELSE 0 END) AS cash,
+            MAX(CASE WHEN a.subtype IN ('receivable','deferred_revenue','operating_revenue','sales_discount') AND a.code<>? THEN 1 ELSE 0 END) AS client
+          FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id JOIN accounts a ON a.code=l.account
+          WHERE {w} AND e.bu_id IS NOT NULL GROUP BY e.bu_id, e.id) x
+        WHERE x.client=1 GROUP BY x.bid""", [db.acct("negotiation_income")] + p)}   # a supplier discount is not the client's money
     pool = shared_overhead_total(db, date_from, date_to)
     savings, kept = {}, {}
     for r in db.q(f"SELECT e.bu_id, e.meta FROM journal_entries e WHERE {w} AND kind IN ('Direct Cost','Supplier Discount')", p):
@@ -1578,14 +1592,21 @@ def bu_summaries(db, date_from=None, date_to=None, status=None, q=None):
             expected = b["contract_value"] or 0
         else:
             expected = collected
+        client_paid, actual = paid.get(b["id"]) or 0, cogs + ovh   # the project's own costs, not the shared overhead
+        if b["basis"] == LIVE_FEE:
+            expected = client_paid       # billed as paid: nothing waits to be collected
         net = rev - cogs - ovh - alloc
         out.append({**b, "contract_value": to_major(b["contract_value"]), "revenue": to_major(rev),
                     "cogs": to_major(cogs), "direct_overhead": to_major(ovh), "allocated_overhead": to_major(alloc),
                     "gross_profit": to_major(rev - cogs), "net_profit": to_major(net),
                     "margin": round(net / rev, 4) if rev else 0, "receivable": to_major(a.get("receivable") or 0),
                     "advances": to_major(a.get("advances") or 0), "collected": to_major(collected),
-                    "expected_billing": to_major(expected), "to_collect": to_major(max(expected - collected, 0)),
-                    "savings": to_major(savings.get(b["id"], 0)), "savings_kept": to_major(kept.get(b["id"], 0))})
+                    "expected_billing": to_major(expected), "to_collect": 0.0 if b["basis"] == LIVE_FEE else to_major(max(expected - collected, 0)),
+                    "savings": to_major(savings.get(b["id"], 0)), "savings_kept": to_major(kept.get(b["id"], 0)),
+                    "client_paid": to_major(client_paid), "actual_costs": to_major(actual),
+                    "live_gap": to_major(client_paid - actual),
+                    "live_fee": round((client_paid - actual) / actual, 4) if actual > 0 else None,
+                    "live_margin": round((client_paid - actual) / client_paid, 4) if client_paid > 0 else None})
     return out
 
 
