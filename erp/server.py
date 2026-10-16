@@ -475,7 +475,10 @@ def _bu_negotiation(ctx, bid):
 @route("GET", "/api/bus", "business_units.units")
 def bus(ctx):
     q = ctx.q
-    return ok({"rows": acc.bu_summaries(ctx.db, q.get("date_from"), q.get("date_to"), q.get("status"), q.get("q")),
+    rows = acc.bu_summaries(ctx.db, q.get("date_from"), q.get("date_to"), q.get("status"), q.get("q"))
+    if q.get("basis"):
+        rows = [r for r in rows if r["basis"] == q["basis"]]
+    return ok({"rows": rows,
                "shared_overhead": acc.shared_overhead_total(ctx.db, q.get("date_from"), q.get("date_to"))})
 
 

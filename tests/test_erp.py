@@ -144,6 +144,13 @@ class Interchange(unittest.TestCase):
         self.assertTrue(any(r["role"] == "funding_partner" for r in landed), landed)
         f = a.bu_summaries(fdb)[0]
         self.assertEqual((f["client_paid"], f["live_fee"]), (6000.0, 0.2))
+        # VAT the client paid is the state's, not the fee: 11,400 received incl. 14% VAT counts as 10,000
+        vdb = Database(":memory:")
+        vdb.x("INSERT INTO business_units(code,name,basis) VALUES ('LF-4','Shop',?)", (a.LIVE_FEE,))
+        a.record_project_cost(vdb, {"bu_code": "LF-4", "description": "Wood", "vendor": "Sup", "qty": 1, "rate": 8000, "paid": 8000, "date": "2026-03-01"})
+        a.record_collection(vdb, {"bu_code": "LF-4", "amount": 11400, "vat_code": "VAT14", "date": "2026-03-05"})
+        v = a.bu_summaries(vdb)[0]
+        self.assertEqual((v["client_paid_gross"], v["client_paid_vat"], v["client_paid"]), (11400.0, 1400.0, 10000.0))
         empty = Database(":memory:")
         empty.x("INSERT INTO business_units(code,name,basis) VALUES ('LF-2','New',?)", (a.LIVE_FEE,))
         self.assertIsNone(a.bu_summaries(empty)[0]["live_fee"])        # no costs yet: no fee to show

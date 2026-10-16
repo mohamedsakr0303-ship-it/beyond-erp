@@ -2435,7 +2435,7 @@ function liveFeeCard(b) {
   const target = b.fee_pct ? `<div class="muted" style="margin-top:6px">${esc(L2("Target fee", "النسبة المستهدفة"))} ${pct(b.fee_pct)} — ${b.live_fee == null ? "" : b.live_fee >= b.fee_pct
     ? esc(L2("on or above target", "عند الهدف أو أعلى")) : esc(L2(`below target: the client would need to pay ${money(b.actual_costs * (1 + b.fee_pct) - b.client_paid)} more to reach it`, `أقل من الهدف: يحتاج العميل لدفع ${money(b.actual_costs * (1 + b.fee_pct) - b.client_paid)} إضافية للوصول إليه`))}</div>` : "";
   return `<div class="card"><h2 class="row" style="gap:8px">${esc(L2("Live fee — client payments vs actual costs", "النسبة الحية — مدفوعات العميل مقابل التكاليف الفعلية"))}<span class="spacer"></span>${liveFeeChip(b)}</h2>
-    <div class="kpis"><div class="kpi"><div class="l">${esc(L2("Paid by the client so far", "ما دفعه العميل حتى الآن"))}</div><div class="v">${money(b.client_paid)}</div><div class="muted" style="font-size:.78em">${esc(L2("receipts, advances and cash sales; refunds deducted", "تحصيلات ودفعات مقدمة ومبيعات نقدية؛ بعد خصم المرتجعات"))}${(() => { const w = b.paid_into || {};
+    <div class="kpis"><div class="kpi"><div class="l">${esc(L2("Paid by the client so far", "ما دفعه العميل حتى الآن"))}</div><div class="v">${money(b.client_paid)}</div><div class="muted" style="font-size:.78em">${esc(L2("receipts, advances and cash sales; refunds deducted", "تحصيلات ودفعات مقدمة ومبيعات نقدية؛ بعد خصم المرتجعات"))}${b.client_paid_vat ? `<br>${esc(L2(`received ${money(b.client_paid_gross)} incl. VAT — the VAT ${money(b.client_paid_vat)} is left out`, `المستلم ${money(b.client_paid_gross)} شامل الضريبة — الضريبة ${money(b.client_paid_vat)} غير محتسبة`))}` : ""}${(() => { const w = b.paid_into || {};
         const parts = [[w.bank, L2("bank / cash", "البنك / النقدية")], [w.funder, L2("funding partner's account", "حساب الشريك الممول")], [w.partner, L2("with a partner personally", "لدى شريك شخصياً")]].filter(([v]) => v);
         return parts.length > 1 || (parts.length === 1 && !w.bank) ? "<br>" + parts.map(([v, l]) => `${esc(l)}: ${money(v)}`).join(" · ") : ""; })()}</div></div>
       <div class="kpi"><div class="l">${esc(L2("Actual costs so far", "التكاليف الفعلية حتى الآن"))}</div><div class="v">${money(b.actual_costs)}</div><div class="muted" style="font-size:.78em">${esc(L2("direct costs + overheads booked to this project", "التكاليف المباشرة + المصروفات المحمّلة على المشروع"))}</div></div>
@@ -2445,10 +2445,15 @@ function liveFeeCard(b) {
 }
 function buTable(rows) {
   if (!rows.length) return `<div class="empty">${t("nothing")}</div>`;
-  return `<div class="tbl stack"><table><thead><tr><th>${t("code")}</th><th>${t("name")}</th><th>${t("basis")}</th><th class="num">${t("rev")}</th><th class="num">${t("direct_costs")}</th><th class="num">${t("direct_overhead")}</th><th class="num">${t("allocated_overhead")}</th><th class="num">${t("net_profit")}</th><th class="num">${t("margin")}</th><th class="num">${t("to_collect")}</th></tr></thead><tbody>
+  // every project shown is on Live fee: what the client paid and the live fee take the places of revenue and "to collect"
+  const live = rows.every(b => b.basis === LIVE_FEE);
+  const first = live ? `<th class="num">${esc(L2("Paid by client (excl. VAT)", "مدفوع العميل (بدون الضريبة)"))}</th>` : `<th class="num">${t("rev")}</th>`;
+  const last = live ? `<th class="num">${esc(L2("Live fee", "النسبة الحية"))}</th>` : `<th class="num">${t("to_collect")}</th>`;
+  return `<div class="tbl stack"><table><thead><tr><th>${t("code")}</th><th>${t("name")}</th><th>${t("basis")}</th>${first}<th class="num">${t("direct_costs")}</th><th class="num">${t("direct_overhead")}</th><th class="num">${t("allocated_overhead")}</th><th class="num">${t("net_profit")}</th><th class="num">${t("margin")}</th>${last}</tr></thead><tbody>
     ${rows.map(b => `<tr class="click" data-href="#/bu/${b.id}"><td><b>${esc(b.code)}</b><div class="lines">${esc(tl(b.status))}</div></td><td>${esc(b.name)}</td><td>${b.basis === LIVE_FEE ? liveFeeChip(b) : `<span class="chip">${esc(tl(b.basis))}${b.basis === "Cost-Plus %" ? " " + pct(b.fee_pct) : ""}</span>`}</td>
-      <td class="num">${money(b.revenue)}</td><td class="num">${money(b.cogs)}</td><td class="num">${money(b.direct_overhead)}</td><td class="num">${money(b.allocated_overhead)}<div class="lines">${pct(b.overhead_pct)}</div></td>
-      <td class="num ${b.net_profit < 0 ? "neg" : "pos"}"><b>${money(b.net_profit)}</b></td><td class="num">${pct(b.margin)}</td><td class="num">${money(b.to_collect)}</td></tr>`).join("")}</tbody></table></div>`;
+      ${live ? `<td class="num">${money(b.client_paid)}<div class="lines">${esc(L2("costs", "تكاليف"))} ${money(b.actual_costs)}</div></td>` : `<td class="num">${money(b.revenue)}</td>`}<td class="num">${money(b.cogs)}</td><td class="num">${money(b.direct_overhead)}</td><td class="num">${money(b.allocated_overhead)}<div class="lines">${pct(b.overhead_pct)}</div></td>
+      <td class="num ${b.net_profit < 0 ? "neg" : "pos"}"><b>${money(b.net_profit)}</b></td><td class="num">${pct(b.margin)}</td>
+      ${live ? `<td class="num ${b.live_fee == null || !b.client_paid ? "" : b.live_fee < 0 ? "neg" : "pos"}"><b>${esc(liveFeeTxt(b))}</b>${b.client_paid ? `<div class="lines">${esc(L2("gap", "الفرق"))} ${money(b.live_gap)}</div>` : ""}</td>` : `<td class="num">${money(b.to_collect)}</td>`}</tr>`).join("")}</tbody></table></div>`;
 }
 PAGES.bus = async (view, parts, q) => {
   const d = await api("GET", "/api/bus?" + qs(q));
@@ -2475,7 +2480,8 @@ PAGES.bus = async (view, parts, q) => {
   };
   view.innerHTML = `<div class="toolbar">${can("business_units.units", "add") ? `<button class="btn pri" data-a="newbu">+ ${t("new")}</button>` : ""}
     ${can("business_units.allocation", "edit") ? `<button class="btn" data-a="alloc">${t("alloc_title")}</button>` : ""}<span class="spacer"></span>${can("business_units.profitability") ? exportMenu("bu_pnl", q) : ""}</div>` +
-    filterBar(q, ["dates", "q", ["select", "status", t("status"), ["Tendering", "In Progress", "On Hold", "Completed", "Closed"].map(s => [s, tl(s)])]]) +
+    filterBar(q, ["dates", "q", ["select", "status", t("status"), ["Tendering", "In Progress", "On Hold", "Completed", "Closed"].map(s => [s, tl(s)])],
+      ["select", "basis", t("basis"), S.boot.enums.billing_bases.map(s => [s, tl(s)])]]) +
     `<div class="banner ${alloc > 1.0001 ? "err" : "info"}">${t("shared_pool")}: <b>${money(d.shared_overhead)}</b> · ${t("alloc_total")}: <b>${pct(alloc)}</b> — ${t("overhead_note")}</div>` +
     `<div class="card">${buTable(d.rows)}</div>`;
   bulkify(bulkTable(view, 'tr[data-href^="#/bu/"]'), BULKS.bus());

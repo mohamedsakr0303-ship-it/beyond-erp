@@ -1570,6 +1570,14 @@ def bu_summaries(db, date_from=None, date_to=None, status=None, q=None):
           FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id JOIN accounts a ON a.code=l.account
           WHERE {w} AND e.bu_id IS NOT NULL GROUP BY e.bu_id, e.id) x
         WHERE x.client=1 GROUP BY x.bid""", [db.acct("negotiation_income")] + p)}   # a supplier discount is not the client's money
+    # the VAT share of what clients pay, per project (output VAT over sales + VAT billed): taken out of "paid", since the
+    # tax is collected for the state and is not the company's fee
+    vat_share = {r["bid"]: (r["vat"] / (r["rev"] + r["vat"]) if (r["rev"] or 0) + (r["vat"] or 0) > 0 and (r["vat"] or 0) > 0 else 0) for r in db.q(f"""
+        SELECT e.bu_id AS bid,
+          SUM(CASE WHEN l.account=? THEN l.credit-l.debit ELSE 0 END) AS vat,
+          SUM(CASE WHEN a.subtype IN ('operating_revenue','sales_discount') AND a.code<>? THEN l.credit-l.debit ELSE 0 END) AS rev
+        FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id JOIN accounts a ON a.code=l.account
+        WHERE {w} AND e.bu_id IS NOT NULL GROUP BY e.bu_id""", [db.acct("vat_output"), db.acct("negotiation_income")] + p)}
     pool = shared_overhead_total(db, date_from, date_to)
     savings, kept = {}, {}
     for r in db.q(f"SELECT e.bu_id, e.meta FROM journal_entries e WHERE {w} AND kind IN ('Direct Cost','Supplier Discount')", p):
@@ -1597,7 +1605,9 @@ def bu_summaries(db, date_from=None, date_to=None, status=None, q=None):
         else:
             expected = collected
         pr = paid.get(b["id"]) or {}
-        client_paid, actual = pr.get("n") or 0, cogs + ovh   # the project's own costs, not the shared overhead
+        paid_gross, actual = pr.get("n") or 0, cogs + ovh   # the project's own costs, not the shared overhead
+        paid_vat = int(round(paid_gross * min(vat_share.get(b["id"], 0), 0.5))) if paid_gross > 0 else 0
+        client_paid = paid_gross - paid_vat
         if b["basis"] == LIVE_FEE:
             expected = client_paid       # billed as paid: nothing waits to be collected
         net = rev - cogs - ovh - alloc
@@ -1608,7 +1618,8 @@ def bu_summaries(db, date_from=None, date_to=None, status=None, q=None):
                     "advances": to_major(a.get("advances") or 0), "collected": to_major(collected),
                     "expected_billing": to_major(expected), "to_collect": 0.0 if b["basis"] == LIVE_FEE else to_major(max(expected - collected, 0)),
                     "savings": to_major(savings.get(b["id"], 0)), "savings_kept": to_major(kept.get(b["id"], 0)),
-                    "client_paid": to_major(client_paid), "actual_costs": to_major(actual),
+                    "client_paid": to_major(client_paid), "client_paid_gross": to_major(paid_gross), "client_paid_vat": to_major(paid_vat),
+                    "actual_costs": to_major(actual),
                     "paid_into": {k: to_major(pr.get(k) or 0) for k in ("bank", "funder", "partner")},   # where it landed
                     "live_gap": to_major(client_paid - actual),
                     "live_fee": round((client_paid - actual) / actual, 4) if actual > 0 else None,
