@@ -906,7 +906,10 @@ def site_extras(db):
     eq = equipment.export_rows(db)
     return {"certificates": {c["code"]: c["certificates"] for c in contracts.export_rows(db) if c["certificates"]},
             "equipment_usage": eq["usage"], "maintenance_logs": eq["logs"], "stock_counts": stocktake.export_rows(db),
-            "ereceipts": ereceipt.export_rows(db), "attendance": labour.export_rows(db)}
+            "ereceipts": ereceipt.export_rows(db), "attendance": labour.export_rows(db),
+            # names merged into another stock item (Check duplicates), so they keep landing on it after a restore
+            "item_aliases": db.q("SELECT a.alias, i.name AS item, a.merged_at, a.username FROM stock_item_aliases a "
+                                 "JOIN stock_items i ON i.id=a.item_id ORDER BY a.rowid")}
 
 
 def site_extras_import(db, ex, counts):
@@ -922,6 +925,11 @@ def site_extras_import(db, ex, counts):
         stocktake.import_rows(db, ex["stock_counts"], counts)
     if ex.get("ereceipts"):
         ereceipt.import_rows(db, ex["ereceipts"], counts)
+    for a in ex.get("item_aliases") or []:
+        it = db.one("SELECT id FROM stock_items WHERE name=?", (a.get("item"),))
+        if it and a.get("alias") and not db.one("SELECT 1 FROM stock_items WHERE name=?", (a["alias"],)):
+            db.conn.execute("INSERT OR IGNORE INTO stock_item_aliases(alias, item_id, merged_at, username) VALUES (?,?,?,?)",
+                            (a["alias"], it["id"], a.get("merged_at"), a.get("username") or ""))
     if ex.get("attendance") and not db.one("SELECT 1 FROM attendance"):   # after payroll re-created the employees
         from . import labour
         labour.import_rows(db, ex["attendance"], counts)

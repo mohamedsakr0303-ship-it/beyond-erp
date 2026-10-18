@@ -1904,9 +1904,12 @@ def item_names(ctx):
 @route("POST", "/api/items", "stock.balances", "add")
 def item_add(ctx):
     """An item can exist with nothing in stock — just its prices, for quotations and forecasting."""
+    from . import dedupe
     v = _item_vals(ctx.body)
-    if ctx.db.one("SELECT 1 FROM stock_items WHERE name=?", (v[0],)):
-        raise acc.ValidationError(f"{v[0]} already exists")
+    same = dedupe.existing(ctx.db, v[0])
+    if same:
+        raise acc.ValidationError(f"{v[0]} already exists" + (f" as “{same['name']}”" if same["name"] != v[0] else ""))
+    dedupe.check_sku(ctx.db, v[2])
     iid = ctx.db.x("INSERT INTO stock_items(name,unit,sku,reorder_level,category,std_cost,price,notes) VALUES (?,?,?,?,?,?,?,?)", v).lastrowid
     ctx.log("item.add", v[0])
     return ok({"id": iid})
@@ -1983,10 +1986,42 @@ def item_del(ctx, iid):
 
 @route("PUT", "/api/items/<iid>", "stock.balances", "edit")
 def item_edit(ctx, iid):
+    from . import dedupe
     b = ctx.body
+    dedupe.check_sku(ctx.db, b.get("sku"), int(iid))
     ctx.db.x("UPDATE stock_items SET name=?, unit=?, sku=?, reorder_level=?, category=?, std_cost=?, price=?, notes=? WHERE id=?",
              (*_item_vals(b), int(iid)))
     return ok()
+
+
+# duplicate items (Stock → Check duplicates)
+@route("GET", "/api/items/duplicates", "stock.balances")
+def item_dupes(ctx):
+    from . import dedupe
+    return ok({"groups": dedupe.find(ctx.db)})
+
+
+@route("GET", "/api/items/similar", "stock.balances")
+def item_similar(ctx):
+    from . import dedupe
+    name = acc.text(ctx.q.get("name"))
+    return ok({"rows": dedupe.similar(ctx.db, name) if name else []})
+
+
+@route("POST", "/api/items/merge", "stock.balances", "edit")
+def item_merge(ctx):
+    from . import dedupe
+    if not auth.action_ok(ctx.user, "stock.balances", "delete"):
+        raise PermissionError(ACTION_DENIED["delete"])
+    r = dedupe.merge(ctx.db, ctx.body.get("keep"), ctx.body.get("merge"), _u(ctx))
+    ctx.log("item.merge", f"{', '.join(r['merged'])} → {r['kept']}")
+    return ok(r)
+
+
+@route("POST", "/api/items/duplicates/ignore", "stock.balances", "edit")
+def item_dupes_ignore(ctx):
+    from . import dedupe
+    return ok(dedupe.ignore(ctx.db, ctx.body.get("ids")))
 
 
 # ================================================================= partners

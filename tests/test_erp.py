@@ -3628,6 +3628,34 @@ class SiteModules(unittest.TestCase):
         self.assertEqual([c["label"] for c in t["columns"]][5:8], ["Avg cost", "Last purchase price", "Last purchased on"])
         self.assertEqual(t["rows"][0]["cells"][:1] + t["rows"][0]["cells"][5:8], ["PIPE-01", 120, 140, "2026-03-05"])
 
+    def test_duplicate_items_found_merged_and_prevented(self):
+        from erp import dedupe
+        wh = self.db.one("SELECT id FROM warehouses WHERE name='Site Store'")["id"]
+        ins = lambda n, sku="": self.db.x("INSERT INTO stock_items(name,unit,sku) VALUES (?,?,?)", (n, "pcs", sku)).lastrowid  # noqa: E731
+        a1, a2 = ins("حنفية غسالة"), ins("حنفيه  غساله")                     # spelling only
+        p25, p32 = ins("مواسير 25مم / 20بار"), ins("مواسير 32مم / 20بار")     # different sizes: never offered
+        r1, r2 = ins("سلك 2مم احمر"), ins("سلك 2مم ازرق")                    # different colours: never offered
+        c1, c2 = ins("Copper wire", "CW-10"), ins("Cu wire roll", "cw 10")    # same code
+        groups = {tuple(g["ids"]): g for g in dedupe.find(self.db)}
+        self.assertEqual(groups[(a1, a2)]["level"], "certain")
+        self.assertTrue(groups[(c1, c2)]["reason"].startswith("same code"))
+        self.assertFalse(any(p25 in k and p32 in k for k in groups) or any(r1 in k and r2 in k for k in groups))
+        # merge: movements and balances move over, balances recomputed, the old name becomes an alias
+        for iid, q, rate in ((a1, 4, 100), (a2, 6, 200)):
+            self.db.x("INSERT INTO stock_moves(item_id,warehouse_id,date,qty,rate,kind) VALUES (?,?,?,?,?,?)", (iid, wh, "2026-03-01", q, rate * 100, "Receipt"))
+            a._recompute_level(self.db, iid, wh)
+        dedupe.merge(self.db, a1, [a2], "t")
+        lvl = self.db.one("SELECT qty, avg_cost FROM stock_levels WHERE item_id=? AND warehouse_id=?", (a1, wh))
+        self.assertEqual((lvl["qty"], lvl["avg_cost"]), (10, 16000))
+        self.assertIsNone(self.db.one("SELECT 1 FROM stock_items WHERE id=?", (a2,)))
+        self.assertEqual(a._item(self.db, {"item": "حنفيه  غساله"})["id"], a1)             # the merged name lands on it
+        self.assertEqual(a._item(self.db, {"item": "حنفيّة غسّالة"}, create=True)["id"], a1)  # so does a new spelling
+        self.assertEqual(a._item(self.db, {"item": "مواسير 40مم / 20بار"}, create=True)["name"], "مواسير 40مم / 20بار")
+        dedupe.ignore(self.db, [c1, c2])
+        self.assertNotIn((c1, c2), {tuple(g["ids"]) for g in dedupe.find(self.db)})
+        with self.assertRaises(a.ValidationError):
+            dedupe.check_sku(self.db, "CW 10")                                              # a code belongs to one item
+
     def test_stocktake_posts_only_the_differences(self):
         from erp import stocktake
         cid = stocktake.start(self.db, {"warehouse": "Site Store"})

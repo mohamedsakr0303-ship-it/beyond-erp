@@ -1006,6 +1006,14 @@ CREATE TABLE IF NOT EXISTS cost_subs (
     updated_at    TEXT NOT NULL DEFAULT ''
 );
 -- The AI assistant's saved changes, row by row, so they can be undone (aiundo.py)
+-- Names of stock items merged into another (Stock → Check duplicates): later entries and imports using them land on it
+CREATE TABLE IF NOT EXISTS stock_item_aliases (
+    alias TEXT PRIMARY KEY,
+    item_id INTEGER NOT NULL REFERENCES stock_items(id) ON DELETE CASCADE,
+    merged_at TEXT,
+    username TEXT DEFAULT ''
+);
+
 CREATE TABLE IF NOT EXISTS ai_undo (
     id         INTEGER PRIMARY KEY,
     change     TEXT NOT NULL,

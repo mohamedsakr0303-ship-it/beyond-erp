@@ -3194,11 +3194,15 @@ PAGES.stock = async (view, parts, q) => {
       { k: "reorder_level", l: t("reorder"), type: "number", v: it.reorder_level || "" }, { k: "notes", l: t("notes"), v: it.notes || "", span: "spanall" }]) +
       datalist("itcats", (d.catalog || []).map(x => x.category).filter(Boolean)) + unitsList() +
       `<p class="muted" style="font-size:.85em">${esc(L2("Quantities and stock value change only through receipts, issues, transfers and counts — so the books and the stock always agree.", "الكميات وقيمة المخزون تتغير فقط بالاستلام والصرف والتحويل والجرد — فتتطابق الدفاتر والمخزون دائماً."))}</p>`,
-    async v => { if (it.id) await api("PUT", "/api/items/" + it.id, v); else await api("POST", "/api/items", v); await refreshBoot(); toast(t("saved")); });
+    async v => {
+      if (!it.id) { const sim = (await api("GET", "/api/items/similar?" + qs({ name: v.name }))).rows;
+        if (sim.length && !await uiConfirm(L2("Items that look the same already exist:", "توجد أصناف تبدو مثله:") + "\n• " + sim.map(s => s.name + (s.sku ? " (" + s.sku + ")" : "")).join("\n• ") + "\n\n" + L2("Add it as a new item anyway?", "إضافته كصنف جديد على أي حال؟"))) return false; }
+      if (it.id) await api("PUT", "/api/items/" + it.id, v); else await api("POST", "/api/items", v); await refreshBoot(); toast(t("saved")); });
   S.H.itemnew = () => itemForm({});
+  S.H.itemdupes = () => itemDupes();
   S.H.itemedit = el => itemForm((d.catalog || []).find(x => String(x.id) === el.dataset.id) || {});
   const SLV = capRows(d.levels, "stocklv"), CT = capRows(d.catalog || [], "stockcat");
-  view.innerHTML = `<div class="toolbar">${ed ? ["Receipt", "Issue", "Transfer", "Adjustment"].map(ty => `<button class="btn ${ty === "Receipt" ? "pri" : ""}" data-a="sm${ty}">${tl(ty)}</button>`).join("") : ""}${can("stock.balances", "add") ? `<button class="btn" data-a="itemnew">+ ${esc(L2("Item", "صنف"))}</button>` : ""}<span class="spacer"></span>${exportMenu("stock", q)}</div>` +
+  view.innerHTML = `<div class="toolbar">${ed ? ["Receipt", "Issue", "Transfer", "Adjustment"].map(ty => `<button class="btn ${ty === "Receipt" ? "pri" : ""}" data-a="sm${ty}">${tl(ty)}</button>`).join("") : ""}${can("stock.balances", "add") ? `<button class="btn" data-a="itemnew">+ ${esc(L2("Item", "صنف"))}</button>` : ""}<button class="btn" data-a="itemdupes" title="${esc(L2("Find items registered twice under different spellings or codes", "ابحث عن أصناف مسجلة مرتين بكتابة أو كود مختلف"))}">${svg("search")} ${esc(L2("Check duplicates", "فحص التكرار"))}</button><span class="spacer"></span>${exportMenu("stock", q)}</div>` +
     filterBar(q, ["warehouse", ["q", "stkq", L2("Name, code or category…", "الاسم أو الكود أو التصنيف…")]]) +
     `<datalist id="stkq">${(d.items || []).map(x => { const more = [x.sku, x.category].filter(Boolean).join(" · ");
       return `<option value="${esc(x.name)}">${esc(x.name + (more ? " — " + more : ""))}</option>`; }).join("")}</datalist>` +
@@ -3218,6 +3222,25 @@ PAGES.stock = async (view, parts, q) => {
     $$("[data-ol]", view).forEach(td => { const o = ol.items[td.dataset.ol]; if (o) td.innerHTML = olChip(o, ol); });
   }).catch(() => {});
 };
+// Stock → Check duplicates: items that may be one and the same (same code, same name once spelling is ignored, or
+// very similar names with the same sizes and colours); merge into the one to keep, or mark "not duplicates".
+async function itemDupes() {
+  let d; try { d = await api("GET", "/api/items/duplicates"); } catch (e) { return fail(e); }
+  const LV = { certain: ["bad", L2("Certain", "مؤكد")], likely: ["warn", L2("Likely", "مرجّح")], possible: ["", L2("Possible", "محتمل")] };
+  const why = r => r.replace(/^same code/, L2("same code", "نفس الكود")).replace(/^same name/, L2("same name (spelling aside)", "نفس الاسم (مع اختلاف الكتابة)")).replace(/^similar name/, L2("similar name", "اسم متشابه"));
+  const ed = can("stock.balances", "edit");
+  drawer(L2("Duplicate items", "الأصناف المكررة"), `<p class="muted">${esc(L2("Each group may be one item registered more than once. Merging moves every movement, balance, count and material line onto the item you keep, recomputes its balances, and keeps the other names so later entries and imports using them land on it. Sizes and colours must match to be offered.", "كل مجموعة قد تكون صنفاً واحداً مسجلاً أكثر من مرة. الدمج ينقل كل الحركات والأرصدة والجرد وبنود الخامات إلى الصنف الذي تختاره، ويعيد حساب أرصدته، ويحتفظ بالأسماء الأخرى حتى تذهب القيود والاستيرادات التي تستخدمها إليه. لا تُعرض إلا الأصناف المتطابقة في المقاسات والألوان."))}</p>
+    ${d.groups.length ? d.groups.map((g, gi) => `<div class="card" data-g="${gi}" style="margin-bottom:10px"><div class="row" style="gap:6px">${chipS(...LV[g.level])}<span class="muted">${esc(why(g.reason))}${g.score < 1 ? ` · ${Math.round(g.score * 100)}%` : ""}</span>${g.units_differ ? `<span class="chip warn">${esc(L2("units differ — check before merging", "الوحدات مختلفة — راجع قبل الدمج"))}</span>` : ""}</div>
+      <div class="tbl"><table><thead><tr><th>${esc(L2("Keep", "الإبقاء"))}</th><th>${t("item")}</th><th>${esc(L2("Code", "الكود"))}</th><th>${t("unit")}</th><th class="num">${t("on_hand")}</th><th class="num">${esc(L2("Movements", "الحركات"))}</th><th class="num">${esc(L2("Last purchase", "آخر سعر شراء"))}</th></tr></thead><tbody>
+      ${g.items.map(m => `<tr><td><input type="radio" name="keep${gi}" value="${m.id}" ${m.id === g.suggest_keep ? "checked" : ""} ${ed ? "" : "disabled"}></td><td><b>${esc(m.name)}</b></td><td>${esc(m.sku || "")}</td><td>${esc(m.unit || "")}</td><td class="num">${numf(m.on_hand)}</td><td class="num">${m.moves}</td><td class="num">${m.last_rate != null ? money(m.last_rate) : "—"}</td></tr>`).join("")}</tbody></table></div>
+      ${ed ? `<div class="row" style="margin-top:6px"><button class="btn pri sm" data-a="dpmerge" data-g="${gi}">${esc(L2("Merge into the chosen item", "دمج في الصنف المختار"))}</button><button class="btn sm" data-a="dpskip" data-g="${gi}">${esc(L2("Not duplicates", "ليست مكررة"))}</button></div>` : ""}</div>`).join("")
+      : `<div class="empty">${esc(L2("No duplicates found.", "لا توجد أصناف مكررة."))}</div>`}`, null, { readOnly: true });
+  S.H.dpmerge = async el => { const g = d.groups[+el.dataset.g], keep = +($(`input[name=keep${el.dataset.g}]:checked`) || {}).value;
+    const kn = g.items.find(m => m.id === keep).name, others = g.items.filter(m => m.id !== keep);
+    if (!await uiConfirm(L2(`Merge ${others.map(m => "“" + m.name + "”").join(", ")} into “${kn}”? Their movements and balances move onto it. This cannot be undone (a backup can bring it back).`, `دمج ${others.map(m => "«" + m.name + "»").join("، ")} في «${kn}»؟ تنتقل حركاتها وأرصدتها إليه. لا يمكن التراجع (إلا من نسخة احتياطية).`))) return;
+    try { await api("POST", "/api/items/merge", { keep, merge: others.map(m => m.id) }); toast(L2("Merged", "تم الدمج")); await refreshBoot(); itemDupes(); route(); } catch (e) { fail(e); } };
+  S.H.dpskip = async el => { try { await api("POST", "/api/items/duplicates/ignore", { ids: d.groups[+el.dataset.g].ids }); toast(L2("Won't be offered again", "لن تُعرض مرة أخرى")); itemDupes(); } catch (e) { fail(e); } };
+}
 PAGES.moves = async (view, parts, q) => {
   const lq = { ...q, limit: q.limit || 100 };
   const d = await api("GET", "/api/stock/moves?" + qs(lq));

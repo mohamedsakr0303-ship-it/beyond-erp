@@ -790,6 +790,10 @@ def _item(db, d, create=False):
     it = db.one("SELECT * FROM stock_items WHERE id=? OR name=?", (d.get("item_id"), name))
     if it:
         return it
+    from . import dedupe
+    same = dedupe.existing(db, name)      # the same item under another spelling, or a merged name
+    if same:
+        return same
     if not create:
         raise ValidationError(f"Unknown item: {name}")
     iid = db.conn.execute("INSERT INTO stock_items(name,unit) VALUES (?,?)", (name, text(d.get("unit")) or "pcs")).lastrowid
