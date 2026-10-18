@@ -1010,7 +1010,7 @@ const CloudAPI = STATIC ? {
   linkMember: m => window.BeyondCloud.linkMember(m),
   manageUser: m => window.BeyondCloud.manageUser(m), deleteAccount: m => window.BeyondCloud.deleteAccount(m),
   companies: () => window.BeyondCloud.companies(), createCompany: n => window.BeyondCloud.createCompany(n), joinCompany: c => window.BeyondCloud.joinCompany(c),
-  renameCompany: n => window.BeyondCloud.renameCompany(n), newInviteCode: () => window.BeyondCloud.newInviteCode(), removeMember: e => window.BeyondCloud.removeMember(e),
+  renameCompany: n => window.BeyondCloud.renameCompany(n), deleteCompany: (id, name) => window.BeyondCloud.deleteCompany(id, name), newInviteCode: () => window.BeyondCloud.newInviteCode(), removeMember: e => window.BeyondCloud.removeMember(e),
   chooseCompany: id => window.BeyondCloud.chooseCompany(id),
   call: (kind, name, params) => window.BeyondCloud.call(kind, name, params),
 } : {
@@ -1022,6 +1022,7 @@ const CloudAPI = STATIC ? {
   manageUser: m => api("PUT", "/api/cloud/account", m), deleteAccount: m => api("POST", "/api/cloud/account/delete", m),
   companies: () => api("GET", "/api/cloud/info").then(i => i.companies || []), createCompany: name => api("POST", "/api/cloud/company", { action: "create", name }),
   joinCompany: code => api("POST", "/api/cloud/company", { action: "join", code }), renameCompany: name => api("POST", "/api/cloud/company", { action: "rename", name }),
+  deleteCompany: (company, name) => api("POST", "/api/cloud/company", { action: "delete", company, name }),
   newInviteCode: () => api("POST", "/api/cloud/company", { action: "code" }).then(r => r.invite_code), removeMember: email => api("POST", "/api/cloud/company", { action: "remove", email }),
   chooseCompany: id => api("POST", "/api/cloud/company", { action: "choose", company: id }).then(() => false),
   call: (kind, name, params) => api("POST", "/api/cloud/call", { kind, name, params }).then(r => r.result),
@@ -1187,7 +1188,7 @@ function renderCompanyGate(info, msg, kind = "err") {
   applyLook();
   $("#root").innerHTML = `<div class="login auth co-gate"><h1 class="center">${live.length ? (ar ? "اختر الشركة" : "Choose a company") : (ar ? "ابدأ" : "Get started")}</h1>
     <p class="muted center">${esc(info.email || C.email())}</p><div id="lerr">${msg ? `<div class="banner ${kind}">${esc(msg)}</div>` : ""}</div>
-    ${live.length ? `<div class="co-list">${live.map(c => `<button class="btn oauth" type="button" data-a="copick" data-id="${esc(c.id)}"><span class="co-ic">${esc((c.name || "?").trim().charAt(0).toUpperCase())}</span><span>${esc(c.name)}</span>${c.is_admin ? `<span class="chip">${t("admin")}</span>` : ""}</button>`).join("")}</div>` : ""}
+    ${live.length ? `<div class="co-list">${live.map(c => `<button class="btn oauth" type="button" data-a="copick" data-id="${esc(c.id)}"><span class="co-ic">${esc((c.name || "?").trim().charAt(0).toUpperCase())}</span><span>${esc(c.name)}${live.some(o => o !== c && (o.name || "").trim().toLowerCase() === (c.name || "").trim().toLowerCase()) && c.created_at ? `<br><small class="muted">${ar ? "أُنشئت " : "made "}${esc(String(c.created_at).slice(0, 10))}${c.changes != null ? ` · ${c.changes ? c.changes + (ar ? " تعديل" : " changes") : (ar ? "فارغة" : "empty")}` : ""}</small>` : ""}</span>${c.is_admin ? `<span class="chip">${t("admin")}</span>` : ""}</button>`).join("")}</div>` : ""}
     ${pending.length ? `<div class="banner info">${ar ? "بانتظار الموافقة: " : "Waiting for approval: "}${pending.map(c => esc(c.name)).join(", ")}</div>` : ""}
     <label class="f co-what">${ar ? "ماذا تريد أن تفعل؟" : "What would you like to do?"}<select id="cowhat">
       <option value="create" ${live.length || pending.length ? "" : "selected"}>${ar ? "إنشاء شركة جديدة" : "Create a new company"}</option>
@@ -5188,8 +5189,11 @@ async function companySwitcher() {
   let cos = [], cur = "";
   try { cos = await CloudAPI.companies(); cur = STATIC ? window.BeyondCloud.company() : ((await CloudAPI.status()).company || ""); } catch (e) { return fail(e); }
   const live = cos.filter(c => c.active && !c.pending), pending = cos.filter(c => c.pending);
-  drawer(ar ? "الشركات" : "Companies", `<div class="co-list">${live.map(c => `<button class="btn oauth ${c.id === cur ? "on" : ""}" type="button" data-a="coopen" data-id="${esc(c.id)}" ${c.id === cur ? "disabled" : ""}>
-      <span class="co-ic">${esc((c.name || "?").trim().charAt(0).toUpperCase())}</span><span>${esc(c.name)}</span>${c.id === cur ? `<span class="chip ok">${ar ? "مفتوحة" : "open"}</span>` : ""}${c.is_admin ? `<span class="chip">${t("admin")}</span>` : ""}</button>`).join("")}</div>
+  const coMeta = c => [c.created_at ? (ar ? "أُنشئت " : "made ") + String(c.created_at).slice(0, 10) : "",
+    c.changes != null ? (c.changes ? `${c.changes} ${ar ? "تعديل" : c.changes === 1 ? "change" : "changes"}` : (ar ? "فارغة" : "empty")) : ""].filter(Boolean).join(" · ");
+  drawer(ar ? "الشركات" : "Companies", `<div class="co-list">${live.map(c => `<div class="row" style="gap:6px;flex-wrap:nowrap"><button class="btn oauth ${c.id === cur ? "on" : ""}" type="button" data-a="coopen" data-id="${esc(c.id)}" ${c.id === cur ? "disabled" : ""} style="flex:1">
+      <span class="co-ic">${esc((c.name || "?").trim().charAt(0).toUpperCase())}</span><span>${esc(c.name)}${coMeta(c) ? `<br><small class="muted">${esc(coMeta(c))}</small>` : ""}</span>${c.id === cur ? `<span class="chip ok">${ar ? "مفتوحة" : "open"}</span>` : ""}${c.is_admin ? `<span class="chip">${t("admin")}</span>` : ""}</button>
+      ${c.is_super && c.id !== cur ? `<button class="btn sm" type="button" data-a="codel" data-id="${esc(c.id)}" title="${ar ? "حذف الشركة" : "Delete the company"}" aria-label="${ar ? "حذف الشركة" : "Delete the company"}">${svg("trash")}</button>` : ""}</div>`).join("")}</div>
     ${pending.length ? `<div class="banner info">${ar ? "بانتظار الموافقة: " : "Waiting for approval: "}${pending.map(c => esc(c.name)).join(", ")}</div>` : ""}
     ${!STATIC ? `<p class="muted" style="font-size:.85em">${ar ? "هذا البرنامج يتابع شركة واحدة. لفتح شركة أخرى: الإعدادات ← مساحة العمل ← فصل هذا الجهاز، ثم سجّل الدخول واختر الشركة." : "This app follows one company. To open another: Settings → Workspace → Disconnect this device, then sign in and choose it."}</p>` : ""}
     <h4>${ar ? "الانضمام برمز دعوة" : "Join with an invite code"}</h4><div class="row"><input id="cocode" placeholder="${ar ? "رمز الدعوة" : "Invite code"}" style="flex:1;text-transform:uppercase"><button class="btn" type="button" data-a="cojoin2">${ar ? "طلب الانضمام" : "Ask to join"}</button></div>
@@ -5199,6 +5203,17 @@ async function companySwitcher() {
   const openCo = id => { if (!STATIC) return toast(ar ? "افصل هذا الجهاز أولاً (الإعدادات ← مساحة العمل)" : "Disconnect this device first (Settings → Workspace)", true);
     if (CloudAPI.chooseCompany(id)) { store.set("token", ""); location.reload(); } };
   S.H.coopen = el => openCo(el.dataset.id);
+  // Delete a company for good (its super administrators): the name typed to confirm; never the one open here
+  S.H.codel = async el => {
+    const c = live.find(x => x.id === el.dataset.id); if (!c) return;
+    const typed = await uiPrompt((ar ? `سيتم حذف «${c.name}» نهائياً بكل دفاترها وأعضائها ومحادثاتها واشتراكها، ولا يمكن التراجع. ` +
+        (c.changes ? `بها ${c.changes} تعديل — نزّل نسخة احتياطية منها أولاً إن احتجت شيئاً منها. ` : "") + "اكتب اسم الشركة للتأكيد:"
+      : `"${c.name}" will be deleted for good, with all its books, members, chat and subscription. This cannot be undone. ` +
+        (c.changes ? `It holds ${c.changes} change(s) — download a backup of it first if you need anything from it. ` : "") + "Type the company's name to confirm:"),
+      "", { title: ar ? "حذف الشركة" : "Delete the company", ok: ar ? "حذف نهائي" : "Delete for good", danger: true });
+    if (typed == null) return;
+    try { await CloudAPI.deleteCompany(c.id, typed.trim()); toast(ar ? "تم حذف الشركة" : "Company deleted"); companySwitcher(); } catch (e) { fail(e); }
+  };
   S.H.cojoin2 = async () => { try { const r = await CloudAPI.joinCompany($("#cocode").value.trim()); toast(r.is_member ? (ar ? "أنت عضو بالفعل" : "You are already a member") : (ar ? "تم إرسال الطلب" : "Request sent — waiting for approval")); companySwitcher(); } catch (e) { fail(e); } };
   S.H.conew2 = async () => { const n = $("#coname").value.trim(); if (!n) return;
     try { const c = await CloudAPI.createCompany(n); toast(t("saved")); if (STATIC && await uiConfirm(ar ? "فتح الشركة الجديدة الآن؟" : "Open the new company now?")) openCo(c.id); else companySwitcher(); } catch (e) { fail(e); } };

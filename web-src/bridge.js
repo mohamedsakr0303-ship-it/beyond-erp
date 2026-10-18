@@ -520,6 +520,12 @@ def cloud_new_books(name, email):
         createCompany: name => rpc("create_company", { p_name: name }),
         joinCompany: code => rpc("join_company", { p_code: code }),
         renameCompany: name => rpc("rename_company", { p_company: co(), p_name: name }),
+        // Delete a company for good (its super administrators; the name typed to confirm). Not the one open here.
+        async deleteCompany(id, name) {
+          if (id === company && dbKey === "db:" + id) throw new CloudError("This company is open here — open another one first, then delete it");
+          await rpc("delete_company", { p_company: id, p_name: name });
+          return true;
+        },
         newInviteCode: () => rpc("new_invite_code", { p_company: co() }),
         removeMember: email => rpc("remove_member", { p_company: co(), p_email: email }),
         // Start a new company from the books on this device (they become its shared books; you its administrator)

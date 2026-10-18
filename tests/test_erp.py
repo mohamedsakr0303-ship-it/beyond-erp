@@ -1507,6 +1507,42 @@ class ServiceSubscriptions(unittest.TestCase):
         self.assertEqual(S.listing(db2)["deferred"], S.listing(db)["deferred"])
         self.assertEqual(S.run(db2, a.today())["invoices"], 0)                          # nothing billed twice after a restore
 
+class CompanyNamesAndDelete(unittest.TestCase):
+    """One person cannot have two companies with one name; a super administrator deletes one by typing its name
+    (mirrors supabase/migrations/*_company_names_delete.sql, checked on Postgres too)."""
+
+    def test_unique_names_and_delete(self):
+        import json as _json
+        import urllib.error
+        import urllib.request
+        sys.path.insert(0, str(Path(__file__).parent))
+        import mock_supabase
+        sb = mock_supabase.start()
+        base = f"http://127.0.0.1:{sb.server_address[1]}"
+        op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+        def rpc(fn, body, who):
+            r = urllib.request.Request(f"{base}/rest/v1/rpc/{fn}", data=_json.dumps(body).encode(), method="POST",
+                                       headers={"Content-Type": "application/json", "Authorization": f"Bearer tok:{who}"})
+            try:
+                with op.open(r) as x:
+                    return x.status, _json.loads(x.read() or b"null")
+            except urllib.error.HTTPError as e:
+                return e.code, _json.loads(e.read() or b"null")
+        first = rpc("create_company", {"p_name": "Acme"}, "ali@x.com")[1]["id"]
+        self.assertEqual(rpc("create_company", {"p_name": "  acme "}, "ali@x.com")[0], 400)      # same name, same person
+        self.assertEqual(rpc("create_company", {"p_name": "Acme"}, "omar@x.com")[0], 200)        # someone else may
+        other = rpc("create_company", {"p_name": "Acme 2"}, "ali@x.com")[1]["id"]
+        cos = rpc("my_companies", {}, "ali@x.com")[1]
+        self.assertEqual([(c["name"], c["is_super"], c["changes"]) for c in cos], [("Acme", True, 0), ("Acme 2", True, 0)])
+        self.assertTrue(all(c["created_at"] for c in cos))
+        self.assertEqual(rpc("delete_company", {"p_company": other, "p_name": "Acme 2"}, "omar@x.com")[0], 403)  # not his
+        self.assertEqual(rpc("delete_company", {"p_company": other, "p_name": "Acme"}, "ali@x.com")[0], 400)     # wrong name
+        self.assertEqual(rpc("delete_company", {"p_company": other, "p_name": "acme 2"}, "ali@x.com")[0], 200)
+        self.assertEqual([c["id"] for c in rpc("my_companies", {}, "ali@x.com")[1]], [first])
+        sb.shutdown()
+
+
 class HostedBilling(unittest.TestCase):
     """Trial -> expired (changes refused) -> paid; mirrors supabase/migrations/*_billing.sql (checked on Postgres too)."""
 

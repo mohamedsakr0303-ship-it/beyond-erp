@@ -5382,13 +5382,14 @@ def cloud_join(ctx):
 
 @route("POST", "/api/cloud/company")
 def cloud_company(ctx):
-    """Companies: choose the one this device follows, create one, ask to join one, rename, new invite code."""
+    """Companies: choose the one this device follows, create one, ask to join one, rename, delete, new invite code."""
     c, b = _cloud(ctx), ctx.body
     act = b.get("action")
     fns = {"choose": lambda: c.choose_company(acc.text(b.get("company"))),
            "create": lambda: c.create_company(acc.text(b.get("name"))),
            "join": lambda: c.join_company(acc.text(b.get("code"))),
            "rename": lambda: c.rename_company(acc.text(b.get("name"))) or {"ok": True},
+           "delete": lambda: c.delete_company(acc.text(b.get("company")), acc.text(b.get("name"))) or {"ok": True},
            "code": lambda: {"invite_code": c.new_invite_code()},
            "remove": lambda: c.remove_member(acc.text(b.get("email"))) or {"ok": True}}
     if act not in fns:

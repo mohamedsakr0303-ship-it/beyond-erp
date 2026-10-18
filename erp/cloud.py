@@ -512,6 +512,13 @@ class CloudSync:
     def rename_company(self, name):
         return self.rpc("rename_company", {"p_company": self._co(), "p_name": name})
 
+    def delete_company(self, cid, name):
+        """Delete a company for good (its super administrators, typing its name). Not the one this device follows."""
+        cid = (cid or "").strip()
+        if cid and cid == self.company:
+            raise RuntimeError("This device follows this company — disconnect it first, then delete it")
+        return self.rpc("delete_company", {"p_company": cid, "p_name": name})
+
     def new_invite_code(self):
         return self.rpc("new_invite_code", {"p_company": self._co()})
 

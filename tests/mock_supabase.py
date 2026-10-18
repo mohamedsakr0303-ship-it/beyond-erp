@@ -558,15 +558,34 @@ class Handler(BaseHTTPRequestHandler):
                 if k in x:
                     b[k] = datetime.datetime.fromisoformat(x[k].replace("Z", "+00:00")) if x[k] else None
             return 200, st.bstate(p["p_company"])
+        norm = lambda n: " ".join((n or "").split()).lower()
+        mine = lambda: [k[0] for k, x in st.members.items() if k[1] == email and (x["active"] or x["pending"])]
         if fn == "my_companies":
             return 200, sorted([{"id": k[0], "name": st.companies[k[0]]["name"], "is_admin": x["is_admin"],
-                                 "pending": x["pending"], "active": x["active"]}
+                                 "pending": x["pending"], "active": x["active"], "created_at": st.companies[k[0]]["created_at"].isoformat(),
+                                 "is_super": x["active"] and not x["pending"] and (x.get("is_super") or st.companies[k[0]]["created_by"] == email),
+                                 "changes": len(st.ops.get(k[0], [])) if x["active"] and not x["pending"] else None}
                                 for k, x in st.members.items() if k[1] == email and (x["active"] or x["pending"])],
-                               key=lambda c: c["name"])
+                               key=lambda c: (c["name"], c["created_at"]))
+        if fn == "delete_company":
+            c = st.companies.get(p.get("p_company"))
+            x = st.members.get((p.get("p_company"), email))
+            if not c or not x or not x["active"] or x["pending"] or not (x.get("is_super") or c["created_by"] == email):
+                return _err("42501", "only a super administrator of this company can do this", 403)
+            if norm(p.get("p_name")) != norm(c["name"]):
+                return _err("P0001", "type the company's name exactly to delete it")
+            del st.companies[c["id"]]
+            for k in [k for k in st.members if k[0] == c["id"]]:
+                del st.members[k]
+            st.ops.pop(c["id"], None)
+            st.snapshots.pop(c["id"], None)
+            return 200, None
         if fn == "create_company":
-            name = (p.get("p_name") or "").strip()
+            name = " ".join((p.get("p_name") or "").split())
             if not name:
                 return _err("P0001", "enter the company name")
+            if any(norm(st.companies[i]["name"]) == norm(name) for i in mine()):
+                return _err("P0001", f'you already have a company called "{name}" — choose another name')
             new = str(uuid.uuid4())
             st.companies[new] = {"id": new, "name": name, "invite_code": uuid.uuid4().hex[:8].upper(), "created_at": st.now(),
                                  "created_by": email}
