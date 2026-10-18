@@ -96,6 +96,9 @@ Deno.serve(async (req) => {
   const me = await call("GET", "/auth/v1/user", undefined, { apikey: ANON, Authorization: `Bearer ${token}` });
   const caller = String(me.data?.email || "").toLowerCase();
   if (!me.ok || !caller) return fail(401, "Sign in to the workspace again");
+  // two-step sign-in on (an authenticator is set up): only a session that passed it may act
+  const aal = (() => { try { return JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))).aal || ""; } catch { return ""; } })();
+  if (aal !== "aal2" && (me.data?.factors || []).some((f: any) => f.status === "verified")) return fail(401, "Finish two-step sign-in first");
   const company = String(b.company || "");
   if (!/^[0-9a-f-]{36}$/i.test(company)) return fail(400, "Say which company");
   const inCo = `company_id=eq.${enc(company)}`;

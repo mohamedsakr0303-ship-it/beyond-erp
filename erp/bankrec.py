@@ -1,6 +1,7 @@
 """Bank reconciliation: match the bank's statement to the books, line by line.
 
-A statement (imported from the bank's CSV / Excel file, pasted, or typed) belongs to one cash / bank account and
+A statement (imported from the bank's CSV / Excel file or its own statement file — MT940, CAMT.053, OFX / QFX, QIF —
+pasted, or typed) belongs to one cash / bank account and
 holds the bank's lines: date, description, reference, amount (+ money in, − money out) and running balance.
 Each bank line is matched to one or more vouchers that moved that account (a deposit of several receipts), or a
 voucher is created for it straight from the line (bank charges, interest, transfers not booked yet); rules
@@ -159,8 +160,204 @@ def _table(data, filename=""):
     return [r for r in csv.reader(io.StringIO(textdata), delimiter=delim)]
 
 
+# ------------------------------------------------------- bank file formats (MT940, CAMT.053, OFX / QFX, QIF)
+def _text_of(data):
+    """The upload as text when it is a text file (None for Excel workbooks)."""
+    raw = base64.b64decode(data.split(",", 1)[1]) if isinstance(data, str) and data.startswith("data:") else data
+    if isinstance(raw, bytes):
+        if raw[:2] == b"PK":
+            return None
+        for enc in ("utf-8-sig", "cp1256", "latin-1"):
+            try:
+                return raw.decode(enc)
+            except UnicodeDecodeError:
+                continue
+    return str(raw or "")
+
+
+def _mt_amount(v):
+    return float(v.replace(",", ".")) if v else 0.0
+
+
+def _mt940(t):
+    """SWIFT MT940 (and MT942): :60F: opening, :61: a line (+ :86: its details), :62F: closing."""
+    rows, opening, closing, tag, cur = [], None, None, None, None
+    fields = []
+    for line in t.replace("\r", "").split("\n"):
+        m = re.match(r"^:(\d{2}[A-Z]?):(.*)$", line)
+        if m:
+            fields.append([m.group(1), m.group(2)])
+        elif fields and line.strip() not in ("-", "}"):
+            fields[-1][1] += "\n" + line
+    for tag, val in fields:
+        if tag in ("60F", "60M", "62F", "62M"):
+            m = re.match(r"([CD])(\d{6})[A-Z]{3}([\d,]+)", val.strip())
+            if m:
+                amt = _mt_amount(m.group(3)) * (-1 if m.group(1) == "D" else 1)
+                if tag.startswith("60") and opening is None:
+                    opening = amt
+                elif tag.startswith("62"):
+                    closing = amt
+        elif tag == "61":
+            first = val.split("\n")[0]
+            m = re.match(r"(\d{6})(\d{4})?(R?[CD])([A-Z])?([\d,]+)[A-Z]([A-Z0-9]{3})?([^/\n]*)(?://(.*))?", first)
+            if not m:
+                continue
+            y, mo, d = 2000 + int(first[:2]), int(first[2:4]), int(first[4:6])
+            sign = -1 if m.group(3) in ("D", "RC") else 1
+            cur = {"date": _dt.date(y, mo, d).isoformat(), "description": " ".join(val.split("\n")[1:]).strip(),
+                   "ref": (m.group(7) or "").strip() if (m.group(7) or "").strip() not in ("NONREF", "") else (m.group(8) or "").strip(),
+                   "amount": round(sign * _mt_amount(m.group(5)), 2), "balance": None}
+            rows.append(cur)
+        elif tag == "86" and cur is not None:
+            info = re.sub(r"\?\d{2}", " ", val.replace("\n", "")) if re.search(r"\?\d{2}", val) else val.replace("\n", " ")
+            cur["description"] = (re.sub(r"\s+", " ", info).strip() + (" " + cur["description"] if cur["description"] else "")).strip()
+    return rows, opening, closing
+
+
+def _local(el):
+    return el.tag.rsplit("}", 1)[-1]
+
+
+def _find(el, *path):
+    for step in path:
+        if el is None:
+            return None
+        el = next((c for c in el if _local(c) == step), None)
+    return el
+
+
+def _ftext(el, *path):
+    x = _find(el, *path)
+    return (x.text or "").strip() if x is not None and x.text else ""
+
+
+def _camt(t):
+    """ISO 20022 CAMT.053 (statement) / CAMT.052 (report): balances OPBD / CLBD and entries (Ntry)."""
+    import xml.etree.ElementTree as ET
+    if re.search(r"<!(DOCTYPE|ENTITY)", t[:5000], re.I):
+        raise ValidationError("This XML file carries definitions that are not allowed in a bank statement")
+    root = ET.fromstring(t.encode("utf-8") if not t.lstrip().startswith("<?xml") else re.sub(r"^\s*<\?xml[^>]*\?>", "", t).encode("utf-8"))
+    stmts = [e for e in root.iter() if _local(e) in ("Stmt", "Rpt")]
+    rows, opening, closing = [], None, None
+    for st in stmts:
+        for b in (c for c in st if _local(c) == "Bal"):
+            code = _ftext(b, "Tp", "CdOrPrtry", "Cd")
+            amt = float(_ftext(b, "Amt") or 0) * (-1 if _ftext(b, "CdtDbtInd") == "DBIT" else 1)
+            if code in ("OPBD", "PRCD") and opening is None:
+                opening = amt
+            elif code == "CLBD" or (code == "CLAV" and closing is None):
+                closing = amt
+        for n in (c for c in st if _local(c) == "Ntry"):
+            if _ftext(n, "Sts") in ("PDNG", "INFO") or _ftext(n, "Sts", "Cd") in ("PDNG", "INFO"):
+                continue
+            amt = float(_ftext(n, "Amt") or 0) * (-1 if _ftext(n, "CdtDbtInd") == "DBIT" else 1)
+            if _ftext(n, "RvslInd").lower() == "true":
+                amt = -amt
+            day = (_ftext(n, "BookgDt", "Dt") or _ftext(n, "BookgDt", "DtTm") or _ftext(n, "ValDt", "Dt") or _ftext(n, "ValDt", "DtTm"))[:10]
+            tx = _find(n, "NtryDtls", "TxDtls")
+            words = [w for w in (
+                " ".join((u.text or "").strip() for u in (tx.iter() if tx is not None else []) if _local(u) == "Ustrd"),
+                _ftext(tx, "RltdPties", "Cdtr", "Nm") if amt < 0 else _ftext(tx, "RltdPties", "Dbtr", "Nm"),
+                _ftext(n, "AddtlNtryInf")) if w]
+            ref = _ftext(tx, "Refs", "EndToEndId") if tx is not None else ""
+            ref = ref if ref and ref != "NOTPROVIDED" else (_ftext(n, "AcctSvcrRef") or _ftext(tx, "Refs", "AcctSvcrRef"))
+            if day:
+                rows.append({"date": day, "description": " · ".join(words), "ref": ref, "amount": round(amt, 2), "balance": None})
+    return rows, opening, closing
+
+
+def _ofx(t):
+    """OFX / QFX (Quicken, Money, many online banks), SGML (1.x) or XML (2.x)."""
+    def tag(block, name):
+        m = re.search(rf"<{name}>\s*([^<\r\n]*)", block, re.I)
+        return m.group(1).strip() if m else ""
+
+    def day(v):
+        return f"{v[:4]}-{v[4:6]}-{v[6:8]}" if re.match(r"\d{8}", v or "") else None
+    rows = []
+    for b in re.findall(r"<STMTTRN>(.*?)(?=</STMTTRN>|<STMTTRN>|</BANKTRANLIST>)", t, re.I | re.S):
+        d = day(tag(b, "DTPOSTED")) or day(tag(b, "DTUSER"))
+        amt = parse_amount(tag(b, "TRNAMT"))
+        if d and amt:
+            words = [w for w in (tag(b, "NAME"), tag(b, "MEMO")) if w]
+            rows.append({"date": d, "description": " · ".join(dict.fromkeys(words)), "ref": tag(b, "CHECKNUM") or tag(b, "REFNUM") or tag(b, "FITID"),
+                         "amount": round(amt, 2), "balance": None})
+    led = re.search(r"<LEDGERBAL>(.*?)(?:</LEDGERBAL>|<AVAILBAL>|</STMTRS>)", t, re.I | re.S)
+    closing = parse_amount(tag(led.group(1), "BALAMT")) if led else None
+    return rows, None, closing
+
+
+def _qif(t):
+    """QIF: D date, T amount, P payee, M memo, N number, ^ end of a line."""
+    rows, cur = [], {}
+    for line in t.replace("\r", "").split("\n"):
+        if not line:
+            continue
+        k, v = line[0], line[1:].strip()
+        if k == "^":
+            if cur.get("date") and cur.get("amount"):
+                rows.append({"date": cur["date"], "description": " · ".join(x for x in (cur.get("payee"), cur.get("memo")) if x),
+                             "ref": cur.get("ref", ""), "amount": round(cur["amount"], 2), "balance": None})
+            cur = {}
+        elif k == "D":
+            cur["date"] = parse_date(v.replace("'", "/"), "mdy" if re.match(r"\d{1,2}/\d{1,2}", v) and int(v.split("/")[1]) > 12 else "dmy")
+        elif k in ("T", "U"):
+            cur["amount"] = parse_amount(v)
+        elif k == "P":
+            cur["payee"] = v
+        elif k == "M":
+            cur["memo"] = v
+        elif k == "N":
+            cur["ref"] = v
+    return rows, None, None
+
+
+def _structured(data, filename=""):
+    """A bank statement file in one of the banks' own formats → (format, rows, opening, closing), or None."""
+    t = _text_of(data)
+    if not t:
+        return None
+    head = t.lstrip()[:3000]
+    name = (filename or "").lower()
+    if "BkToCstmrStmt" in head or "BkToCstmrAcctRpt" in head or name.endswith(".camt"):
+        fmt, got = "CAMT.053 (ISO 20022)", _camt(t)
+    elif re.search(r"<OFX>|OFXHEADER", head, re.I) or name.endswith((".ofx", ".qfx")):
+        fmt, got = "OFX", _ofx(t)
+    elif re.search(r"(^|\n):20:", head) and ":61:" in t or name.endswith((".sta", ".mt940", ".940")):
+        fmt, got = "MT940 (SWIFT)", _mt940(t)
+    elif head.startswith("!Type:") or name.endswith(".qif"):
+        fmt, got = "QIF", _qif(t)
+    else:
+        return None
+    rows, opening, closing = got
+    return fmt, [r for r in rows if r["date"] and r["amount"]], opening, closing
+
+
 def parse(data, filename="", order=None, mapping=None):
     """Find the header row, map the columns, read the lines. Returns rows + what was detected."""
+    try:
+        found = None if mapping else _structured(data, filename)
+    except (ValueError, IndexError, SyntaxError) as e:     # ElementTree's ParseError is a SyntaxError
+        raise ValidationError(f"Could not read this bank file: {e}") from None
+    if found:
+        fmt, out, opening, closing = found
+        if not out:
+            raise ValidationError(f"No lines with a date and an amount were found in this {fmt} file")
+        out.sort(key=lambda r: r["date"])
+        if opening is None and closing is not None:
+            opening = round(closing - sum(r["amount"] for r in out), 2)
+        if closing is None and opening is not None:
+            closing = round(opening + sum(r["amount"] for r in out), 2)
+        run = opening
+        for r in out:                       # the running balance, from the bank's own opening balance
+            if run is not None:
+                run = round(run + r["amount"], 2)
+                r["balance"] = run
+        return {"rows": out, "skipped": 0, "columns": {}, "format": fmt, "date_order": "", "date_from": out[0]["date"], "date_to": out[-1]["date"],
+                "opening": round(opening, 2) if opening is not None else None, "closing": round(closing, 2) if closing is not None else None,
+                "total_in": round(sum(r["amount"] for r in out if r["amount"] > 0), 2),
+                "total_out": round(-sum(r["amount"] for r in out if r["amount"] < 0), 2)}
     rows = [r for r in _table(data, filename) if any(c not in (None, "") for c in r)]
     if not rows:
         raise ValidationError("The file is empty")

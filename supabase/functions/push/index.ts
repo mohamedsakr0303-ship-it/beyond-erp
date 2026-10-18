@@ -7,6 +7,8 @@
 //   POST {action: "send", company, kind: "notify", to: [usernames], title, body, href, tag, pref}  follow-ups, decisions, alerts…
 //   POST {action: "schedule", …, day, time?, pref}   a reminder that day at that time (bills due, alerts) — or the person's own
 //   POST {action: "schedule", company, key, at, to, title, body, href, tag} / {action: "cancel", company, key}  reminders
+//   POST {action: "alerts", company, covers: [rule ids], items: [{key, day, time, to, title, body, href, tag}]}
+//                                                          the alerts' upcoming times (replace what waited for those rules)
 //   POST {action: "flush"}                                  send the reminders whose time has come (scheduled job)
 //   POST {action: "visitor", token}                         a public page received something (no sign-in)
 //
@@ -188,16 +190,38 @@ Deno.serve(async (req) => {
     return reply(200, { due: (due.data || []).length, sent });
   }
 
-  if (!["send", "schedule", "cancel"].includes(b.action)) return fail(400, "Unknown action");
+  if (!["send", "schedule", "cancel", "alerts"].includes(b.action)) return fail(400, "Unknown action");
   const token = (req.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
   const me = await call("GET", "/auth/v1/user", undefined, { apikey: ANON, Authorization: `Bearer ${token}` });
   const caller = String(me.data?.email || "").toLowerCase();
   if (!me.ok || !caller) return fail(401, "Sign in to the workspace again");
+  // two-step sign-in on (an authenticator is set up): only a session that passed it may act
+  const aal = (() => { try { return JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))).aal || ""; } catch { return ""; } })();
+  if (aal !== "aal2" && (me.data?.factors || []).some((f: any) => f.status === "verified")) return fail(401, "Finish two-step sign-in first");
   const company = String(b.company || "");
   if (!/^[0-9a-f-]{36}$/i.test(company)) return fail(400, "Say which company");
   const mem = await call("GET", `/rest/v1/members?select=email&company_id=eq.${enc(company)}&email=eq.${enc(caller)}&active=is.true&pending=is.false`);
   if (!mem.ok || !mem.data.length) return fail(403, "You are not a member of this company");
   if (await countRecent(caller, 3600) >= 600) return fail(429, "Too many notifications sent in the last hour");
+  // alerts people set (erp/automations.py forecast): when each will next come true if nothing changes. A device sends
+  // the alerts it checked (covers: rule ids) with their upcoming times; they replace what was waiting for those rules,
+  // so an alert that no longer applies (the bill was paid, attendance was recorded) is withdrawn before it rings.
+  if (b.action === "alerts") {
+    const covers = (Array.isArray(b.covers) ? b.covers : []).map((x: any) => Number(x)).filter((x: number) => Number.isInteger(x) && x > 0).slice(0, 300);
+    for (const id of covers) await call("DELETE", `/rest/v1/push_queue?company_id=eq.${enc(company)}&key=like.${enc(`alert:${id}:`)}*`);
+    const ok = new Set(covers);
+    const rows = (Array.isArray(b.items) ? b.items : []).slice(0, 150).filter((m: any) => {
+      const k = String(m && m.key || "").match(/^alert:(\d+):[0-9a-f]{1,32}$/);
+      return k && ok.has(Number(k[1])) && /^\d{4}-\d{2}-\d{2}$/.test(String(m.day || "")) && /^\d{1,2}:\d{2}$/.test(String(m.time || ""));
+    }).map((m: any) => {
+      const start = Date.parse(m.day + "T00:00:00Z") - 14 * 3600000;   // from the earliest time zone's start of that day
+      return { company_id: company, key: String(m.key), at: new Date(Math.max(start, Date.now() + 60000)).toISOString(), sender: caller,
+               msg: { to: (Array.isArray(m.to) ? m.to : []).map((x: any) => clip(x, 80)).slice(0, 50), title: clip(m.title, 80), body: clip(m.body, 180),
+                      href: String(m.href || "#/alerts").slice(0, 120), tag: clip(m.tag, 40), day: m.day, time: m.time, pref: "reminders" } };
+    }).filter((r: any) => Date.parse(r.msg.day + "T23:59:59Z") + 14 * 3600000 > Date.now() && Date.parse(r.at) < Date.now() + 15 * 86400000);
+    if (rows.length) await call("POST", "/rest/v1/push_queue?on_conflict=company_id,key", rows, { ...svc, Prefer: "resolution=merge-duplicates" });
+    return reply(200, { scheduled: rows.length });
+  }
   const key = clip(b.key, 60);
   if (b.action === "cancel") {
     if (key) await call("DELETE", `/rest/v1/push_queue?company_id=eq.${enc(company)}&key=eq.${enc(key)}`);

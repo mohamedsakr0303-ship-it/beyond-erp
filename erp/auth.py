@@ -110,6 +110,8 @@ def clean_perms(perms):
                 out[f"{scr}.{tb}"] = v
     if perms.get("_grid"):                 # saved from the permission grid (administrators then follow it)
         out["_grid"] = 1
+    if isinstance(perms.get("_bus"), list) and perms["_bus"]:   # only these projects (erp/scope.py); none = every project
+        out["_bus"] = [str(c)[:40] for c in perms["_bus"] if str(c).strip()][:500]
     return out
 
 
@@ -121,11 +123,13 @@ def public_user(u):
     # set keeps full access (as administrators had before) until a super administrator saves theirs
     full = u.get("is_super") or (u["is_admin"] and not stored.get("_grid"))
     perms = {m: "edit" for m in MODULES} if full else clean_perms(stored)
+    if full and not u.get("is_super") and isinstance(stored.get("_bus"), list) and stored["_bus"]:
+        perms["_bus"] = clean_perms(stored).get("_bus", [])
     return {"id": u["id"], "username": u["username"], "full_name": u["full_name"], "email": u.get("email") or "",
             "is_admin": bool(u["is_admin"]), "is_super": bool(u.get("is_super")), "active": bool(u["active"]), "perms": perms,
             "group_key": u.get("group_key") or "", "needs_approval": bool(u.get("needs_approval")),
             "grants": list(GRANTS) if u.get("is_super") else clean_grants(json.loads(u.get("grants") or "[]")),
-            "platform_owner": platform_owner(u)}
+            "platform_owner": platform_owner(u), "two_step": bool(u.get("totp_secret"))}
 
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -167,6 +171,12 @@ def create_user(db, d, first=False):
         db.x("UPDATE users SET needs_approval=1 WHERE id=?", (uid,))
     if d.get("grants"):                  # (the server lets only a super administrator send them)
         db.x("UPDATE users SET grants=? WHERE id=?", (json.dumps(clean_grants(d["grants"])), uid))
+    if isinstance(d.get("projects"), list) and d["projects"] and not is_super:   # only these projects (erp/scope.py)
+        from . import scope
+        perms = json.loads(db.one("SELECT perms FROM users WHERE id=?", (uid,))["perms"] or "{}")
+        perms["_bus"] = scope.clean(db, d["projects"])
+        if perms["_bus"]:
+            db.x("UPDATE users SET perms=? WHERE id=?", (json.dumps(perms), uid))
     return uid
 
 
@@ -198,9 +208,17 @@ def update_user(db, uid, d, acting_user_id):
     if uid == acting_user_id and not active:
         raise ValidationError("You cannot deactivate yourself")
     email = clean_email(db, d.get("email", u.get("email")), uid)
+    stored = json.loads(u["perms"] or "{}")
+    perms = clean_perms(d.get("perms") or stored)
+    perms.pop("_bus", None)
+    bus = d["projects"] if "projects" in d else stored.get("_bus")     # only these projects (erp/scope.py)
+    if isinstance(bus, list) and bus and not is_super:
+        from . import scope
+        perms["_bus"] = scope.clean(db, bus)
+        if not perms["_bus"]:
+            perms.pop("_bus")
     db.x("UPDATE users SET full_name=?, is_admin=?, is_super=?, active=?, perms=?, email=? WHERE id=?",
-         (text(d.get("full_name", u["full_name"])), is_admin, is_super, active,
-          json.dumps(clean_perms(d.get("perms") or json.loads(u["perms"] or "{}"))), email, uid))
+         (text(d.get("full_name", u["full_name"])), is_admin, is_super, active, json.dumps(perms), email, uid))
     if "group_key" in d:
         db.x("UPDATE users SET group_key=? WHERE id=?", (_group(db, d.get("group_key")), uid))
     if "grants" in d:              # special rights (the server lets only a super administrator change them)
@@ -249,7 +267,97 @@ def _throttle(key):
         raise ValidationError(f"Too many wrong passwords — try again in {wait} minute{'s' if wait != 1 else ''}")
 
 
-def login(db, username, password):
+# ------------------------------------------------------------------ two-step sign-in (authenticator app, RFC 6238)
+# The secret is made on the device when the person turns it on and kept with their account; a sign-in then also needs
+# the 6-digit code the authenticator app shows (or one of 10 one-time recovery codes, derived from the secret).
+TOTP_STEP, TOTP_DIGITS, RECOVERY_N = 30, 6, 10
+_B32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+_last_step = {}                 # user id -> last accepted time step (a code works once)
+
+
+class SecondStepNeeded(ValidationError):
+    """The password was right; the authenticator code is still needed."""
+
+
+def _b32decode(s):
+    import base64
+    s = re.sub(r"[\s-]", "", str(s or "")).upper()
+    return base64.b32decode(s + "=" * (-len(s) % 8))
+
+
+def new_totp_secret():
+    return "".join(secrets.choice(_B32) for _ in range(32))
+
+
+def totp(secret, step):
+    import struct
+    h = hmac.new(_b32decode(secret), struct.pack(">Q", step), hashlib.sha1).digest()
+    o = h[-1] & 0x0F
+    return str((int.from_bytes(h[o:o + 4], "big") & 0x7FFFFFFF) % 10 ** TOTP_DIGITS).zfill(TOTP_DIGITS)
+
+
+def _now_step():
+    import time
+    return int(time.time()) // TOTP_STEP
+
+
+def totp_ok(secret, code, uid=None):
+    """The code from the authenticator app: this 30-second step or the one before / after (clocks drift)."""
+    code = re.sub(r"\D", "", str(code or ""))
+    if len(code) != TOTP_DIGITS or not secret:
+        return False
+    now = _now_step()
+    for step in (now, now - 1, now + 1):
+        if hmac.compare_digest(totp(secret, step), code):
+            if uid is not None:
+                if _last_step.get(uid, -1) >= step:
+                    return False
+                _last_step[uid] = step
+            return True
+    return False
+
+
+def recovery_codes(secret):
+    """10 one-time codes for when the phone is lost (XXXXX-XXXXX), the same every time they are shown."""
+    out = []
+    for i in range(RECOVERY_N):
+        d = hmac.new(_b32decode(secret), f"recovery:{i}".encode(), hashlib.sha256).digest()
+        c = "".join(_B32[b % 32] for b in d[:10])
+        out.append(c[:5] + "-" + c[5:])
+    return out
+
+
+def _use_recovery(db, u, code):
+    c = re.sub(r"[\s-]", "", str(code or "")).upper()
+    used = json.loads(u.get("totp_used") or "[]")
+    for i, rc in enumerate(recovery_codes(u["totp_secret"])):
+        if i not in used and hmac.compare_digest(rc.replace("-", ""), c):
+            db.x("UPDATE users SET totp_used=? WHERE id=?", (json.dumps(used + [i]), u["id"]))
+            return True
+    return False
+
+
+def totp_uri(secret, username, issuer="BeyondERP"):
+    from urllib.parse import quote
+    return f"otpauth://totp/{quote(issuer)}:{quote(username)}?secret={secret}&issuer={quote(issuer)}&digits={TOTP_DIGITS}&period={TOTP_STEP}"
+
+
+def totp_enable(db, uid, secret, code):
+    """Turn two-step sign-in on with the secret the device made, once the app shows a matching code."""
+    if not re.fullmatch(r"[A-Z2-7]{16,64}", str(secret or "")):
+        raise ValidationError("Start again: the setup key is not valid")
+    from .db import CLOCK
+    if CLOCK["at"] is None and not totp_ok(secret, code):          # (a replay from the shared workspace was checked where it was typed)
+        raise ValidationError("That code does not match — check the time on the phone and type the newest code")
+    db.x("UPDATE users SET totp_secret=?, totp_used='[]' WHERE id=?", (secret, int(uid)))
+    return recovery_codes(secret)
+
+
+def totp_disable(db, uid):
+    db.x("UPDATE users SET totp_secret='', totp_used='[]' WHERE id=?", (int(uid),))
+
+
+def login(db, username, password, code=None):
     import time
     key = str(username or "").strip().lower()
     _throttle(key)
@@ -257,6 +365,12 @@ def login(db, username, password):
     if not u or not check_password(password, u["pw_hash"]):
         _fails.setdefault(key, []).append(time.time())     # (not written to the shared audit log: it syncs to every device)
         raise ValidationError("Wrong username or password")
+    if u.get("totp_secret"):
+        if not str(code or "").strip():
+            raise SecondStepNeeded("Type the 6-digit code from your authenticator app")
+        if not (totp_ok(u["totp_secret"], code, u["id"]) or _use_recovery(db, u, code)):
+            _fails.setdefault(key, []).append(time.time())
+            raise SecondStepNeeded("That code is not right — type the newest code from the app (or a recovery code)")
     _fails.pop(key, None)
     token = secrets.token_urlsafe(32)
     db.x("INSERT INTO sessions(token,user_id,expires) VALUES (?,?,datetime('now',?))",

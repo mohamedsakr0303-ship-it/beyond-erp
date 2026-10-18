@@ -113,9 +113,17 @@ COMPANY_KEYS = ("company_name", "company_tagline", "company_address", "company_t
                 "bank_holder", "bank_swift", "bank_iban", "offer_validity_days", "offer_prefix", "offer_digits", "regional",
                 "banks", "bank_default")
 PUBLIC_SETTINGS = COMPANY_KEYS + ("demo_loaded", "desk_site", "workday_location", "menu_labels", "reserve_pct", "legal_reserve_pct", "legal_reserve_cap", "funding_partner", "funding_limit", "report_from", "report_to", "lock_date", "hidden_modules",
-                                  "appearance", "po_self_approve_limit", "menu_layout", "form_custom")
+                                  "appearance", "po_self_approve_limit", "menu_layout", "form_custom", "duplicate_check", "two_step_required")
 JSON_SETTINGS = {"menu_labels": {}, "units": [], "hidden_modules": [], "appearance": {}, "regional": {}, "banks": [],
                  "menu_layout": {}, "form_custom": {}}
+
+
+def _my_bus(db, user):
+    """The projects (business units) this person works with: all of them, or only theirs (erp/scope.py)."""
+    from . import scope
+    rows = db.q("SELECT id, code, name, status, basis, negotiation, grp FROM business_units ORDER BY code")
+    sc = scope.of(db, user)
+    return [b for b in rows if b["id"] in sc.ids] if sc else rows
 
 
 def settings_dict(db):
@@ -198,7 +206,7 @@ def bootstrap(ctx):
         "cloud": {"joined": bool(sync and sync.active)},
         "settings": settings_dict(db),
         "accounts": db.q("SELECT * FROM accounts ORDER BY code"),
-        "bus": db.q("SELECT id, code, name, status, basis, negotiation, grp FROM business_units ORDER BY code"),
+        "bus": _my_bus(db, user),
         "warehouses": db.q("SELECT * FROM warehouses ORDER BY id"),
         "partners": db.q("SELECT * FROM partners ORDER BY id"),
         "items": db.q("SELECT * FROM stock_items ORDER BY name"),
@@ -245,7 +253,9 @@ def setup(ctx):
 @route("POST", "/api/login", public=True)
 def login(ctx):
     try:
-        token, user = auth.login(ctx.db, ctx.body.get("username"), ctx.body.get("password"))
+        token, user = auth.login(ctx.db, ctx.body.get("username"), ctx.body.get("password"), ctx.body.get("code"))
+    except auth.SecondStepNeeded as e:          # right password: now the code from the authenticator app
+        return ok({"error": str(e), "two_step": True}, 400)
     except acc.ValidationError:
         # a device joined to the shared workspace also takes the workspace password (the one used on the website)
         found = _workspace_login(ctx, acc.text(ctx.body.get("username")), ctx.body.get("password") or "")
@@ -333,8 +343,15 @@ def put_settings(ctx):
                     ctx.body["appearance"].pop(k, None)
     if keys & {"reserve_pct", "legal_reserve_pct", "legal_reserve_cap", "funding_partner", "funding_limit"} and not ctx.can("partners.equity", "edit"):
         ctx.require("settings.company", "edit")
-    if keys & {"backup_keep", "lock_date", "po_self_approve_limit"}:
+    if keys & {"backup_keep", "lock_date", "po_self_approve_limit", "duplicate_check"}:
         ctx.require("settings.system", "edit")
+    if "two_step_required" in keys:
+        if not ctx.user.get("is_super"):
+            raise PermissionError("Only a super administrator decides who must use two-step sign-in")
+        if ctx.body["two_step_required"] not in ("", "admins", "all"):
+            raise acc.ValidationError("two_step_required is '', 'admins' or 'all'")
+        if ctx.body["two_step_required"] and not ctx.user.get("two_step") and getattr(ctx.app, "static", False) is not True:
+            raise PermissionError("Turn on two-step sign-in for yourself first (your profile), then require it for others")
     if "hidden_modules" in keys:
         ctx.require("settings.menus", "edit")
     allowed = set(PUBLIC_SETTINGS) | {"backup_keep"}
@@ -372,6 +389,16 @@ def put_settings(ctx):
                 raise acc.ValidationError(f"{k} is too large")
         if k == "lock_date" and v:
             v = acc.clean_date(v, "lock date")
+        if k == "fiscal_year_start":
+            v = acc.text(v) or "01-01"
+            try:
+                _m, _d = (int(x) for x in v.split("-"))
+                _dt.date(2001, _m, _d)
+            except (ValueError, TypeError):
+                raise acc.ValidationError("The financial year start looks like 01-01 (month-day)") from None
+            v = f"{_m:02d}-{_d:02d}"
+            if v != (ctx.db.setting("fiscal_year_start") or "01-01") and ctx.db.one("SELECT 1 FROM year_closes"):
+                raise acc.ValidationError("Closed financial years follow the current start date — reopen them before changing it")
         if k == "font_size":
             v = str(max(11, min(22, int(float(v or 15)))))
         if k in ("reserve_pct", "legal_reserve_pct", "legal_reserve_cap"):
@@ -398,7 +425,10 @@ def put_new_menu(ctx):
 
 @route("POST", "/api/entry/<tid>", "accounting.journal", "add")
 def post_entry_type(ctx, tid):
-    eid = entries.post(ctx.db, tid, ctx.body, ctx.user["username"])
+    try:
+        eid = _dup_checked(ctx, lambda: entries.post(ctx.db, tid, ctx.body, ctx.user["username"]))
+    except _Duplicate as e:
+        return _dup_reply(e)
     ctx.log("journal.add", eid)
     return ok({"id": eid})
 
@@ -612,6 +642,9 @@ def journal_filters(q):
 @route("GET", "/api/journal", "accounting.journal")
 def journal(ctx):
     w, p = journal_filters(ctx.q)
+    if getattr(ctx, "scope", None):         # only the person's projects (counts and pages too)
+        w += f" AND e.bu_id IN ({','.join('?' * len(ctx.scope.ids)) or 'NULL'})"
+        p = p + sorted(ctx.scope.ids)
     limit, offset = page(ctx.q)
     total = ctx.db.one(f"SELECT COUNT(*) AS n, COALESCE(SUM((SELECT SUM(debit) FROM journal_lines WHERE entry_id=e.id)),0) "
                        f"AS amt FROM journal_entries e WHERE {w} AND e.status='posted'", p)
@@ -674,12 +707,38 @@ def _to_approval(ctx, dtype, body, run, target_id=None, module="accounting.journ
     return ok({"id": None, "approval": aid, "pending": True})
 
 
+class _Duplicate(Exception):
+    pass
+
+
+def _dup_checked(ctx, make):
+    """A new entry typed in now: when it looks like one already in the books, nothing is saved and the screen is told
+    (HTTP 409 with the look-alikes) so the person can confirm it really is another one (allow_duplicate) or cancel.
+    Replays of the shared log, imports and confirmed entries go straight through."""
+    from .db import CLOCK
+    if CLOCK["at"] is not None or ctx.body.get("allow_duplicate") or ctx.db.setting("duplicate_check") == "off":
+        return make()
+    with ctx.db.tx():
+        eid = make()
+        dups = acc.possible_duplicates(ctx.db, eid) if isinstance(eid, int) else []
+        if dups:
+            raise _Duplicate(dups)
+    return eid
+
+
+def _dup_reply(e):
+    return ok({"error": "This looks like an entry that is already in the books", "code": "duplicate", "duplicates": e.args[0]}, 409)
+
+
 @route("POST", "/api/journal", "accounting.journal", "add")
 def journal_add(ctx):
     from . import approvals
-    if approvals.needs_approval(ctx.db, ctx.user):
-        return _to_approval(ctx, "journal", ctx.body, lambda: acc.record_journal(ctx.db, ctx.body, ctx.user["username"]))
-    eid = acc.record_journal(ctx.db, ctx.body, ctx.user["username"])
+    try:
+        if approvals.needs_approval(ctx.db, ctx.user):
+            return _to_approval(ctx, "journal", ctx.body, lambda: _dup_checked(ctx, lambda: acc.record_journal(ctx.db, ctx.body, ctx.user["username"])))
+        eid = _dup_checked(ctx, lambda: acc.record_journal(ctx.db, ctx.body, ctx.user["username"]))
+    except _Duplicate as e:
+        return _dup_reply(e)
     ctx.log("journal.add", eid)
     return ok({"id": eid})
 
@@ -738,9 +797,14 @@ def post_doc(ctx, dtype):
     from .db import CLOCK
     kw = {"strict": True} if dtype == "direct_cost" and CLOCK["at"] is None else {}  # typed in now, not a replay
     from . import approvals
-    if approvals.needs_approval(ctx.db, ctx.user):
-        return _to_approval(ctx, dtype, ctx.body, lambda: fn(ctx.db, ctx.body, ctx.user["username"], **kw), None, module)
-    eid = fn(ctx.db, ctx.body, ctx.user["username"], **kw)
+    run = (lambda: fn(ctx.db, ctx.body, ctx.user["username"], **kw)) if dtype == "stock_move" else \
+        (lambda: _dup_checked(ctx, lambda: fn(ctx.db, ctx.body, ctx.user["username"], **kw)))
+    try:
+        if approvals.needs_approval(ctx.db, ctx.user):
+            return _to_approval(ctx, dtype, ctx.body, run, None, module)
+        eid = run()
+    except _Duplicate as e:
+        return _dup_reply(e)
     _remember_form(ctx.db, dtype, eid, ctx.body)
     ctx.log(f"doc.{dtype}", eid)
     return ok({"id": eid})
@@ -759,7 +823,7 @@ def _remember_form(db, dtype, eid, body):
     if not row:
         return
     meta = json.loads(row["meta"] or "{}")
-    meta["form"] = {k: v for k, v in body.items() if isinstance(v, (str, int, float, bool)) or v is None}
+    meta["form"] = {k: v for k, v in body.items() if (isinstance(v, (str, int, float, bool)) or v is None) and k != "allow_duplicate"}
     db.x("UPDATE journal_entries SET meta=? WHERE id=?", (json.dumps(meta, ensure_ascii=False), eid))
 
 
@@ -1102,8 +1166,20 @@ def automations_run(ctx):
         if not (ctx.can("settings.automations", "edit") or (r and r["created_by"] == ctx.user["username"])):
             raise PermissionError()
     pushes = []
-    done = automations.run(ctx.db, only=only, owner=None if only else ctx.user["username"], local=ctx.body.get("local"), pushes=pushes)
+    if ctx.body.get("all") and not only:      # everyone's alerts this person may also see (and their own rules)
+        done = automations.run(ctx.db, local=ctx.body.get("local"), pushes=pushes, viewer=ctx.user)
+    else:
+        done = automations.run(ctx.db, only=only, owner=None if only else ctx.user["username"], local=ctx.body.get("local"), pushes=pushes)
+    if not only and not any(x.get("acted") or x.get("error") for x in done):
+        return ok({"_nochange": True, "done": done})      # (the shared workspace then records nothing)
     return ok(push_hint({"done": done}, *pushes))
+
+
+@route("GET", "/api/automations/forecast", "settings.automations|crm.followups|dashboard|team.alerts")
+def automations_forecast(ctx):
+    """When each alert this person may see will next come true — the app hands it to the workspace's push service."""
+    from . import automations
+    return ok(automations.forecast(ctx.db, ctx.user, ctx.q.get("local"), min(int(ctx.q.get("days") or 7), 14)))
 
 
 # ---------------------------------------------------------------- my alerts: what each person wants to be told about
@@ -4481,6 +4557,8 @@ def user_edit(ctx, uid):
         b.pop("needs_approval", None)     # nobody lifts their own approval requirement
     if not ctx.user.get("is_super"):
         b.pop("grants", None)             # special rights: given by a super administrator only
+        b.pop("projects", None)           # which projects someone sees: set by a super administrator
+        b.pop("perms", None)
     raises = bool(b.get("is_admin")) and not target["is_admin"] or bool(b.get("is_super")) and not target["is_super"]
     lowers = ("is_admin" in b and not b["is_admin"] and target["is_admin"]) or ("is_super" in b and not b["is_super"] and target["is_super"])
     if raises or ((target["is_admin"] or target["is_super"]) and int(uid) != ctx.user["id"]) or (lowers and int(uid) != ctx.user["id"]):
@@ -4734,6 +4812,85 @@ def ai_params(ctx):
 
 
 # ================================================================= forecasting
+# ---------------------------------------------------------------- two-step sign-in (auth.py)
+@route("GET", "/api/me/two-step")
+def two_step_get(ctx):
+    """A new setup key (not kept until a code from the app confirms it) and whether it is on."""
+    u = ctx.db.one("SELECT totp_secret FROM users WHERE id=?", (ctx.user["id"],))
+    secret = auth.new_totp_secret()
+    return ok({"on": bool(u and u["totp_secret"]), "secret": secret, "uri": auth.totp_uri(secret, ctx.user["username"], ctx.db.setting("company_name") or "BeyondERP"),
+               "required": ctx.db.setting("two_step_required") or ""})
+
+
+@route("POST", "/api/me/two-step")
+def two_step_on(ctx):
+    codes = auth.totp_enable(ctx.db, ctx.user["id"], acc.text(ctx.body.get("secret")), ctx.body.get("code"))
+    ctx.log("two-step.on", ctx.user["username"])
+    return ok({"on": True, "recovery_codes": codes})
+
+
+@route("POST", "/api/me/two-step/off")
+def two_step_off(ctx):
+    from .db import CLOCK
+    u = ctx.db.one("SELECT * FROM users WHERE id=?", (ctx.user["id"],))
+    if not u["totp_secret"]:
+        return ok({"on": False})
+    if (ctx.db.setting("two_step_required") == "all" or (ctx.db.setting("two_step_required") == "admins" and u["is_admin"])) and CLOCK["at"] is None:
+        raise acc.ValidationError("Two-step sign-in is required for you in this company — a super administrator can change that")
+    if CLOCK["at"] is None and not (auth.totp_ok(u["totp_secret"], ctx.body.get("code")) or auth.check_password(ctx.body.get("password") or "", u["pw_hash"])):
+        raise acc.ValidationError("Type a code from your authenticator app (or your password) to turn it off")
+    auth.totp_disable(ctx.db, u["id"])
+    ctx.log("two-step.off", u["username"])
+    return ok({"on": False})
+
+
+@route("POST", "/api/users/<uid>/two-step/off", "users.users", "edit")
+def two_step_reset(ctx, uid):
+    """Someone lost their phone and their recovery codes: a super administrator turns it off so they can set it up again."""
+    _need_super(ctx, "turn off someone's two-step sign-in")
+    auth.totp_disable(ctx.db, int(uid))
+    ctx.log("two-step.reset", uid)
+    return ok({"on": False})
+
+
+# ---------------------------------------------------------------- year-end close (erp/yearend.py)
+@route("GET", "/api/year-end", "accounting.yearend")
+def year_end_list(ctx):
+    from . import yearend
+    return ok({"years": yearend.years(ctx.db), "fiscal_year_start": ctx.db.setting("fiscal_year_start") or "01-01",
+               "lock_date": ctx.db.setting("lock_date") or ""})
+
+
+@route("GET", "/api/year-end/<end>", "accounting.yearend")
+def year_end_get(ctx, end):
+    from . import yearend
+    return ok(yearend.preview(ctx.db, acc.clean_date(end)))
+
+
+@route("POST", "/api/year-end/<end>/close", "accounting.yearend", "edit")
+def year_end_close(ctx, end):
+    from . import yearend
+    r = yearend.close(ctx.db, acc.clean_date(end), ctx.user["username"], ctx.body.get("notes") or "")
+    ctx.log("year.close", end)
+    return ok(r)
+
+
+@route("POST", "/api/year-end/<end>/reopen", "accounting.yearend", "edit")
+def year_end_reopen(ctx, end):
+    if not ctx.user.get("is_super"):
+        raise PermissionError("Only a super administrator can reopen a closed year")
+    from . import yearend
+    r = yearend.reopen(ctx.db, acc.clean_date(end))
+    ctx.log("year.reopen", end)
+    return ok(r)
+
+
+@route("GET", "/api/cash-forecast", "reports.cashplan")
+def cash_forecast(ctx):
+    from . import cashplan
+    return ok(cashplan.build(ctx.db, ctx.q.get("days") or 90, ctx.q.get("overdue", "1") != "0"))
+
+
 @route("GET", "/api/forecast", "reports.forecast")
 def forecast_get(ctx):
     from . import forecast
@@ -5306,6 +5463,10 @@ def serve_api(app, method, target, headers, raw=b""):
 
 
 # ================================================================== handler
+# what someone who still has to turn on two-step sign-in (when the company requires it) may do meanwhile
+TWO_STEP_FREE = re.compile(r"^/api/(?:me/two-step(?:/off)?|logout|bootstrap|me/profile|app-update|licence)$")
+
+
 class Ctx:
     def __init__(self, app, db, user, token, q, body, raw, headers):
         self.app, self.db, self.user, self.token, self.q, self.body, self.raw = app, db, user, token, q, body, raw
@@ -5425,10 +5586,23 @@ def handle(app, method, target, headers, raw=b"", as_user=None, dry=False):
                 if not st["can_write"]:
                     return ok({"error": f"{st.get('problem') or 'No licence'} — the books are read-only (view, print and export "
                                         "still work). Enter a licence key in Settings → System → Licence.", "licence": st["state"]}, 402)
+            if (user and not public and as_user is None and not api_key and getattr(app, "static", False) is not True
+                    and not user.get("two_step") and not TWO_STEP_FREE.match(url.path)):
+                need = db.setting("two_step_required") or ""
+                if need == "all" or (need == "admins" and user.get("is_admin")):
+                    return ok({"error": "Turn on two-step sign-in first (your profile → Two-step sign-in)", "two_step_setup": True}, 403)
+            from . import scope
+            sc = scope.of(db, user) if not public else None
+            if sc:                                    # a person limited to some projects
+                scope.guard(db, sc, method, url.path, q, body)
             ctx = Ctx(app, db, user, token, q, body, raw, headers)
             ctx.action = action
             ctx.cloud_hook = getattr(app, "cloud", None)
-            return fn(ctx, **match.groupdict())
+            ctx.scope = sc
+            reply = fn(ctx, **match.groupdict())
+            if sc and method == "GET" and isinstance(reply, Reply) and reply.status == 200 and "json" in (reply.ctype or ""):
+                reply.body = json.dumps(scope.narrow(sc, url.path, json.loads(reply.body)), ensure_ascii=False, default=str).encode("utf-8")
+            return reply
         return ok({"error": "Not found"}, 404)
     except PermissionError as e:
         return ok({"error": str(e) or "You do not have permission for this"}, 403)
@@ -5538,6 +5712,25 @@ class ERPServer(ThreadingHTTPServer):
         for old in self.backups()[keep:]:
             old.unlink(missing_ok=True)
         return dest
+
+    def start_alert_checks(self, every=300):
+        """Desktop / self-hosted server on its own (no shared workspace): check every alert and rule every few minutes
+        on the server itself, so the bell has them even when nobody has the app open. (With the shared workspace the
+        devices and its push service do this, and a change must go through the shared log, so the server stays out.)"""
+        import threading
+        from . import automations
+
+        def loop():
+            import time
+            while True:
+                time.sleep(every)
+                if self.cloud.active:
+                    continue
+                try:
+                    automations.run(self.db, local=_dt.datetime.now().isoformat(timespec="minutes"))
+                except Exception:      # noqa: BLE001 — try again next time
+                    traceback.print_exc()
+        threading.Thread(target=loop, name="alert-checks", daemon=True).start()
 
     def daily_backup(self):
         today = _dt.date.today().strftime("%Y%m%d")

@@ -90,7 +90,7 @@ def sheets(industry=None):
          "phone": "01000000104"},
         {"name": "El-Nour Building Materials", "type": "supplier", "category": "supplier", "phone": "01000000201",
          "specialty": "Cement, sand, bricks", "bank_details": "Demo Bank — 1000200030004", "default_vat": "VAT14"},
-        {"name": "Cleopatra Tiles Trading", "type": "supplier", "category": "supplier", "phone": "01000000202", "specialty": "Ceramics & porcelain"},
+        {"name": "Tiles & Ceramics Supplier", "type": "supplier", "category": "supplier", "phone": "01000000202", "specialty": "Ceramics & porcelain"},
         {"name": "Hassan Aluminium", "type": "supplier", "category": "subcontractor", "phone": "01000000203", "specialty": "Aluminium & glass"},
         {"name": "Eng. Fathy Plumbing", "type": "supplier", "category": "subcontractor", "phone": "01000000204", "specialty": "Plumbing"},
         {"name": "Osama Mahmoud", "type": "supplier", "category": "driver", "phone": "01000000205", "vehicle": "Jumbo — DEMO 123"},
@@ -181,13 +181,13 @@ def sheets(industry=None):
         {"date": d(0, 20), "bu_code": "PRJ-D01", "account": "5020", "description": "Masonry works", "vendor": "Eng. Fathy Plumbing", "deal_ref": "FATHY-01", "deal_status": "Open", "qty": 1, "unit": "LS", "rate": 85000, "paid": 50000},
         {"date": d(1, 6), "bu_code": "PRJ-D01", "account": "5020", "description": "Plumbing first fix", "vendor": "Eng. Fathy Plumbing", "deal_ref": "FATHY-02", "deal_status": "Settled", "qty": 1, "unit": "LS", "rate": 46000, "savings": 4000, "paid": 42000},
         {"date": d(1, 12), "bu_code": "PRJ-D01", "account": "5030", "description": "Daily labour — plaster", "vendor": "Site crew", "qty": 12, "unit": "day", "rate": 900, "paid": 10800, "method": "Cash"},
-        {"date": d(2, 3), "bu_code": "PRJ-D01", "account": "5010", "description": "Porcelain 60x60", "vendor": "Cleopatra Tiles Trading", "deal_ref": "CLEO-01", "qty": 260, "unit": "m2", "rate": 610, "paid": 120000, "vat_code": "VAT14"},
+        {"date": d(2, 3), "bu_code": "PRJ-D01", "account": "5010", "description": "Porcelain 60x60", "vendor": "Tiles & Ceramics Supplier", "deal_ref": "CLEO-01", "qty": 260, "unit": "m2", "rate": 610, "paid": 120000, "vat_code": "VAT14"},
         {"date": d(2, 18), "bu_code": "PRJ-D01", "account": "5020", "description": "Aluminium windows", "vendor": "Hassan Aluminium", "deal_ref": "HASSAN-01", "qty": 1, "unit": "LS", "rate": 135000, "savings": 10000, "paid": 60000, "wht_code": "WHT1-S"},
         {"date": d(3, 9), "bu_code": "PRJ-D01", "account": "5020", "description": "Electrical works", "vendor": "Spark Electric", "qty": 1, "unit": "LS", "rate": 72000, "paid": 72000},
         {"date": d(1, 8), "bu_code": "PRJ-D02", "account": "5040", "description": "Demolition", "vendor": "Osama Mahmoud", "qty": 120, "unit": "m2", "rate": 110, "paid": 13200, "method": "Cash"},
         {"date": d(1, 20), "bu_code": "PRJ-D02", "account": "5010", "description": "Bricks & mortar", "vendor": "El-Nour Building Materials", "qty": 1, "unit": "Lot", "rate": 38000, "paid": 38000},
         {"date": d(2, 15), "bu_code": "PRJ-D02", "account": "5030", "description": "Plaster crew", "vendor": "Site crew", "qty": 20, "unit": "day", "rate": 850, "paid": 17000, "method": "Cash"},
-        {"date": d(3, 20), "bu_code": "PRJ-D02", "account": "5010", "description": "Porcelain for living room", "vendor": "Cleopatra Tiles Trading", "qty": 160, "unit": "m2", "rate": 600, "paid": 0, "vat_code": "VAT14"},
+        {"date": d(3, 20), "bu_code": "PRJ-D02", "account": "5010", "description": "Porcelain for living room", "vendor": "Tiles & Ceramics Supplier", "qty": 160, "unit": "m2", "rate": 600, "paid": 0, "vat_code": "VAT14"},
         {"date": d(2, 22), "bu_code": "PRJ-D03", "account": "5020", "description": "Gypsum partitions", "vendor": "Hassan Aluminium", "qty": 1, "unit": "LS", "rate": 180000, "paid": 100000},
         {"date": d(3, 5), "bu_code": "PRJ-D03", "account": "5060", "description": "Transport of materials", "vendor": "Osama Mahmoud", "qty": 4, "unit": "trip", "rate": 1500, "paid": 6000, "method": "Cash"},
         {"date": d(4, 2), "bu_code": "PRJ-D03", "account": "5050", "description": "Scissor lift rental", "vendor": "Steelform Scaffolding", "qty": 1, "unit": "month", "rate": 14000, "paid": 14000}]
@@ -228,11 +228,11 @@ def sheets(industry=None):
         {"date": d(4, 10), "party": "Hassan Aluminium", "amount": 40000, "method": "Cheque", "ref": "CHQ 4411"}]
     S["Stock Moves"] = [
         {"date": d(1, 4), "type": "Receipt", "warehouse": "Main Store", "item": "Ceramic tiles 60x60", "unit": "m2", "qty": 400, "rate": 300,
-         "vendor": "Cleopatra Tiles Trading", "paid": 120000},
+         "vendor": "Tiles & Ceramics Supplier", "paid": 120000},
         {"date": d(1, 4), "type": "Receipt", "warehouse": "Main Store", "item": "Cement bag 50kg", "unit": "bag", "qty": 200, "rate": 95,
          "vendor": "El-Nour Building Materials", "paid": 19000},
         {"date": d(1, 5), "type": "Receipt", "warehouse": "Main Store", "item": "Bathroom set (basin + WC)", "unit": "set", "qty": 10,
-         "rate": 6200, "vendor": "Cleopatra Tiles Trading", "paid": 62000},
+         "rate": 6200, "vendor": "Tiles & Ceramics Supplier", "paid": 62000},
         {"date": d(1, 5), "type": "Receipt", "warehouse": "Main Store", "item": "Wall paint 18L", "unit": "drum", "qty": 20, "rate": 1150,
          "vendor": "El-Nour Building Materials", "paid": 23000},
         {"date": d(1, 18), "type": "Transfer", "warehouse": "Main Store", "to_warehouse": "Site Store — Villa 7", "item": "Cement bag 50kg", "qty": 80},
@@ -340,7 +340,7 @@ def sheets(industry=None):
         {"code": "SP-D05", "name": "Extra module (add-on)", "name_ar": "موديول إضافي", "kind": "addon", "price": 600, "period_months": 1,
          "vat_code": "VAT14"}]
     S["Service Subscriptions"] = [
-        {"code": "SUB-D01", "customer": "Tamer Nabil", "plan": "SP-D01", "covers": "Unit A-204, Palm Hills", "start": d(1, 1),
+        {"code": "SUB-D01", "customer": "Tamer Nabil", "plan": "SP-D01", "covers": "Unit A-204", "start": d(1, 1),
          "term_months": 12, "auto_renew": "Yes"},
         {"code": "SUB-D02", "customer": "Laila Samir", "plan": "SP-D02", "covers": "Apartment 14, Zamalek", "start": d(2, 1)},
         {"code": "SUB-D03", "customer": "Tamer Nabil", "plan": "SP-D03", "covers": "Oven + hob, serials OV-88231 / HB-11873", "start": d(1, 15),
@@ -349,7 +349,7 @@ def sheets(industry=None):
          "start": d(3, 1)},
         {"code": "SUB-D05", "customer": "Delta Tech Solutions", "plan": "SP-D05", "parent": "SUB-D04", "title": "Extra module — Rentals",
          "covers": "Rentals module", "start": d(4, 1)}]
-    S["Purchase Orders"] = [{"code": "PO-D100", "date": d(4, 2), "supplier": "Cleopatra Tiles Trading", "bu_code": "PRJ-D01",
+    S["Purchase Orders"] = [{"code": "PO-D100", "date": d(4, 2), "supplier": "Tiles & Ceramics Supplier", "bu_code": "PRJ-D01",
                              "expected": d(4, 20), "vat_code": "VAT14", "kind": "cost", "description": desc, "account": "5010",
                              "qty": q, "unit": u, "rate": r, "terms": "Ex-works, 50 % advance", "approved": "Yes"}
                             for desc, q, u, r in (("Porcelain tiles 60×60", 320, "m2", 410), ("Tile skirting", 140, "m", 85))]
@@ -616,9 +616,9 @@ def _extra(S, key, d, eom):
         for m in range(1, 6):
             S["Stock Moves"] += [
                 {"date": d(m, 2), "type": "Receipt", "warehouse": "Main Store", "item": "Ceramic tiles 60x60", "unit": "m2", "qty": 600,
-                 "rate": 300, "vendor": "Cleopatra Tiles Trading", "paid": 180000},
+                 "rate": 300, "vendor": "Tiles & Ceramics Supplier", "paid": 180000},
                 {"date": d(m, 2), "type": "Receipt", "warehouse": "Main Store", "item": "Bathroom set (basin + WC)", "unit": "set", "qty": 8,
-                 "rate": 6200, "vendor": "Cleopatra Tiles Trading", "paid": 49600}]
+                 "rate": 6200, "vendor": "Tiles & Ceramics Supplier", "paid": 49600}]
             for j in range(2):
                 b = buyers[(m * 2 + j) % len(buyers)]
                 code = f"SO-T{m}{j}"
@@ -882,7 +882,7 @@ def load(db, user="", replace=False, industry=None):
             # a negotiation: keep the discount as earnings on the cost-plus villa
             db.conn.execute("UPDATE business_units SET negotiation='keep' WHERE code='PRJ-D01'")
             acc.record_project_cost(db, {"date": S["Direct Costs"][7]["date"], "bu_code": "PRJ-D01", "account": "5010",
-                                       "description": "Sanitary ware (negotiated)", "vendor": "Cleopatra Tiles Trading", "qty": 1,
+                                       "description": "Sanitary ware (negotiated)", "vendor": "Tiles & Ceramics Supplier", "qty": 1,
                                        "rate": 58000, "savings": 6000, "paid": 52000, "negotiation": "keep",
                                        "deal_ref": "CLEO-02", "deal_status": "Settled"}, user)
             # a supplier deal settled for less than owed

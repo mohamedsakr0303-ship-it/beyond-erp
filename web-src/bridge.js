@@ -478,6 +478,35 @@ def cloud_new_books(name, email):
           return { type: p.type, info: await info() };
         },
         hasPendingAuth: () => !!pendingAuth,
+        // Two-step sign-in (Supabase Auth MFA, authenticator app): the workspace refuses the books to a session that
+        // has not passed the second step when the account has it on (supabase/migrations/…_two_step.sql)
+        async mfaFactors() {
+          const u = await req("GET", "/auth/v1/user", undefined, await token());
+          return (u.factors || []).filter(f => f.factor_type === "totp");
+        },
+        async mfaNeeded() {
+          if (!get(SES)) return false;
+          let aal = "aal1";
+          try { aal = JSON.parse(atob(get(SES).access.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))).aal || "aal1"; } catch { /* old token */ }
+          if (aal === "aal2") return false;
+          return (await this.mfaFactors()).some(f => f.status === "verified");
+        },
+        async mfaEnroll() {
+          for (const f of (await this.mfaFactors()).filter(x => x.status !== "verified")) await req("DELETE", "/auth/v1/factors/" + f.id, undefined, await token()).catch(() => {});
+          const r = await req("POST", "/auth/v1/factors", { factor_type: "totp", friendly_name: "BeyondERP " + new Date().toISOString().slice(0, 16) }, await token());
+          return { id: r.id, qr: r.totp && r.totp.qr_code, secret: r.totp && r.totp.secret, uri: r.totp && r.totp.uri };
+        },
+        async mfaVerify(factorId, code) {
+          const tk = await token();
+          if (!factorId) { const f = (await this.mfaFactors()).find(x => x.status === "verified"); if (!f) return; factorId = f.id; }
+          const ch = await req("POST", `/auth/v1/factors/${factorId}/challenge`, {}, tk);
+          try { saveSession(await req("POST", `/auth/v1/factors/${factorId}/verify`, { challenge_id: ch.id, code: String(code || "").replace(/\D/g, "") }, tk)); }
+          catch (e) { throw new CloudError(/invalid|code/i.test(e.message) ? "That code is not right — type the newest code from the app" : e.message, e.code, e.status); }
+        },
+        async mfaOff() {
+          for (const f of await this.mfaFactors()) await req("DELETE", "/auth/v1/factors/" + f.id, undefined, await token());
+          try { saveSession(await req("POST", "/auth/v1/token?grant_type=refresh_token", { refresh_token: get(SES).refresh })); } catch { /* keeps the current one */ }
+        },
         info,
         signedIn: () => !!get(SES),
         company: () => (dbKey === "db" ? "" : company),
@@ -540,6 +569,7 @@ def cloud_new_books(name, email):
         linkMember: m => rpc("link_member", { p_company: co(), p_email: m.email, p_username: m.username || "", p_active: m.active !== false }),
         // create / update the person's sign-in account (supabase/functions/manage-user; administrators of this company)
         deleteAccount: async m => req("POST", "/functions/v1/manage-user", { company: co(), action: "delete", username: m.username || "", email: m.email || "" }, await token()),
+        mfaReset: async m => req("POST", "/functions/v1/manage-user", { company: co(), action: "mfa_off", username: m.username || "", email: m.email || "" }, await token()),
         manageUser: async m => req("POST", "/functions/v1/manage-user", { company: co(), username: m.username, email: m.email || "", password: m.password || "",
           full_name: m.full_name || "", active: m.active !== false }, await token()),
         snapshot: () => maybeSnapshot(true),

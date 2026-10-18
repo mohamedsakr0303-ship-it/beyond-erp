@@ -942,6 +942,7 @@ def export_extras(db, files=True, secrets=False):
             "bu_groups": {r["code"]: r["grp"] for r in db.q("SELECT code, grp FROM business_units WHERE grp<>''")}, "site": site_extras(db),
             "people": _people_export(db), "approvals": _approvals_export(db), "history": _history_export(db),
             "bills": __import__("erp.billsubs", fromlist=["x"]).export_rows(db),
+            "year_closes": __import__("erp.yearend", fromlist=["x"]).export_rows(db),
             **({"secrets": _secrets_export(db)} if secrets else {})}
 
 
@@ -1549,6 +1550,11 @@ def _imp_extras(db, ex, mode, counts):
         n = billsubs.import_rows(db, ex["bills"], replace=mode == "replace")
         if n:
             counts["Subscriptions & bills"] = n
+    if isinstance(ex.get("year_closes"), list) and (mode == "replace" or ex["year_closes"]):
+        from . import yearend
+        n = yearend.import_rows(db, ex["year_closes"], replace=mode == "replace")
+        if n:
+            counts["Closed financial years"] = n
     if isinstance(ex.get("secrets"), dict):
         _secrets_import(db, ex["secrets"], mode, counts)
     if ex.get("ownership_changes"):
@@ -1589,7 +1595,7 @@ def to_csv(db, sheet_name, template=False):
     return ("﻿" + buf.getvalue()).encode("utf-8")
 
 
-WIPE_ORDER = ("cost_subs", "entry_tags", "kb_pages", "workdays", "automation_log", "automations", "desk_rows", "desk_threads", "care_visit_lines", "care_visits", "care_claims", "care_packages", "care_services", "care_patients", "crm_followups", "crm_activities", "crm_deals", "sub_cert_lines", "sub_certificates", "variation_orders", "contract_lines", "contracts", "pr_quote_lines", "pr_quotes",
+WIPE_ORDER = ("year_closes", "cost_subs", "entry_tags", "kb_pages", "workdays", "automation_log", "automations", "desk_rows", "desk_threads", "care_visit_lines", "care_visits", "care_claims", "care_packages", "care_services", "care_patients", "crm_followups", "crm_activities", "crm_deals", "sub_cert_lines", "sub_certificates", "variation_orders", "contract_lines", "contracts", "pr_quote_lines", "pr_quotes",
               "pr_lines", "purchase_requests", "stock_count_lines", "stock_counts", "equipment_usage", "maintenance_logs", "maintenance_plans",
               "equipment", "attendance", "ereceipts", "project_tasks", "project_phases", "payroll_lines", "payroll_runs", "crew_sheets", "employees", "sub_recognitions", "sub_visits", "sub_invoices", "subscriptions", "service_plans", "attachments", "po_receipts", "po_lines", "purchase_orders", "budgets", "bank_lines", "bank_statements", "bank_rules", "recurring_runs", "recurring", "sale_cheques", "sale_installments", "sale_lines", "sales_orders", "product_media", "products", "rent_moves", "rental_invoices", "rental_charges", "rental_handovers", "rental_lines", "rentals", "rent_lots",
               "rent_kit_lines", "rent_kits", "rent_models", "rent_items", "loans", "custodies", "parties", "ownership_changes", "fixed_assets", "stock_moves", "stock_levels", "stock_items", "extract_lines", "extracts", "boq_lines", "boqs",

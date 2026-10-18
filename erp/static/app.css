@@ -732,6 +732,7 @@ tr.click:hover td{background:color-mix(in srgb,var(--brand) 6%,transparent)}
 .ch-comp .icbtn{flex:none}
 /* WhatsApp-style: the mic while the box is empty, Send once there is something to send */
 .ch-comp:not(.typing)>.ch-send,.ch-comp.typing>.ch-mic{display:none}
+.ch-comp.ai-comp>.ch-send{display:inline-flex}   /* the assistant has no voice notes: its send button always shows */
 .ch-mic{width:42px;height:42px;border-radius:14px;justify-content:center}
 @media (max-width:600px){.ch-comp{gap:2px;padding:8px}.ch-comp .ch-emo .btn,.ch-comp>.icbtn{width:36px;padding:0;justify-content:center}}
 .ch-comp.recording>:not(.ch-rec){visibility:hidden}
@@ -1821,3 +1822,6 @@ input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 4px color
 .nt-day{display:inline-flex;align-items:center;padding:6px 12px;border:1px solid var(--line);border-radius:999px;cursor:pointer;font-size:.88em;user-select:none}
 .nt-day input{position:absolute;opacity:0;pointer-events:none}
 .nt-day.on{background:var(--brand);border-color:var(--brand);color:#fff}
+
+/* a menu screen / section locked in place (right-click → Lock) */
+#nav a.locked>span::after,#nav .grp.locked>span::after{content:"🔒";font-size:.62em;margin-inline-start:6px;opacity:.55;vertical-align:middle}

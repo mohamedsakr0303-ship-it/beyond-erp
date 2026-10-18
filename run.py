@@ -5,6 +5,7 @@
     python run.py --host 0.0.0.0     # share on your office network
     python run.py --data D:\\Books    # keep the database somewhere else
     python run.py reset-password admin
+    python run.py reset-two-step admin   # lost the phone used for two-step sign-in (and the recovery codes)
     python run.py import-legacy "BEYOND_Accounting_System_V0_6_1.xlsx"
     python run.py build-workbook out.xlsx
 
@@ -30,7 +31,7 @@ from erp.db import Database, default_data_dir  # noqa: E402
 def main(argv=None):
     p = argparse.ArgumentParser(description=f"BeyondERP {__version__}")
     p.add_argument("command", nargs="?", default="serve",
-                   choices=["serve", "reset-password", "import-legacy", "import", "build-workbook", "backup",
+                   choices=["serve", "reset-password", "reset-two-step", "import-legacy", "import", "build-workbook", "backup",
                             "licence-keygen", "licence-issue"])
     p.add_argument("arg", nargs="?")
     p.add_argument("--host", default="127.0.0.1", help="127.0.0.1 = this computer only; 0.0.0.0 = whole network")
@@ -78,6 +79,14 @@ def main(argv=None):
     data_dir.mkdir(parents=True, exist_ok=True)
     db = Database(data_dir / "beyond-erp.sqlite3")
 
+    if a.command == "reset-two-step":
+        user = a.arg or input("Username: ")
+        row = db.one("SELECT id FROM users WHERE username=?", (user,))
+        if not row:
+            sys.exit(f"No user named {user!r}")
+        auth.totp_disable(db, row["id"])
+        print(f"Two-step sign-in turned off for {user} — they sign in with their password and can set it up again.")
+        return
     if a.command == "reset-password":
         user = a.arg or input("Username: ")
         row = db.one("SELECT id FROM users WHERE username=?", (user,))
@@ -146,6 +155,7 @@ def main(argv=None):
         return
 
     server.daily_backup()
+    server.start_alert_checks()
     print(f"BeyondERP {__version__}")
     print(f"  Open:     {url}")
     print(f"  Data:     {data_dir}")

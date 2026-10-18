@@ -184,6 +184,8 @@ def prepare(app, method, target, headers, raw, user):
             conn.execute("ROLLBACK")
     if reply.status >= 400:
         return reply, None
+    if b'"_nochange": true' in (reply.body or b"")[:4000]:   # a check that found nothing to do: nothing to share
+        return reply, None
     ctype = headers.get("content-type") or ""
     body, pw = _strip_password(method, target, encode_body(raw, ctype))
     op = {"version": __version__, "app_user": user["username"], "device": device_id(app.db), "method": method,

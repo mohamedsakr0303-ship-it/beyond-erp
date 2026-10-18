@@ -4007,7 +4007,7 @@ class BillsAndAlerts(unittest.TestCase):
 
     def test_subscription_pay_split_and_company_cost(self):
         from erp import billsubs
-        st, r = self.call("boss", "POST", "/api/bills", {"name": "Claude Pro", "vendor": "Anthropic", "amount": 1000, "next_due": "2026-01-31",
+        st, r = self.call("boss", "POST", "/api/bills", {"name": "Software subscription", "vendor": "Software supplier", "amount": 1000, "next_due": "2026-01-31",
                                                          "alloc": "split", "split": [{"bu_code": "PRJ-D01", "pct": 60}, {"bu_code": "PRJ-D02", "pct": 40}],
                                                          "remind_days": 2, "remind_time": "10:30"})
         self.assertEqual(st, 200, r)
@@ -4019,7 +4019,7 @@ class BillsAndAlerts(unittest.TestCase):
         self.assertEqual(shares, [400.0, 600.0])
         self.assertEqual(billsubs.next_after("2026-02-28", "monthly", 31), "2026-03-31")   # back to the 31st
         pool = a.shared_overhead_total(self.db)
-        st, c = self.call("boss", "POST", "/api/bills", {"name": "ChatGPT Pro", "amount": 10000, "next_due": "2026-02-10", "alloc": "company"})
+        st, c = self.call("boss", "POST", "/api/bills", {"name": "Online service", "amount": 10000, "next_due": "2026-02-10", "alloc": "company"})
         self.call("boss", "POST", f"/api/bills/{c['id']}/pay", {"date": "2026-02-10"})
         self.assertEqual(a.shared_overhead_total(self.db), pool)            # a company cost stays out of the projects
         self.assertEqual(self.call("eng", "GET", "/api/bills")[0], 403)      # not his screen
@@ -5086,3 +5086,235 @@ class KnowledgeBaseAndApiKeys(unittest.TestCase):
             srv.server_close()
             db.close()
             tmp.cleanup()
+
+
+class ImprovementsPack(unittest.TestCase):
+    """Duplicate warnings, bank statement files, cash forecast, year-end close, project-level access, two-step sign-in
+    and alerts that are checked without the app open."""
+
+    def setUp(self):
+        from erp import demo
+        from erp.server import handle
+        self.handle = handle
+        self.app = type("App", (), {"static": False})()
+        self.app.db = self.db = Database(":memory:")
+        demo.load(self.db, "boss")
+        auth.create_user(self.db, {"username": "boss", "password": "secret123"}, first=True)
+        auth.create_user(self.db, {"username": "eng", "password": "secret123", "perms": {"purchasing": "add", "business_units": "view", "accounting": "view"}})
+        self.tok = {u: auth.login(self.db, u, "secret123")[0] for u in ("boss", "eng")}
+
+    def call(self, who, method, url, body=None):
+        h = {"x-requested-with": "BeyondERP", "x-session": self.tok[who], "content-type": "application/json"}
+        r = self.handle(self.app, method, url, h, json.dumps(body).encode() if body is not None else b"")
+        return r.status, json.loads(r.body)
+
+    def test_duplicate_entries_are_flagged_until_confirmed(self):
+        exp = {"description": "Office internet", "amount": 1234.5, "date": "2026-03-10", "vendor": "Internet provider", "account": "6045"}
+        st, r = self.call("boss", "POST", "/api/docs/expense", exp)
+        self.assertEqual(st, 200, r)
+        n = self.db.one("SELECT COUNT(*) n FROM journal_entries")["n"]
+        st, r = self.call("boss", "POST", "/api/docs/expense", {**exp, "date": "2026-03-12"})
+        self.assertEqual((st, r["code"]), (409, "duplicate"))
+        self.assertEqual(r["duplicates"][0]["amount"], 1234.5)
+        self.assertEqual(self.db.one("SELECT COUNT(*) n FROM journal_entries")["n"], n)      # nothing saved
+        st, r = self.call("boss", "POST", "/api/docs/expense", {**exp, "date": "2026-03-12", "allow_duplicate": 1})
+        self.assertEqual(st, 200)
+        self.assertNotIn("allow_duplicate", a.get_entry(self.db, r["id"])["meta"].get("form", {}))
+        self.assertEqual(self.call("boss", "POST", "/api/docs/expense", {**exp, "date": "2026-03-20"})[0], 200)   # a week later: next month's bill
+        jv = {"date": "2026-03-10", "memo": "Bank charges", "lines": [{"account": "6015", "debit": 50}, {"account": a.money_account(self.db, "bank"), "credit": 50}]}
+        self.assertEqual(self.call("boss", "POST", "/api/journal", jv)[0], 200)
+        self.assertEqual(self.call("boss", "POST", "/api/journal", jv)[0], 409)
+        self.db.set_setting("duplicate_check", "off")
+        self.assertEqual(self.call("boss", "POST", "/api/journal", jv)[0], 200)
+
+    def test_bank_statement_files_mt940_camt_ofx_qif(self):
+        from erp import bankrec
+        mt = (":20:STMT1\n:25:EG123456\n:28C:1/1\n:60F:C260301EGP10000,00\n"
+              ":61:2603020302C2500,00NTRFNONREF//B1\n:86:Client transfer ALFA\n"
+              ":61:2603050305D120,50NCHGCHQ1001\n:86:Bank charges\nmonthly\n:62F:C260305EGP12379,50\n-")
+        r = bankrec.parse(mt, "march.sta")
+        self.assertEqual((r["format"][:5], r["opening"], r["closing"], [x["amount"] for x in r["rows"]]), ("MT940", 10000.0, 12379.5, [2500.0, -120.5]))
+        self.assertEqual((r["rows"][1]["ref"], r["rows"][1]["description"], r["rows"][1]["balance"]), ("CHQ1001", "Bank charges monthly", 12379.5))
+        camt = """<?xml version="1.0" encoding="UTF-8"?><Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.02"><BkToCstmrStmt><Stmt>
+          <Bal><Tp><CdOrPrtry><Cd>OPBD</Cd></CdOrPrtry></Tp><Amt Ccy="EGP">500.00</Amt><CdtDbtInd>CRDT</CdtDbtInd></Bal>
+          <Bal><Tp><CdOrPrtry><Cd>CLBD</Cd></CdOrPrtry></Tp><Amt Ccy="EGP">400.00</Amt><CdtDbtInd>CRDT</CdtDbtInd></Bal>
+          <Ntry><Amt Ccy="EGP">100.00</Amt><CdtDbtInd>DBIT</CdtDbtInd><Sts>BOOK</Sts><BookgDt><Dt>2026-03-04</Dt></BookgDt><AcctSvcrRef>X9</AcctSvcrRef>
+            <NtryDtls><TxDtls><RmtInf><Ustrd>Rent March</Ustrd></RmtInf><RltdPties><Cdtr><Nm>Landlord</Nm></Cdtr></RltdPties></TxDtls></NtryDtls></Ntry>
+          </Stmt></BkToCstmrStmt></Document>"""
+        r = bankrec.parse(camt, "s.xml")
+        self.assertEqual((r["opening"], r["closing"], r["rows"][0]["amount"], r["rows"][0]["ref"], r["rows"][0]["description"]),
+                         (500.0, 400.0, -100.0, "X9", "Rent March · Landlord"))
+        with self.assertRaises(a.ValidationError):
+            bankrec.parse('<?xml version="1.0"?><!DOCTYPE x [<!ENTITY a "b">]><BkToCstmrStmt/>', "bad.xml")
+        ofx = ("OFXHEADER:100\nDATA:OFXSGML\n<OFX><BANKMSGSRSV1><STMTTRNRS><STMTRS><BANKTRANLIST>"
+               "<STMTTRN><TRNTYPE>DEBIT<DTPOSTED>20260310120000<TRNAMT>-45.00<FITID>F1<NAME>FUEL STATION<MEMO>Card 1234"
+               "<STMTTRN><TRNTYPE>CREDIT<DTPOSTED>20260311<TRNAMT>900<FITID>F2<NAME>CLIENT</BANKTRANLIST>"
+               "<LEDGERBAL><BALAMT>1855.00<DTASOF>20260311</LEDGERBAL></STMTRS></STMTTRNRS></BANKMSGSRSV1></OFX>")
+        r = bankrec.parse(ofx, "x.ofx")
+        self.assertEqual((r["format"], r["opening"], r["closing"], r["rows"][0]["description"]), ("OFX", 1000.0, 1855.0, "FUEL STATION · Card 1234"))
+        r = bankrec.parse("!Type:Bank\nD03/15/2026\nT-75.00\nPElectricity\nN554\n^\nD16/03/2026\nT20\nPRefund\n^\n", "a.qif")
+        self.assertEqual([(x["date"], x["amount"], x["ref"]) for x in r["rows"]], [("2026-03-15", -75.0, "554"), ("2026-03-16", 20.0, "")])
+        csv_r = bankrec.parse("Date,Description,Amount\n01/03/2026,Fee,-5\n")     # the existing CSV reader still works
+        self.assertEqual(csv_r["rows"][0]["amount"], -5.0)
+
+    def test_cash_forecast_uses_only_dated_items(self):
+        from erp import cashplan
+        today = a.today()
+        due = (datetime.date.fromisoformat(today) + datetime.timedelta(days=10)).isoformat()
+        st, b = self.call("boss", "POST", "/api/bills", {"name": "Software subscription", "amount": 1000, "next_due": due, "cycle": "monthly"})
+        self.assertEqual(st, 200, b)
+        st, r = self.call("boss", "GET", "/api/cash-forecast?days=90")
+        self.assertEqual(st, 200, r)
+        bills = [x for x in r["items"] if x["source"] == "bills" and x["label"].startswith("Software subscription")]
+        self.assertEqual([x["date"] for x in bills][:1], [due])
+        self.assertEqual(len(bills), 3)                          # every monthly cycle inside 90 days
+        self.assertEqual(r["cash_now"], cashplan.cash_now(self.db))
+        w = {x["days"]: x for x in r["windows"]}
+        in30 = sum(x["amount"] for x in r["items"] if x["amount"] > 0 and x["date"] <= w[30]["until"])
+        self.assertAlmostEqual(w[30]["in"], in30, places=2)
+        self.assertAlmostEqual(r["weeks"][-1]["balance"], round(r["opening"] + sum(x["amount"] for x in r["items"]), 2), places=2)
+        self.assertAlmostEqual(r["opening"], round(r["cash_now"] + r["overdue"]["in"] - r["overdue"]["out"], 2), places=2)
+        off = self.call("boss", "GET", "/api/cash-forecast?days=90&overdue=0")[1]
+        self.assertEqual(off["opening"], off["cash_now"])
+        self.assertEqual({x["key"] for x in r["undated"]}, {"receivables", "payables", "taxes", "purchase_orders"})
+        self.assertEqual(self.call("eng", "GET", "/api/cash-forecast")[0], 403)
+
+    def test_year_end_close_locks_and_moves_profit_to_retained_earnings(self):
+        from erp import yearend
+        db = self.db
+        db.set_setting("lock_date", "")
+        a.record_expense(db, {"description": "Old year cost", "amount": 500, "date": "2025-06-01", "account": "6045"})
+        last_end = "2025-12-31"
+        st, p = self.call("boss", "GET", f"/api/year-end/{last_end}")
+        self.assertEqual((st, p["start"]), (200, "2025-01-01"), p)
+        self.assertTrue({"trial_balance", "approvals", "cash"} <= {c["key"] for c in p["checks"]})
+        bs_before = a.balance_sheet(db, "2026-06-30")
+        st, r = self.call("boss", "POST", f"/api/year-end/{last_end}/close", {"notes": "Checked with the auditor"})
+        self.assertEqual(st, 200, r)
+        self.assertEqual(db.setting("lock_date"), last_end)
+        with self.assertRaises(a.ValidationError):                               # the closed year is locked
+            a.record_expense(db, {"description": "Late", "amount": 10, "date": "2025-12-30", "account": "6045"})
+        bs = a.balance_sheet(db, "2026-06-30")
+        eq = {x["subtype"]: x["amount"] for x in bs["equity"] if x["subtype"] in ("earnings", "earnings_closed")}
+        prior = a.income_statement(db, None, last_end)["net_profit"]
+        self.assertAlmostEqual(eq["earnings_closed"], prior, places=2)
+        self.assertAlmostEqual(eq["earnings_closed"] + eq["earnings"], [x["amount"] for x in bs_before["equity"] if x["subtype"] == "earnings"][0], places=2)
+        self.assertEqual((bs["total_equity"], bs["balanced"]), (bs_before["total_equity"], True))
+        self.assertEqual(a.income_statement(db, "2025-01-01", last_end)["net_profit"], p["net_profit"])   # the year's own figures stay
+        self.assertEqual(self.call("boss", "POST", f"/api/year-end/{last_end}/close", {})[0], 400)          # already closed
+        self.assertEqual(self.call("boss", "POST", "/api/year-end/2025-12-30/close", {})[0], 400)          # not a year end
+        self.assertEqual(self.call("boss", "PUT", "/api/settings", {"fiscal_year_start": "07-01"})[0], 400)
+        self.assertEqual(self.call("eng", "POST", f"/api/year-end/{last_end}/reopen", {})[0], 403)
+        st, r = self.call("boss", "POST", f"/api/year-end/{last_end}/reopen", {})
+        self.assertEqual((st, db.setting("lock_date")), (200, ""))
+        self.assertEqual(len(yearend.closed(db)), 0)
+        self.assertNotIn("earnings_closed", {x["subtype"] for x in a.balance_sheet(db, "2026-06-30")["equity"]})
+
+    def test_project_level_access(self):
+        db = self.db
+        codes = [r["code"] for r in db.q("SELECT code FROM business_units ORDER BY code")]
+        mine, other = codes[0], codes[1]
+        uid = auth.create_user(db, {"username": "site", "password": "secret123", "projects": [mine],
+                                    "perms": {"business_units": "view", "accounting": "view", "purchasing": "add", "reports": "view", "assets": "view", "dashboard": "view"}})
+        self.tok["site"] = auth.login(db, "site", "secret123")[0]
+        self.assertEqual(auth.public_user(db.one("SELECT * FROM users WHERE id=?", (uid,)))["perms"]["_bus"], [mine])
+        st, r = self.call("site", "GET", "/api/bus")
+        self.assertEqual((st, [b["code"] for b in r["rows"]], "shared_overhead" in r), (200, [mine], False))
+        st, j = self.call("site", "GET", "/api/journal?limit=100")
+        mine_id = db.one("SELECT id FROM business_units WHERE code=?", (mine,))["id"]
+        self.assertEqual(j["total"], db.one("SELECT COUNT(*) n FROM journal_entries WHERE bu_id=?", (mine_id,))["n"])
+        self.assertTrue(j["rows"] and all(e["bu_code"] == mine for e in j["rows"]))
+        theirs = db.one("SELECT e.id FROM journal_entries e JOIN business_units b ON b.id=e.bu_id WHERE b.code=? LIMIT 1", (other,))["id"]
+        self.assertEqual(self.call("site", "GET", f"/api/journal/{theirs}")[0], 403)
+        st, rep = self.call("site", "GET", "/api/reports/income_statement")
+        self.assertEqual(st, 200, rep)
+        self.assertEqual(self.call("site", "GET", "/api/reports/aging")[0], 403)
+        self.assertEqual(self.call("site", "GET", f"/api/reports/income_statement?bu_id={db.one('SELECT id FROM business_units WHERE code=?', (other,))['id']}")[0], 403)
+        self.assertEqual(self.call("site", "GET", "/api/cash-accounts")[0], 403)
+        exp = {"description": "Site water", "amount": 120, "date": a.today(), "account": "6045"}
+        self.assertEqual(self.call("site", "POST", "/api/docs/expense", exp)[0], 400)                      # no project = company overhead
+        self.assertEqual(self.call("site", "POST", "/api/docs/expense", {**exp, "bu_code": other})[0], 403)
+        self.assertEqual(self.call("site", "POST", "/api/docs/expense", {**exp, "bu_code": mine})[0], 200)
+        self.tok["site"] = auth.login(db, "site", "secret123")[0]
+        boot = self.call("site", "GET", "/api/bootstrap")[1]
+        self.assertEqual([b["code"] for b in boot["bus"]], [mine])
+        # only a super administrator changes it; the boss is never limited
+        self.assertEqual(self.call("boss", "PUT", f"/api/users/{uid}", {"projects": []})[0], 200)
+        self.assertNotIn("_bus", auth.public_user(db.one("SELECT * FROM users WHERE id=?", (uid,)))["perms"])
+        self.assertEqual(len(self.call("site", "GET", "/api/bus")[1]["rows"]), len(codes))
+
+    def test_two_step_sign_in(self):
+        db = self.db
+        st, r = self.call("eng", "GET", "/api/me/two-step")
+        self.assertEqual((st, r["on"]), (200, False))
+        self.assertTrue(r["uri"].startswith("otpauth://totp/") and r["secret"] in r["uri"])
+        secret = r["secret"]
+        self.assertEqual(self.call("eng", "POST", "/api/me/two-step", {"secret": secret, "code": "000000"})[0], 400)
+        code = auth.totp(secret, auth._now_step())
+        st, on = self.call("eng", "POST", "/api/me/two-step", {"secret": secret, "code": code})
+        self.assertEqual((st, len(on["recovery_codes"])), (200, 10))
+        auth._last_step.clear()
+        with self.assertRaises(auth.SecondStepNeeded):                     # the password alone is no longer enough
+            auth.login(db, "eng", "secret123")
+        r = self.handle(self.app, "POST", "/api/login", {"x-requested-with": "BeyondERP", "content-type": "application/json"},
+                        json.dumps({"username": "eng", "password": "secret123"}).encode())
+        self.assertEqual((r.status, json.loads(r.body).get("two_step")), (400, True))
+        with self.assertRaises(auth.SecondStepNeeded):
+            auth.login(db, "eng", "secret123", "123456" if code != "123456" else "654321")
+        tok, u = auth.login(db, "eng", "secret123", auth.totp(secret, auth._now_step()))
+        self.assertTrue(u["two_step"])
+        with self.assertRaises(auth.SecondStepNeeded):                     # the same code works once
+            auth.login(db, "eng", "secret123", auth.totp(secret, auth._now_step()))
+        rc = on["recovery_codes"][0]
+        self.assertTrue(auth.login(db, "eng", "secret123", rc.lower())[0])  # a recovery code, once
+        with self.assertRaises(auth.SecondStepNeeded):
+            auth.login(db, "eng", "secret123", rc)
+        # the company requires it for everyone: someone without it may only set it up
+        auth.create_user(db, {"username": "clerk", "password": "secret123", "perms": {"purchasing": "view"}})
+        self.tok["clerk"] = auth.login(db, "clerk", "secret123")[0]
+        self.assertEqual(self.call("eng", "PUT", "/api/settings", {"two_step_required": "all"})[0], 403)   # super administrators decide
+        self.assertEqual(self.call("boss", "PUT", "/api/settings", {"two_step_required": "all"})[0], 403)  # (boss has none either)
+        db.set_setting("two_step_required", "all")
+        st, r = self.call("clerk", "GET", "/api/purchase-orders")
+        self.assertEqual((st, r.get("two_step_setup")), (403, True))
+        self.assertEqual(self.call("clerk", "GET", "/api/me/two-step")[0], 200)
+        self.assertEqual(self.call("eng", "POST", "/api/me/two-step/off", {"password": "secret123"})[0], 400)   # required: stays on
+        db.set_setting("two_step_required", "")
+        self.assertEqual(self.call("eng", "POST", "/api/me/two-step/off", {"password": "wrong"})[0], 400)
+        uid = db.one("SELECT id FROM users WHERE username='eng'")["id"]
+        self.assertEqual(self.call("clerk", "POST", f"/api/users/{uid}/two-step/off", {})[0], 403)
+        self.assertEqual(self.call("boss", "POST", f"/api/users/{uid}/two-step/off", {})[0], 200)
+        self.assertTrue(auth.login(db, "eng", "secret123")[0])
+        self.assertNotIn("totp", json.dumps(interchange.export_extras(db, False, False)["people"]))      # never in backups
+
+    def test_alerts_reach_people_with_their_app_closed(self):
+        from erp import automations
+        db = self.db
+        # eng sets an alert about bills (he may see them); the boss's app finds it true and acts for him
+        auth.update_user(db, db.one("SELECT id FROM users WHERE username='eng'")["id"], {"perms": {"purchasing": "add", "team": "add"}}, 1)
+        self.tok["eng"] = auth.login(db, "eng", "secret123")[0]
+        st, r = self.call("eng", "POST", "/api/my-alerts", {"name": "Bills soon", "trigger": "bill_due", "settings": {"days": 3, "at": "08:00"}})
+        self.assertEqual(st, 200, r)
+        today = datetime.date.fromisoformat(a.today())
+        due = (today + datetime.timedelta(days=6)).isoformat()
+        self.call("boss", "POST", "/api/bills", {"name": "Internet", "amount": 900, "next_due": due})
+        # nothing yet today; the forecast says when it will come true (3 days before the due date, at 08:00)
+        st, f = self.call("boss", "GET", f"/api/automations/forecast?local={today.isoformat()}T07:00")
+        self.assertEqual(st, 200, f)
+        mine = [x for x in f["items"] if x["title"] == "Bills soon"]
+        self.assertEqual((mine[0]["day"], mine[0]["time"], mine[0]["to"]), ((today + datetime.timedelta(days=3)).isoformat(), "08:00", ["eng"]))
+        self.assertEqual(len(mine), 1)                                 # once, on the first day it is true
+        st, r = self.call("boss", "POST", "/api/automations/run", {"all": 1, "local": f"{today.isoformat()}T09:00"})
+        self.assertTrue(r.get("_nochange"))                            # nothing true today: the shared log records nothing
+        # the bill moves closer: the boss's change makes it true now — eng's bell gets it without his app
+        sid = db.one("SELECT id FROM cost_subs WHERE name='Internet'")["id"]
+        self.assertEqual(self.call("boss", "PUT", f"/api/bills/{sid}", {"name": "Internet", "amount": 900, "next_due": (today + datetime.timedelta(days=1)).isoformat()})[0], 200)
+        st, r = self.call("boss", "POST", "/api/automations/run", {"all": 1, "local": f"{today.isoformat()}T09:00"})
+        self.assertEqual(st, 200, r)
+        self.assertTrue(any(x.get("acted") for x in r["done"]))
+        self.assertEqual(db.one("SELECT COUNT(*) n FROM alert_feed WHERE username='eng'")["n"], 1)
+        self.assertEqual([h["to"] for h in r["_push"]], [["eng"]])
+        # someone who may not see bills does not run (or read) eng's alert
+        auth.create_user(db, {"username": "clerk2", "password": "secret123", "perms": {"crm": "view"}})
+        clerk = auth.public_user(db.one("SELECT * FROM users WHERE username='clerk2'"))
+        self.assertEqual(automations.forecast(db, clerk)["covers"], [])

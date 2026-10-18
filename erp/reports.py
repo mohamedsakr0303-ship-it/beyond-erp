@@ -264,7 +264,9 @@ def balance_sheet_table(db, date_to=None, date_from=None, compare="none", bu_id=
     sect("noncurrent_liabilities", "noncurrent_liabilities", "total_noncurrent_liabilities", "noncurrent_liabilities")
     rows.append(_row(L("total_liabilities", lang), [r["total_liabilities"] for r in res], "total"))
     rows.append(_row(L("equity", lang), ["" for _ in pers], "section"))
+    eq_ar = {"Retained earnings — closed years": "أرباح محتجزة — سنوات مُقفلة", "Current earnings (profit to date)": "أرباح الفترة الحالية"}
     for code, name, vals in _merge_lines(res, lambda r: r["equity"]):
+        name = eq_ar.get(name, name) if lang == "ar" and not code else name
         rows.append(_row(f"{code}  {nm.get(code, name)}".strip(), vals, "item", 1, code))
     rows.append(_row(L("total_equity", lang), [r["total_equity"] for r in res], "total"))
     rows.append(_row(L("total_le", lang), [r["total_liabilities_equity"] for r in res], "grand"))

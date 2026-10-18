@@ -1,5 +1,5 @@
 """Company subscriptions & recurring bills: what the company itself pays for every week / month / quarter / year
-(ChatGPT, Claude, software, internet, rent of a storage room…).
+(software, internet, services, rent…).
 
 Each one knows its next due date and how its cost is carried:
   * shared   — shared overhead: no project; spread over the projects by their overhead % (like other overheads)

@@ -237,6 +237,29 @@ def post_entry(db, **kw):
         return _insert_entry(db, **kw)
 
 
+def possible_duplicates(db, eid, days=3):
+    """Posted entries that look like this one was already recorded: the same kind and party (or the same description
+    when there is no party), the same total, dated within `days` of it — or the same kind, party and reference (e.g.
+    the supplier's invoice number) on any date."""
+    e = db.one("SELECT e.*, (SELECT SUM(debit) FROM journal_lines WHERE entry_id=e.id) amt FROM journal_entries e WHERE e.id=?", (int(eid),))
+    if not e or not e["amt"]:
+        return []
+    d = _dt.date.fromisoformat(e["date"])
+    lo, hi = (d - _dt.timedelta(days=days)).isoformat(), (d + _dt.timedelta(days=days)).isoformat()
+    who = ("e.party=?", e["party"]) if e["party"] else ("LOWER(TRIM(e.memo))=LOWER(TRIM(?)) AND e.party=''", e["memo"] or "")
+    if not e["party"] and not (e["memo"] or "").strip():
+        return []
+    ref = "OR (e.kind=? AND e.party<>'' AND e.party=? AND e.ref<>'' AND e.ref=?)" if e["party"] and (e["ref"] or "").strip() else ""
+    rows = db.q(f"""SELECT e.id, e.date, e.kind, e.memo, e.party, e.ref, e.created_by, e.created_at, b.code bu_code,
+                          (SELECT SUM(debit) FROM journal_lines WHERE entry_id=e.id) amt
+                   FROM journal_entries e LEFT JOIN business_units b ON b.id=e.bu_id
+                   WHERE {LIVE} AND e.id<>? AND ((e.kind=? AND e.date BETWEEN ? AND ? AND {who[0]}
+                         AND (SELECT SUM(debit) FROM journal_lines WHERE entry_id=e.id)=?) {ref})
+                   ORDER BY e.date DESC, e.id DESC LIMIT 5""",
+                [e["id"], e["kind"], lo, hi, who[1], e["amt"]] + ([e["kind"], e["party"], e["ref"]] if ref else []))
+    return [{**r, "amount": to_major(r.pop("amt") or 0), "same_ref": bool(ref) and r["ref"] == e["ref"]} for r in rows]
+
+
 def get_entry(db, eid):
     e = db.one("SELECT e.*, b.code AS bu_code, (SELECT COUNT(*) FROM attachments WHERE owner='entry' AND owner_id=e.id) AS files "
                "FROM journal_entries e LEFT JOIN business_units b ON b.id=e.bu_id WHERE e.id=?", (eid,))
@@ -1368,6 +1391,13 @@ def balance_sheet(db, date_to=None, bu_id=None):
     cur_liab = sect(BS_CURRENT_LIABILITIES, -1)
     nc_liab = sect(BS_NONCURRENT_LIABILITIES, -1)
     equity = sect(BS_EQUITY, -1)
+    # closed financial years (yearend.py): their profit is retained earnings; only the profit since is current earnings
+    closed_to = db.one("SELECT MAX(year_end) e FROM year_closes" + (" WHERE year_end<=?" if date_to else ""),
+                       (clean_date(date_to),) if date_to else ())["e"]
+    if closed_to:
+        prior = -sum(r["net"] for r in account_totals(db, date_to=closed_to, bu_id=bu_id) if r["type"] in ("Revenue", "COGS", "Expense"))
+        equity.append({"code": "", "name": "Retained earnings — closed years", "subtype": "earnings_closed", "amount": to_major(prior)})
+        earnings -= prior
     equity.append({"code": "", "name": "Current earnings (profit to date)", "subtype": "earnings",
                    "amount": to_major(earnings)})
     t = lambda ls: round(sum(x["amount"] for x in ls), 2)  # noqa: E731

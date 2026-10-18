@@ -415,9 +415,16 @@ def feed_read(db, username, ids=None):
              (username, username))
 
 
-def run(db, only=None, dry=False, owner=None, local=None, pushes=None):
-    """Check every active rule (or one; or the rules one person made — each person's app runs their own rules, so two
-    devices do not act on the same thing twice) and act on what is new. Returns what happened."""
+def _visible(rule, viewer):
+    """A person's app checks their own rules, and everyone's alerts about what that person may also see — so an alert
+    reaches its people as soon as anyone's change makes it true, even with their own app closed."""
+    return rule["created_by"] == viewer["username"] or (rule["action"] == "notify" and allowed(viewer, rule["trigger"]))
+
+
+def run(db, only=None, dry=False, owner=None, local=None, pushes=None, viewer=None):
+    """Check every active rule (or one; or the rules one person made; or, with `viewer`, the ones that person's app
+    may check) and act on what is new. Each thing found acts once (automation_log), whichever device finds it first —
+    in the shared workspace the check is itself a recorded change, so every device agrees. Returns what happened."""
     out = []
     w, p = ["active=1"], []
     if only:
@@ -428,6 +435,8 @@ def run(db, only=None, dry=False, owner=None, local=None, pushes=None):
         p.append(owner)
     local = local if isinstance(local, str) and acc.re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}", local) else None
     for rule in db.q(f"SELECT * FROM automations WHERE {' AND '.join(w)}", p):
+        if viewer and not only and not _visible(rule, viewer):
+            continue
         user_row = db.one("SELECT * FROM users WHERE username=?", (rule["created_by"],))
         if rule["action"] == "notify" and not allowed(_public(user_row), rule["trigger"]):
             continue                                   # its owner may no longer see what it watches
@@ -467,6 +476,62 @@ def run(db, only=None, dry=False, owner=None, local=None, pushes=None):
         if n:
             out.append({"rule": rule["name"], "acted": n})
     return out
+
+
+def _recipients(db, rule):
+    p = json.loads(rule["params"] or "{}")
+    to = [u.strip() for u in str(p.get("to") or "").split(",") if u.strip()] or [rule["created_by"]]
+    return [u for u in to if db.one("SELECT 1 FROM users WHERE username=? AND active=1", (u,))]
+
+
+def forecast(db, viewer, local=None, days=7):
+    """When each alert will next come true if nothing changes — for the shared workspace's push service, which then
+    rings people's phones at that time even when nobody has the app open. Recomputed after every change (a bill paid,
+    attendance recorded…), so what no longer applies is withdrawn. Only alerts (notify rules) the viewer may see.
+    Returns {covers: [rule ids], items: [{key, day, time, to, title, body, href, tag}]}."""
+    import hashlib
+    from . import db as _db
+    local = local if isinstance(local, str) and acc.re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}", local) else now_iso()
+    start = _dt.date.fromisoformat(local[:10])
+    covers, items = [], []
+    rules = [r for r in db.q("SELECT * FROM automations WHERE active=1 AND action='notify' ORDER BY id") if _visible(r, viewer)]
+    for rule in rules:
+        owner = db.one("SELECT * FROM users WHERE username=?", (rule["created_by"],))
+        if not allowed(_public(owner), rule["trigger"]):
+            continue
+        covers.append(rule["id"])
+        settings = json.loads(rule["settings"] or "{}")
+        at = settings.get("at") or "09:00"
+        h, m = (int(x) for x in at.split(":"))
+        at = f"{h:02d}:{m:02d}"
+        to, seen = _recipients(db, rule), set()
+        if not to:
+            continue
+        for k in range(int(days)):
+            day = (start + _dt.timedelta(days=k)).isoformat()
+            if k == 0 and local[11:16] >= at:
+                continue                               # due already: the regular check acts on it now
+            with db.lock:                              # the engine's clock pinned to that moment, read-only
+                prev = _db.CLOCK["at"]
+                _db.CLOCK["at"] = _dt.datetime.fromisoformat(f"{day}T{at}:00")
+                try:
+                    events = list(TRIGGERS[rule["trigger"]][0](db, {**settings, "_local": f"{day}T{at}"}))
+                except Exception:                      # noqa: BLE001 — a broken rule must not stop the others
+                    events = []
+                finally:
+                    _db.CLOCK["at"] = prev
+            for ev in events[:20]:
+                if ev["ref"] in seen:
+                    continue
+                last = db.one("SELECT at FROM automation_log WHERE automation_id=? AND ref=? ORDER BY id DESC LIMIT 1", (rule["id"], ev["ref"]))
+                if last and (not rule["repeat_days"] or last["at"][:10] > (_dt.date.fromisoformat(day) - _dt.timedelta(days=rule["repeat_days"])).isoformat()):
+                    continue
+                seen.add(ev["ref"])
+                items.append({"key": f"alert:{rule['id']}:" + hashlib.sha1(ev["ref"].encode()).hexdigest()[:16], "day": day, "time": at, "to": to,
+                              "title": rule["name"][:80], "body": ev["text"][:180], "href": ev.get("href") or "#/alerts", "tag": f"alert{rule['id']}"})
+            if len(items) >= 150:
+                break
+    return {"covers": covers, "items": items[:150]}
 
 
 TABLES = ("automations", "automation_log", "alert_feed")

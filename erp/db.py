@@ -1005,6 +1005,18 @@ CREATE TABLE IF NOT EXISTS cost_subs (
     created_at    TEXT NOT NULL DEFAULT '',
     updated_at    TEXT NOT NULL DEFAULT ''
 );
+-- Year-end close (yearend.py): a closed financial year — its profit is shown as retained earnings and its dates are locked
+CREATE TABLE IF NOT EXISTS year_closes (
+    id          INTEGER PRIMARY KEY,
+    year_start  TEXT NOT NULL,
+    year_end    TEXT NOT NULL UNIQUE,
+    net_profit  INTEGER NOT NULL DEFAULT 0,
+    prev_lock   TEXT NOT NULL DEFAULT '',          -- the lock date before closing (put back on reopen)
+    checks      TEXT NOT NULL DEFAULT '[]',        -- the checklist as it stood when the year was closed
+    notes       TEXT NOT NULL DEFAULT '',
+    closed_by   TEXT NOT NULL DEFAULT '',
+    closed_at   TEXT NOT NULL DEFAULT ''
+);
 -- Alerts that reached a person (an automation's "notify" action): their bell keeps them until read
 CREATE TABLE IF NOT EXISTS alert_feed (
     id         INTEGER PRIMARY KEY,
@@ -1861,9 +1873,9 @@ SUBMODULES = {
     "rentals": ["contracts", "fleet", "calculator"],
     "payroll": ["employees", "attendance", "runs", "entries", "crew", "settings", "workdays"],
     "assets": ["overview", "cash", "register", "depreciation"],
-    "accounting": ["journal", "ledger", "coa", "loans", "bankrec", "recurring", "budgets", "approvals"],
+    "accounting": ["journal", "ledger", "coa", "loans", "bankrec", "recurring", "budgets", "approvals", "yearend"],
     "partners": ["equity", "transactions", "ownership"],
-    "reports": ["partner_pack", "income_statement", "balance_sheet", "cash_flow", "trial_balance", "budget", "aging", "statement", "forecast"],
+    "reports": ["partner_pack", "income_statement", "balance_sheet", "cash_flow", "trial_balance", "budget", "aging", "statement", "forecast", "cashplan"],
     "tax": ["codes", "report", "einvoice", "ereceipt"],
     "import_export": ["export", "import"],
     "settings": ["company", "branding", "menus", "layout", "system", "dashboards", "workspace", "automations", "api"],
@@ -1995,7 +2007,9 @@ class Database:
         self._add_cols("users", [("needs_approval", "INTEGER NOT NULL DEFAULT 0")])
         self._add_cols("user_groups", [("look", "TEXT DEFAULT ''")])
         self._add_cols("business_units", [("grp", "TEXT DEFAULT ''")])
-        self._add_cols("users", [("grants", "TEXT DEFAULT '[]'")])        # special rights given by a super administrator      # a group of projects (e.g. "New Cairo villas")   # the dashboard page's own design (heading, accent…)
+        self._add_cols("users", [("totp_secret", "TEXT NOT NULL DEFAULT ''")])   # two-step sign-in (auth.py): authenticator secret
+        self._add_cols("users", [("totp_used", "TEXT NOT NULL DEFAULT '[]'")])   # recovery codes already used (their numbers)
+        self._add_cols("users", [("grants", "TEXT DEFAULT '[]'")])        # special rights given by a super administrator      # a group of projects   # the dashboard page's own design (heading, accent…)
         for t in ("boq_lines", "extract_lines"):      # a line's look: bold, italic, colours, alignment (as in Excel)
             self._add_cols(t, [("style", "TEXT DEFAULT ''")])   # their entries wait for approval
         if not self.conn.execute("SELECT 1 FROM users WHERE is_super=1 AND active=1").fetchone():   # books from before the level

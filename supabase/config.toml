@@ -8,6 +8,12 @@ schemas = ["public"]
 site_url = "http://localhost:8765"
 enable_signup = true
 
+# two-step sign-in with an authenticator app (on by default on hosted projects); the books then need a session that
+# passed it (supabase/migrations/20261017000000_two_step.sql)
+[auth.mfa.totp]
+enroll_enabled = true
+verify_enabled = true
+
 # username + password sign-in: called before people are signed in, so no JWT check (it checks the password itself)
 [functions.login]
 verify_jwt = false

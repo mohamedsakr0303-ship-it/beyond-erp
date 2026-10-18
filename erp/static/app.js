@@ -50,10 +50,22 @@ let API_WRITES = 0;   // saves still on their way (an update waits for them)
 async function api(method, path, body, raw) {
   if (method === "GET") return apiCall(method, path, body, raw);
   API_WRITES++;
-  try { const r = await apiCall(method, path, body, raw);
+  try { let r;
+    try { r = await apiCall(method, path, body, raw); }
+    catch (e) {   // looks like an entry already in the books: show it and let the person decide
+      if (!(e.status === 409 && e.data && e.data.code === "duplicate" && body && typeof body === "object")) throw e;
+      const ds = e.data.duplicates || [];
+      const msg = L2("This looks like an entry that is already in the books:", "يبدو أن هذا القيد مسجل بالفعل:") + "\n\n" +
+        ds.map(d => `• #${d.id} · ${fd(d.date)} · ${money(d.amount)} · ${d.party || d.memo || ""}${d.ref ? ` · ${L2("ref", "مرجع")} ${d.ref}` : ""}${d.created_by ? ` · ${L2("by", "بواسطة")} ${d.created_by}` : ""}`).join("\n") +
+        "\n\n" + L2("Save it anyway only if it is really another one.", "احفظه فقط إن كان قيداً آخر فعلاً.");
+      if (!await uiConfirm(msg, { title: L2("Possible duplicate", "قيد مكرر محتمل"), ok: L2("Save anyway", "احفظ على أي حال"), cancel: L2("Don't save", "لا تحفظ"), danger: false })) {
+        const x = new Error(L2("Not saved — it looked like a duplicate.", "لم يُحفظ — بدا مكرراً.")); x.duplicate = true; throw x; }
+      r = await apiCall(method, path, { ...body, allow_duplicate: 1 }, raw);
+    }
     if (r && r.pending && r.approval) pushSend({ kind: "approval", title: L2("Entry waiting for your approval", "قيد ينتظر اعتمادك"),
       body: `${me().full_name || me().username}`, href: "#/approvals", tag: "approval" });
     if (r && r._push) pushHints(r._push);
+    if (typeof path === "string") autoAfterChange(path.split("?")[0]);
     return r; }
   finally { API_WRITES--; }
 }
@@ -599,6 +611,14 @@ async function route() {
   if (!S.boot || !S.boot.user || !$("#nav")) return;   // still on sign-in / set-up: nothing to route yet
   S.H = { ...S.GLOBAL_H };
   const { parts, q } = parseHash();
+  // the company requires two-step sign-in for this person and it is not on yet: their profile first
+  const tsReq = S.boot.settings.two_step_required || "";
+  if ((tsReq === "all" || (tsReq === "admins" && S.boot.user.is_admin)) && parts[0] !== "profile") {
+    const C = window.BeyondCloud, cloud = STATIC && cloudOn() && C && C.mfaFactors;
+    if (S.tsOk === undefined) S.tsOk = cloud ? await C.mfaFactors().then(f => f.some(x => x.status === "verified")).catch(() => true) : !!S.boot.user.two_step;
+    if (!cloud) S.tsOk = !!S.boot.user.two_step;
+    if (!S.tsOk) { toast(L2("Turn on two-step sign-in to keep working", "فعّل التحقق بخطوتين لمواصلة العمل"), true); location.hash = "#/profile"; return; }
+  }
   // land on the first screen this user may open when the requested one is not permitted
   const menuItems = window.MENU.flatMap(([, items]) => items);
   const here = menuItems.find(i => i[1] === parts.join("/")) || menuItems.find(i => i[1] === parts[0]);
@@ -963,11 +983,12 @@ function renderNav(active) {
       const [k, r] = it, base = r.split("?")[0], name = itemLabel(it);
       const on = it[4] ? r === full : !exactCopy && (active === base || active.startsWith(base + "/") || parent === base);
       if (on) { title = name; group = groupLabel(g); has = true; }
-      links += g === "g_home" ? `<a href="#/${r}" data-k="${esc(k)}" class="${on ? "on" : ""}" title="${esc(name)}">${svg(ROUTE_IC[base] || GROUP_IC[g])}<span>${esc(name)}</span></a>`
-        : `<a href="#/${r}" data-k="${esc(k)}" class="${on ? "on" : ""}"><i class="dash"></i><span>${esc(name)}</span></a>`;
+      const lk = (ML().lock || []).includes(k) ? " locked" : "";
+      links += g === "g_home" ? `<a href="#/${r}" data-k="${esc(k)}" class="${on ? "on" : ""}${lk}" title="${esc(name)}">${svg(ROUTE_IC[base] || GROUP_IC[g])}<span>${esc(name)}</span></a>`
+        : `<a href="#/${r}" data-k="${esc(k)}" class="${on ? "on" : ""}${lk}"><i class="dash"></i><span>${esc(name)}</span></a>`;
     }
     if (g === "g_home") { html += `<div class="grp-solo">${links}</div>`; continue; }
-    html += `<div class="grp-wrap ${!hoverNav() && (has || open.has(g)) ? "open" : ""} ${has ? "has" : ""}"><button class="grp" data-a="grp" data-g="${g}" title="${esc(groupLabel(g))}">${svg(GROUP_IC[g] || "grid")}<span>${esc(groupLabel(g))}</span>${svg("chev", "chev")}</button><div class="grp-items"><div class="grp-in"><div class="fly-t">${esc(t(g))}</div>${links}</div></div></div>`;
+    html += `<div class="grp-wrap ${!hoverNav() && (has || open.has(g)) ? "open" : ""} ${has ? "has" : ""}"><button class="grp${(ML().lock || []).includes("g:" + g) ? " locked" : ""}" data-a="grp" data-g="${g}" title="${esc(groupLabel(g))}">${svg(GROUP_IC[g] || "grid")}<span>${esc(groupLabel(g))}</span>${svg("chev", "chev")}</button><div class="grp-items"><div class="grp-in"><div class="fly-t">${esc(t(g))}</div>${links}</div></div></div>`;
   }
   nav.innerHTML = html;
   $("#ttl").textContent = title || t("m_dashboard");
@@ -1065,7 +1086,8 @@ async function renderCloudAuth(msg, kind = "info", mode = "start") {
   else body = `<form id="lf" class="grid"><p class="muted" style="margin:0">${ar ? "اكتب بريدك واختر ما تحتاجه:" : "Enter your email and choose what you need:"}</p>${emailField}
       <button class="btn" type="button" data-a="cforgot">${ar ? "إرسال رابط إعادة تعيين كلمة المرور" : "Email me a password-reset link"}</button>
       <button class="btn" type="button" data-a="cresend">${ar ? "إعادة إرسال رسالة تأكيد الحساب" : "Resend my account confirmation email"}</button></form>
-    <p class="muted" style="font-size:.85em">${ar ? "إن كنت تستخدم Google فسجّل الدخول بزر Google — لا توجد كلمة مرور لهذا الحساب هنا." : "Signed up with Google? Use “Sign in with Google” — that account has no password here."}</p>`;
+    <p class="muted" style="font-size:.85em">${ar ? "إن كنت تستخدم Google فسجّل الدخول بزر Google — لا توجد كلمة مرور لهذا الحساب هنا." : "Signed up with Google? Use “Sign in with Google” — that account has no password here."}</p>
+    <p class="muted" style="font-size:.85em">${ar ? "تسجّل الدخول باسم مستخدم بدون بريد؟ اطلب من المسؤول الأعلى في شركتك ضبط كلمة مرور جديدة لك من المستخدمين — أو أضف بريدك لحسابك لتستعيدها بنفسك مستقبلاً. فقدت هاتف التحقق بخطوتين؟ اطلب منه إيقافه لك." : "You sign in with a username and no email? Ask your company's super administrator to set a new password for you in Users — or add your email to your account to reset it yourself next time. Lost the phone you use for two-step sign-in? Ask them to turn it off for you."}</p>`;
   $("#root").innerHTML = `<div class="login auth">${brandLogoSrc() ? `<img class="login-logo" src="${esc(brandLogoSrc())}" alt="">` : ""}
     <div class="muted center" style="font-weight:600;letter-spacing:.4px">${esc(appName())}</div>
     <h1 class="center">${esc(title)}</h1><div id="lerr">${msg ? `<div class="banner ${kind}">${esc(msg)}</div>` : ""}</div>${body}
@@ -1133,6 +1155,15 @@ const plainNetErr = e => (/failed to fetch|load failed|networkerror|network requ
 // After a successful workspace sign-in: choose / create / join a company if needed, get its books, open the user.
 async function cloudEnter(info) {
   const ar = S.lang === "ar", C = window.BeyondCloud;
+  // two-step sign-in on: the code from the authenticator app before the books open
+  if (C.mfaNeeded && await C.mfaNeeded().catch(() => false)) {
+    for (;;) {
+      const code = await uiPrompt(L2("Type the 6-digit code from your authenticator app", "اكتب الرمز المكوّن من 6 أرقام من تطبيق المصادقة"), "", { title: L2("Two-step sign-in", "التحقق بخطوتين"), ok: t("sign_in") });
+      if (code === null) { C.signout(); return renderCloudAuth("", "info", "start"); }
+      try { await C.mfaVerify(null, code); break; } catch (e) { toast(e.message, true); }
+    }
+    info = await C.info();
+  }
   // one company and nothing else pending: open it straight away
   if (info.needs_company && (info.live || []).length === 1 && !(info.companies || []).some(c => c.pending) && C.chooseCompany(info.live[0].id)) return location.reload();
   if (info.needs_company || !info.is_member) return renderCompanyGate(info);
@@ -1290,8 +1321,10 @@ async function renderAuth() {
       <label class="f">${t("username")}<input name="username" autocomplete="username" required></label>
       ${setup ? pwFields(true).replace(/minlength="6"/g, 'minlength="8"') : `<label class="f">${t("password")}<input name="password" type="password" autocomplete="current-password" required minlength="1"></label>
       <label class="f chk"><input type="checkbox" data-change="pwshow">${S.lang === "ar" ? "إظهار كلمة المرور" : "Show password"}</label>`}
+      <label class="f" id="codebox" hidden>${esc(L2("Code from your authenticator app (or a recovery code)", "الرمز من تطبيق المصادقة (أو رمز استرداد)"))}<input name="code" inputmode="numeric" autocomplete="one-time-code" autocapitalize="none" spellcheck="false"></label>
       <button class="btn pri" type="submit">${setup ? t("save") : t("sign_in")}</button>
-      <button class="btn" type="button" data-a="lang2">${t("switch_lang")}</button></form>${LP_LINK()}</div>`;
+      <button class="btn" type="button" data-a="lang2">${t("switch_lang")}</button></form>
+    ${setup ? "" : `<p class="center muted" style="font-size:.85em">${esc(L2("Forgot your password? A super administrator sets a new one in Users. Only one super administrator and it's you? Run “reset-password” on the computer that holds the books (see the guide).", "نسيت كلمة المرور؟ يضبط المسؤول الأعلى كلمة جديدة من المستخدمين. أنت المسؤول الأعلى الوحيد؟ شغّل «reset-password» على الكمبيوتر الذي يحفظ الدفاتر (راجع الدليل)."))}</p>`}${LP_LINK()}</div>`;
   S.H = { lang2: () => { store.set("lang", S.lang === "ar" ? "en" : "ar"); renderAuth(); } };
   pwWire($("#lf"));
   $("#lf").addEventListener("submit", async e => {
@@ -1304,7 +1337,8 @@ async function renderAuth() {
       if (v.demo) { sb.disabled = true; sb.textContent = S.lang === "ar" ? "جارٍ تجهيز الشركة التجريبية…" : "Setting up the demo company…"; }
       await api("POST", setup ? "/api/setup" : "/api/login", v);
       await boot();
-    } catch (err) { sb.disabled = false; sb.textContent = setup ? t("save") : t("sign_in"); $("#lerr").innerHTML = `<div class="banner err">${esc(err.message)}</div>`; }
+    } catch (err) { sb.disabled = false; sb.textContent = setup ? t("save") : t("sign_in"); $("#lerr").innerHTML = `<div class="banner ${err.data && err.data.two_step && !v.code ? "info" : "err"}">${esc(err.message)}</div>`;
+      if (err.data && err.data.two_step) { const cb = $("#codebox"); cb.hidden = false; $("input", cb).value = ""; $("input", cb).focus(); } }
   });
 }
 
@@ -2124,6 +2158,19 @@ function ring(pctv, label, cls) {
   return `<div class="ring ${cls}"><svg viewBox="0 0 90 90"><circle cx="45" cy="45" r="${r}" class="trk"/><circle cx="45" cy="45" r="${r}" class="val" stroke-dasharray="${(c * p).toFixed(1)} ${c.toFixed(1)}" transform="rotate(-90 45 45)"/></svg>
     <b>${isFinite(pctv) ? Math.round(pctv * 100) + "%" : "—"}</b><span>${esc(label)}</span></div>`;
 }
+function chartTips(view) {
+  $$(".mchart", view).forEach(mc => { const tip = $(".tip", mc);
+    const hide = () => { tip.hidden = true; $$(".mb.on", mc).forEach(x => x.classList.remove("on")); };
+    const show = (g, x) => { $$(".mb.on", mc).forEach(o => o !== g && o.classList.remove("on"));
+      if (!g) return hide(); g.classList.add("on"); const r = mc.getBoundingClientRect(); tip.hidden = false; tip.textContent = g.dataset.tip;
+      tip.style.left = Math.min(r.width - tip.offsetWidth - 4, Math.max(4, x - r.left - tip.offsetWidth / 2)) + "px"; };
+    mc.addEventListener("pointermove", e => { if (e.pointerType === "mouse") show(e.target.closest(".mb"), e.clientX); });
+    mc.addEventListener("pointerleave", e => { if (e.pointerType === "mouse") hide(); });
+    mc.addEventListener("click", e => { const g = e.target.closest(".mb");
+      if (!g || (g.classList.contains("on") && !tip.hidden && !matchMedia("(hover: hover)").matches)) hide(); else show(g, e.clientX); });
+    const away = e => { if (!mc.isConnected) return document.removeEventListener("pointerdown", away, true); if (!mc.contains(e.target)) hide(); };
+    document.addEventListener("pointerdown", away, true); });
+}
 function monthBars(series) {
   if (!series.length) return `<div class="empty">${t("nothing")}</div>`;
   const W = 640, H = 230, padL = 6, padB = 26, max = Math.max(1, ...series.map(s => Math.max(s.revenue, s.costs)));
@@ -2224,17 +2271,7 @@ PAGES.dashboard = async (view, parts, q) => {
   }
   // the monthly chart's tooltip
   // A mouse shows it while hovering; a finger (phone, tablet) taps a month to pin it and taps again, or anywhere else, to close it.
-  $$(".mchart", view).forEach(mc => { const tip = $(".tip", mc);
-    const hide = () => { tip.hidden = true; $$(".mb.on", mc).forEach(x => x.classList.remove("on")); };
-    const show = (g, x) => { $$(".mb.on", mc).forEach(o => o !== g && o.classList.remove("on"));
-      if (!g) return hide(); g.classList.add("on"); const r = mc.getBoundingClientRect(); tip.hidden = false; tip.textContent = g.dataset.tip;
-      tip.style.left = Math.min(r.width - tip.offsetWidth - 4, Math.max(4, x - r.left - tip.offsetWidth / 2)) + "px"; };
-    mc.addEventListener("pointermove", e => { if (e.pointerType === "mouse") show(e.target.closest(".mb"), e.clientX); });
-    mc.addEventListener("pointerleave", e => { if (e.pointerType === "mouse") hide(); });
-    mc.addEventListener("click", e => { const g = e.target.closest(".mb");
-      if (!g || (g.classList.contains("on") && !tip.hidden && !matchMedia("(hover: hover)").matches)) hide(); else show(g, e.clientX); });
-    const away = e => { if (!mc.isConnected) return document.removeEventListener("pointerdown", away, true); if (!mc.contains(e.target)) hide(); };
-    document.addEventListener("pointerdown", away, true); });
+  chartTips(view);
   void months;
   countUp(view);
 };
@@ -2503,7 +2540,7 @@ function buForm(b) {
   drawer((b.id ? t("edit") : t("new")) + " — " + t("m_bus"), form([
     { k: "code", l: t("bu_code"), v: b.code || `PRJ-${today().slice(0, 4)}-${String(S.boot.bus.length + 1).padStart(3, "0")}`, req: 1 }, { k: "name", l: t("bu_name"), v: b.name, req: 1 },
     { k: "type", l: t("bu_type"), v: b.type }, { k: "location", l: t("location"), v: b.location },
-    { k: "grp", l: L2("Project group", "مجموعة المشروعات"), v: b.grp || "", list: "bugroups", help: L2("Optional — e.g. “New Cairo villas”; filter the journal by the whole group.", "اختياري — مثل «فيلات القاهرة الجديدة»؛ لفلترة القيود بالمجموعة كلها.") },
+    { k: "grp", l: L2("Project group", "مجموعة المشروعات"), v: b.grp || "", list: "bugroups", help: L2("Optional — e.g. “Villas”; filter the journal by the whole group.", "اختياري — مثل «الفيلات»؛ لفلترة القيود بالمجموعة كلها.") },
     { k: "area", l: t("area"), type: "number", v: b.area }, { k: "start_date", l: t("start_date"), type: "date", v: b.start_date },
     { k: "status", l: t("status"), type: "select", opts: ["Tendering", "In Progress", "On Hold", "Completed", "Closed"], v: b.status },
     { k: "basis", l: t("basis"), type: "select", opts: S.boot.enums.billing_bases, v: b.basis,
@@ -3195,7 +3232,7 @@ function dealForm(dl, after) {
   dl = dl || { stage: "lead" };
   const stages = (S.cache.crmStages || []).map(c => [c.key, L2(c.en, c.ar)]);
   drawer(dl.id ? L2("Deal", "صفقة") + " — " + dl.title : L2("New deal", "صفقة جديدة"), form([
-    { k: "title", l: L2("Deal", "الصفقة"), v: dl.title || "", req: 1, ph: L2("e.g. Villa finishing — Sheikh Zayed", "مثال: تشطيب فيلا — الشيخ زايد") },
+    { k: "title", l: L2("Deal", "الصفقة"), v: dl.title || "", req: 1, ph: L2("e.g. Finishing works", "مثال: أعمال تشطيب") },
     { k: "party", l: L2("Customer", "العميل"), v: dl.party || "", req: 1, list: "crmparties" },
     { k: "stage", l: L2("Stage", "المرحلة"), type: "select", opts: stages, v: dl.stage },
     { k: "value", l: L2("Expected value", "القيمة المتوقعة"), type: "number", v: dl.value ?? "" },
@@ -3794,7 +3831,7 @@ PAGES.automations = async (view) => {
   view.innerHTML = `<div class="banner info">${esc(L2("Rules that act by themselves: when something happens in the books (a customer pays late, stock runs low, a booking is tomorrow…), the app creates a follow-up for someone or posts in a team chat room. Each rule acts once per item, and runs from its creator's app every few minutes.",
       "قواعد تعمل وحدها: عندما يحدث شيء في الدفاتر (تأخر عميل في السداد، نقص مخزون، حجز غداً…) ينشئ البرنامج متابعة لشخص أو يرسل رسالة في غرفة دردشة الفريق. تعمل كل قاعدة مرة واحدة لكل حالة، من برنامج من أنشأها كل بضع دقائق."))}</div>
     ${add && S.ai && S.ai.allowed ? `<div class="card"><h2>✨ ${esc(L2("Describe it — the assistant sets it up", "صِفها — والمساعد ينشئها"))}</h2><div class="row" style="gap:8px;align-items:stretch">
-      <textarea id="autodesc" rows="2" style="flex:1" placeholder="${esc(L2("e.g. When a customer owes money for more than 30 days, give Sara a follow-up every two weeks", "مثال: عندما يتأخر عميل في السداد أكثر من 30 يوماً، أنشئ متابعة لسارة كل أسبوعين"))}"></textarea>
+      <textarea id="autodesc" rows="2" style="flex:1" placeholder="${esc(L2("e.g. When a customer owes money for more than 30 days, give the sales team a follow-up every two weeks", "مثال: عندما يتأخر عميل في السداد أكثر من 30 يوماً، أنشئ متابعة لفريق المبيعات كل أسبوعين"))}"></textarea>
       <button class="btn pri" data-a="autoai">${esc(L2("Set it up", "أنشئها"))}</button></div></div>` : ""}
     <div class="toolbar">${add ? `<button class="btn pri" data-a="autonew">+ ${esc(L2("New automation", "قاعدة جديدة"))}</button>` : ""}</div>
     <div class="card">${d.rows.length ? `<div class="tbl stack"><table><thead><tr><th>${t("name")}</th><th>${esc(L2("When", "عندما"))}</th><th>${esc(L2("Then", "إذن"))}</th><th class="num">${esc(L2("Acted", "نُفّذت"))}</th><th>${esc(L2("Last check", "آخر فحص"))}</th><th></th></tr></thead><tbody>
@@ -3805,10 +3842,24 @@ PAGES.automations = async (view) => {
       : `<div class="empty">${svg("repeat")}<div>${esc(L2("No automations yet.", "لا توجد قواعد تلقائية بعد."))}</div></div>`}</div>
     ${d.log.length ? `<div class="card"><h2>${esc(L2("What they did lately", "ما نفّذته مؤخراً"))}</h2>${d.log.slice(0, 40).map(l => `<div class="row"><small class="muted">${esc(l.at.slice(0, 16).replace("T", " "))}</small><b>${esc(l.name)}</b><span>${esc(l.result)}</span></div>`).join("")}</div>` : ""}`;
 };
-// run my own rules every few minutes while the app is open
-let autoLast = 0;
-setInterval(() => { if (document.visibilityState !== "visible" || !S.boot || !S.boot.user || Date.now() - autoLast < 4.5 * 60e3) return; autoLast = Date.now();
-  api("POST", "/api/automations/run", { local: localStamp() }).then(r => { if ((r.done || []).some(x => x.acted)) loadAlerts(true); }).catch(() => {}); }, 30e3);
+// Alerts and rules: checked every few minutes while the app is open, and shortly after any change made here — my own
+// rules and everyone's alerts I may also see, so an alert reaches its people as soon as anyone's change makes it true.
+// With the shared workspace, the times the alerts will next come true go to its push service too, which rings phones
+// at that time even when nobody has the app open (and withdraws what a later change made untrue).
+let autoLast = 0, autoSoon = null, fcLast = 0;
+function autoSweep() {
+  if (!S.boot || !S.boot.user) return;
+  autoLast = Date.now();
+  api("POST", "/api/automations/run", { local: localStamp(), all: 1 }).then(r => { if ((r.done || []).some(x => x.acted)) loadAlerts(true); }).catch(() => {});
+  if (STATIC && cloudOn() && Date.now() - fcLast > 2 * 60e3) { fcLast = Date.now();
+    apiCall("GET", "/api/automations/forecast?" + qs({ local: localStamp() }))
+      .then(f => f.covers.length && CloudAPI.call("fn", "push", { action: "alerts", covers: f.covers, items: f.items })).catch(() => {}); }
+}
+function autoAfterChange(path) {      // a change was saved: check again in a little while (once, however many changes)
+  if (/^\/api\/(automations\/run|chat|me\/|login|logout|ai\/|support|cloud)/.test(path)) return;
+  clearTimeout(autoSoon); autoSoon = setTimeout(() => { if (Date.now() - autoLast > 45e3) autoSweep(); else autoSoon = setTimeout(autoSweep, 45e3 - (Date.now() - autoLast)); }, 15e3);
+}
+setInterval(() => { if (document.visibilityState !== "visible" || Date.now() - autoLast < 4.5 * 60e3) return; autoSweep(); }, 30e3);
 // ---------------------------------------------------------- my day (workdays.py): start / end the working day, with the place and a short report
 const mapLink = (lat, lng) => lat != null && lng != null ? `<a href="https://maps.google.com/?q=${lat},${lng}" target="_blank" rel="noopener">📍 ${esc(L2("Map", "الخريطة"))}</a>` : "";
 const hhmm = iso => iso ? String(iso).slice(11, 16) : "—";
@@ -3880,7 +3931,7 @@ async function billForm(b) {
   const splitRow = (s = {}) => `<div class="row bsplit" style="gap:6px;margin-bottom:6px"><select data-sp="bu" style="flex:1">${optHtml(S.boot.bus.map(x => [x.code, `${x.code} — ${x.name}`]), s.bu_code || "")}</select>
     <input data-sp="pct" type="number" step="any" value="${esc(s.pct ?? "")}" placeholder="%" style="width:90px" class="num"><button type="button" class="btn sm" data-a="bsdel">✕</button></div>`;
   const html = form([
-    { k: "name", l: L2("Name", "الاسم"), v: b.name, req: 1, ph: L2("e.g. ChatGPT Pro", "مثال: ChatGPT Pro") }, { k: "vendor", l: L2("Supplier", "المورّد"), v: b.vendor, ph: "OpenAI" },
+    { k: "name", l: L2("Name", "الاسم"), v: b.name, req: 1, ph: L2("e.g. Software subscription", "مثال: اشتراك برنامج") }, { k: "vendor", l: L2("Supplier", "المورّد"), v: b.vendor, ph: L2("Service provider", "مقدّم الخدمة") },
     { k: "plan", l: L2("Plan / what it covers", "الباقة / ما تغطيه"), v: b.plan }, { k: "cycle", l: L2("Paid", "يُدفع"), type: "select", opts: BILL_CYCLES(), v: b.cycle },
     { k: "amount", l: L2("Amount (company currency)", "المبلغ (بعملة الشركة)"), type: "number", v: b.amount, req: 1 },
     { k: "currency_note", l: L2("Price in its own currency (note)", "السعر بعملته (ملاحظة)"), v: b.currency_note, ph: "USD 200" },
@@ -3945,7 +3996,7 @@ PAGES.bills = async (view, parts) => {
         <td>${esc(BILL_CYCLES().find(c => c[0] === r.cycle)[1])}</td><td class="num">${money(r.amount)}${r.currency_note ? `<div class="lines">${esc(r.currency_note)}</div>` : ""}</td>
         <td>${fd(r.next_due)} ${billState(r)}</td><td>${esc(billAllocTxt(r))}</td><td><small>${esc(`${r.remind_days}d · ${r.remind_time}`)}</small><div class="lines">${esc(r.remind_to.join(", "))}</div></td>
         <td onclick="event.stopPropagation()">${add && r.active ? `<button class="btn sm pri" data-a="bpayl" data-id="${r.id}">✓ ${esc(L2("Paid", "دُفع"))}</button>` : ""}</td></tr>`).join("")}</tbody></table></div>`
-      : `<div class="empty">${svg("repeat")}<div>${esc(L2("Add what the company pays every month or year — ChatGPT, Claude, software, internet… — with a reminder before each is due.", "أضف ما تدفعه الشركة كل شهر أو سنة — ChatGPT وClaude والبرامج والإنترنت… — مع تذكير قبل كل استحقاق."))}</div></div>`}</div>`;
+      : `<div class="empty">${svg("repeat")}<div>${esc(L2("Add what the company pays every month or year — software, internet, services… — with a reminder before each is due.", "أضف ما تدفعه الشركة كل شهر أو سنة — البرامج والإنترنت والخدمات… — مع تذكير قبل كل استحقاق."))}</div></div>`}</div>`;
 };
 
 // ---------------------------------------------------------- my alerts: what each person wants to be told, and when
@@ -4038,13 +4089,13 @@ PAGES.kb = async (view, parts, q) => {
         <p class="muted">${esc(String(r.excerpt || "").replace(/[#*_>`-]/g, "").slice(0, 200))}</p><small class="muted">${esc(r.updated_by)} · ${esc(String(r.updated_at).slice(0, 10))}</small></a>`).join("")}</div>`
       : `<div class="card"><div class="empty">${svg("book")}<div>${esc(q.q ? L2("Nothing found.", "لم يُعثر على شيء.") : L2("No articles yet. Write down how your company does things — pricing rules, onboarding, the return policy, site safety — so everyone (and the assistant) can find the answer.", "لا توجد مقالات بعد. اكتب كيف تعمل شركتك — قواعد التسعير، استقبال الموظفين الجدد، سياسة الاسترجاع، السلامة في الموقع — ليجد الجميع (والمساعد) الإجابة."))}</div></div></div>`);
 };
-// ---------------------------------------------------------- API keys: scripts, other systems and AI coding tools (Claude Code, Cursor…) use the books as one person
+// ---------------------------------------------------------- API keys: scripts, other systems and AI coding tools use the books as one person
 PAGES["api-keys"] = async (view) => {
   const d = await api("GET", "/api/api-keys"), base = location.origin;
   if (!d.server) { view.innerHTML = `<div class="card"><h2>${esc(t("m_api"))}</h2><p>${esc(L2("API keys work when BeyondERP runs as a server — the desktop app or your own server — because outside tools need an address to call. In this web version the books live inside each browser, so there is nothing to call from outside yet.",
     "مفاتيح الواجهة البرمجية تعمل عندما يعمل BeyondERP كخادم — تطبيق سطح المكتب أو خادمك الخاص — لأن الأدوات الخارجية تحتاج عنواناً تتصل به. في نسخة الويب هذه تعيش الدفاتر داخل كل متصفح، فلا يوجد ما يُتصل به من الخارج بعد."))}</p></div>`; return; }
   S.H.apinew = () => drawer(L2("New API key", "مفتاح جديد"), form([
-    { k: "name", l: L2("What it is for", "الغرض منه"), req: 1, span: "spanall", ph: L2("e.g. Claude Code — sales dashboard", "مثال: Claude Code — لوحة المبيعات") },
+    { k: "name", l: L2("What it is for", "الغرض منه"), req: 1, span: "spanall", ph: L2("e.g. Sales dashboard script", "مثال: برنامج لوحة المبيعات") },
     { k: "username", l: L2("Acts as (its permissions)", "يعمل بصلاحيات"), type: "select", v: S.boot.user.username, opts: d.people.map(p => [p, p]) },
     { k: "read_only", l: L2("Read-only (recommended)", "للقراءة فقط (مُوصى به)"), type: "switch", v: true }]),
     async v => { const r = await api("POST", "/api/api-keys", v); route();
@@ -4055,8 +4106,8 @@ PAGES["api-keys"] = async (view) => {
         <h3>${esc(L2("Give this to an AI coding tool", "أعطِ هذا لأداة برمجة ذكية"))}</h3><textarea readonly rows="5" dir="ltr" onclick="this.select()">${esc(how)}</textarea><button type="button" class="btn" data-a="apihow">⧉ ${esc(L2("Copy instructions", "نسخ التعليمات"))}</button>
         <h3>${esc(L2("Try it", "جرّبه"))}</h3><pre dir="ltr" style="white-space:pre-wrap;font-size:.85em">curl -H "Authorization: Bearer ${esc(r.key)}" ${esc(base)}/api/reports/income_statement</pre>`, null, { readOnly: true }); return false; });
   S.H.apirevoke = async el => { if (!await uiConfirm(L2("Revoke this key? Anything using it stops working at once.", "إلغاء هذا المفتاح؟ يتوقف كل ما يستخدمه فوراً."))) return; try { await api("DELETE", "/api/api-keys/" + el.dataset.id); route(); } catch (e) { fail(e); } };
-  view.innerHTML = `<div class="banner info">${esc(L2("An API key lets scripts, other systems and AI coding tools (Claude Code, Cursor, Codex…) read — or, if you allow it, change — the books as one person, with exactly that person's permissions. Keys can never manage people, keys or passwords, erase or restore the books.",
-      "يتيح مفتاح الواجهة البرمجية للبرامج والأنظمة الأخرى وأدوات البرمجة الذكية (Claude Code وCursor وCodex…) قراءة الدفاتر — أو تعديلها إن سمحت — كشخص واحد وبصلاحياته فقط. لا يمكن للمفاتيح إدارة المستخدمين أو المفاتيح أو كلمات المرور أو مسح الدفاتر أو استعادتها."))}</div>
+  view.innerHTML = `<div class="banner info">${esc(L2("An API key lets scripts, other systems and AI coding tools read — or, if you allow it, change — the books as one person, with exactly that person's permissions. Keys can never manage people, keys or passwords, erase or restore the books.",
+      "يتيح مفتاح الواجهة البرمجية للبرامج والأنظمة الأخرى وأدوات البرمجة الذكية قراءة الدفاتر — أو تعديلها إن سمحت — كشخص واحد وبصلاحياته فقط. لا يمكن للمفاتيح إدارة المستخدمين أو المفاتيح أو كلمات المرور أو مسح الدفاتر أو استعادتها."))}</div>
     <div class="toolbar"><button class="btn pri" data-a="apinew">+ ${esc(L2("New API key", "مفتاح جديد"))}</button><span class="spacer"></span><a class="btn" href="/api/api-docs" target="_blank" rel="noopener">${esc(L2("API paths (JSON)", "مسارات الواجهة (JSON)"))}</a></div>
     <div class="card">${d.rows.length ? `<div class="tbl stack"><table><thead><tr><th>${t("name")}</th><th>${esc(L2("Acts as", "يعمل بصلاحيات"))}</th><th>${esc(L2("Key", "المفتاح"))}</th><th>${esc(L2("Access", "الوصول"))}</th><th>${esc(L2("Last used", "آخر استخدام"))}</th><th></th></tr></thead><tbody>
       ${d.rows.map(k => `<tr><td><b>${esc(k.name)}</b><div class="lines">${esc(k.created_by)} · ${esc(String(k.created_at).slice(0, 10))}</div></td><td>${esc(k.username)}</td><td dir="ltr"><code>${esc(k.prefix)}…</code></td>
@@ -4700,7 +4751,7 @@ PAGES.settings = async (view, parts, q) => {
       { k: "company_cr_no", l: t("cr_no"), v: st.company_cr_no }, { k: "company_address", l: t("address"), v: st.company_address },
       { k: "company_city", l: t("city"), v: st.company_city }, { k: "company_phone", l: t("phone"), v: st.company_phone },
       { k: "company_email", l: t("email"), v: st.company_email }, { k: "company_website", l: t("website"), v: st.company_website },
-      { k: "currency", l: t("currency"), v: st.currency }, { k: "language", l: t("default_lang"), type: "select", opts: [["en", "English"], ["ar", "العربية"]], v: st.language || "en" },
+      { k: "currency", l: t("currency"), v: st.currency }, { k: "fiscal_year_start", l: L2("Financial year starts (MM-DD)", "بداية السنة المالية (MM-DD)"), v: st.fiscal_year_start || "01-01", ph: "01-01" }, { k: "language", l: t("default_lang"), type: "select", opts: [["en", "English"], ["ar", "العربية"]], v: st.language || "en" },
       { k: "font_family", l: t("font_family") + " (" + t("default") + ")", type: "select", opts: FONTS.map(f => [f, f]), v: st.font_family || "system" },
       { k: "font_size", l: t("font_size") + " (" + t("default") + ")", type: "number", v: st.font_size || 15 },
       { k: "units", l: t("units"), v: (st.units || []).join(", "), span: "span2" }], 4)}</div>
@@ -4834,7 +4885,11 @@ PAGES.settings = async (view, parts, q) => {
       <div>${Object.entries(sys.counts).map(([k, v]) => `${esc(k)}: ${v}`).join(" · ")}<br><span class="muted">${sys.backups.length} backups: ${esc(sys.backups.slice(0, 3).join(", "))}</span></div></div>
       ${ed ? `<div class="row" style="margin-top:10px"><label class="f">${t("backups_keep")}<input id="bkeep" type="number" value="${esc(st.backup_keep || 14)}" style="max-width:100px"></label><button class="btn" data-a="maint">${t("maintenance")}</button><a class="btn" href="/api/backup">⬇ ${t("db_backup")}</a></div>` : ""}</div>
     ${STATIC ? "" : `<div class="card" id="liccard"><h2>${L2("Licence", "الترخيص")}</h2><div class="muted">${t("loading")}</div></div>`}
-    <div class="card" id="lockcard"><h2>${t("lock_date")}</h2><div class="row"><input type="date" name="lock_date" value="${esc(st.lock_date || "")}" style="max-width:200px" ${ed ? "" : "disabled"}>${ed ? `<button class="btn" data-a="locksave">${t("save")}</button>` : ""}</div><p class="muted">${t("lock_note")}</p></div>
+    <div class="card" id="lockcard"><h2>${t("lock_date")}</h2><div class="row"><input type="date" name="lock_date" value="${esc(st.lock_date || "")}" style="max-width:200px" ${ed ? "" : "disabled"}>${ed ? `<button class="btn" data-a="locksave">${t("save")}</button>` : ""}</div><p class="muted">${t("lock_note")}</p>${ed ? `<a class="btn sm" href="#/year-end">${esc(L2("Year-end close…", "إقفال السنة المالية…"))}</a>` : ""}</div>
+    ${S.boot.user.is_super ? `<div class="card"><h2>${esc(L2("Two-step sign-in", "التحقق بخطوتين"))}</h2><label class="f">${esc(L2("Who must use it", "من يجب عليه استخدامه"))}<select data-change="tsreq" style="max-width:360px">${[["", L2("Nobody — each person chooses", "لا أحد — كل شخص يختار")], ["admins", L2("Administrators", "المسؤولون")], ["all", L2("Everyone", "الجميع")]].map(([v, l]) => `<option value="${v}" ${(st.two_step_required || "") === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
+      <p class="muted">${esc(L2("People it applies to set it up from their profile before they can keep working. If someone loses their phone and recovery codes, turn it off for them in Users.", "من ينطبق عليهم يفعّلونه من ملفهم الشخصي قبل مواصلة العمل. إن فقد أحدهم هاتفه ورموز الاسترداد، أوقفه له من المستخدمين."))}</p></div>` : ""}
+    <div class="card"><h2>${esc(L2("Duplicate entries", "القيود المكررة"))}</h2><label class="f chk"><input type="checkbox" data-change="dupset" ${st.duplicate_check === "off" ? "" : "checked"} ${ed ? "" : "disabled"}>${esc(L2("Warn before saving an entry that looks like one already in the books", "التنبيه قبل حفظ قيد يشبه قيداً مسجلاً بالفعل"))}</label>
+      <p class="muted">${esc(L2("Same type and supplier / customer (or the same description), the same amount, within 3 days — or the same supplier with the same reference number. You can still save it after checking.", "النوع نفسه والمورد / العميل نفسه (أو الوصف نفسه)، والمبلغ نفسه، خلال 3 أيام — أو المورد نفسه برقم المرجع نفسه. يمكنك الحفظ بعد التأكد."))}</p></div>
     <div class="card"><h2>${t("hidden_mods")}</h2><p class="muted">${t("hidden_moved")} <a href="#/settings?tab=menus">${t("tab_menus")}</a></p></div>` : "") +
     (S.boot.user.is_super ? `<div class="card danger-zone" id="erasecard"><h2 class="neg">${t("erase_title")}</h2>
       <div class="banner ${STATIC ? "err" : "info"}">${STATIC ? t("erase_static") + ` <a href="/api/export/json">⬇ JSON</a>` : t("erase_note")}</div>
@@ -4861,6 +4916,8 @@ PAGES.settings = async (view, parts, q) => {
     S.H.liccopy = async () => { try { await navigator.clipboard.writeText(L.install_id); toast(L2("Copied", "تم النسخ")); } catch { toast(L.install_id); } };
     S.H.licsave = async () => { try { await api("POST", "/api/licence", { key: $("#lickey").value }); toast(L2("Licence activated", "تم تفعيل الترخيص")); await refreshBoot(); route(); } catch (e) { fail(e); } };
   })();
+  S.H.tsreq = async el => { try { await api("PUT", "/api/settings", { two_step_required: el.value }); await refreshBoot(); toast(t("saved")); } catch (e) { fail(e); } };
+  S.H.dupset = async el => { try { await api("PUT", "/api/settings", { duplicate_check: el.checked ? "" : "off" }); await refreshBoot(); toast(t("saved")); } catch (e) { fail(e); } };
   S.H.locksave = async () => { try { await api("PUT", "/api/settings", { lock_date: $("[name=lock_date]").value }); await refreshBoot(); toast(t("saved")); } catch (e) { fail(e); } };
   S.H.erase = async () => {
     const scope = ($("input[name=escope]:checked") || {}).value, word = $("#econfirm").value;
@@ -5004,7 +5061,7 @@ PAGES.users = async (view) => {
   const ar = S.lang === "ar";
   const groupName = k => { const g = gr.groups.find(x => x.key === (k || "general")); return g ? (ar && g.name_ar) || g.name : ""; };
   const edit = u => drawer(t("m_users") + (u.username ? " — " + u.username : ""), form([{ k: "username", l: t("username"), v: u.username, req: 1, dis: !!u.id,
-    help: cloudOn() && !u.id ? (S.lang === "ar" ? "اسم الدخول فريد في كل الشركات — لو كان مستخدماً في شركة أخرى سنقترح اسماً آخر (مثل ahmed.beyond)." : "Sign-in names are unique across all companies — if it is taken in another company you'll be offered another (e.g. ahmed.beyond).") : "" }, { k: "full_name", l: t("full_name"), v: u.full_name },
+    help: cloudOn() && !u.id ? (S.lang === "ar" ? "اسم الدخول فريد في كل الشركات — لو كان مستخدماً في شركة أخرى سنقترح اسماً آخر (مثل name.company)." : "Sign-in names are unique across all companies — if it is taken in another company you'll be offered another (e.g. name.company).") : "" }, { k: "full_name", l: t("full_name"), v: u.full_name },
     ...(gr.groups.length ? [{ k: "group_key", l: L2("Group (decides their dashboard)", "المجموعة (تحدد لوحة التحكم الخاصة به)"), type: "select", v: u.group_key || "general",
       opts: gr.groups.map(g => [g.key, (ar && g.name_ar) || g.name]), help: L2("Super administrators choose what each group's dashboard shows (Dashboard → Customise).", "يحدد المدير العام ما تعرضه لوحة كل مجموعة (لوحة التحكم ← تخصيص).") }] : []),
     { k: "email", l: t("email") + (cloudOn() ? (ar ? " (اختياري)" : " (optional)") : ""), type: "email", v: u.email, span: "spanall", help: cloudOn()
@@ -5021,6 +5078,10 @@ PAGES.users = async (view) => {
       <div class="row" style="gap:14px;flex-wrap:wrap;margin-top:6px">${[["design_dashboards", L2("Design dashboards & groups", "تصميم لوحات التحكم والمجموعات")], ["required_fields", L2("Make fields required", "جعل الحقول إلزامية")],
         ["arrange_forms", L2("Arrange menus & forms", "ترتيب القوائم والنماذج")], ["build_calculators", L2("Build calculators", "إنشاء الحاسبات")]].map(([k, l]) =>
         `<label class="f chk"><input type="checkbox" data-grant="${k}" data-skip="1" ${(u.grants || []).includes(k) ? "checked" : ""}>${esc(l)}</label>`).join("")}</div></div>`, span: "spanall" }] : []),
+    ...((S.boot.user.is_super || !u.id) && S.boot.bus.length ? [{ html: `<div class="f spanall" id="ubus"><b>${esc(L2("Projects this person can see", "المشروعات التي يراها هذا الشخص"))}</b>
+      <label class="f chk" style="margin-top:4px"><input type="checkbox" data-skip="1" id="ubusall" data-change="ubusall" ${(u.perms && u.perms._bus || []).length ? "" : "checked"}>${esc(L2("All projects and company-wide figures", "كل المشروعات وأرقام الشركة كلها"))}</label>
+      <div class="row" id="ubuslist" style="gap:4px 14px;flex-wrap:wrap" ${(u.perms && u.perms._bus || []).length ? "" : "hidden"}>${S.boot.bus.map(b => `<label class="f chk"><input type="checkbox" data-skip="1" data-bu="${esc(b.code)}" ${((u.perms && u.perms._bus) || []).includes(b.code) ? "checked" : ""}>${esc(b.code)} — ${esc(b.name)}</label>`).join("")}</div>
+      <div class="muted" style="font-size:.82em">${esc(L2("With chosen projects they see only those projects' entries, documents and reports, record only on them, and never see company-wide money (cash & bank, taxes, partners, loans, payroll runs, forecasts). Super administrators always see everything.", "عند اختيار مشروعات يرى قيودها ومستنداتها وتقاريرها فقط، ويسجل عليها فقط، ولا يرى أموال الشركة كلها (النقدية والبنوك والضرائب والشركاء والقروض ومسيرات الرواتب والتوقعات). المسؤول الأعلى يرى كل شيء دائماً."))}</div></div>`, span: "spanall" }] : []),
     { k: "can_post", type: "checkbox", v: u.is_super || (u.id ? !u.needs_approval : false), dis: !!u.is_super || (u.id && u.id === S.boot.user.id && !S.boot.user.is_super),
       l: L2("Can post entries to the books (unticked: their entries are saved as drafts and wait for someone with “Approve & post entries” to post them)", "يمكنه ترحيل القيود إلى الدفاتر (بدون علامة: تُحفظ قيوده كمسودات وتنتظر من له صلاحية «اعتماد وترحيل القيود» لترحيلها)") },
     ...(u.id ? [{ k: "active", l: t("active") + (cloudOn() ? (ar ? " (إلغاء التحديد يمنع تسجيل الدخول)" : " (untick to block sign-in)") : ""), type: "checkbox", v: u.active !== false }] : []),
@@ -5030,6 +5091,8 @@ PAGES.users = async (view) => {
     const body = { username: v.username || u.username, full_name: v.full_name, email: v.email, password: v.password, is_admin: v.is_admin || v.is_super, active: v.active, perms, _no_password: !v.password,
       ...(v.can_post === undefined || (u.id && u.id === S.boot.user.id && !S.boot.user.is_super) ? {} : { needs_approval: !v.can_post }) };
     if (S.boot.user.is_super && $("[data-grant]", f)) body.grants = $$("[data-grant]", f).filter(x => x.checked).map(x => x.dataset.grant);
+    if ($("#ubus", f)) body.projects = $("#ubusall", f).checked ? [] : $$("[data-bu]", f).filter(x => x.checked).map(x => x.dataset.bu);
+    if (body.projects && !$("#ubusall", f).checked && !body.projects.length) throw new Error(L2("Choose at least one project, or tick “All projects”", "اختر مشروعاً واحداً على الأقل، أو حدد «كل المشروعات»"));
     if (v.group_key !== undefined) body.group_key = v.group_key === "general" ? "" : v.group_key;
     if (S.boot.user.is_super) body.is_super = !!v.is_super; else { body.is_admin = !!u.is_admin; }
     if (u.id) await api("PUT", "/api/users/" + u.id, body); else await api("POST", "/api/users", body);
@@ -5050,6 +5113,7 @@ PAGES.users = async (view) => {
       } else toast((ar ? "تم حفظ المستخدم، لكن لم يُنشأ حساب الدخول: " : "User saved, but the sign-in account was not set: ") + e.message, true);
     } },
   { onOpen: f => { wirePerms(f); pwWire(f);
+    S.H.ubusall = el => { $("#ubuslist", f).hidden = el.checked; };
     S.H.urole = el => { const top = el.value === "super", cp = $("[name=can_post]", f);
       // a new administrator starts with full access in the grid (narrow it as needed)
       if (el.value === "admin" && !$$("input.psec:checked, input.pscr:checked", f).some(r => r.value !== "none" && !/^(ps_team|pp_team_)/.test(r.name))) S.H.pmall({ dataset: { l: "edit" } });
@@ -5063,19 +5127,25 @@ PAGES.users = async (view) => {
         $$("input, select, textarea", f).forEach(x => { x.disabled = true; });
         f.querySelector(".dbody, form").insertAdjacentHTML("afterbegin", `<div class="banner info">${esc(L2("Only the super administrator can change or remove someone's account. You can add new users.", "المسؤول الأعلى فقط يمكنه تعديل حساب أي شخص أو حذفه. يمكنك إضافة مستخدمين جدد."))}</div>`); } },
     readOnly: !!(u.id && u.id !== S.boot.user.id && !S.boot.user.is_super),
-    extraButtons: u.id && ed && u.id !== S.boot.user.id && S.boot.user.is_super ? `<button type="button" class="btn danger" data-a="udel">${t("delete")}</button>` : "" });
+    extraButtons: (u.id && (u.two_step || (STATIC && cloudOn())) && S.boot.user.is_super && u.id !== S.boot.user.id ? `<button type="button" class="btn" data-a="utsoff">${esc(L2("Turn off two-step sign-in", "إيقاف التحقق بخطوتين"))}</button>` : "") +
+      (u.id && ed && u.id !== S.boot.user.id && S.boot.user.is_super ? `<button type="button" class="btn danger" data-a="udel">${t("delete")}</button>` : "") });
   S.H.udel = () => {};
   S.H.unew = () => edit({ perms: { dashboard: "view" } });
   S.H.uedit = el => { const u = rows.find(x => String(x.id) === el.dataset.id);
     edit(u);
+    S.H.utsoff = async () => { if (!await uiConfirm(L2(`Turn off two-step sign-in for ${u.username}? They sign in with their password and can set it up again.`, `إيقاف التحقق بخطوتين لـ ${u.username}؟ يسجل الدخول بكلمة المرور ويمكنه تفعيله من جديد.`))) return;
+    try { await api("POST", `/api/users/${u.id}/two-step/off`, {});
+      if (STATIC && cloudOn() && window.BeyondCloud.mfaReset) await window.BeyondCloud.mfaReset({ username: u.username, email: u.email });
+      toast(t("saved")); closeDrawer(); route(); } catch (e) { fail(e); } };
     S.H.udel = () => confirmDelete(`${u.username}${u.full_name ? " (" + u.full_name + ")" : ""}` + (cloudOn() ? (ar ? " وحساب دخوله" : " and their sign-in account") : ""), "/api/users/" + u.id,
       async () => { if (cloudOn()) await CloudAPI.deleteAccount({ username: u.username, email: u.email }).catch(e => { if (e.status !== 404) toast((ar ? "حُذف المستخدم، لكن حساب الدخول لم يُحذف: " : "User deleted, but their sign-in account was not: ") + e.message, true); }); }); };
   const L = ["none", "view", "add", "edit"];
   const summary = u => {
     if (u.is_super) return `<span class="chip ok">★ ${L2("Super administrator", "مسؤول أعلى")}</span>`;
-    if (u.is_admin) return `<span class="chip ok">${t("admin")}</span>`;
+    const pj = (u.perms && u.perms._bus || []).length ? `<span class="chip warn">${esc(L2("Projects", "المشروعات"))}: ${esc(u.perms._bus.join(", "))}</span> ` : "";
+    if (u.is_admin) return pj + `<span class="chip ok">${t("admin")}</span>`;
     const subs = S.boot.enums.submodules || {};
-    return S.boot.enums.modules.map(m => { const ss = subs[m] || [];
+    return pj + S.boot.enums.modules.map(m => { const ss = subs[m] || [];
       if (!ss.length) return (u.perms[m] || "none") === "none" ? "" : `<span class="chip">${esc(t("mod_" + m))}: ${esc(t("perm_" + (u.perms[m] === "edit" ? "full" : u.perms[m])))}</span>`;
       const vals = ss.map(s => L.includes(u.perms[`${m}.${s}`]) ? u.perms[`${m}.${s}`] : (u.perms[m] || "none"));
       if (vals.every(v => v === "none")) return "";
@@ -5876,7 +5946,7 @@ async function custodyForm(C) {
   const html = form([
     { k: "holder", l: L2("Employee holding it", "الموظف صاحب العهدة"), v: C ? C.holder : "", list: "cuholders", req: 1 },
     { k: "kind", l: L2("Type", "النوع"), type: "select", opts: CU_KIND(), v: C ? C.kind : "temporary", change: "cusync" },
-    { k: "purpose", l: L2("Purpose", "الغرض"), v: C ? C.purpose : "", ph: L2("e.g. site purchases for Villa", "مثال: مشتريات موقع الفيلا"), span: "spanall" },
+    { k: "purpose", l: L2("Purpose", "الغرض"), v: C ? C.purpose : "", ph: L2("e.g. site purchases", "مثال: مشتريات الموقع"), span: "spanall" },
     ...(ed ? [] : [{ k: "booking", l: L2("The money", "المبلغ"), type: "select", change: "cusync", span: "spanall", opts: [["money", L2("Handed over now — from cash / bank", "يُصرف الآن — من الخزينة / البنك")],
       ["opening", L2("Already with the employee (in the books) — track it from here", "لدى الموظف بالفعل (مسجل بالدفاتر) — متابعته من الآن")], ["none", L2("Give it later", "يُصرف لاحقاً")]] },
       { k: "amount", l: t("amount"), type: "number" }, { k: "paid_from", l: L2("Paid from", "دُفع من"), type: "select", opts: moneyAccts(), v: defMoney("cash") }]),
@@ -6891,7 +6961,7 @@ async function mountAttach(box) {
       else if (k === "dl") { const f = await attFile(aid); const l = document.createElement("a"); l.href = f.blob; l.download = a.title; document.body.appendChild(l); l.click(); l.remove(); }
       else if (k === "ren") { const n = await uiPrompt(L2("File name", "اسم الملف"), a.title); if (!n) return; await api("PUT", "/api/attachments/" + aid, { title: n }); reload(); }
       else if (k === "del") { if (!await uiConfirm(L2(`Remove “${a.title}”?`, `حذف «${a.title}»؟`))) return; await api("DELETE", "/api/attachments/" + aid); reload(); }
-      else if (k === "link") { const u = await uiPrompt(L2("Paste the link (Google Drive, Dropbox, OneDrive…)", "الصق الرابط (جوجل درايف، دروب بوكس…)")); if (!u) return;
+      else if (k === "link") { const u = await uiPrompt(L2("Paste the link (cloud storage, shared folder…)", "الصق الرابط (تخزين سحابي، مجلد مشترك…)")); if (!u) return;
         const n = await uiPrompt(L2("Name", "الاسم"), u.replace(/^https?:\/\//, "").slice(0, 60)); await api("POST", "/api/attachments", { owner, id, url: u.trim(), title: n || "" }); reload(); }
     } catch (e) { fail(e); }
   };
@@ -7350,7 +7420,7 @@ PAGES.bankrec = async (view) => {
     <div class="card"><h2>${L2("Statements", "الكشوف")}</h2>${d.statements.length ? `<div class="tbl stack"><table><thead><tr><th>${t("account")}</th><th>${L2("Period", "الفترة")}</th><th>${L2("Name", "الاسم")}</th><th class="num">${L2("Opening", "الافتتاحي")}</th><th class="num">${L2("Closing", "الختامي")}</th><th class="num">${L2("Lines", "الحركات")}</th><th>${t("status")}</th></tr></thead><tbody>
       ${d.statements.map(s => `<tr class="click" data-a="brgo" data-id="${s.id}"><td>${esc(s.account)}</td><td>${fd(s.date_from)} → ${fd(s.date_to)}</td><td>${esc(s.name)}</td><td class="num">${money(s.opening)}</td><td class="num">${money(s.closing)}</td><td class="num">${s.n}${s.open_lines ? ` <span class="chip warn">${s.open_lines} ${L2("open", "مفتوح")}</span>` : ""}</td>
         <td>${s.status === "reconciled" ? `<span class="chip ok">✓ ${L2("Reconciled", "تمت التسوية")} ${fd(s.reconciled_on)}</span>` : `<span class="chip">${L2("In progress", "جارية")}</span>`}</td></tr>`).join("")}</tbody></table></div>`
-      : `<div class="empty">${L2("Download your statement from the bank's website (CSV or Excel) and import it — the app matches each bank line to your vouchers, books the bank charges and interest, and shows what is still in transit. No file? Use a paper statement and tick the vouchers the bank shows.", "حمّل كشف الحساب من موقع البنك (CSV أو Excel) واستورده — سيطابق البرنامج كل حركة بنكية مع قيودك، ويسجل العمولات والفوائد، ويعرض ما زال معلقاً. لا يوجد ملف؟ استخدم الكشف الورقي وحدد القيود الظاهرة به.")}</div>`}</div>`;
+      : `<div class="empty">${L2("Download your statement from the bank's website (CSV, Excel, MT940, CAMT.053, OFX or QIF) and import it — the app matches each bank line to your vouchers, books the bank charges and interest, and shows what is still in transit. No file? Use a paper statement and tick the vouchers the bank shows.", "حمّل كشف الحساب من موقع البنك (CSV أو Excel أو MT940 أو CAMT.053 أو OFX أو QIF) واستورده — سيطابق البرنامج كل حركة بنكية مع قيودك، ويسجل العمولات والفوائد، ويعرض ما زال معلقاً. لا يوجد ملف؟ استخدم الكشف الورقي وحدد القيود الظاهرة به.")}</div>`}</div>`;
 };
 
 function bankImportForm(account) {
@@ -7358,7 +7428,7 @@ function bankImportForm(account) {
   drawer(L2("Import bank statement", "استيراد كشف حساب البنك"), form([
     { k: "account", l: L2("Bank / cash account", "حساب البنك / النقدية"), type: "select", opts: bankAccts(), v: account || accByRole("bank"), req: 1 },
     { k: "date_order", l: L2("Dates are written", "صيغة التاريخ"), type: "select", opts: [["", L2("Detect", "تلقائي")], ["dmy", "31/12/2026"], ["mdy", "12/31/2026"]] },
-    { html: `<div class="f">${L2("Statement file (CSV or Excel)", "ملف الكشف (CSV أو Excel)")}<input type="file" id="brfile" data-skip="1" accept=".csv,.txt,.xlsx,.xlsm,text/csv"></div>`, span: "spanall" },
+    { html: `<div class="f">${L2("Statement file — CSV, Excel, or the bank's own file: MT940, CAMT.053 (XML), OFX / QFX, QIF", "ملف الكشف — CSV أو Excel أو ملف البنك نفسه: MT940 أو CAMT.053 (XML) أو OFX / QFX أو QIF")}<input type="file" id="brfile" data-skip="1" accept=".csv,.txt,.xlsx,.xlsm,text/csv,.sta,.mt940,.940,.xml,.camt,.ofx,.qfx,.qif"></div>`, span: "spanall" },
     { k: "paste", l: L2("…or paste the lines (copied from Excel / the bank's page, with the heading row)", "…أو الصق الحركات (منسوخة من Excel أو صفحة البنك مع صف العناوين)"), type: "textarea", span: "spanall" },
     { html: `<div id="brprev"></div>`, span: "spanall" }]),
   async v => { if (!parsed) { await read(); return false; }
@@ -7371,7 +7441,7 @@ function bankImportForm(account) {
         if (!file && !(v.paste || "").trim()) throw new Error(L2("Choose the file or paste the lines", "اختر الملف أو الصق الحركات"));
         parsed = await api("POST", "/api/bank-preview/parse", { ...body, date_order: v.date_order });
         const p = parsed;
-        box.innerHTML = `<div class="banner ok">${p.rows.length} ${L2("lines read", "حركة")}${p.skipped ? ` · ${p.skipped} ${L2("rows skipped (no date / amount)", "صف تم تجاهله (بدون تاريخ / مبلغ)")}` : ""} · ${L2("in", "وارد")} ${money(p.total_in)} · ${L2("out", "منصرف")} ${money(p.total_out)}</div>` +
+        box.innerHTML = `<div class="banner ok">${p.format ? `<b>${esc(p.format)}</b> · ` : ""}${p.rows.length} ${L2("lines read", "حركة")}${p.skipped ? ` · ${p.skipped} ${L2("rows skipped (no date / amount)", "صف تم تجاهله (بدون تاريخ / مبلغ)")}` : ""} · ${L2("in", "وارد")} ${money(p.total_in)} · ${L2("out", "منصرف")} ${money(p.total_out)}</div>` +
           form([{ k: "name", l: L2("Statement name", "اسم الكشف"), v: `${v.account} ${p.date_from.slice(0, 7)}` }, { k: "date_from", l: t("from"), type: "date", v: p.date_from }, { k: "date_to", l: t("to"), type: "date", v: p.date_to },
             { k: "opening", l: L2("Opening balance (per bank)", "الرصيد الافتتاحي (حسب البنك)"), type: "number", v: p.opening ?? "" }, { k: "closing", l: L2("Closing balance (per bank)", "الرصيد الختامي (حسب البنك)"), type: "number", v: p.closing ?? "" },
             { k: "book_from", l: L2("Look at vouchers from", "مراجعة القيود من"), type: "date", v: p.date_from, help: L2("First reconciliation: older vouchers are treated as already cleared", "أول تسوية: القيود الأقدم تعتبر مسواة") }], 3) +
@@ -8651,6 +8721,7 @@ PAGES.profile = async view => {
         ${phoneMenuSelect('data-change="ppm"')}
         <label class="f">${esc(L2("Light / dark", "فاتح / داكن"))}<select data-change="pmode">${[["auto", L2("Follow this device", "حسب إعداد الجهاز")], ["light", L2("Light", "فاتح")], ["dark", L2("Dark", "داكن")]].map(([v, l]) => `<option value="${v}" ${modeNow() === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label></div>
         <div class="muted" style="margin-top:6px">${esc(L2("Colours and saved themes: Settings → Theme.", "الألوان والسمات المحفوظة: الإعدادات ← السمات."))} <a href="#/settings?tab=theme">${esc(L2("Open", "فتح"))}</a></div></div>
+      <div class="card" id="tscard"><h2>${esc(L2("Two-step sign-in", "التحقق بخطوتين"))}</h2><div class="muted">${t("loading")}</div></div>
       <div class="card" id="notifcard"><h2>${esc(L2("Notifications", "الإشعارات"))}</h2>
         <p class="muted" style="margin-top:0">${esc(L2("What reaches you, the sound, vibration and pop-ups — all in one place.", "ما يصلك من تنبيهات، والصوت والاهتزاز والإشعارات المنبثقة — كلها في مكان واحد."))}</p>
         <a class="btn" href="#/notifications">${svg("bell")} ${esc(L2("Notification settings", "إعدادات الإشعارات"))}</a></div>
@@ -8665,7 +8736,56 @@ PAGES.profile = async view => {
   S.H.pnav = el => { saveNavMode(el.value); setTimeout(() => { renderShell(); route(); }, 150); };
   S.H.ppm = el => { savePhoneMenu(el.value); setTimeout(() => { renderShell(); route(); }, 150); };
   S.H.pmode = el => { setMyLook({ mode: el.value }, { quiet: true }); applyLook(); renderShell(); route(); };
+  twoStepCard($("#tscard", view));
 };
+
+// Two-step sign-in card (profile): the shared workspace uses Supabase's own (the code is asked at every sign-in on
+// the website and the apps); the desktop / device-only books keep it with the account (auth.py)
+async function twoStepCard(box) {
+  if (!box) return;
+  const C = window.BeyondCloud, cloud = STATIC && cloudOn() && C && C.mfaFactors;
+  const head = `<h2>${esc(L2("Two-step sign-in", "التحقق بخطوتين"))}</h2><p class="muted" style="margin-top:0">${esc(L2("After your password, a 6-digit code from an authenticator app on your phone — a stolen password alone is not enough.", "بعد كلمة المرور، رمز من 6 أرقام من تطبيق مصادقة على هاتفك — كلمة المرور المسروقة وحدها لا تكفي."))}</p>`;
+  const qrSvg = async uri => { await loadQr(); const q = window.qrcode(0, "M"); q.addData(uri); q.make(); return q.createSvgTag({ cellSize: 4, margin: 2, scalable: true }); };
+  const setupUi = (qrHtml, secret) => `${head}<div class="grid g2" style="align-items:center"><div class="qrbox" style="background:#fff;padding:8px;border-radius:12px;max-width:220px">${qrHtml}</div>
+    <div><ol style="margin:0;padding-inline-start:18px;line-height:1.7"><li>${esc(L2("Open an authenticator app on your phone and add an account.", "افتح تطبيق مصادقة على هاتفك وأضف حساباً."))}</li><li>${esc(L2("Scan the code — or type this key:", "امسح الرمز — أو اكتب هذا المفتاح:"))} <code dir="ltr" style="word-break:break-all">${esc(secret)}</code></li><li>${esc(L2("Type the 6-digit code the app shows:", "اكتب الرمز المكوّن من 6 أرقام الذي يظهر في التطبيق:"))}</li></ol>
+    <div class="row" style="margin-top:8px"><input id="tscode" inputmode="numeric" autocomplete="one-time-code" maxlength="8" style="max-width:140px"><button class="btn pri" data-a="tsconfirm">${esc(L2("Turn on", "تفعيل"))}</button><button class="btn" data-a="tscancel">${t("cancel")}</button></div></div></div>`;
+  let st;
+  try { st = cloud ? { on: (await C.mfaFactors()).some(f => f.status === "verified") } : await api("GET", "/api/me/two-step"); }
+  catch (e) { box.innerHTML = head + `<div class="banner err">${esc(e.message)}</div>`; return; }
+  const req = S.boot.settings.two_step_required || "", mustHave = req === "all" || (req === "admins" && S.boot.user.is_admin);
+  const draw = () => { box.innerHTML = head + (st.on ? `<div class="row"><span class="chip ok">✓ ${esc(L2("On", "مفعّل"))}</span>${mustHave ? `<span class="muted">${esc(L2("Required in this company", "مطلوب في هذه الشركة"))}</span>` : `<button class="btn" data-a="tsoff">${esc(L2("Turn off", "إيقاف"))}</button>`}</div>`
+      : `${mustHave ? `<div class="banner warn">${esc(L2("This company requires two-step sign-in for you — turn it on to keep working.", "تشترط هذه الشركة التحقق بخطوتين لك — فعّله لمواصلة العمل."))}</div>` : ""}<button class="btn pri" data-a="tson">${esc(L2("Turn on two-step sign-in", "تفعيل التحقق بخطوتين"))}</button>`); };
+  draw();
+  let pending = null;
+  S.H.tson = async () => {
+    try {
+      if (cloud) { const r = await C.mfaEnroll(); pending = r; box.innerHTML = setupUi(r.qr ? `<img src="${esc(r.qr)}" alt="" style="width:100%">` : await qrSvg(r.uri), r.secret); }
+      else { const r = await api("GET", "/api/me/two-step"); pending = r; box.innerHTML = setupUi(await qrSvg(r.uri), r.secret); }
+      $("#tscode", box).focus();
+    } catch (e) { fail(e); } };
+  S.H.tscancel = () => { pending = null; draw(); };
+  S.H.tsconfirm = async () => { const code = $("#tscode", box).value;
+    try {
+      if (cloud) { await C.mfaVerify(pending.id, code); st = { on: true }; S.tsOk = true; draw(); toast(L2("Two-step sign-in is on", "تم تفعيل التحقق بخطوتين")); return; }
+      const r = await api("POST", "/api/me/two-step", { secret: pending.secret, code }); st = { on: true }; await refreshBoot();
+      box.innerHTML = head + `<div class="banner ok">${esc(L2("On. Keep these recovery codes somewhere safe — each one works once if you lose your phone:", "تم التفعيل. احفظ رموز الاسترداد هذه في مكان آمن — كل رمز يعمل مرة واحدة إن فقدت هاتفك:"))}</div>
+        <pre dir="ltr" style="font-size:1.05em;line-height:1.7">${r.recovery_codes.map(esc).join("\n")}</pre><button class="btn" data-a="tscopy">⧉ ${esc(L2("Copy", "نسخ"))}</button> <button class="btn pri" data-a="tsdone">${esc(L2("I saved them", "حفظتها"))}</button>`;
+      S.H.tscopy = async () => { try { await navigator.clipboard.writeText(r.recovery_codes.join("\n")); toast(L2("Copied", "تم النسخ")); } catch { /* shown on screen */ } };
+      S.H.tsdone = () => draw();
+    } catch (e) { fail(e); } };
+  S.H.tsoff = async () => {
+    try {
+      if (cloud) { if (!await uiConfirm(L2("Turn off two-step sign-in?", "إيقاف التحقق بخطوتين؟"))) return; await C.mfaOff(); }
+      else { const code = await uiPrompt(L2("Type a code from your authenticator app (or your password) to turn it off", "اكتب رمزاً من تطبيق المصادقة (أو كلمة المرور) للإيقاف"), ""); if (code === null) return;
+        await api("POST", "/api/me/two-step/off", /^\d{6}$/.test(code.trim()) ? { code } : { password: code }); await refreshBoot(); }
+      st = { on: false }; S.tsOk = undefined; draw(); toast(L2("Two-step sign-in is off", "تم إيقاف التحقق بخطوتين"));
+    } catch (e) { fail(e); } };
+}
+let qrLoading = null;
+function loadQr() {   // QR code maker (vendor/qrcode-generator, MIT) — loaded only when setting up two-step sign-in
+  if (window.qrcode) return Promise.resolve();
+  return qrLoading || (qrLoading = new Promise((res, rej) => { const sc = document.createElement("script"); sc.src = "vendor/qrcode-generator-1.4.4.js"; sc.onload = () => res(); sc.onerror = () => { qrLoading = null; rej(new Error(L2("The QR code could not load — type the key instead", "تعذر تحميل رمز QR — اكتب المفتاح بدلاً منه"))); }; document.head.appendChild(sc); }));
+}
 
 // ================================================================== notification settings (each person's own)
 PAGES.notifications = view => notifPage(view, "");
@@ -9801,14 +9921,15 @@ PAGES.assistant = async (view, parts) => {
     <section class="chv"><div class="ch-top"><a class="icbtn ch-back" href="#/assistant">${BACK_ICON}</a>${aiAvatar(40)}<div class="ch-tt"><b>${esc(name)}</b><small>${esc(L2("Works with your own access only", "يعمل بصلاحياتك أنت فقط"))} · ${esc(S.ai.policy.write === "off" ? L2("read-only", "قراءة فقط") : L2("every change is checked, then you review it", "كل تعديل يُفحص ثم تراجعه أنت"))}</small></div></div>
       <div class="ch-list ai-list" id="ailist"></div>
       <div class="ch-pending" id="aipend"></div>
-      <div class="ch-comp"><div class="dd ch-emo"><button class="btn icbtn" type="button" aria-label="Emoji">${svg("smile")}</button><div class="dd-menu emo-grid">${EMOJIS.map(e => `<button type="button" data-a="aiemo" data-e="${e}">${e}</button>`).join("")}</div></div>
+      <div class="ch-comp ai-comp"><div class="dd ch-emo"><button class="btn icbtn" type="button" aria-label="Emoji">${svg("smile")}</button><div class="dd-menu emo-grid">${EMOJIS.map(e => `<button type="button" data-a="aiemo" data-e="${e}">${e}</button>`).join("")}</div></div>
         <label class="icbtn" title="${esc(L2("Attach files (pictures, PDF, Excel, Word, text…)", "إرفاق ملفات (صور، PDF، Excel، Word، نصوص…)"))}">${svg("attach")}<input type="file" id="aifiles" multiple hidden></label>
-        <div class="ch-inbox"><textarea id="aitext" rows="1" placeholder="${esc(L2("Ask about your books or ask for a change… (drop or paste files)", "اسأل عن دفاترك أو اطلب تعديلاً… (اسحب الملفات أو الصقها)"))}"></textarea></div>
+        <div class="ch-inbox"><textarea id="aitext" rows="1" enterkeyhint="send" placeholder="${esc(L2("Ask about your books or ask for a change… (drop or paste files)", "اسأل عن دفاترك أو اطلب تعديلاً… (اسحب الملفات أو الصقها)"))}"></textarea></div>
         <button class="btn pri icbtn ch-send" data-a="aisend" aria-label="${esc(L2("Send", "إرسال"))}">${svg("send")}</button></div>
       <div class="muted ai-foot">${esc(L2("What the assistant reads is sent to the AI provider your company chose, to answer you. Check important figures in the reports.", "ما يقرؤه المساعد يُرسل إلى مزوّد الذكاء الاصطناعي الذي اختارته شركتك للإجابة. راجع الأرقام المهمة في التقارير."))}${S.ai.policy.daily_limit ? " · " + esc(L2("Today", "اليوم")) + ` ${S.ai.used_today}/${S.ai.policy.daily_limit}` : ""}</div></section></div>`;
   const ta = $("#aitext");
   ta.addEventListener("input", () => { ta.style.height = "auto"; ta.style.height = Math.min(ta.scrollHeight, 200) + "px"; });
-  ta.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing && matchMedia("(pointer: fine)").matches) { e.preventDefault(); S.H.aisend(); } });
+  // Enter sends — on phones too (the keyboard's key says "send"); Shift+Enter makes a new line on a keyboard
+  ta.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); S.H.aisend(); } });
   S.H.aisend = () => aiSend(ta.value.trim(), ta);
   try { const pre = sessionStorage.getItem("berp.aiPrefill"); if (pre) { sessionStorage.removeItem("berp.aiPrefill"); ta.value = pre; setTimeout(() => S.H.aisend(), 400); } } catch { /* private window */ }
   // attachments: pick, paste or drop — any kind of file
@@ -10009,8 +10130,8 @@ async function aiSettingsTab(view, head) {
   const hasKey = cloud && !cloud.error ? cloud.has_key : r.has_key;
   if (cloud && cloud.error) AI.cloudReady = false;
   view.innerHTML = head + `<div class="card"><h2>${svg("spark")} ${esc(L2("AI assistant", "المساعد الذكي"))}</h2>
-    <p class="muted">${esc(L2("An AI model of your choice (Claude, or any other provider) answers questions about your books and, if you allow it, prepares changes — every change is checked and reviewed before it is saved. It always acts as the person using it — with exactly their permissions — and never touches users, sign-in, licences, backups or these settings.",
-      "نموذج ذكاء اصطناعي تختاره (Claude أو أي مزوّد آخر) يجيب عن أسئلة حول دفاترك، ويُعد التعديلات إن سمحت بذلك — وكل تعديل يُفحص ويُراجع قبل حفظه. يعمل دائماً بصفة الشخص الذي يستخدمه وبصلاحياته فقط، ولا يقترب من المستخدمين أو الدخول أو التراخيص أو النسخ الاحتياطية أو هذه الإعدادات."))}</p>
+    <p class="muted">${esc(L2("An AI model from the provider of your choice answers questions about your books and, if you allow it, prepares changes — every change is checked and reviewed before it is saved. It always acts as the person using it — with exactly their permissions — and never touches users, sign-in, licences, backups or these settings.",
+      "نموذج ذكاء اصطناعي من المزوّد الذي تختاره يجيب عن أسئلة حول دفاترك، ويُعد التعديلات إن سمحت بذلك — وكل تعديل يُفحص ويُراجع قبل حفظه. يعمل دائماً بصفة الشخص الذي يستخدمه وبصلاحياته فقط، ولا يقترب من المستخدمين أو الدخول أو التراخيص أو النسخ الاحتياطية أو هذه الإعدادات."))}</p>
     <form id="aiform">${form([
       { k: "enabled", l: L2("AI assistant", "المساعد الذكي"), type: "switch", v: p.enabled, on: L2("On", "يعمل"), off: L2("Off", "متوقف") },
       { k: "name", l: L2("Assistant's name", "اسم المساعد"), v: p.name },
@@ -11231,6 +11352,12 @@ function effectiveMenu() {
   if (L.gorder) { const pos = g => { const i = L.gorder.indexOf(g); return g === "g_home" ? -1 : i < 0 ? 1e6 : i; }; res = res.sort((a, b) => pos(a[0]) - pos(b[0])); }
   return res.filter(([g]) => !(L.ghide || []).includes(g));
 }
+// locked (right-click → Lock): a locked screen or section stays where it is — no dragging, moving, renaming or hiding
+// until it is unlocked; a locked section also keeps its screens in and others out. "Lock the whole menu" locks all.
+const navLockedG = g => { const L = ML(); return !!(L.lockAll || (L.lock || []).includes("g:" + g)); };
+const navGroupOf = k => (effectiveMenu().find(([, items]) => items.some(i => i[0] === k)) || [])[0];
+const navLockedK = k => { const L = ML(); return !!(L.lockAll || (L.lock || []).includes(k) || navLockedG(navGroupOf(k))); };
+const lockToggle = (key, on) => saveLayout(L => { const s = new Set(L.lock || []); if (on) s.add(key); else s.delete(key); L.lock = [...s]; if (!L.lock.length) delete L.lock; });
 const groupLabel = g => { const cg = (ML().groups || []).find(x => x.k === g); return cg && !(S.boot.settings.menu_labels || {})[g] ? lbl2(cg.label) : t(g); };
 const itemLabel = it => it[4] && !(S.boot.settings.menu_labels || {})[it[0]] ? lbl2(it[4].label) : t(it[0]);
 async function saveLayout(mut) {
@@ -11293,6 +11420,11 @@ function navItemMenu(a) {
     { ic: "↗", label: L2("Open in a new browser tab", "فتح في تبويب متصفح جديد"), act: () => open(location.pathname + "#/" + route, "_blank") },
     { ic: "🔗", label: L2("Copy link", "نسخ الرابط"), act: () => copyText(location.origin + location.pathname + "#/" + route) }];
   if (!canMenus()) return out.concat({ note: L2("Renaming and arranging the menu needs the “Arrange menus & forms” permission (given by an administrator).", "إعادة التسمية وترتيب القائمة تحتاج صلاحية «ترتيب القوائم والنماذج» (يمنحها المسؤول).") });
+  const L0 = ML(), ownLock = (L0.lock || []).includes(k);
+  if (navLockedK(k)) return out.concat({ sep: 1 }, ownLock && !L0.lockAll
+    ? { ic: "🔓", label: L2("Unlock", "إلغاء القفل"), act: () => lockToggle(k, false) }
+    : { note: L0.lockAll ? L2("The whole menu is locked — unlock it from a section's right-click menu.", "القائمة كلها مقفلة — ألغِ القفل من قائمة النقر الأيمن لأي قسم.")
+                         : L2("Its section is locked — unlock the section to change it.", "قسمها مقفل — ألغِ قفل القسم لتعديلها.") });
   const moveTo = gg => saveLayout(L => { if (copy) { const c = (L.copies || []).find(x => x.k === k); if (c) c.g = gg; } else { L.move = L.move || {}; L.move[k] = gg; } });
   const reorder = d => saveLayout(L => { L.order = L.order || {}; const keys = items.map(i => i[0]); const j = idx + d; if (j < 0 || j >= keys.length) return;
     [keys[idx], keys[j]] = [keys[j], keys[idx]]; L.order[g] = keys; });
@@ -11302,7 +11434,7 @@ function navItemMenu(a) {
   out.push({ sep: 1 },
     { ic: "✎", label: L2("Rename…", "إعادة تسمية…"), act: async () => { const v = await uiPrompt(L2("New name (empty = the original)", "الاسم الجديد (فارغ = الأصلي)"), itemLabel(it)); if (v === null) return;
       if (copy) saveLayout(L => { const c = (L.copies || []).find(x => x.k === k); if (c) c.label = { ...c.label, [S.lang]: v.trim() || c.label[S.lang] }; }); else saveMenuLabel(k, v.trim()); } },
-    { ic: "⇄", label: L2("Move to section", "نقل إلى قسم"), sub: () => em.filter(([gg]) => gg !== "g_home").map(([gg]) => ({ label: groupLabel(gg), on: gg === g, act: () => gg !== g && moveTo(gg) }))
+    { ic: "⇄", label: L2("Move to section", "نقل إلى قسم"), sub: () => em.filter(([gg]) => gg !== "g_home" && (gg === g || !navLockedG(gg))).map(([gg]) => ({ label: groupLabel(gg), on: gg === g, act: () => gg !== g && moveTo(gg) }))
       .concat({ sep: 1 }, { ic: "＋", label: L2("New section…", "قسم جديد…"), act: async () => { const name = await uiPrompt(L2("Name of the new section", "اسم القسم الجديد"), ""); if (!name || !name.trim()) return;
         const gk = "cg_" + Date.now().toString(36); await saveLayout(L => { L.groups = L.groups || []; L.groups.push({ k: gk, label: { [S.lang]: name.trim() } });
           if (copy) { const c = (L.copies || []).find(x => x.k === k); if (c) c.g = gk; } else { L.move = L.move || {}; L.move[k] = gk; } }); } }) },
@@ -11314,7 +11446,8 @@ function navItemMenu(a) {
       const v = await uiPrompt(L2("Name of the copy (it opens with today's filters)", "اسم النسخة (تفتح بنفس الفلاتر)"), itemLabel(it) + " — " + L2("filtered", "مفلتر")); if (v && v.trim()) dup(withFilters, v.trim()); } });
   if (copy && hereRoute === route.split("?")[0] && withFilters !== route)
     out.push({ ic: "⚲", label: L2("Save the filters on screen into this copy", "حفظ الفلاتر الظاهرة في هذه النسخة"), act: () => saveLayout(L => { const c = (L.copies || []).find(x => x.k === k); if (c) c.route = withFilters; }) });
-  out.push({ sep: 1 }, { ic: "◌", label: L2("Hide from the menu", "إخفاء من القائمة"), act: () => saveLayout(L => { L.hide = [...new Set([...(L.hide || []), k])]; }) });
+  out.push({ sep: 1 }, { ic: "🔒", label: L2("Lock in place", "قفل في مكانه"), act: () => lockToggle(k, true) },
+    { ic: "◌", label: L2("Hide from the menu", "إخفاء من القائمة"), act: () => saveLayout(L => { L.hide = [...new Set([...(L.hide || []), k])]; }) });
   if (copy) out.push({ ic: "✕", danger: 1, label: L2("Delete this copy", "حذف هذه النسخة"), act: async () => { if (await uiConfirm(L2("Delete this menu copy? The screen and its data stay.", "حذف نسخة القائمة؟ الشاشة وبياناتها تبقى."))) saveLayout(L => { L.copies = (L.copies || []).filter(x => x.k !== k); }); } });
   else if ((ML().move || {})[k] || (S.boot.settings.menu_labels || {})[k]) out.push({ ic: "↺", label: L2("Back to its original name and section", "إرجاع الاسم والقسم الأصليين"),
     act: async () => { await saveLayout(L => { if (L.move) delete L.move[k]; }); if ((S.boot.settings.menu_labels || {})[k]) saveMenuLabel(k, ""); } });
@@ -11328,6 +11461,10 @@ function navGroupMenu(btn) {
   const hidden = [...(L0.hide || [])].map(k => { const it = window.MENU.flatMap(([, x]) => x).find(x => x[0] === k); const c = (L0.copies || []).find(x => x.k === k);
     return it ? [k, t(k)] : c ? [k, lbl2(c.label)] : null; }).filter(Boolean);
   const greorder = d => saveLayout(L => { const arr = gs.slice(); const j = i + d; if (j < 0 || j >= arr.length) return; [arr[i], arr[j]] = [arr[j], arr[i]]; L.gorder = arr; });
+  const wholeLock = L0.lockAll ? { ic: "🔓", label: L2("Unlock the whole menu", "إلغاء قفل القائمة كلها"), act: () => saveLayout(L => { delete L.lockAll; }) }
+    : { ic: "🔒", label: L2("Lock the whole menu", "قفل القائمة كلها"), act: () => saveLayout(L => { L.lockAll = 1; }) };
+  if (navLockedG(g)) return out.concat({ sep: 1 }, L0.lockAll ? wholeLock : { ic: "🔓", label: L2("Unlock this section", "إلغاء قفل هذا القسم"), act: () => lockToggle("g:" + g, false) });
+  out.push({ sep: 1 }, { ic: "🔒", label: L2("Lock this section (and its screens)", "قفل هذا القسم (وشاشاته)"), act: () => lockToggle("g:" + g, true) }, wholeLock);
   out.push({ sep: 1 },
     { ic: "✎", label: L2("Rename section…", "إعادة تسمية القسم…"), act: async () => { const v = await uiPrompt(L2("New name (empty = the original)", "الاسم الجديد (فارغ = الأصلي)"), groupLabel(g)); if (v === null) return;
       if (custom) saveLayout(L => { const c = (L.groups || []).find(x => x.k === g); if (c && v.trim()) c.label = { ...c.label, [S.lang]: v.trim() }; }); else saveMenuLabel(g, v.trim()); } },
@@ -11488,6 +11625,8 @@ document.addEventListener("contextmenu", e => {
     const el = document.elementFromPoint(x, y); if (!el || !el.closest("#nav")) return null;
     const a = el.closest("#nav a[data-k]"), g = el.closest("#nav .grp[data-g]");
     if (drag.kind === "item") {
+      const into = g ? g.dataset.g : a ? navGroupOf(a.dataset.k) : null;
+      if (into && into !== navGroupOf(drag.k) && navLockedG(into)) return null;          // a locked section takes nothing in
       if (a && a.dataset.k !== drag.k) { const r = a.getBoundingClientRect(); return { el: a, k: a.dataset.k, pos: y < r.top + r.height / 2 ? "before" : "after" }; }
       if (g) return { el: g, g: g.dataset.g, pos: "into" };
     } else { const w = el.closest("#nav .grp-wrap"); const gb = w && $(".grp[data-g]", w);
@@ -11522,6 +11661,7 @@ document.addEventListener("contextmenu", e => {
   document.addEventListener("pointerdown", e => {
     if (e.button !== 0 || !S.boot || !S.boot.user || !canMenus()) return;
     const src = e.target.closest("#nav a[data-k], #nav .grp[data-g]"); if (!src) return;
+    if (src.dataset.k ? navLockedK(src.dataset.k) : navLockedG(src.dataset.g)) return;     // locked in place
     const x0 = e.clientX, y0 = e.clientY; clearTimeout(hold);
     const cancel = ev => { if (Math.hypot(ev.clientX - x0, ev.clientY - y0) > 8) { clearTimeout(hold); document.removeEventListener("pointermove", cancel); } };
     document.addEventListener("pointermove", cancel);
@@ -11799,6 +11939,81 @@ const FC_SECTIONS = () => ({ prices: L2("Price list (client prices)", "قائم�
   expenses: L2("Spending by account (per quarter)", "المصروفات حسب الحساب (للربع)"), payroll: L2("Payroll (per quarter)", "الرواتب (للربع)"),
   depreciation: L2("Depreciation & amortisation", "الإهلاك والاستهلاك"), loans: L2("Loan instalments due", "أقساط القروض المستحقة"), sales: L2("Sales", "المبيعات") });
 const FC_MIX = () => [["local", L2("Local", "محلي")], ["imported", L2("Imported", "مستورد")], ["labour", L2("Labour", "عمالة")], ["energy", L2("Energy", "طاقة")]];
+// Year-end close: the year's checklist, its profit going to retained earnings, then the lock (erp/yearend.py)
+PAGES["year-end"] = async (view, parts, q) => {
+  const list = await api("GET", "/api/year-end");
+  const ed = can("accounting.yearend", "edit"), sup = S.boot.user.is_super;
+  const pick = q.year || (list.years.find(y => y.ended && !y.closed) || list.years[0] || {}).end;
+  const d = pick ? await api("GET", "/api/year-end/" + pick) : null;
+  const IC = { ok: ["✓", "ok"], warn: ["!", "warn"], info: ["i", ""] };
+  S.H.yepick = el => setQ({ ...q, year: el.dataset.end });
+  S.H.yeclose = async () => {
+    const warns = d.checks.filter(c => c.state === "warn").length;
+    const notes = await uiPrompt(L2(`Close ${d.start} → ${d.end}? Net profit ${money(d.net_profit)} moves to retained earnings and nothing dated on or before ${d.end} can be posted or changed any more.${warns ? `\n\n${warns} item(s) on the checklist still need attention.` : ""}\n\nA note for the record (optional):`,
+      `إقفال ${d.start} → ${d.end}؟ صافي الربح ${money(d.net_profit)} ينتقل إلى الأرباح المحتجزة ولن يمكن ترحيل أو تعديل أي قيد بتاريخ ${d.end} أو قبله.${warns ? `\n\n${warns} بند في قائمة المراجعة يحتاج إلى انتباه.` : ""}\n\nملاحظة للسجل (اختياري):`), "", { ok: L2("Close the year", "إقفال السنة") });
+    if (notes === null) return;
+    try { await api("POST", `/api/year-end/${d.end}/close`, { notes }); await refreshBoot(); toast(L2("Year closed", "تم إقفال السنة")); route(); } catch (e) { fail(e); } };
+  S.H.yereopen = async () => {
+    if (!await uiConfirm(L2(`Reopen ${d.start} → ${d.end}? Its dates unlock (the lock date goes back to ${d.closed.prev_lock || "none"}) and its profit shows as current earnings again.`, `إعادة فتح ${d.start} → ${d.end}؟ تُفتح تواريخها (يعود تاريخ الإقفال إلى ${d.closed.prev_lock || "لا شيء"}) ويظهر ربحها كأرباح جارية مرة أخرى.`), { danger: true, ok: L2("Reopen", "إعادة الفتح") })) return;
+    try { await api("POST", `/api/year-end/${d.end}/reopen`, {}); await refreshBoot(); toast(L2("Year reopened", "أُعيد فتح السنة")); route(); } catch (e) { fail(e); } };
+  const yearRow = y => `<tr class="click ${y.end === pick ? "sel" : ""}" data-a="yepick" data-end="${esc(y.end)}"><td><b>${esc(y.label)}</b> <span class="muted">${fd(y.start)} → ${fd(y.end)}</span></td>
+    <td class="num ${y.net_profit < 0 ? "neg" : ""}">${money(y.net_profit)}</td><td>${y.closed ? `<span class="chip ok">✓ ${esc(L2("Closed", "مُقفلة"))}</span> <span class="muted" style="font-size:.85em">${esc(y.closed_by)} · ${fd((y.closed_at || "").slice(0, 10))}</span>`
+      : y.ended ? `<span class="chip warn">${esc(L2("Ready to close", "جاهزة للإقفال"))}</span>` : `<span class="chip">${esc(L2("In progress", "جارية"))}</span>`}</td></tr>`;
+  view.innerHTML = `<div class="toolbar"><h1>${t("m_yearend")}</h1><span class="spacer"></span><a class="btn" href="#/settings?tab=company">${esc(L2("Financial year starts", "بداية السنة المالية"))}: ${esc(list.fiscal_year_start)}</a></div>
+    <p class="muted">${esc(L2("Closing a year locks it and shows its profit as retained earnings on the balance sheet. No closing entry is posted, so the year's income statement, project reports and budgets keep their real figures. Share the profit with partners or set reserves in Partners → profit appropriation.", "إقفال السنة يقفل تواريخها ويُظهر ربحها كأرباح محتجزة في الميزانية. لا يُسجَّل قيد إقفال، لذلك تبقى قائمة دخل السنة وتقارير المشروعات والموازنات بأرقامها الحقيقية. وزّع الربح على الشركاء أو كوّن الاحتياطيات من الشركاء ← توزيع الأرباح."))}
+      ${list.lock_date ? `<br>${esc(L2("Books are locked up to", "الدفاتر مقفلة حتى"))} <b>${fd(list.lock_date)}</b>.` : ""}</p>
+    <div class="card"><h2>${esc(L2("Financial years", "السنوات المالية"))}</h2>${list.years.length ? `<div class="tbl"><table><thead><tr><th></th><th class="num">${esc(L2("Net profit", "صافي الربح"))}</th><th>${t("status")}</th></tr></thead><tbody>${list.years.map(yearRow).join("")}</tbody></table></div>` : `<div class="empty">${t("nothing")}</div>`}</div>
+    ${d ? `<div class="card"><h2>${esc(L2("Year", "السنة"))} ${fd(d.start)} → ${fd(d.end)}</h2>
+      <div class="kpis">${kpiBox(L2("Net sales", "صافي المبيعات"), d.revenue)}${kpiBox(L2("Gross profit", "مجمل الربح"), d.gross_profit)}${kpiBox("EBITDA", d.ebitda)}${kpiBox(L2("Net profit", "صافي الربح"), d.net_profit, d.net_profit < 0 ? "neg" : "pos")}
+        ${kpiBox(L2("Retained earnings after closing", "الأرباح المحتجزة بعد الإقفال"), d.closed ? d.retained_before : d.retained_after, "", d.closed ? esc(L2("closed", "مُقفلة")) : `${esc(L2("now", "الآن"))} ${money(d.retained_before)}`)}</div>
+      <h3 style="margin-top:14px">${esc(L2("Before closing", "قبل الإقفال"))}</h3>
+      <div class="tbl"><table><tbody>${(d.closed ? JSON.parse(d.closed.checks || "[]") : d.checks).map(c => `<tr class="${c.href ? "click" : ""}" ${c.href ? `data-href="${esc(c.href)}"` : ""}>
+        <td style="width:34px"><span class="chip ${IC[c.state][1]}">${IC[c.state][0]}</span></td><td><b>${esc(c.title)}</b>${c.detail ? `<div class="muted" style="font-size:.85em">${esc(c.detail)}</div>` : ""}</td></tr>`).join("")}</tbody></table></div>
+      ${d.closed ? `<div class="banner ok" style="margin-top:12px">${esc(L2(`Closed by ${d.closed.closed_by} on ${(d.closed.closed_at || "").slice(0, 10)}.`, `أقفلها ${d.closed.closed_by} في ${(d.closed.closed_at || "").slice(0, 10)}.`))}${d.closed.notes ? ` ${esc(d.closed.notes)}` : ""}</div>
+          ${ed && sup ? `<button class="btn danger" data-a="yereopen">${esc(L2("Reopen this year", "إعادة فتح هذه السنة"))}</button>` : ""}`
+        : !d.ended ? `<div class="banner info" style="margin-top:12px">${esc(L2(`This year ends on ${d.end} — it can be closed from the day after.`, `تنتهي هذه السنة في ${d.end} — يمكن إقفالها من اليوم التالي.`))}</div>`
+        : ed ? `<div class="row" style="margin-top:12px"><button class="btn pri" data-a="yeclose">⊠ ${esc(L2("Close the year", "إقفال السنة"))}</button><a class="btn" href="#/report/balance_sheet?date_to=${esc(d.end)}">${t("m_bs")}</a><a class="btn" href="#/report/income_statement?date_from=${esc(d.start)}&date_to=${esc(d.end)}">${t("m_is")}</a><a class="btn" href="#/partners">${esc(L2("Profit appropriation", "توزيع الأرباح"))}</a></div>` : ""}</div>` : ""}`;
+  $$("tr[data-href]", view).forEach(tr => tr.addEventListener("click", () => { location.hash = tr.dataset.href; }));
+};
+// Cash forecast: cash & bank today plus what the books date to come in and go out, week by week (erp/cashplan.py)
+PAGES["cash-forecast"] = async (view, parts, q) => {
+  const days = +(q.days || store.get("cfDays", 90)), over = (q.overdue ?? store.get("cfOver", "1")) !== "0";
+  const d = await api("GET", "/api/cash-forecast?" + qs({ days, overdue: over ? 1 : 0 }));
+  const SRC = { installments: L2("Customer installments", "أقساط العملاء"), cheques: L2("Customer cheques", "شيكات العملاء"), loans: L2("Loans", "القروض"),
+    bills: L2("Subscriptions & bills", "الاشتراكات والفواتير"), recurring: L2("Recurring entries", "القيود المتكررة"), payroll: L2("Payroll", "الرواتب"),
+    purchase_orders: L2("Purchase orders (expected delivery)", "أوامر الشراء (موعد الاستلام)") };
+  const UND = { receivables: L2("Customers owe (invoices and balances)", "مستحق من العملاء (فواتير وأرصدة)"), payables: L2("Owed to suppliers & subcontractors", "مستحق للموردين ومقاولي الباطن"),
+    taxes: L2("Taxes payable", "ضرائب مستحقة"), purchase_orders: L2("Purchase orders with no expected date", "أوامر شراء بلا موعد استلام") };
+  S.H.cfdays = el => { store.set("cfDays", +el.value); setQ({ ...q, days: el.value }); };
+  S.H.cfover = el => { store.set("cfOver", el.checked ? "1" : "0"); setQ({ ...q, overdue: el.checked ? 1 : 0 }); };
+  const W = 640, H = 230, padB = 26, ws = d.weeks, max = Math.max(1, ...ws.map(w => Math.max(w.in, w.out)));
+  const bals = ws.map(w => w.balance), lo = Math.min(d.opening, ...bals), hi = Math.max(d.opening, ...bals), span = hi - lo || 1;
+  const bw = W / Math.max(1, ws.length), b = Math.min(14, bw / 3), y = v => (H - padB) - v / max * (H - padB - 12), yb = v => (H - padB) - (v - lo) / span * (H - padB - 24) - 6;
+  const line = ws.map((w, i) => `${i ? "L" : "M"}${(i * bw + bw / 2).toFixed(1)},${yb(w.balance).toFixed(1)}`).join(" ");
+  const chart = `<div class="mchart"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${[0.5, 1].map(f => `<line x1="0" x2="${W}" y1="${y(max * f)}" y2="${y(max * f)}" class="gl"/>`).join("")}
+    ${ws.map((w, i) => { const x = i * bw + bw / 2; return `<g class="mb" data-tip="${esc(fd(w.from))} → ${esc(fd(w.to))}&#10;${esc(L2("In", "وارد"))}: ${money(w.in)}&#10;${esc(L2("Out", "منصرف"))}: ${money(w.out)}&#10;${esc(L2("Balance", "الرصيد"))}: ${money(w.balance)}">
+      <rect x="${x - bw / 2}" y="0" width="${bw}" height="${H}" class="hit"/><rect x="${x - b - 1}" y="${y(w.in)}" width="${b}" height="${Math.max(1, H - padB - y(w.in))}" rx="${b / 2}" class="r"/>
+      <rect x="${x + 1}" y="${y(w.out)}" width="${b}" height="${Math.max(1, H - padB - y(w.out))}" rx="${b / 2}" class="c"/>${i % 2 ? "" : `<text x="${x}" y="${H - 8}">${esc(w.from.slice(8))}/${esc(w.from.slice(5, 7))}</text>`}</g>`; }).join("")}
+    <path d="${line}" fill="none" stroke="var(--brand)" stroke-width="2.5" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>${lo < 0 && hi > 0 ? `<line x1="0" x2="${W}" y1="${yb(0)}" y2="${yb(0)}" stroke="#ff5a5f" stroke-dasharray="3 4" vector-effect="non-scaling-stroke"/>` : ""}</svg><div class="tip" hidden></div></div>`;
+  const neg = d.lowest.balance < 0;
+  view.innerHTML = `<div class="toolbar"><h1>${t("m_cashplan")}</h1><span class="spacer"></span>
+      <label class="f chk" style="margin:0"><input type="checkbox" data-change="cfover" ${over ? "checked" : ""}>${esc(L2("Count late amounts as collected / paid today", "اعتبار المبالغ المتأخرة محصلة / مدفوعة اليوم"))}</label>
+      <select data-change="cfdays" aria-label="${esc(L2("Days ahead", "أيام قادمة"))}">${[30, 60, 90, 180].map(n => `<option value="${n}" ${n === d.days ? "selected" : ""}>${n} ${L2("days", "يوماً")}</option>`).join("")}</select></div>
+    ${neg ? `<div class="banner err">${esc(L2(`Cash is expected to go below zero: ${money(d.lowest.balance)} around ${fd(d.lowest.date)}.`, `يُتوقع أن تنزل السيولة تحت الصفر: ${money(d.lowest.balance)} في حدود ${fd(d.lowest.date)}.`))}</div>` : ""}
+    <div class="kpis">${kpiBox(L2("Cash & bank today", "النقدية والبنوك اليوم"), d.cash_now)}${d.windows.map(w => kpiBox(L2(`In ${w.days} days`, `بعد ${w.days} يوماً`), w.balance, w.balance < 0 ? "neg" : "",
+      `${esc(L2("in", "وارد"))} ${money(w.in)} · ${esc(L2("out", "منصرف"))} ${money(w.out)}`)).join("")}${kpiBox(L2("Lowest point", "أدنى رصيد"), d.lowest.balance, neg ? "neg" : "", fd(d.lowest.date))}</div>
+    ${d.overdue.rows.length ? `<div class="banner ${over ? "info" : "warn"}">${esc(L2(`Late (due before today): ${money(d.overdue.in)} to collect and ${money(d.overdue.out)} to pay — ${over ? "counted in today's balance" : "left out of the forecast"}.`, `متأخر (مستحق قبل اليوم): ${money(d.overdue.in)} للتحصيل و${money(d.overdue.out)} للسداد — ${over ? "محسوب في رصيد اليوم" : "غير محسوب في التوقعات"}.`))}</div>` : ""}
+    <div class="card"><h2 style="margin-bottom:2px">${esc(L2("Week by week", "أسبوعاً بأسبوع"))}</h2><div class="muted" style="font-size:.82em;margin-bottom:6px">${esc(L2("green = in · red = out · line = balance", "أخضر = وارد · أحمر = منصرف · الخط = الرصيد"))}</div>${chart}</div>
+    <div class="grid g2"><div class="card"><h2>${esc(L2("Where it comes from", "مصادر الحركة"))}</h2>${d.sources.length ? `<div class="tbl"><table><thead><tr><th></th><th class="num">${esc(L2("In", "وارد"))}</th><th class="num">${esc(L2("Out", "منصرف"))}</th></tr></thead><tbody>
+        ${d.sources.map(x => `<tr><td>${esc(SRC[x.source] || x.source)} <span class="muted">(${x.count})</span></td><td class="num pos">${x.in ? money(x.in) : ""}</td><td class="num neg">${x.out ? money(x.out) : ""}</td></tr>`).join("")}</tbody></table></div>`
+        : `<div class="empty">${esc(L2("Nothing dated to come in or go out yet. Installments, cheques, loans, subscriptions, recurring entries, payroll and purchase orders with delivery dates show here.", "لا توجد حركة مؤرخة قادمة. تظهر هنا الأقساط والشيكات والقروض والاشتراكات والقيود المتكررة والرواتب وأوامر الشراء ذات مواعيد الاستلام."))}</div>`}</div>
+      <div class="card"><h2>${esc(L2("Owed with no due date", "مستحقات بلا تاريخ استحقاق"))}</h2><p class="muted" style="font-size:.85em">${esc(L2("Not spread over dates — the books do not say when. Add due dates (installments, cheques, delivery dates) to bring them into the forecast.", "لا تُوزَّع على تواريخ — الدفاتر لا تحدد موعدها. أضف مواعيد (أقساط، شيكات، مواعيد استلام) لتدخل في التوقعات."))}</p>
+        <div class="tbl"><table><tbody>${d.undated.filter(x => x.amount).map(x => `<tr class="click" data-href="${esc(x.href)}"><td>${esc(UND[x.key] || x.label)}</td><td class="num ${x.dir === "in" ? "pos" : "neg"}">${money(x.amount)}</td></tr>`).join("") || `<tr><td class="muted">${t("nothing")}</td></tr>`}</tbody></table></div></div></div>
+    <div class="card"><h2>${esc(L2("Every dated item", "كل الحركات المؤرخة"))}</h2><div class="tbl stack"><table><thead><tr><th>${t("date")}</th><th>${esc(L2("What", "البيان"))}</th><th>${esc(L2("Source", "المصدر"))}</th><th class="num">${t("amount")}</th></tr></thead><tbody>
+      ${[...d.overdue.rows.map(r => ({ ...r, late: 1 })), ...d.items].map(r => `<tr class="${r.href ? "click" : ""}" ${r.href ? `data-href="${esc(r.href)}"` : ""}><td>${fd(r.date)}${r.late ? ` <span class="chip warn">${esc(L2("late", "متأخر"))}</span>` : ""}</td><td>${esc(r.label)}</td><td class="muted">${esc(SRC[r.source] || r.source)}</td><td class="num ${r.amount < 0 ? "neg" : "pos"}">${money(r.amount)}</td></tr>`).join("") || `<tr><td colspan="4" class="muted">${t("nothing")}</td></tr>`}</tbody></table></div></div>`;
+  $$("tr[data-href]", view).forEach(tr => tr.addEventListener("click", () => { location.hash = tr.dataset.href; }));
+  chartTips(view);
+};
 PAGES.forecast = async (view) => {
   let d = await api("GET", "/api/forecast");
   const ed = can("reports.forecast", "edit"), pct = v => (+(v * 100).toFixed(2)), n = () => d.periods.length;
@@ -11813,7 +12028,7 @@ PAGES.forecast = async (view) => {
       <div class="card"><h2>${esc(L2("1 · Drivers (% change per quarter)", "١ · المحركات (نسبة التغير لكل ربع)"))}</h2>
         <div class="tbl"><table><thead><tr><th>${esc(L2("Driver", "المحرك"))}</th>${head}<th>${esc(L2("Source / basis", "المصدر / الأساس"))}</th></tr></thead><tbody>
         ${d.drivers.map(x => `<tr><td><b>${esc(L2(x.en, x.ar))}</b></td>${d.periods.map((p, i) => `<td class="num"><input class="num fc-in" type="number" step="0.01" ${ed ? "" : "disabled"} data-input="fcdrv" data-k="${x.key}" data-i="${i}" value="${pct(x.rates[i] || 0)}"></td>`).join("")}
-          <td><input ${ed ? "" : "disabled"} data-input="fcsrc" data-k="${x.key}" value="${esc(x.source || "")}" placeholder="${esc(L2("e.g. CAPMAS, CBE, your own estimate", "مثال: الجهاز المركزي للإحصاء، البنك المركزي، تقديرك"))}">${x.as_of ? `<div class="lines">${esc(x.as_of)}</div>` : ""}</td></tr>`).join("")}</tbody></table></div>
+          <td><input ${ed ? "" : "disabled"} data-input="fcsrc" data-k="${x.key}" value="${esc(x.source || "")}" placeholder="${esc(L2("e.g. statistics office, central bank, your own estimate", "مثال: جهاز الإحصاء، البنك المركزي، تقديرك"))}">${x.as_of ? `<div class="lines">${esc(x.as_of)}</div>` : ""}</td></tr>`).join("")}</tbody></table></div>
         <p class="muted" style="font-size:.85em;margin-bottom:0">${esc(L2("Imported content moves with the dollar and global prices together. A driver left at 0 means no change.", "المكوّن المستورد يتحرك مع الدولار والأسعار العالمية معاً. المحرك المتروك عند 0 يعني بلا تغيير."))}</p></div>
       <div class="card"><h2>${esc(L2("2 · What each category is made of", "٢ · مكونات كل فئة"))}</h2>
         <div class="tbl"><table><thead><tr><th>${esc(L2("Category", "الفئة"))}</th>${FC_MIX().map(([, l]) => `<th class="num">${esc(l)} %</th>`).join("")}<th>${esc(L2("Quick fill", "تعبئة سريعة"))}</th>${head}</tr></thead><tbody>

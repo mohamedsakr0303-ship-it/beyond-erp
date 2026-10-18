@@ -48,6 +48,9 @@ Deno.serve(async (req) => {
   const me = await call("GET", "/auth/v1/user", undefined, { apikey: ANON, Authorization: `Bearer ${token}` });
   const caller = String(me.data?.email || "").toLowerCase();
   if (!me.ok || !caller) return fail(401, "Sign in to the workspace again");
+  // two-step sign-in on (an authenticator is set up): only a session that passed it may act
+  const aal = (() => { try { return JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))).aal || ""; } catch { return ""; } })();
+  if (aal !== "aal2" && (me.data?.factors || []).some((f: any) => f.status === "verified")) return fail(401, "Finish two-step sign-in first");
   let company = String(b.company || "");
   if (!company) {  // app versions before 1.3: the caller's only company
     const mine = await call("GET", `/rest/v1/members?select=company_id&email=eq.${enc(caller)}&active=is.true&pending=is.false`);
@@ -95,6 +98,26 @@ Deno.serve(async (req) => {
       await call("DELETE", `/rest/v1/people?email=eq.${enc(target)}`);
     }
     return reply(200, { deleted: target, account });
+  }
+
+  // two-step sign-in: someone lost their phone and recovery codes — a super administrator removes their authenticator
+  // so they sign in with the password and set it up again
+  if (b.action === "mfa_off") {
+    if (!isSuper) return fail(403, "Only a super administrator can turn off someone's two-step sign-in");
+    const p = email ? await person(`email=eq.${enc(email)}`) : (username ? await person(`username=ilike.${enc(username)}`) : null);
+    const target: string = p ? p.email : (email || (username ? `${username}@${PLACEHOLDER_DOMAIN}` : ""));
+    const here = await call("GET", `/rest/v1/members?select=email&${inCo}&email=eq.${enc(target)}`);
+    if (!target || !here.ok || !here.data.length) return fail(404, "This person is not in this company");
+    if (await otherCompanies(target)) return fail(403, "This account also belongs to another company — its owner turns two-step sign-in off from their own profile");
+    const id = await idOf(target);
+    if (!id) return reply(200, { removed: 0 });
+    const fs = await call("GET", `/auth/v1/admin/users/${id}/factors`);
+    let removed = 0;
+    for (const f of (fs.ok && Array.isArray(fs.data) ? fs.data : [])) {
+      const r = await call("DELETE", `/auth/v1/admin/users/${id}/factors/${f.id}`);
+      if (r.ok) removed++;
+    }
+    return reply(200, { removed });
   }
 
   const password = b.password ? String(b.password) : "";
