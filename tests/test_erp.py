@@ -3613,6 +3613,21 @@ class SiteModules(unittest.TestCase):
         self.assertEqual(sorted(purchasing.get(self.db, c)["supplier"] for c in codes), ["Sup A", "Sup B"])
         self.assertEqual(procurement.get(self.db, pid)["status"], "ordered")
 
+    def test_stock_search_by_code_and_last_purchase_price(self):
+        from erp import reports
+        wh = self.db.one("SELECT id FROM warehouses WHERE name='Site Store'")["id"]
+        for rate, date in ((100, "2026-01-05"), (140, "2026-03-05")):
+            a.stock_move(self.db, {"type": "Receipt", "warehouse_id": wh, "item": "Steel pipe", "qty": 10, "rate": rate, "vendor": "S", "date": date}, "t")
+        self.db.x("UPDATE stock_items SET sku='PIPE-01', category='Metals' WHERE name='Steel pipe'")
+        for q in ("pipe-0", "metal", "steel 01"):                          # code, category, words across name and code
+            self.assertEqual([r["name"] for r in a.stock_report(self.db, None, q)], ["Steel pipe"], q)
+        self.assertEqual(a.stock_report(self.db, None, "steel xyz"), [])
+        r = a.stock_report(self.db, None, "PIPE-01")[0]
+        self.assertEqual((r["avg_cost"], r["last_rate"], r["last_date"]), (120, 140, "2026-03-05"))
+        t = reports.stock_table(self.db, q="PIPE-01")
+        self.assertEqual([c["label"] for c in t["columns"]][5:8], ["Avg cost", "Last purchase price", "Last purchased on"])
+        self.assertEqual(t["rows"][0]["cells"][:1] + t["rows"][0]["cells"][5:8], ["PIPE-01", 120, 140, "2026-03-05"])
+
     def test_stocktake_posts_only_the_differences(self):
         from erp import stocktake
         cid = stocktake.start(self.db, {"warehouse": "Site Store"})

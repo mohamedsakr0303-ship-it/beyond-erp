@@ -568,7 +568,8 @@ document.addEventListener("click", e => {
   if (app && app.classList.contains("menu") && !e.target.closest(".side") && !e.target.closest("[data-a=menu]")) {
     app.classList.remove("menu"); e.preventDefault(); return;
   }
-  if (app && e.target.closest("a.brand")) app.classList.remove("menu");
+  // tapping a screen in the menu slides the menu away at once (even before the screen has loaded, or when it is the one already open)
+  if (app && (e.target.closest("a.brand") || e.target.closest(".side a[href^='#/']"))) app.classList.remove("menu");
   const pick = e.target.closest(".bsel");   // the selection column: never opens the row
   if (pick) { if (e.target.tagName !== "INPUT") { const cb = $("input", pick); if (cb) cb.click(); } return; }
   const el = e.target.closest("[data-a]");
@@ -1556,6 +1557,9 @@ document.addEventListener("keydown", e => { if (!combo.box || e.target !== combo
     $$(".citem", combo.box).forEach((x, i) => x.classList.toggle("on", i === combo.i)); const on = $(".citem.on", combo.box); if (on) on.scrollIntoView({ block: "nearest" }); }
   else if (e.key === "Enter" && combo.i >= 0) { e.preventDefault(); comboPick(combo.i); }
   else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); comboClose(); } }, true);
+// Enter in a filter bar field runs the filter (after a suggestion is picked, if one is highlighted)
+document.addEventListener("keydown", e => { if (e.key !== "Enter" || e.defaultPrevented || !(e.target instanceof HTMLInputElement) || !e.target.closest("#fbar")) return;
+  e.preventDefault(); pickClose(); if (S.H.fapply) S.H.fapply(); });
 window.addEventListener("scroll", () => comboPlace(), true); window.addEventListener("resize", () => comboPlace());
 // under a name field: offer to save a typed new name as a contact (ticked → saved after the document posts)
 function offerContact(f, field, cat) { const el = $(`[name=${field}]`, f); if (!el || !(can("purchasing.contacts", "add") || can("sales.parties", "add"))) return () => null;
@@ -1599,6 +1603,8 @@ function filterBar(q, fields, extra = "") {
     else if (f === "bu") parts.push(`<label class="f">${t("bu")}<select name="bu_id"><option value="">${t("all_bu")}</option><option value="none" ${q.bu_id === "none" ? "selected" : ""}>${t("shared")}</option>${S.boot.bus.map(b => `<option value="${b.id}" ${String(q.bu_id) === String(b.id) ? "selected" : ""}>${esc(b.code)} — ${esc(b.name)}</option>`).join("")}</select></label>`);
     else if (f === "qv") parts.push(`<label class="f">${t("search").replace("…", "")}<input name="q" value="${esc(q.q || "")}" placeholder="${t("search_v")}" title="${esc(t("search_v"))}"></label>`);
     else if (f === "q") parts.push(`<label class="f">${t("search").replace("…", "")}<input name="q" value="${esc(q.q || "")}" placeholder="${t("search")}"></label>`);
+    // ["q", datalist id, placeholder]: a search box that suggests matches from that list while typing
+    else if (Array.isArray(f) && f[0] === "q") parts.push(`<label class="f">${t("search").replace("…", "")}<input name="q" value="${esc(q.q || "")}" placeholder="${esc(f[2] || t("search"))}" list="${esc(f[1])}" autocomplete="off"></label>`);
     else if (f === "status" || f === "jstatus") {    // jstatus: the journal also lists drafts that wait for approval
       const o = (v, l) => `<option value="${v}" ${q.status === v ? "selected" : ""}>${esc(l)}</option>`;
       parts.push(`<label class="f">${t("status")}<select name="status"><option value="">${t("all")}</option>${o("posted", L2("Posted", "مُرحّل"))}${o("void", t("void"))}${o("reversed", L2("Reversed", "معكوس"))}${o("edited", L2("Corrected after posting", "عُدّل بعد الترحيل"))}
@@ -3165,9 +3171,12 @@ PAGES.stock = async (view, parts, q) => {
   S.H.itemedit = el => itemForm((d.catalog || []).find(x => String(x.id) === el.dataset.id) || {});
   const SLV = capRows(d.levels, "stocklv"), CT = capRows(d.catalog || [], "stockcat");
   view.innerHTML = `<div class="toolbar">${ed ? ["Receipt", "Issue", "Transfer", "Adjustment"].map(ty => `<button class="btn ${ty === "Receipt" ? "pri" : ""}" data-a="sm${ty}">${tl(ty)}</button>`).join("") : ""}${can("stock.balances", "add") ? `<button class="btn" data-a="itemnew">+ ${esc(L2("Item", "صنف"))}</button>` : ""}<span class="spacer"></span>${exportMenu("stock", q)}</div>` +
-    filterBar(q, ["warehouse", "q"]) +
-    `<div class="card"><h2>${t("inventory")} — ${money(tot)} ${cur()}</h2>${d.levels.length ? `<div class="tbl"><table><thead><tr><th>${t("item")}</th><th>${t("warehouse")}</th><th>${t("unit")}</th><th class="num">${t("on_hand")}</th><th class="num">${t("avg_cost")}</th><th class="num">${t("value")}</th><th></th></tr></thead><tbody>
-      ${SLV.rows.map(r => `<tr><td>${esc(r.name)} ${r.low ? `<span class="chip warn">${t("reorder")}</span>` : ""}</td><td>${esc(r.warehouse)}</td><td>${esc(r.unit)}</td><td class="num ${r.qty < 0 ? "neg" : ""}">${numf(r.qty)}</td><td class="num">${money(r.avg_cost)}</td><td class="num">${money(r.value)}</td>
+    filterBar(q, ["warehouse", ["q", "stkq", L2("Name, code or category…", "الاسم أو الكود أو التصنيف…")]]) +
+    `<datalist id="stkq">${(d.items || []).map(x => { const more = [x.sku, x.category].filter(Boolean).join(" · ");
+      return `<option value="${esc(x.name)}">${esc(x.name + (more ? " — " + more : ""))}</option>`; }).join("")}</datalist>` +
+    `<div class="card"><h2>${t("inventory")} — ${money(tot)} ${cur()}</h2>${d.levels.length ? `<div class="tbl"><table><thead><tr><th>${t("item")}</th><th>${t("warehouse")}</th><th>${t("unit")}</th><th class="num">${t("on_hand")}</th><th class="num">${t("avg_cost")}</th><th class="num">${esc(L2("Last purchase", "آخر سعر شراء"))}</th><th class="num">${t("value")}</th><th></th></tr></thead><tbody>
+      ${SLV.rows.map(r => `<tr><td>${esc(r.name)} ${r.low ? `<span class="chip warn">${t("reorder")}</span>` : ""}${r.sku ? `<div class="lines">${esc(r.sku)}</div>` : ""}</td><td>${esc(r.warehouse)}</td><td>${esc(r.unit)}</td><td class="num ${r.qty < 0 ? "neg" : ""}">${numf(r.qty)}</td><td class="num">${money(r.avg_cost)}</td>
+      <td class="num">${r.last_rate != null ? money(r.last_rate) + `<div class="lines">${fd(r.last_date)}</div>` : "—"}</td><td class="num">${money(r.value)}</td>
       <td>${can("stock.balances", "edit") && !r.qty && !r.value ? `<button class="btn sm danger" data-a="itemdel" data-id="${r.item_id}" data-n="${esc(r.name)}" title="${S.lang === "ar" ? "حذف صنف بدون حركات" : "Delete an item that has no movements"}">✕</button> ` : ""}${ed ? `<button class="btn sm" data-a="smIssue" data-item="${esc(r.name)}" data-wh="${r.warehouse_id}">${tl("Issue")}</button> <button class="btn sm" data-a="smAdjustment" data-item="${esc(r.name)}" data-wh="${r.warehouse_id}">${tl("Adjustment")}</button>` : ""}</td></tr>`).join("")}</tbody></table></div>${SLV.foot}` : `<div class="empty">${t("nothing")}</div>`}</div>`;
   const cat = d.catalog || [];
   if (cat.length) view.insertAdjacentHTML("beforeend", `<div class="card"><h2>${esc(L2("Items & prices", "الأصناف والأسعار"))} <span class="chip">${cat.length}</span></h2>
@@ -11326,7 +11335,8 @@ document.addEventListener("pointerdown", e => {
 }, true);
 function pickKeys(e, inp) {
   const st = pickOpen; if (!st || st.inp !== inp) return false;
-  if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); st.i = Math.max(0, Math.min(st.items.length - 1, st.i + (e.key === "ArrowDown" ? 1 : -1))); st.draw(); return true; }
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); st.moved = true; st.i = Math.max(0, Math.min(st.items.length - 1, st.i + (e.key === "ArrowDown" ? 1 : -1))); st.draw(); return true; }
+  if (e.key === "Enter" && !st.moved && inp.closest("#fbar")) return false;     // a search box: Enter searches what was typed
   if ((e.key === "Enter" || e.key === "Tab") && st.items[st.i] && (inp.dataset.q || e.key === "Enter")) { if (e.key === "Enter") e.preventDefault(); st.onPick(st.items[st.i]); pickClose(); return true; }
   if (e.key === "Escape") { e.stopPropagation(); pickClose(); return true; }
   return false;
@@ -11356,7 +11366,8 @@ function enhanceList(inp) {
   if (inp.dataset.pick || !inp.getAttribute("list") || inp.closest(".no-pick")) return;
   const id = inp.getAttribute("list"); inp.dataset.pick = "1"; inp.dataset.listId = id; inp.removeAttribute("list"); inp.autocomplete = "off";
   const items = () => { const dl = document.getElementById(id); return dl ? [...dl.options].map(o => ({ v: o.value, l: o.textContent || o.value, h: normAr((o.textContent || "") + " " + o.value) })) : []; };
-  const pick = it => { inp.value = it.v; inp.dispatchEvent(new Event("input", { bubbles: true })); inp.dispatchEvent(new Event("change", { bubbles: true })); };
+  const pick = it => { inp.value = it.v; inp.dispatchEvent(new Event("input", { bubbles: true })); inp.dispatchEvent(new Event("change", { bubbles: true }));
+    if (inp.closest("#fbar") && S.H.fapply) S.H.fapply(); };
   const open = () => { const its = items(); if (its.length) { inp.dataset.q = inp.value; pickShow(inp, its, pick, inp.value); } };
   inp.addEventListener("focus", () => { inp.dataset.q = ""; const its = items(); if (its.length) pickShow(inp, its, pick, inp.value); });
   inp.addEventListener("input", e => { if (!e.isTrusted) return; inp.dataset.q = inp.value; if (pickOpen && pickOpen.inp === inp) pickOpen.draw(); else open(); });

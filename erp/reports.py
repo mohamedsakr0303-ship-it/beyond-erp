@@ -405,13 +405,14 @@ def payables_table(db, date_to=None, lang="en"):
 
 def stock_table(db, warehouse_id=None, q=None, lang="en"):
     data = acc.stock_report(db, warehouse_id, q)
-    heads = [("Item", "الصنف", "left", None), ("Warehouse", "المخزن", "left", None), ("Unit", "الوحدة", "left", None),
-             ("On hand", "الرصيد", "right", "num"), ("Avg cost", "متوسط التكلفة", "right", "money"),
+    heads = [("Code", "الكود", "left", None), ("Item", "الصنف", "left", None), ("Warehouse", "المخزن", "left", None),
+             ("Unit", "الوحدة", "left", None), ("On hand", "الرصيد", "right", "num"), ("Avg cost", "متوسط التكلفة", "right", "money"),
+             ("Last purchase price", "آخر سعر شراء", "right", "money"), ("Last purchased on", "تاريخ آخر شراء", "left", None),
              ("Value", "القيمة", "right", "money")]
     cols = [{"label": h[1] if lang == "ar" else h[0], "align": h[2], "fmt": h[3]} for h in heads]
-    rows = [{"cells": [r["name"], r["warehouse"], r["unit"], r["qty"], r["avg_cost"], r["value"]], "style": "item",
-             "indent": 0} for r in data]
-    rows.append({"cells": [L("total", lang), "", "", "", "", round(sum(r["value"] for r in data), 2)], "style": "grand",
+    rows = [{"cells": [r["sku"] or "", r["name"], r["warehouse"], r["unit"], r["qty"], r["avg_cost"], r["last_rate"],
+                       r["last_date"] or "", r["value"]], "style": "item", "indent": 0} for r in data]
+    rows.append({"cells": [L("total", lang), "", "", "", "", "", "", "", round(sum(r["value"] for r in data), 2)], "style": "grand",
                  "indent": 0})
     return {"title": L("stock", lang), "subtitle": f"{L('as_of', lang)} {acc.today()} · {db.setting('currency')}",
             "columns": cols, "rows": rows, "lang": lang}

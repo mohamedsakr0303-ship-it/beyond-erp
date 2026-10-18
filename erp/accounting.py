@@ -943,16 +943,20 @@ def stock_report(db, warehouse_id=None, q=None):
     if warehouse_id:
         w.append("l.warehouse_id=?")
         p.append(int(warehouse_id))
-    if q:
-        w.append("i.name LIKE ?")
-        p.append(f"%{q}%")
-    rows = db.q("SELECT i.id AS item_id, i.name, i.unit, i.reorder_level, w.id AS warehouse_id, w.name AS warehouse, "
-                "l.qty, l.avg_cost FROM stock_levels l JOIN stock_items i ON i.id=l.item_id "
+    for word in str(q or "").split():          # every word must match the name, the code or the category
+        w.append("(i.name LIKE ? OR i.sku LIKE ? OR i.category LIKE ?)")
+        p += [f"%{word}%"] * 3
+    last = ("(SELECT {} FROM stock_moves m WHERE m.item_id=i.id AND m.qty>0 AND m.kind='Receipt' "
+            "ORDER BY m.date DESC, m.id DESC LIMIT 1)")
+    rows = db.q("SELECT i.id AS item_id, i.name, i.sku, i.category, i.unit, i.reorder_level, w.id AS warehouse_id, w.name AS warehouse, "
+                f"l.qty, l.avg_cost, {last.format('m.rate')} AS last_rate, {last.format('m.date')} AS last_date "
+                "FROM stock_levels l JOIN stock_items i ON i.id=l.item_id "
                 "JOIN warehouses w ON w.id=l.warehouse_id" + (" WHERE " + " AND ".join(w) if w else "") +
                 " ORDER BY i.name, w.name", p)
     for r in rows:
         r["value"] = to_major(r["qty"] * r["avg_cost"])
         r["avg_cost"] = to_major(r["avg_cost"])
+        r["last_rate"] = to_major(r["last_rate"]) if r["last_rate"] is not None else None
         r["low"] = bool(r["reorder_level"]) and r["qty"] <= r["reorder_level"]
     return rows
 
