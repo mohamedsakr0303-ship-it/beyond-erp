@@ -831,13 +831,18 @@ function openPalette() {
   const items = [];
   for (const [g, list] of window.MENU) for (const [k, r, mod] of list) if (can(mod) && shown(mod)) items.push({ label: t(k), sub: t(g), href: "#/" + r, ic: ROUTE_IC[r] || GROUP_IC[g] });
   newMenuItems().filter(i => i.show && i.ok).forEach(i => items.push({ label: "+ " + i.label, sub: t("new"), doc: i.key, ic: "plus" }));
+  // records too, once something is typed: projects, contacts and items (with their codes)
+  const recs = [];
+  if (can("business_units.units")) (S.boot.bus || []).forEach(b => recs.push({ label: `${b.code} — ${b.name}`, sub: t("bu"), href: "#/bu/" + b.id, ic: "target" }));
+  if (can("reports.statement")) (S.boot.parties || []).forEach(p => recs.push({ label: p.name, sub: [L2("Contact", "جهة اتصال"), contactSub(p)].filter(Boolean).join(" · "), href: "#/statement?party=" + encodeURIComponent(p.name), ic: "users" }));
+  if (can("stock.balances")) (S.boot.items || []).forEach(i => recs.push({ label: i.name, sub: [L2("Item", "صنف"), i.sku, i.category].filter(Boolean).join(" · "), href: "#/stock?q=" + encodeURIComponent(i.name), ic: "box" }));
   const box = document.createElement("div"); box.className = "pal-bg";
   box.innerHTML = `<div class="pal" role="dialog"><div class="pal-in">${svg("search")}<input placeholder="${esc(L2("Type a screen or an action…", "اكتب اسم شاشة أو إجراء…"))}" autofocus><kbd>Esc</kbd></div><div class="pal-list"></div></div>`;
   document.body.appendChild(box);
   const inp = $("input", box), list = $(".pal-list", box); let sel = 0, shownItems = [];
   const norm = x => x.toLowerCase().normalize("NFKD").replace(/[ً-ٟ]/g, "");
   const draw = () => { const words = norm(inp.value).split(/\s+/).filter(Boolean);
-    shownItems = items.filter(i => words.every(w => norm(i.label + " " + i.sub).includes(w))).slice(0, 40); sel = Math.min(sel, Math.max(0, shownItems.length - 1));
+    shownItems = [...items, ...(words.length ? recs : [])].filter(i => words.every(w => norm(i.label + " " + i.sub).includes(w))).slice(0, 40); sel = Math.min(sel, Math.max(0, shownItems.length - 1));
     list.innerHTML = shownItems.map((i, n) => `<button class="pal-it ${n === sel ? "on" : ""}" data-n="${n}">${svg(i.ic)}<span><b>${esc(i.label)}</b><small>${esc(i.sub)}</small></span></button>`).join("") || `<div class="empty">${esc(t("nothing"))}</div>`; };
   const go = n => { const i = shownItems[n]; if (!i) return; close(); if (i.doc) newItem(i.doc); else location.hash = i.href; };
   const close = () => box.remove();
@@ -1594,6 +1599,29 @@ const rateOf = code => ((S.boot.tax_codes || []).find(x => x.code === code) || {
 
 // ---------------------------------------------------------- filter bar
 // kinds: dates, asof, bu, q, status, kind:[...], account, party, warehouse, type:[...], compare, detail, allocate, lang
+// Suggestions for the filter bar's search boxes (the searchable drop-down): what the list on screen shows (names,
+// codes, references…) — on entry searches also every contact and project; the party box suggests contacts.
+function fillSearchLists() {
+  const fbq = document.getElementById("fbq"), fbp = document.getElementById("fbparty"), seen = new Set(), opts = [];
+  const add = (v, label) => { v = String(v || "").replace(/\s+/g, " ").trim();
+    if (v.length < 2 || v.length > 90 || seen.has(v.toLowerCase()) || /^[-−+]?[\d\s.,%:/()-]+$/.test(v)) return;
+    seen.add(v.toLowerCase()); opts.push([v, label || v]); };
+  if (fbq) {
+    $$("#view .tbl tbody tr:not(.total)").slice(0, 300).forEach(tr => $$(":scope > td", tr).forEach(td => {
+      if (td.classList.contains("num") || td.classList.contains("bsel") || td.querySelector("input, select, button")) return;
+      const subs = $$(".lines, .muted, small", td).map(x => x.textContent); subs.forEach(s => add(s));
+      const c = td.cloneNode(true); $$(".lines, .muted, small, .chip", c).forEach(x => x.remove()); add(c.textContent); }));
+    $$("#view .card.click").slice(0, 300).forEach(c => $$("b, .muted", c).forEach(x => x.textContent.split(" · ").forEach(s => add(s))));   // card lists
+    if (parseHash().parts[0] === "contacts") (S.boot.parties || []).forEach(p => add(p.name));
+    if ($('#fbar input[name="q"][title]')) {      // entry searches also find contacts and projects not on this page
+      (S.boot.bus || []).forEach(b => add(b.code, `${b.code} — ${b.name}`));
+      (S.boot.parties || []).forEach(p => add(p.name)); }
+    fbq.innerHTML = opts.slice(0, 1500).map(([v, l]) => `<option value="${esc(v)}">${esc(l)}</option>`).join("");
+  }
+  if (fbp) fbp.innerHTML = (S.boot.parties || []).map(p => `<option value="${esc(p.name)}">${esc(p.name + (contactSub(p) ? " — " + contactSub(p) : ""))}</option>`).join("");
+}
+// filled when the box is entered (before its picker reads the list), so rows loaded after the bar are included
+document.addEventListener("focus", e => { const el = e.target; if (el instanceof HTMLInputElement && el.closest("#fbar") && /^fb(q|party)$/.test(el.getAttribute("list") || el.dataset.listId || "")) fillSearchLists(); }, true);
 function filterBar(q, fields, extra = "") {
   const parts = [];
   for (const f of fields) {
@@ -1601,8 +1629,8 @@ function filterBar(q, fields, extra = "") {
       `<label class="f">${t("to")}<input type="date" name="date_to" value="${esc(q.date_to || "")}"></label>`);
     else if (f === "asof") parts.push(`<label class="f">${t("as_of")}<input type="date" name="date_to" value="${esc(q.date_to || today())}"></label>`);
     else if (f === "bu") parts.push(`<label class="f">${t("bu")}<select name="bu_id"><option value="">${t("all_bu")}</option><option value="none" ${q.bu_id === "none" ? "selected" : ""}>${t("shared")}</option>${S.boot.bus.map(b => `<option value="${b.id}" ${String(q.bu_id) === String(b.id) ? "selected" : ""}>${esc(b.code)} — ${esc(b.name)}</option>`).join("")}</select></label>`);
-    else if (f === "qv") parts.push(`<label class="f">${t("search").replace("…", "")}<input name="q" value="${esc(q.q || "")}" placeholder="${t("search_v")}" title="${esc(t("search_v"))}"></label>`);
-    else if (f === "q") parts.push(`<label class="f">${t("search").replace("…", "")}<input name="q" value="${esc(q.q || "")}" placeholder="${t("search")}"></label>`);
+    else if (f === "qv") parts.push(`<label class="f">${t("search").replace("…", "")}<input name="q" value="${esc(q.q || "")}" placeholder="${t("search_v")}" title="${esc(t("search_v"))}" list="fbq" autocomplete="off"></label>`);
+    else if (f === "q") parts.push(`<label class="f">${t("search").replace("…", "")}<input name="q" value="${esc(q.q || "")}" placeholder="${t("search")}" list="fbq" autocomplete="off"></label>`);
     // ["q", datalist id, placeholder]: a search box that suggests matches from that list while typing
     else if (Array.isArray(f) && f[0] === "q") parts.push(`<label class="f">${t("search").replace("…", "")}<input name="q" value="${esc(q.q || "")}" placeholder="${esc(f[2] || t("search"))}" list="${esc(f[1])}" autocomplete="off"></label>`);
     else if (f === "status" || f === "jstatus") {    // jstatus: the journal also lists drafts that wait for approval
@@ -1620,7 +1648,7 @@ function filterBar(q, fields, extra = "") {
     else if (Array.isArray(f) && f[0] === "kind") parts.push(`<label class="f">${t("kind")}<select name="kind"><option value="">${t("all")}</option>${f[1].map(k => `<option value="${esc(k)}" ${q.kind === k ? "selected" : ""}>${esc(tl(k))}</option>`).join("")}</select></label>`);
     else if (Array.isArray(f) && f[0] === "select") parts.push(`<label class="f">${esc(f[2])}<select name="${f[1]}"><option value="">${t("all")}</option>${f[3].map(([v, l]) => `<option value="${esc(v)}" ${String(q[f[1]]) === String(v) ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`);
     else if (f === "account") parts.push(`<label class="f">${t("account")}<select name="account"><option value="">${t("all")}</option>${["1", "2", "3", "4", "5", "6", "7"].map(x => `<option value="${x}" ${q.account === x ? "selected" : ""}>${x}000s</option>`).join("")}${S.boot.accounts.map(a => `<option value="${a.code}" ${q.account === a.code ? "selected" : ""}>${esc(a.code)} ${esc(aname(a))}</option>`).join("")}</select></label>`);
-    else if (f === "party") parts.push(`<label class="f">${t("party")}<input name="party" value="${esc(q.party || "")}"></label>`);
+    else if (f === "party") parts.push(`<label class="f">${t("party")}<input name="party" value="${esc(q.party || "")}" list="fbparty" autocomplete="off"></label>`);
     else if (f === "warehouse") parts.push(`<label class="f">${t("warehouse")}<select name="warehouse_id"><option value="">${t("all")}</option>${whOpts().map(([v, l]) => `<option value="${v}" ${String(q.warehouse_id) === String(v) ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`);
     else if (f === "compare") parts.push(`<label class="f">${t("compare")}<select name="compare">${["none", "month", "quarter", "year"].map(c => `<option value="${c}" ${(q.compare || "none") === c ? "selected" : ""}>${t("c_" + c)}</option>`).join("")}</select></label>`);
     else if (f === "detail") parts.push(`<label class="f chk"><input type="checkbox" name="detail" ${q.detail !== "0" ? "checked" : ""}>${t("detail")}</label>`);
@@ -1647,7 +1675,7 @@ function filterBar(q, fields, extra = "") {
     if (!await uiConfirm(L2(`Delete the view “${name}”?`, `حذف العرض «${name}»؟`))) return; try { await saveViews(myViews().filter(v => v.name !== name)); route(); } catch (e) { fail(e); } };
   const active = Object.entries(q).filter(([k, v]) => v && !["limit", "offset", "tab", "lang"].includes(k)).length;
   const views = myViews(), curView = views.find(v => JSON.stringify(v.q) === JSON.stringify(Object.fromEntries(Object.entries(q).filter(([k, x]) => x && !["limit", "offset"].includes(k)))));
-  return `<div class="card ${active ? "" : ""}" id="fbar"><button type="button" class="btn sm ftoggle" data-a="ftoggle">⚲ ${t("filters")}${active ? ` <span class="chip">${active}</span>` : ""}</button><div class="filters">${parts.join("")}
+  return `<datalist id="fbq"></datalist><datalist id="fbparty"></datalist><div class="card ${active ? "" : ""}" id="fbar"><button type="button" class="btn sm ftoggle" data-a="ftoggle">⚲ ${t("filters")}${active ? ` <span class="chip">${active}</span>` : ""}</button><div class="filters">${parts.join("")}
     <div class="row"><button class="btn pri" data-a="fapply">${t("apply")}</button><button class="btn" data-a="fclear">${t("clear")}</button>
       <span class="fviews">${views.length ? `<select data-change="fview" aria-label="${esc(L2("Saved views", "العروض المحفوظة"))}"><option value="">${esc(L2("★ My views…", "★ عروضي…"))}</option>${views.map(v => `<option ${curView && curView.name === v.name ? "selected" : ""}>${esc(v.name)}</option>`).join("")}</select>
         <button type="button" class="btn sm" data-a="fviewdel" title="${esc(L2("Delete the chosen view", "حذف العرض المختار"))}">✕</button>` : ""}
@@ -11369,7 +11397,8 @@ function enhanceList(inp) {
   const pick = it => { inp.value = it.v; inp.dispatchEvent(new Event("input", { bubbles: true })); inp.dispatchEvent(new Event("change", { bubbles: true }));
     if (inp.closest("#fbar") && S.H.fapply) S.H.fapply(); };
   const open = () => { const its = items(); if (its.length) { inp.dataset.q = inp.value; pickShow(inp, its, pick, inp.value); } };
-  inp.addEventListener("focus", () => { inp.dataset.q = ""; const its = items(); if (its.length) pickShow(inp, its, pick, inp.value); });
+  inp.addEventListener("focus", () => { inp.dataset.q = ""; if (inp.closest("#fbar") && !inp.value) return;     // a search box opens once something is typed
+    const its = items(); if (its.length) pickShow(inp, its, pick, inp.value); });
   inp.addEventListener("input", e => { if (!e.isTrusted) return; inp.dataset.q = inp.value; if (pickOpen && pickOpen.inp === inp) pickOpen.draw(); else open(); });
   inp.addEventListener("keydown", e => { pickKeys(e, inp); });
   inp.addEventListener("blur", () => setTimeout(() => { if (pickOpen && pickOpen.inp === inp) pickClose(); }, 120));
