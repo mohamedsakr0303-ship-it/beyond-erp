@@ -3910,6 +3910,14 @@ def sc_cancel(ctx, cid):
     return ok()
 
 
+@route("DELETE", "/api/stock-counts/<cid>", "stock.counts", "edit")
+def sc_delete(ctx, cid):
+    from . import stocktake
+    c = stocktake.delete(ctx.db, cid)
+    ctx.log("stockcount.delete", f"{c['code']} ({c['status']}, {c['warehouse']})")
+    return ok()
+
+
 # equipment
 @route("GET", "/api/equipment", "equipment.register")
 def eq_list(ctx):

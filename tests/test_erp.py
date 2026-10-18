@@ -296,6 +296,36 @@ class Api(unittest.TestCase):
         self.assertEqual(self.call(op, "POST", "/api/docs/supplier_discount", {"party": "Hani", "amount": 1000})[0], 200)
         self.assertEqual(self.call(op, "GET", "/api/supplier-discount?party=Hani")[1]["owed"], 0)
 
+    def test_stock_counts_delete_rules(self):
+        """Open and cancelled counts can be deleted (stock.counts edit, deleting not switched off — also in bulk);
+        a posted count cannot."""
+        sup = self.client()
+        if self.call(sup, "POST", "/api/setup", {"username": "admin", "password": "secret123"})[0] != 200:
+            self.assertEqual(self.call(sup, "POST", "/api/login", {"username": "admin", "password": "secret123"})[0], 200)
+        wh = self.call(sup, "POST", "/api/warehouses", {"name": "Count Store"})[1]["id"]
+        st, r = self.call(sup, "POST", "/api/docs/stock_move", {"type": "Receipt", "warehouse_id": wh, "item": "Bolt", "qty": 5, "rate": 2, "vendor": "Supplier"})
+        self.assertEqual(st, 200, r)
+        start = lambda: self.call(sup, "POST", "/api/stock-counts", {"warehouse_id": wh})[1]["id"]  # noqa: E731
+        c1 = start()
+        self.assertEqual(self.call(sup, "POST", f"/api/stock-counts/{c1}/cancel", {})[0], 200)
+        for user, perms in (("cview", {"stock": "add"}), ("cnodel", {"stock": "edit", "stock.counts!delete": "no"})):
+            self.assertEqual(self.call(sup, "POST", "/api/users", {"username": user, "password": user + "pass1", "perms": perms})[0], 200)
+            u = self.client()
+            self.assertEqual(self.call(u, "POST", "/api/login", {"username": user, "password": user + "pass1"})[0], 200)
+            self.assertEqual(self.call(u, "DELETE", f"/api/stock-counts/{c1}")[0], 403)
+            st, r = self.call(u, "POST", "/api/bulk", {"target": "stock_counts", "action": "delete", "ids": [str(c1)]})
+            self.assertEqual((st, r.get("done", 0)), (200, 0) if st == 200 else (st, 0))
+        self.assertEqual(self.call(sup, "DELETE", f"/api/stock-counts/{c1}")[0], 200)              # cancelled
+        c2 = start()
+        self.assertEqual(self.call(sup, "POST", "/api/bulk", {"target": "stock_counts", "action": "delete", "ids": [str(c2)]})[1]["done"], 1)  # open
+        c3 = start()
+        self.assertEqual(self.call(sup, "PUT", f"/api/stock-counts/{c3}", {"lines": [{"item": "Bolt", "counted": 4}]})[0], 200)
+        self.assertEqual(self.call(sup, "POST", f"/api/stock-counts/{c3}/post", {})[0], 200)
+        st, r = self.call(sup, "DELETE", f"/api/stock-counts/{c3}")
+        self.assertEqual(st, 400)
+        self.assertIn("posted", r["error"])
+        self.assertEqual([c["id"] for c in self.call(sup, "GET", "/api/stock-counts")[1]], [c3])
+
     def test_people_and_arranging_rules(self):
         """Administrators add people; only the super administrator edits or removes them. Arranging the menu and the
         forms needs its own permission."""

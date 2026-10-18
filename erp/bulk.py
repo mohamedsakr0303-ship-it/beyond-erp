@@ -18,13 +18,16 @@ BU_STATUSES = ("Tendering", "In Progress", "On Hold", "Completed", "Closed")
 
 def _route(ctx, method, path, body=None):
     """Run one of the app's own routes as the person doing the bulk action (same permission, same rules)."""
-    from .server import ROUTES, Ctx
+    from .server import ACTION_DENIED, ROUTES, Ctx, request_action
     for m, rx, module, level, public, fn in ROUTES:
         match = rx.match(path) if m == method else None
         if not match:
             continue
         if module and not auth.can(ctx.user, module, level):
             raise PermissionError("You do not have permission for this")
+        act = request_action(method, path, {})
+        if module and act and not auth.action_ok(ctx.user, module, act):
+            raise PermissionError(ACTION_DENIED[act])
         raw = json.dumps(body or {}).encode()
         sub = Ctx(ctx.app, ctx.db, ctx.user, ctx.token, {}, body or {}, raw, {"content-type": "application/json"})
         sub.cloud_hook = getattr(ctx, "cloud_hook", None)
@@ -174,6 +177,7 @@ TARGETS = {
                 "delete": _go("DELETE", "/api/parties-master/{id}")},
     "invoices": {"post": _go("POST", "/api/extracts/{id}/post", {}), "delete": _go("DELETE", "/api/extracts/{id}")},
     "ereceipts": {"issue": _go("POST", "/api/ereceipts/{id}/issue"), "delete": _go("DELETE", "/api/ereceipts/{id}")},
+    "stock_counts": {"cancel": _go("POST", "/api/stock-counts/{id}/cancel"), "delete": _go("DELETE", "/api/stock-counts/{id}")},
 }
 
 

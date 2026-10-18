@@ -1907,6 +1907,9 @@ const BULKS = {
     actions: [{ a: "submit", label: L2("Send for approval", "إرسال للاعتماد"), need: ["purchasing.requests", "add"] },
       { a: "approve", label: L2("Approve", "اعتماد"), need: ["purchasing.requests", "edit"] }, { a: "reject", label: L2("Reject", "رفض"), need: ["purchasing.requests", "edit"] },
       { a: "cancel", label: L2("Cancel", "إلغاء"), need: ["purchasing.requests", "edit"] }, { a: "delete", label: t("delete"), danger: true, need: ["purchasing.requests", "edit"] }] }),
+  stock_counts: () => ({ target: "stock_counts",
+    actions: [{ a: "cancel", label: L2("Cancel (open ones)", "إلغاء (المفتوحة)"), need: ["stock.counts", "edit"] },
+      { a: "delete", label: L2("Delete (not posted)", "حذف (غير المرحّلة)"), danger: true, need: ["stock.counts", "edit"] }] }),
   purchase_orders: () => ({ target: "purchase_orders",
     actions: [{ a: "approve", label: L2("Approve", "اعتماد"), need: ["purchasing.orders", "edit"] }, { a: "close", label: L2("Close (rest not needed)", "إغلاق"), need: ["purchasing.orders", "edit"] },
       { a: "cancel", label: L2("Cancel", "إلغاء"), danger: true, need: ["purchasing.orders", "edit"] }, { a: "delete", label: t("delete"), danger: true, need: ["purchasing.orders", "edit"] }] }),
@@ -10608,6 +10611,7 @@ PAGES["stock-counts"] = async (view, parts, q) => {
       ${rows.map(r => `<tr class="click" data-href="#/stock-count/${r.id}"><td><b>${esc(r.code)}</b><div class="lines">${esc(r.counted_by || "")}</div></td><td>${fd(r.date)}</td><td>${esc(r.warehouse)}</td><td class="num">${r.counted}/${r.items}</td><td class="num">${r.differences || ""}</td>
         <td class="num pos">${r.surplus_value ? money(r.surplus_value) : ""}</td><td class="num neg">${r.shortage_value ? money(r.shortage_value) : ""}</td><td>${chipS(...ST[r.status])}</td></tr>`).join("")}</tbody></table></div>`
       : `<div class="empty">${L2("Count each store periodically: start a count, enter what is on the shelves, and post — the differences are booked as stock adjustments.", "جرد كل مخزن دورياً: ابدأ الجرد، وأدخل الموجود فعلياً، ثم رحّل — تُسجل الفروق كتسويات مخزنية.")}</div>`}</div>`;
+  bulkify(bulkTable(view, 'tr[data-href^="#/stock-count/"]'), BULKS.stock_counts());
 };
 PAGES["stock-count"] = async (view, parts) => {
   const c = await api("GET", "/api/stock-counts/" + encodeURIComponent(parts[1]));
@@ -10619,12 +10623,14 @@ PAGES["stock-count"] = async (view, parts) => {
     scpost: async () => { if (!await uiConfirm(L2("Post the differences as stock adjustments and close this count?", "ترحيل الفروق كتسويات مخزنية وإغلاق الجرد؟"))) return;
       try { await api("PUT", "/api/stock-counts/" + c.id, { lines: collect() }); const r = await api("POST", `/api/stock-counts/${c.id}/post`, {}); toast(`${r.adjustments} ${L2("adjustments posted", "تسوية مرحّلة")}`); route(); } catch (e) { fail(e); } },
     sccancel: async () => { if (!await uiConfirm(L2("Cancel this count?", "إلغاء هذا الجرد؟"))) return; try { await api("POST", `/api/stock-counts/${c.id}/cancel`, {}); route(); } catch (e) { fail(e); } },
+    scdel: () => confirmDelete(`${c.code} — ${c.warehouse}`, "/api/stock-counts/" + c.id, () => { location.hash = "#/stock-counts"; }),
     scfill: () => $$("tr[data-item]", view).forEach(tr => { const i = $("[data-c]", tr); if (i.value === "") i.value = tr.dataset.sys; }),
     scadd: async () => { const name = await uiPrompt(L2("Item found that is not on the sheet (name):", "صنف موجود غير مدرج (الاسم):")); if (!name) return;
       $("#sctb", view).insertAdjacentHTML("beforeend", `<tr data-item="" data-name="${esc(name)}" data-sys="0"><td><b>${esc(name)}</b></td><td class="num">0</td><td><input type="number" step="any" data-c style="width:100px"></td><td class="num"></td><td class="num"></td><td><input data-n></td></tr>`); } });
   view.innerHTML = `<div class="toolbar"><a class="btn" href="#/stock-counts">← ${t("m_counts")}</a><span class="spacer"></span>
       ${add ? `<button class="btn" data-a="scfill">${L2("Fill blanks with book qty", "ملء الفراغات برصيد الدفاتر")}</button><button class="btn" data-a="scadd">+ ${L2("Item not listed", "صنف غير مدرج")}</button><button class="btn" data-a="scsave">${t("save")}</button>` : ""}
-      ${ed ? `<button class="btn pri" data-a="scpost">${L2("Post differences", "ترحيل الفروق")}</button><button class="btn danger" data-a="sccancel">${L2("Cancel", "إلغاء")}</button>` : ""}</div>
+      ${ed ? `<button class="btn pri" data-a="scpost">${L2("Post differences", "ترحيل الفروق")}</button><button class="btn danger" data-a="sccancel">${L2("Cancel", "إلغاء")}</button>` : ""}
+      ${c.status !== "posted" && can("stock.counts", "edit") && actionOk(screenKey(), "delete") ? `<button class="btn danger" data-a="scdel">${svg("trash")} ${t("delete")}</button>` : ""}</div>
     <div class="kpis">${kpiBox(L2("Counted", "تم عده"), `${c.counted}/${c.lines.length}`)}${kpiBox(L2("Surplus", "زيادة"), c.surplus_value, "pos")}${kpiBox(L2("Shortage", "عجز"), c.shortage_value, "neg")}${kpiBox(L2("Net", "الصافي"), c.net_value, c.net_value < 0 ? "neg" : "")}</div>
     <div class="card"><div class="tbl stack"><table><thead><tr><th>${L2("Item", "الصنف")}</th><th class="num">${L2("Books", "الدفاتر")}</th><th>${L2("Counted", "الفعلي")}</th><th class="num">${L2("Difference", "الفرق")}</th><th class="num">${t("amount")}</th><th>${t("notes")}</th></tr></thead><tbody id="sctb">
       ${c.lines.map(l => `<tr data-item="${l.item_id}" data-name="${esc(l.item)}" data-sys="${l.system_qty}"><td><b>${esc(l.item)}</b> <span class="muted">${esc(l.unit)}</span></td><td class="num">${numf(l.system_qty)}</td>

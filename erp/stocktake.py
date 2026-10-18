@@ -113,6 +113,17 @@ def cancel(db, cid):
     db.x("UPDATE stock_counts SET status='cancelled' WHERE id=?", (c["id"],))
 
 
+def delete(db, cid):
+    """Delete a count that is still open or was cancelled. A posted count stays: its adjustments are in the books."""
+    c = get(db, cid)
+    if c["status"] == "posted":
+        raise ValidationError("A posted count cannot be deleted — its stock adjustments are in the books")
+    with db.tx():
+        db.conn.execute("DELETE FROM stock_count_lines WHERE count_id=?", (c["id"],))
+        db.conn.execute("DELETE FROM stock_counts WHERE id=?", (c["id"],))
+    return c
+
+
 def listing(db, status=None):
     out = []
     for r in db.q("SELECT id FROM stock_counts" + (" WHERE status=?" if status else "") + " ORDER BY date DESC, id DESC",
