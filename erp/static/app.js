@@ -9888,16 +9888,17 @@ async function aiCompleteBrowser(r) {
   }
 }
 // the assistant's calls: as the signed-in person, marked so the ERP applies the assistant's policy on top of their rights
-async function aiApi(method, path, body, review) {
+async function aiApi(method, path, body, review, change, idx) {
   if (!/^\/api\//.test(path)) throw new Error("Only /api/ paths");
+  if (change && method !== "GET") path += (path.includes("?") ? "&" : "?") + "_ai=" + encodeURIComponent(change);   // recorded, so it can be undone
   if (STATIC) {
-    const h = { ...staticHeaders(), "x-ai-call": "1", ...(review ? { "x-ai-review": review } : {}) }; let payload = null;
+    const h = { ...staticHeaders(), "x-ai-call": "1", ...(review ? { "x-ai-review": review, "x-ai-batch": String(idx || 0) } : {}) }; let payload = null;
     if (body !== undefined && method !== "GET") { payload = JSON.stringify(body); h["content-type"] = "application/json"; }
     const r = await window.__beyondFetch(method, path, h, payload);
     const txt = new TextDecoder().decode(r.body);
     return { status: r.status, text: /json/.test(r.ctype || "") ? txt : `(${r.ctype}, ${r.body.length} bytes — a file, not shown)` };
   }
-  const opt = { method, credentials: "same-origin", headers: { "X-Requested-With": "BeyondERP", "X-AI-Call": "1", ...(review ? { "X-AI-Review": review } : {}) } };
+  const opt = { method, credentials: "same-origin", headers: { "X-Requested-With": "BeyondERP", "X-AI-Call": "1", ...(review ? { "X-AI-Review": review, "X-AI-Batch": String(idx || 0) } : {}) } };
   if (body !== undefined && method !== "GET") { opt.body = JSON.stringify(body); opt.headers["Content-Type"] = "application/json"; }
   const r = await fetch(path, opt), ct = r.headers.get("content-type") || "";
   return { status: r.status, text: /json/.test(ct) ? await r.text() : `(${ct} — a file, not shown)` };
@@ -9918,7 +9919,7 @@ PAGES.assistant = async (view, parts) => {
   const name = (S.ai.policy && S.ai.policy.name) || "Kazuha";
   view.innerHTML = `<div class="chat ai ${tid || parts[1] === "new" ? "has-room" : ""}"><aside class="chl"><div class="chl-head"><a class="btn pri" href="#/assistant/new" style="width:100%;justify-content:center">${svg("plus")} ${esc(L2("New conversation", "محادثة جديدة"))}</a></div>
       <div class="chl-list">${threads.map(th => `<a class="chl-item ${th.id === tid ? "on" : ""}" href="#/assistant/${th.id}"><span class="chl-ic">${svg("spark")}</span><span class="chl-t"><b>${esc(th.title)}</b><small>${esc(fmtTime(th.updated_at))}</small></span><button class="lnk" data-a="aidel" data-id="${th.id}" title="${esc(L2("Delete", "حذف"))}">×</button></a>`).join("") || `<div class="muted chl-note">${esc(L2("Your conversations stay on this device.", "محادثاتك تبقى على هذا الجهاز."))}</div>`}</div></aside>
-    <section class="chv"><div class="ch-top"><a class="icbtn ch-back" href="#/assistant">${BACK_ICON}</a>${aiAvatar(40)}<div class="ch-tt"><b>${esc(name)}</b><small>${esc(L2("Works with your own access only", "يعمل بصلاحياتك أنت فقط"))} · ${esc(S.ai.policy.write === "off" ? L2("read-only", "قراءة فقط") : L2("every change is checked, then you review it", "كل تعديل يُفحص ثم تراجعه أنت"))}</small></div></div>
+    <section class="chv"><div class="ch-top"><a class="icbtn ch-back" href="#/assistant">${BACK_ICON}</a>${aiAvatar(40)}<div class="ch-tt"><b>${esc(name)}</b><small>${esc(L2("Works with your own access only", "يعمل بصلاحياتك أنت فقط"))} · ${esc({ off: L2("read-only", "قراءة فقط"), batch: L2("changes are checked together, then you approve them at once", "التعديلات تُفحص معاً ثم توافق عليها دفعة واحدة"), auto: L2("checked changes are saved directly — you can undo them", "التعديلات المفحوصة تُحفظ مباشرة — ويمكنك التراجع عنها") }[S.ai.policy.write] || L2("every change is checked, then you review it", "كل تعديل يُفحص ثم تراجعه أنت"))}</small></div></div>
       <div class="ch-list ai-list" id="ailist"></div>
       <div class="ch-pending" id="aipend"></div>
       <div class="ch-comp ai-comp"><div class="dd ch-emo"><button class="btn icbtn" type="button" aria-label="Emoji">${svg("smile")}</button><div class="dd-menu emo-grid">${EMOJIS.map(e => `<button type="button" data-a="aiemo" data-e="${e}">${e}</button>`).join("")}</div></div>
@@ -9944,6 +9945,11 @@ PAGES.assistant = async (view, parts) => {
   S.H.aidel = async el => { if (!await uiConfirm(L2("Delete this conversation?", "حذف هذه المحادثة؟"))) return; await api("DELETE", "/api/ai/threads/" + el.dataset.id); location.hash = "#/assistant"; route(); };
   S.H.aiok = el => { const w = AI.waiting && AI.waiting[el.dataset.id]; if (w) w(true); };
   S.H.aino = el => { const w = AI.waiting && AI.waiting[el.dataset.id]; if (w) w(false); };
+  S.H.aiundo = async el => { const rv = (AI.reviews || {})[el.dataset.id]; if (!rv || !rv.change) return;
+    if (!await uiConfirm(L2("Undo what the assistant saved here? Every record goes back exactly as it was — refused if someone has changed them since.", "التراجع عما حفظه المساعد هنا؟ يعود كل سجل كما كان تماماً — ويُرفض إن عدّله أحد بعد ذلك."))) return;
+    try { const r = await api("POST", "/api/ai-undo/" + rv.change, {}); rv.undone = true; aiDraw(); toast(L2(`Undone (${r.undone} record changes)`, `تم التراجع (${r.undone} تغيير)`));
+      AI.note = "(Note: I undid the change(s) you saved earlier — they are no longer in the books.)"; }
+    catch (e) { fail(e); } };
   aiDraw();
   if (matchMedia("(pointer: fine)").matches) ta.focus();
 };
@@ -9991,7 +9997,7 @@ function aiDraw() {
       if (b.type === "tool_use") {
         const r = results[b.id], inp = b.input || {};
         const label = b.name === "erp_find" ? L2("Looked for: ", "بحث عن: ") + (inp.query || "") : b.name === "erp_read" ? L2("Read ", "قرأ ") + (inp.path || "") : (inp.summary || inp.path || "");
-        if (b.name === "erp_write") {
+        if (b.name === "erp_write" || b.name === "erp_write_batch") {
           h += reviewCard(b, inp, (AI.reviews || {})[b.id], r);
         } else {
           const bad = r && (r.is_error || /declined|رفض/.test(String(r.content)));
@@ -10006,8 +10012,11 @@ function aiDraw() {
 }
 // the change the assistant proposes: what the ERP's checks found, what it does to the numbers, and the entries it posts
 function reviewCard(b, inp, rv, result) {
-  const head = `<b>${esc(L2("Proposed change", "تعديل مقترح"))}</b><div>${esc(inp.summary || "")}</div>`;
-  if (!rv || rv.checking) return `<div class="ai-act ask">${head}<div class="muted"><i class="spin"></i> ${esc(L2("Checking it against the books without saving anything…", "جارٍ فحصه على الدفاتر دون حفظ أي شيء…"))}</div></div>`;
+  const n = (inp.changes || []).length;
+  const head = `<b>${esc(n ? L2(`${n} changes, checked together`, `${n} تعديلاً تُفحص معاً`) : L2("Proposed change", "تعديل مقترح"))}</b><div>${esc(inp.summary || "")}</div>`;
+  if (!rv || rv.checking) return `<div class="ai-act ask">${head}<div class="muted"><i class="spin"></i> ${esc(n ? L2(`Checking all ${n} against the books without saving anything…`, `جارٍ فحص الـ ${n} على الدفاتر دون حفظ أي شيء…`) : L2("Checking it against the books without saving anything…", "جارٍ فحصه على الدفاتر دون حفظ أي شيء…"))}</div></div>`;
+  const items = n ? `<details ${rv.ok ? "" : "open"}><summary>${esc(L2(`The ${n} changes`, `التعديلات الـ ${n}`))}</summary><ol class="rv-items">${(inp.changes || []).map((c, i) => { const it = (rv.items || [])[i] || {};
+      return `<li class="${it.ok === false ? "bad" : ""}">${esc(c.summary || `${c.method} ${c.path}`)}${it.error ? `<small>${esc(it.error)}</small>` : ""}</li>`; }).join("")}</ol></details>` : "";
   const checks = `<ul class="rv-checks">${rv.checks.map(c => `<li class="${c.ok ? "ok" : "bad"}">${c.ok ? "✓" : "✕"} ${esc(c.label)}${c.detail ? `<small>${esc(c.detail)}</small>` : ""}</li>`).join("")}</ul>`;
   const moved = rv.figures.filter(f => f.change);
   const figs = rv.figures.length ? `<div class="tbl"><table><thead><tr><th>${esc(L2("Figure", "البند"))}</th><th class="num">${esc(L2("Now", "الآن"))}</th><th class="num">${esc(L2("After", "بعد"))}</th><th class="num">${esc(L2("Change", "التغيير"))}</th></tr></thead><tbody>${
@@ -10015,11 +10024,15 @@ function reviewCard(b, inp, rv, result) {
   const ents = rv.entries.length ? rv.entries.map(e => `<div class="rv-entry"><b>${esc(e.status === "new" ? L2("New entry", "قيد جديد") : e.status === "removed" ? L2("Entry removed", "قيد محذوف") : L2("Entry changed", "قيد معدّل"))}</b> ${esc([e.ref, e.date, e.memo].filter(Boolean).join(" · "))}
       ${e.lines.length ? `<div class="tbl"><table><tbody>${e.lines.map(l => `<tr><td>${esc(l.account)} ${esc(l.name)}</td><td class="num">${l.debit ? money(l.debit) : ""}</td><td class="num">${l.credit ? money(l.credit) : ""}</td></tr>`).join("")}</tbody></table></div>` : ""}</div>`).join("") : "";
   const tbls = rv.tables && rv.tables.length ? `<div class="muted">${esc(L2("Records:", "السجلات:"))} ${rv.tables.map(t => `${esc(t.table)} ${t.before}→${t.after}`).join(" · ")}</div>` : "";
-  const state = result ? (rv.saved ? `<div class="chip ok">✓ ${esc(L2("Saved and posted after your review", "حُفظ ورُحّل بعد مراجعتك"))}</div>`
+  const undo = rv.change && rv.done ? (rv.undone ? `<span class="chip">↺ ${esc(L2("Undone", "تم التراجع"))}</span>`
+      : `<button class="btn sm" data-a="aiundo" data-id="${esc(b.id)}">↺ ${esc(n ? L2("Undo all of them", "تراجع عنها كلها") : L2("Undo", "تراجع"))}</button>`) : "";
+  const state = result ? (rv.saved ? `<div class="row"><span class="chip ok">✓ ${esc(rv.mode === "auto" ? L2("Saved directly (checks passed)", "حُفظ مباشرة (اجتاز الفحوص)") : n ? L2(`All ${n} saved after your review`, `حُفظت الـ ${n} بعد مراجعتك`) : L2("Saved and posted after your review", "حُفظ ورُحّل بعد مراجعتك"))}</span>${undo}</div>`
+      : rv.done ? `<div class="row"><span class="chip bad">${esc(L2(`Stopped: ${rv.done} of ${rv.n} saved`, `توقف: حُفظ ${rv.done} من ${rv.n}`))}</span>${undo}</div>`
       : `<div class="chip ${rv.ok ? "" : "bad"}">${esc(rv.ok ? L2("Not saved", "لم يُحفظ") : L2("Blocked by the checks — nothing was saved", "أوقفته الفحوص — لم يُحفظ شيء"))}</div>`)
-    : rv.ok ? `<div class="row"><button class="btn pri" data-a="aiok" data-id="${esc(b.id)}">${esc(L2("Save and post", "حفظ وترحيل"))}</button><button class="btn" data-a="aino" data-id="${esc(b.id)}">${esc(L2("Decline", "رفض"))}</button></div>` : "";
-  return `<div class="ai-act ask ${rv.ok ? "" : "blocked"}">${head}<h5>${esc(L2("Checks (nothing saved yet)", "الفحوص (لم يُحفظ شيء بعد)"))}</h5>${checks}
-    ${rv.ok ? `<h5>${esc(L2("Effect on the numbers", "الأثر على الأرقام"))}</h5>${figs}${ents ? `<h5>${esc(L2("Entries it will post", "القيود التي سيرحّلها"))}</h5>${ents}` : ""}${tbls}` : ""}
+    : rv.change ? `<div class="muted"><i class="spin"></i> ${esc(L2(`Saving… ${rv.done || 0} of ${rv.n}`, `جارٍ الحفظ… ${rv.done || 0} من ${rv.n}`))}</div>`
+    : rv.ok ? `<div class="row"><button class="btn pri" data-a="aiok" data-id="${esc(b.id)}">${esc(n ? L2(`Save all ${n}`, `حفظ الـ ${n} كلها`) : L2("Save and post", "حفظ وترحيل"))}</button><button class="btn" data-a="aino" data-id="${esc(b.id)}">${esc(L2("Decline", "رفض"))}</button></div>` : "";
+  return `<div class="ai-act ask ${rv.ok ? "" : "blocked"}">${head}${items}<h5>${esc(L2("Checks (nothing saved yet)", "الفحوص (لم يُحفظ شيء بعد)"))}</h5>${checks}
+    ${rv.ok ? `<h5>${esc(L2("Effect on the numbers", "الأثر على الأرقام"))}</h5>${figs}${ents ? `<h5>${esc(L2("Entries it will post", "القيود التي سيرحّلها"))}${rv.entries_total > rv.entries.length ? ` <small class="muted">(${rv.entries.length} ${esc(L2("of", "من"))} ${rv.entries_total})</small>` : ""}</h5>${ents}` : ""}${tbls}` : ""}
     <details><summary>${esc(L2("Request details", "تفاصيل الطلب"))}</summary><code>${esc(inp.method)} ${esc(inp.path)}</code><pre>${esc(inp.body_json || "")}</pre></details>${state}</div>`;
 }
 async function aiTool(b) {
@@ -10028,26 +10041,44 @@ async function aiTool(b) {
   try {
     if (b.name === "erp_find") return { type: "tool_result", tool_use_id: b.id, content: JSON.stringify(await api("GET", "/api/ai/catalog?" + qs({ q: inp.query || "", limit: 40 }))) };
     if (b.name === "erp_read") { const r = await aiApi("GET", String(inp.path || "")); return { type: "tool_result", tool_use_id: b.id, content: cut(`HTTP ${r.status}\n${r.text}`), is_error: r.status >= 400 }; }
-    if (b.name === "erp_write") {
-      let body; try { body = JSON.parse(inp.body_json || "{}"); } catch { return { type: "tool_result", tool_use_id: b.id, content: "body_json is not valid JSON", is_error: true }; }
-      if (!["POST", "PUT", "DELETE"].includes(inp.method)) return { type: "tool_result", tool_use_id: b.id, content: "method must be POST, PUT or DELETE", is_error: true };
-      // 1. the ERP runs the change without saving it and checks the result
-      AI.reviews = AI.reviews || {}; AI.reviews[b.id] = { checking: true }; aiDraw();
-      let rv; try { rv = await api("POST", "/api/ai/preview", { method: inp.method, path: String(inp.path || ""), body }); }
-      catch (e) { rv = { ok: false, checks: [{ key: "accepted", ok: false, label: L2("The ERP accepts the change", "يقبل النظام التعديل"), detail: e.message }], figures: [], entries: [], tables: [] }; }
-      AI.reviews[b.id] = rv;
+    if (b.name === "erp_write" || b.name === "erp_write_batch") {
+      const raw = b.name === "erp_write" ? [inp] : (inp.changes || []);
+      const changes = [];
+      for (const c of raw) {
+        let body; try { body = JSON.parse(c.body_json || "{}"); } catch { return { type: "tool_result", tool_use_id: b.id, content: `body_json is not valid JSON (${c.summary || c.path})`, is_error: true }; }
+        if (!["POST", "PUT", "DELETE"].includes(c.method)) return { type: "tool_result", tool_use_id: b.id, content: "method must be POST, PUT or DELETE", is_error: true };
+        changes.push({ method: c.method, path: String(c.path || ""), body, summary: c.summary || "" });
+      }
+      if (!changes.length) return { type: "tool_result", tool_use_id: b.id, content: "No changes in the batch", is_error: true };
+      const mode = (S.ai && S.ai.policy && S.ai.policy.write) || "confirm";
+      // 1. the ERP runs the change(s) without saving and checks the result
+      AI.reviews = AI.reviews || {}; AI.reviews[b.id] = { checking: true, n: changes.length }; aiDraw();
+      let rv; try { rv = await api("POST", "/api/ai/preview", changes.length > 1 || b.name === "erp_write_batch" ? { changes } : { method: changes[0].method, path: changes[0].path, body: changes[0].body }); }
+      catch (e) { rv = { ok: false, checks: [{ key: "accepted", ok: false, label: L2("The ERP accepts the change", "يقبل النظام التعديل"), detail: e.message }], figures: [], entries: [], tables: [], items: [] }; }
+      rv.n = changes.length; rv.mode = mode; AI.reviews[b.id] = rv;
       const report = "Checks: " + rv.checks.map(c => `${c.ok ? "PASS" : "FAIL"} ${c.label}${c.detail ? " (" + c.detail + ")" : ""}`).join("; ") +
         (rv.figures.length ? "\nEffect: " + rv.figures.filter(f => f.change).map(f => `${f.label} ${f.before} -> ${f.after}`).join("; ") : "");
       if (!rv.ok) { aiDraw(); return { type: "tool_result", tool_use_id: b.id, content: "BLOCKED — nothing was saved.\n" + report + "\nFix the request and propose it again, or explain to the person.", is_error: true }; }
-      // 2. the person reviews the checks and the effect on the numbers, and approves
-      AI.busy = false; aiDraw();
-      const okd = await new Promise(res => { AI.waiting = { ...(AI.waiting || {}), [b.id]: res }; });
-      delete AI.waiting[b.id]; AI.busy = true;
-      if (!okd) return { type: "tool_result", tool_use_id: b.id, content: "The person reviewed the checked change and declined it — nothing was saved. Do not retry it; ask what they want instead.\n" + report };
-      // 3. saved and posted, carrying the review (the ERP refuses it if the books changed meanwhile)
-      const r = await aiApi(inp.method, String(inp.path || ""), body, rv.review);
-      AI.reviews[b.id].saved = r.status < 400;
-      return { type: "tool_result", tool_use_id: b.id, content: cut(`Saved after review. HTTP ${r.status}\n${r.text}\n${report}`), is_error: r.status >= 400 };
+      // 2. the person approves (each change, or the whole batch) — unless changes are saved directly
+      if (mode !== "auto") {
+        AI.busy = false; aiDraw();
+        const okd = await new Promise(res => { AI.waiting = { ...(AI.waiting || {}), [b.id]: res }; });
+        delete AI.waiting[b.id]; AI.busy = true;
+        if (!okd) return { type: "tool_result", tool_use_id: b.id, content: "The person reviewed the checked change(s) and declined — nothing was saved. Do not retry; ask what they want instead.\n" + report };
+      }
+      // 3. saved in order, carrying the review (the ERP refuses it if the books changed meanwhile); recorded for undo
+      const change = "ai" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+      rv.change = change; rv.done = 0; aiDraw();
+      const outs = [];
+      for (let i = 0; i < changes.length; i++) {
+        const c = changes[i], r = await aiApi(c.method, c.path, c.body, rv.review, change, i);
+        outs.push(`#${i + 1} HTTP ${r.status} ${r.text.slice(0, changes.length > 1 ? 300 : 20000)}`);
+        if (r.status >= 400) { rv.failedAt = i; break; }
+        rv.done = i + 1; if (changes.length > 1 && i % 10 === 9) aiDraw();
+      }
+      rv.saved = rv.done === changes.length;
+      const how = mode === "auto" ? "Saved directly (checks passed)." : "Saved after review.";
+      return { type: "tool_result", tool_use_id: b.id, content: cut(`${rv.saved ? how : `Stopped at change #${(rv.failedAt || 0) + 1}: ${rv.done} of ${changes.length} saved (the person can undo them).`}\n${outs.join("\n")}\n${report}`), is_error: !rv.saved };
     }
     return { type: "tool_result", tool_use_id: b.id, content: "Unknown tool", is_error: true };
   } catch (e) { return { type: "tool_result", tool_use_id: b.id, content: "Error: " + e.message, is_error: true }; }
@@ -10101,6 +10132,7 @@ async function aiSend(text, ta) {
   if (files.length) {
     try { content = [...(await aiBlocks(files)), ...(text ? [{ type: "text", text }] : [])]; } catch (e) { fail(e); return; }
   }
+  if (AI.note) { if (typeof content === "string") content = AI.note + "\n" + content; else content = [{ type: "text", text: AI.note }, ...content]; AI.note = null; }
   ta.value = ""; ta.style.height = "auto"; AI.pending = []; if (AI.drawPend) AI.drawPend();
   th.messages.push(files.length ? { role: "user", content, files: files.map(f => ({ name: f.name, size: f.size, thumb: f.thumb })) } : { role: "user", content });
   AI.busy = true; aiDraw();
@@ -10130,8 +10162,8 @@ async function aiSettingsTab(view, head) {
   const hasKey = cloud && !cloud.error ? cloud.has_key : r.has_key;
   if (cloud && cloud.error) AI.cloudReady = false;
   view.innerHTML = head + `<div class="card"><h2>${svg("spark")} ${esc(L2("AI assistant", "المساعد الذكي"))}</h2>
-    <p class="muted">${esc(L2("An AI model from the provider of your choice answers questions about your books and, if you allow it, prepares changes — every change is checked and reviewed before it is saved. It always acts as the person using it — with exactly their permissions — and never touches users, sign-in, licences, backups or these settings.",
-      "نموذج ذكاء اصطناعي من المزوّد الذي تختاره يجيب عن أسئلة حول دفاترك، ويُعد التعديلات إن سمحت بذلك — وكل تعديل يُفحص ويُراجع قبل حفظه. يعمل دائماً بصفة الشخص الذي يستخدمه وبصلاحياته فقط، ولا يقترب من المستخدمين أو الدخول أو التراخيص أو النسخ الاحتياطية أو هذه الإعدادات."))}</p>
+    <p class="muted">${esc(L2("An AI model from the provider of your choice answers questions about your books and, if you allow it, prepares changes — every change is checked before it is saved, reviewed by the person unless you choose otherwise below, and can be undone. It always acts as the person using it — with exactly their permissions — and never touches users, sign-in, licences, backups or these settings.",
+      "نموذج ذكاء اصطناعي من المزوّد الذي تختاره يجيب عن أسئلة حول دفاترك، ويُعد التعديلات إن سمحت بذلك — وكل تعديل يُفحص قبل حفظه، ويراجعه الشخص ما لم تختر غير ذلك أدناه، ويمكن التراجع عنه. يعمل دائماً بصفة الشخص الذي يستخدمه وبصلاحياته فقط، ولا يقترب من المستخدمين أو الدخول أو التراخيص أو النسخ الاحتياطية أو هذه الإعدادات."))}</p>
     <form id="aiform">${form([
       { k: "enabled", l: L2("AI assistant", "المساعد الذكي"), type: "switch", v: p.enabled, on: L2("On", "يعمل"), off: L2("Off", "متوقف") },
       { k: "name", l: L2("Assistant's name", "اسم المساعد"), v: p.name },
@@ -10143,7 +10175,10 @@ async function aiSettingsTab(view, head) {
         <label class="f" id="aimodeltxt">${esc(L2("Model name (exactly as the provider writes it)", "اسم النموذج (كما يكتبه المزوّد تماماً)"))}<input name="model_other" value="${esc(p.provider === "anthropic" ? "" : p.model)}" autocomplete="off"></label>` },
       { html: `<label class="f" id="aibase">${esc(L2("Provider address (OpenAI-compatible)", "عنوان المزوّد (متوافق مع OpenAI)"))}<input name="base_url" value="${esc(p.base_url || "")}" placeholder="https://…/v1" autocomplete="off"></label>`, span: "span2" },
       { k: "effort", l: L2("Thoroughness", "مستوى التفكير"), type: "select", opts: [["low", L2("Quick", "سريع")], ["medium", L2("Balanced", "متوازن")], ["high", L2("Thorough", "متعمّق")]], v: p.effort },
-      { k: "write", l: L2("Changing data", "تعديل البيانات"), type: "select", opts: [["off", L2("Never — read and advise only", "أبداً — قراءة ونصح فقط")], ["confirm", L2("Check every change, then the person reviews and approves it", "فحص كل تعديل ثم يراجعه الشخص ويوافق عليه")]], v: p.write },
+      { k: "write", l: L2("Changing data", "تعديل البيانات"), type: "select", opts: [["off", L2("Never — read and advise only", "أبداً — قراءة ونصح فقط")], ["confirm", L2("Check every change, then the person reviews and approves it", "فحص كل تعديل ثم يراجعه الشخص ويوافق عليه")],
+        ["batch", L2("Check all the changes of a request together, show the outcome, then the person approves them at once", "فحص كل تعديلات الطلب معاً وعرض النتيجة ثم يوافق الشخص عليها دفعة واحدة")],
+        ["auto", L2("Save changes directly once the checks pass (no approval) — each one can be undone", "حفظ التعديلات مباشرة بعد اجتياز الفحوص (دون موافقة) — ويمكن التراجع عن كل منها")]], v: p.write,
+        help: L2("Whatever is chosen, the ERP checks every change first and blocks it if a check fails, and every saved change has an Undo button in the conversation.", "أياً كان الاختيار، يفحص النظام كل تعديل أولاً ويوقفه إن فشل أي فحص، ولكل تعديل محفوظ زر تراجع في المحادثة.") },
       { k: "daily_limit", l: L2("Requests per person per day (0 = no limit)", "عدد الطلبات لكل شخص يومياً (0 = بلا حد)"), type: "number", v: p.daily_limit },
       { k: "access", l: L2("Who can use it", "من يمكنه استخدامه"), type: "select", opts: [["all", L2("Everyone in the company", "كل من في الشركة")], ["list", L2("Only the people ticked below", "فقط الأشخاص المحددون أدناه")]], v: p.access, change: "aiacc" },
       { k: "instructions", l: L2("Standing instructions (how it should deal with people's requests)", "تعليمات دائمة (كيف يتعامل مع طلبات الأشخاص)"), type: "textarea", v: p.instructions, span: "span2",

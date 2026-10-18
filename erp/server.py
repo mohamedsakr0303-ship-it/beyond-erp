@@ -4795,10 +4795,34 @@ def ai_extract(ctx):
     return ok(ai.extract_text(ctx.body.get("name"), ctx.body.get("data")))
 
 
+@route("GET", "/api/ai-undo/<change>")
+def ai_undo_info(ctx, change):
+    from . import aiundo
+    return ok(aiundo.info(ctx.db, change))
+
+
+@route("POST", "/api/ai-undo/<change>")
+def ai_undo(ctx, change):
+    """Undo one of the assistant's saved changes (or a whole batch): every row back as it was, if nobody changed it since."""
+    from . import aiundo
+    r = aiundo.undo(ctx.db, change, ctx.user)
+    ctx.log("ai.undo", change)
+    return ok(r)
+
+
 @route("POST", "/api/ai/preview")
 def ai_preview(ctx):
     """Run a change the assistant proposes without saving it, and report what it would do (checks, numbers, entries)."""
     from . import ai
+    if isinstance(ctx.body.get("changes"), list):          # a batch: checked together, approved (or saved) at once
+        ch = []
+        for c in ctx.body["changes"][:ai.MAX_BATCH + 1]:
+            if not isinstance(c, dict):
+                raise acc.ValidationError("Each change needs method, path and body")
+            m, pth = str(c.get("method") or "").upper(), str(c.get("path") or "")
+            ch.append({"method": m, "path": pth, "body": c.get("body"), "summary": acc.text(c.get("summary"), maxlen=300),
+                       "module": route_module(m, urlparse(pth).path)})
+        return ok(ai.preview_many(ctx.app, ctx.user, ch))
     method, path = str(ctx.body.get("method") or "").upper(), str(ctx.body.get("path") or "")
     return ok(ai.preview(ctx.app, ctx.user, method, path, ctx.body.get("body"), route_module(method, urlparse(path).path)))
 
@@ -5599,7 +5623,12 @@ def handle(app, method, target, headers, raw=b"", as_user=None, dry=False):
             ctx.action = action
             ctx.cloud_hook = getattr(app, "cloud", None)
             ctx.scope = sc
-            reply = fn(ctx, **match.groupdict())
+            ai_change = q.get("_ai") if method != "GET" else None
+            if ai_change and re.fullmatch(r"[\w-]{6,60}", ai_change):   # the assistant's change: recorded so it can be undone
+                from . import aiundo
+                reply = aiundo.capture(db, ai_change, user, lambda: fn(ctx, **match.groupdict()))
+            else:
+                reply = fn(ctx, **match.groupdict())
             if sc and method == "GET" and isinstance(reply, Reply) and reply.status == 200 and "json" in (reply.ctype or ""):
                 reply.body = json.dumps(scope.narrow(sc, url.path, json.loads(reply.body)), ensure_ascii=False, default=str).encode("utf-8")
             return reply

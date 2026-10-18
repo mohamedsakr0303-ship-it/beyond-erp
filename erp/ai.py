@@ -29,7 +29,10 @@ MODELS = [("claude-opus-5-5", "Claude Opus 5.5 — most capable"),
           ("claude-sonnet-5-5", "Claude Sonnet 5.5 — faster, lower cost"),
           ("claude-haiku-4-5", "Claude Haiku 4.5 — quickest, lowest cost")]
 EFFORTS = ("low", "medium", "high")
-WRITE_MODES = ("off", "confirm")   # every change is checked and reviewed; there is no "change directly"
+# off: read and advise only · confirm: each change checked, then the person approves it · batch: all the changes of one
+# request checked together, then approved at once · auto: checked, then saved without asking (each can be undone)
+WRITE_MODES = ("off", "confirm", "batch", "auto")
+MAX_BATCH = 500
 # Any other provider: almost every one offers the same "chat completions" API (OpenAI's format), so one adapter covers
 # them all — pick a preset or type the provider's address and model name. Local models (Ollama, LM Studio) need no key.
 PROVIDERS = [
@@ -52,9 +55,9 @@ DEFAULT_POLICY = {"enabled": False, "provider": "anthropic", "base_url": "", "mo
                   "access": "all", "users": [], "write": "confirm", "blocked": ["payroll"], "daily_limit": 100,
                   "instructions": "", "name": "Kazuha", "avatar": ""}
 # never reachable through the assistant, whatever the policy says
-ALWAYS_BLOCKED = re.compile(r"^/api/(users|me|cloud|ai|ai-policy|licence|login|logout|setup|erase|restore|backup|"
+ALWAYS_BLOCKED = re.compile(r"^/api/(users|me|cloud|ai|ai-policy|ai-undo|licence|login|logout|setup|erase|restore|backup|"
                             r"maintenance|demo|session|einvoice/(submit|test)|\w+/\d+/reopen-licence)(/|$|\?)")
-TOOL_NAMES = ("erp_find", "erp_read", "erp_write")
+TOOL_NAMES = ("erp_find", "erp_read", "erp_write", "erp_write_batch")
 
 BASE_PROMPT = """You are {name}, the assistant built into BeyondERP, an accounting and operations system for a company \
 (business units / projects, sales and receivables, purchasing and payables, stock, rentals, payroll, fixed assets, \
@@ -80,6 +83,17 @@ WRITE_RULES = {
                 "sheets and import back with the same balances), then shown to the person with its results; nothing is "
                 "saved until they approve. If a check fails, the change is blocked: read the failures, fix the request "
                 "and propose it again. If the person declines, do not retry it."),
+    "batch": ("When a request needs several changes (e.g. a stock count with many lines, many vouchers), send them ALL in "
+              "one erp_write_batch call, in the order they must be saved (up to 500). The ERP checks the whole batch "
+              "without saving anything — each change accepted, every entry balanced, the trial balance and the books "
+              "checks — and shows the person the combined outcome; nothing is saved until they approve the batch. Use "
+              "erp_write for a single change. If a check fails, nothing is saved: fix the batch and send it again. If "
+              "the person declines, do not retry it."),
+    "auto": ("Changes are saved straight away once the ERP's checks pass (the request is accepted, every journal entry "
+             "balances, the trial balance and the books checks still hold) — the person does not approve each one, so be "
+             "careful and precise. For several related changes use erp_write_batch (all checked together, saved in order). "
+             "Every saved change can be undone by the person. If a check fails, nothing is saved: fix and retry. Never "
+             "repeat a change that was already saved."),
 }
 
 
@@ -184,7 +198,7 @@ def check_call(db, user, method, path):
 # by the same person, on books that have not changed since (else it is refused and must be checked again).
 REVIEW_TTL = 15 * 60
 _REVIEWS = {}
-_FP_SKIP = ("sessions", "audit_log", "cloud_local", "ai_threads", "ai_usage", "user_profiles")
+_FP_SKIP = ("sessions", "audit_log", "cloud_local", "ai_threads", "ai_usage", "user_profiles", "ai_undo")
 
 
 def _canon(raw_or_obj):
@@ -248,40 +262,69 @@ def guard(db, user, method, path, raw, headers, module):
     r = _REVIEWS.get(headers.get("x-ai-review") or "")
     if not r or not r["ok"]:
         raise PermissionError("The assistant's change was not checked and reviewed first — it was not saved")
-    if (r["user"], r["method"], r["path"], r["body"]) != (user["id"], method, path, _canon(raw)):
+    try:
+        i = int(headers.get("x-ai-batch") or 0)          # which change of a reviewed batch (0 for a single change)
+    except ValueError:
+        i = -1
+    if r["user"] != user["id"] or not 0 <= i < len(r["items"]) or r["items"][i] != (method, path, _canon(raw)):
         raise PermissionError("This change is not the one that was reviewed — it was not saved")
+    if i > r["next"]:
+        raise PermissionError("The reviewed changes must be saved in order — it was not saved")
     if now().timestamp() - r["at"] > REVIEW_TTL:
         raise PermissionError("The review has expired — ask the assistant to check the change again")
-    if fingerprint(db) != r["fp"]:
+    if i == 0 and r["next"] == 0 and fingerprint(db) != r["fp"]:
         raise PermissionError("The books changed since this change was reviewed — ask the assistant to check it again")
+    r["next"] = max(r["next"], i + 1)                   # (a retry of the same change, e.g. a busy workspace, is allowed)
 
 
 def preview(app, user, method, path, body, module):
     """Run a change without saving it and report what it would do to the books (see above)."""
+    return preview_many(app, user, [{"method": method, "path": path, "body": body, "module": module}])
+
+
+def preview_many(app, user, changes):
+    """Run one change — or a whole batch, in order — without saving anything, and report the combined effect on the
+    books with the same checks. One review covers the batch: it is saved change by change, in this order, as reviewed."""
     from .server import handle
     from . import interchange
     from .db import Database, to_major
-    if method not in ("POST", "PUT", "DELETE") or not str(path).startswith("/api/"):
-        raise AIError("Only POST, PUT or DELETE on an /api/ path")
-    check_call(app.db, user, method, path.split("?")[0])
-    if route_blocked(app.db, module):
-        raise PermissionError("The AI assistant may not use this section (super administrator's setting)")
-    db, raw = app.db, json.dumps(body if body is not None else {}).encode()
+    if not changes:
+        raise AIError("No changes to check")
+    if len(changes) > MAX_BATCH:
+        raise AIError(f"At most {MAX_BATCH} changes in one batch — split it")
+    for c in changes:
+        if c["method"] not in ("POST", "PUT", "DELETE") or not str(c["path"]).startswith("/api/"):
+            raise AIError("Only POST, PUT or DELETE on an /api/ path")
+        check_call(app.db, user, c["method"], c["path"].split("?")[0])
+        if route_blocked(app.db, c.get("module")):
+            raise PermissionError("The AI assistant may not use this section (super administrator's setting)")
+    db = app.db
     headers = {"x-requested-with": "BeyondERP", "content-type": "application/json"}
-    out = {"checks": [], "figures": [], "entries": [], "tables": []}
+    out = {"checks": [], "figures": [], "entries": [], "tables": [], "items": []}
+    raws = [json.dumps(c["body"] if c["body"] is not None else {}).encode() for c in changes]
     with db.lock:
         db.conn.execute("BEGIN IMMEDIATE")
         try:
             before = _snapshot(db)
-            reply = handle(app, method, path, headers, raw, as_user=user["username"], dry=True)
-            try:
-                rbody = json.loads(reply.body or b"{}")
-            except ValueError:
-                rbody = {}
-            accepted = reply.status < 400
-            out["checks"].append({"key": "accepted", "ok": accepted, "label": "The ERP accepts the change",
-                                  "detail": "" if accepted else (rbody.get("error") or f"HTTP {reply.status}")})
-            out["reply"] = rbody if accepted else {}
+            failed = []
+            for i, (c, raw) in enumerate(zip(changes, raws)):
+                reply = handle(app, c["method"], c["path"], headers, raw, as_user=user["username"], dry=True)
+                try:
+                    rbody = json.loads(reply.body or b"{}")
+                except ValueError:
+                    rbody = {}
+                ok_i = reply.status < 400
+                out["items"].append({"i": i, "ok": ok_i, "error": "" if ok_i else (rbody.get("error") or f"HTTP {reply.status}"),
+                                     "summary": c.get("summary") or f"{c['method']} {c['path']}"})
+                if not ok_i:
+                    failed.append(i)
+                if len(changes) == 1:
+                    out["reply"] = rbody if ok_i else {}
+            accepted = not failed
+            many = len(changes) > 1
+            out["checks"].append({"key": "accepted", "ok": accepted,
+                                  "label": f"The ERP accepts all {len(changes)} changes" if many else "The ERP accepts the change",
+                                  "detail": "" if accepted else "; ".join(f"#{i + 1}: {out['items'][i]['error']}" for i in failed[:8])})
             if accepted:
                 after = _snapshot(db)
                 changed = [e for e in after["entries"] if before["entries"].get(e) != after["entries"][e]]
@@ -321,6 +364,7 @@ def preview(app, user, method, path, body, module):
                     out["figures"].append({"key": k, "label": lab, "before": b, "after": a2, "change": round(a2 - b, 2)})
                 out["entries"] = [{**_entry_detail(db, e), "status": "new" if e not in before["entries"] else "changed"} for e in changed[:20]]
                 out["entries"] += [{"id": e, "status": "removed", "lines": []} for e in removed[:20]]
+                out["entries_total"] = len(changed) + len(removed)
                 out["tables"] = [{"table": t, "before": before["tables"].get(t, 0), "after": n}
                                  for t, n in after["tables"].items() if n != before["tables"].get(t, 0)]
         finally:
@@ -329,8 +373,8 @@ def preview(app, user, method, path, body, module):
     if out["ok"]:
         import secrets
         token = secrets.token_urlsafe(18)
-        _REVIEWS[token] = {"ok": True, "user": user["id"], "method": method, "path": path.split("?")[0],
-                           "body": _canon(raw), "fp": fingerprint(db), "at": now().timestamp()}
+        _REVIEWS[token] = {"ok": True, "user": user["id"], "fp": fingerprint(db), "at": now().timestamp(), "next": 0,
+                           "items": [(c["method"], c["path"].split("?")[0], _canon(raw)) for c, raw in zip(changes, raws)]}
         for k in [k for k, v in _REVIEWS.items() if now().timestamp() - v["at"] > REVIEW_TTL]:
             _REVIEWS.pop(k, None)
         out["review"] = token   # not "token": the browser edition reads that as the sign-in session
@@ -432,6 +476,18 @@ def tools(p):
                                                   "path": {"type": "string", "description": "Starts with /api/"},
                                                   "body_json": {"type": "string", "description": "The JSON request body as a string ('{}' when none)."},
                                                   "summary": {"type": "string", "description": "One plain sentence the person reads before approving."}}}})
+        if p.get("write") in ("batch", "auto"):
+            t.append({"name": "erp_write_batch", "strict": True,
+                      "description": "Several ERP changes checked together and saved in order, as the signed-in person. "
+                                     + WRITE_RULES[p["write"]],
+                      "input_schema": {"type": "object", "additionalProperties": False, "required": ["summary", "changes"],
+                                       "properties": {"summary": {"type": "string", "description": "One plain sentence for the whole batch."},
+                                                      "changes": {"type": "array", "items": {
+                                                          "type": "object", "additionalProperties": False,
+                                                          "required": ["method", "path", "body_json", "summary"],
+                                                          "properties": {"method": {"type": "string", "enum": ["POST", "PUT", "DELETE"]},
+                                                                         "path": {"type": "string"}, "body_json": {"type": "string"},
+                                                                         "summary": {"type": "string"}}}}}}})
     return t
 
 

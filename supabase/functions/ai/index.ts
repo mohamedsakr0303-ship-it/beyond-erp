@@ -80,7 +80,7 @@ function fromOpenAI(r: any) {
   if (!content.some(b => b.type === "text" || b.type === "tool_use")) content.push({ type: "text", text: "(The model returned an empty answer.)" });
   return { role: "assistant", content, stop_reason: stop, model: r.model || "" };
 }
-const TOOLS = ["erp_find", "erp_read", "erp_write"];
+const TOOLS = ["erp_find", "erp_read", "erp_write", "erp_write_batch"];
 const MAX_REQUEST = 30_000_000;
 
 Deno.serve(async (req) => {
@@ -133,9 +133,11 @@ Deno.serve(async (req) => {
     return fail(400, "Malformed conversation");
   messages = messages.map((m: any) => ({ role: m.role, content: m.content }));   // screen-only fields (file chips) stay behind
   const model = other ? String(s.model || "") : (MODELS.includes(s.model) ? s.model : "claude-opus-5-5");
-  const write = ["off", "confirm", "auto"].includes(s.write) ? s.write : "confirm";
+  // changing data: off · confirm (each change approved) · batch (approved together) · auto (saved once checked; undoable)
+  const write = ["off", "confirm", "batch", "auto"].includes(s.write) ? s.write : "confirm";
   const tools = test ? [] : (Array.isArray(b.tools) ? b.tools : [])
-    .filter((t: any) => t && TOOLS.includes(t.name) && !(t.name === "erp_write" && write === "off"));
+    .filter((t: any) => t && TOOLS.includes(t.name) && !(t.name === "erp_write" && write === "off")
+                     && !(t.name === "erp_write_batch" && !["batch", "auto"].includes(write)));
   let fixed = String(b.base || "").slice(0, 20000);
   if (s.instructions) fixed += "\n\nStanding instructions from the company's super administrator:\n" + String(s.instructions).slice(0, 8000);
   const params: any = {

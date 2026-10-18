@@ -5318,3 +5318,39 @@ class ImprovementsPack(unittest.TestCase):
         auth.create_user(db, {"username": "clerk2", "password": "secret123", "perms": {"crm": "view"}})
         clerk = auth.public_user(db.one("SELECT * FROM users WHERE username='clerk2'"))
         self.assertEqual(automations.forecast(db, clerk)["covers"], [])
+
+    def test_ai_batch_review_direct_mode_and_undo(self):
+        from erp import ai
+        db = self.db
+        ai.save_policy(db, {"is_super": True}, {"enabled": True, "write": "batch"})
+        self.assertIn("erp_write_batch", [t["name"] for t in ai.tools(ai.policy(db))])
+        n0 = db.one("SELECT COUNT(*) n FROM journal_entries")["n"]
+        lines = [{"method": "POST", "path": "/api/docs/expense", "summary": f"line {i}",
+                  "body": {"description": f"Count line {i}", "amount": 100 + i, "date": "2026-10-05", "account": "6045", "allow_duplicate": 1}} for i in range(3)]
+        st, rv = self.call("boss", "POST", "/api/ai/preview", {"changes": lines})
+        self.assertEqual((st, rv["ok"], len(rv["items"]), rv["entries_total"]), (200, True, 3, 3), rv)
+        self.assertEqual(db.one("SELECT COUNT(*) n FROM journal_entries")["n"], n0)          # nothing saved by the check
+        h = {"x-requested-with": "BeyondERP", "x-session": self.tok["boss"], "content-type": "application/json", "x-ai-call": "1", "x-ai-review": rv["review"]}
+        send = lambda i, path="/api/docs/expense?_ai=chg001": self.handle(self.app, "POST", path, {**h, "x-ai-batch": str(i)}, json.dumps(lines[i]["body"]).encode())  # noqa: E731
+        self.assertEqual(send(1).status, 403)                                                # in the reviewed order only
+        for i in range(3):
+            self.assertEqual(send(i).status, 200)
+        self.assertEqual(db.one("SELECT COUNT(*) n FROM journal_entries")["n"], n0 + 3)
+        self.assertEqual(self.call("eng", "POST", "/api/ai-undo/chg001", {})[0], 403)         # only who asked (or a super admin)
+        st, r = self.call("boss", "POST", "/api/ai-undo/chg001", {})
+        self.assertEqual(st, 200, r)
+        self.assertEqual(db.one("SELECT COUNT(*) n FROM journal_entries")["n"], n0)          # every record back as it was
+        self.assertEqual(self.call("boss", "POST", "/api/ai-undo/chg001", {})[0], 400)       # once
+        # direct mode: saved without approval, still recorded; an undo is refused once someone changed the record
+        ai.save_policy(db, {"is_super": True}, {"write": "auto"})
+        st, rv = self.call("boss", "POST", "/api/ai/preview", lines[0])
+        h["x-ai-review"] = rv["review"]
+        r = self.handle(self.app, "POST", "/api/docs/expense?_ai=chg002", {**h, "x-ai-batch": "0"}, json.dumps(lines[0]["body"]).encode())
+        eid = json.loads(r.body)["id"]
+        self.call("boss", "PUT", f"/api/journal/{eid}/tags", {"tags": ["checked"]})
+        a.post_entry(db, date="2026-10-06", kind="Journal Voucher", memo="later work", lines=[{"account": "6045", "debit": 5}, {"account": a.money_account(db, "bank"), "credit": 5}])
+        db.x("UPDATE journal_entries SET memo='edited by someone' WHERE id=?", (eid,))
+        st, r = self.call("boss", "POST", "/api/ai-undo/chg002", {})
+        self.assertEqual(st, 400)
+        self.assertIn("changed again", r["error"])
+        self.assertTrue(db.one("SELECT 1 FROM journal_entries WHERE id=?", (eid,)))

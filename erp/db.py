@@ -1005,6 +1005,21 @@ CREATE TABLE IF NOT EXISTS cost_subs (
     created_at    TEXT NOT NULL DEFAULT '',
     updated_at    TEXT NOT NULL DEFAULT ''
 );
+-- The AI assistant's saved changes, row by row, so they can be undone (aiundo.py)
+CREATE TABLE IF NOT EXISTS ai_undo (
+    id         INTEGER PRIMARY KEY,
+    change     TEXT NOT NULL,
+    seq        INTEGER NOT NULL,
+    tbl        TEXT NOT NULL,
+    op         TEXT NOT NULL,                       -- i (added) | u (changed) | d (removed)
+    rid        INTEGER NOT NULL,
+    old        TEXT,
+    new        TEXT,
+    username   TEXT NOT NULL DEFAULT '',
+    at         TEXT NOT NULL DEFAULT '',
+    undone_at  TEXT
+);
+CREATE INDEX IF NOT EXISTS ai_undo_change ON ai_undo(change);
 -- Year-end close (yearend.py): a closed financial year — its profit is shown as retained earnings and its dates are locked
 CREATE TABLE IF NOT EXISTS year_closes (
     id          INTEGER PRIMARY KEY,

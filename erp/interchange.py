@@ -949,7 +949,7 @@ def export_extras(db, files=True, secrets=False):
 def _secrets_export(db):
     """Keys of connected tools — only in a super administrator's backup: the API keys people made for outside tools (each
     kept as its fingerprint, so the same key keeps working after a restore), the e-invoice / e-receipt (ETA) credentials
-    and, on the desktop app, the AI provider key. (On the hosted app the AI and ETA secrets live in the workspace server,
+    and, on the desktop app, the AI provider key. (On the hosted app the AI provider key lives in the workspace server,
     not in these books.)"""
     from . import cloud
     from .db import ETA_SECRETS
