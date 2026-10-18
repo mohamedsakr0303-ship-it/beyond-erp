@@ -154,6 +154,8 @@ def _validate_lines(db, lines):
     touched = set()
     for ln in lines:
         acc = text(ln.get("account"))
+        if not acc:
+            raise ValidationError("A line has no account — fill in the account code")
         if acc not in accounts:
             raise ValidationError(f"Unknown account {acc!r}")
         d = to_minor(num(ln.get("debit"), "debit"))
