@@ -318,7 +318,6 @@ def batch_xlsx(db, extract_ids):
         for c in ws[1]:
             c.font = Font(name="Arial", bold=True, color="FFFFFF")
             c.fill = PatternFill("solid", fgColor="1F3A5F")
-        ws.freeze_panes = "A2"
     for d in docs:
         tt = {t["taxType"]: t["amount"] for t in d["taxTotals"]}
         r, i = d["receiver"], d["issuer"]

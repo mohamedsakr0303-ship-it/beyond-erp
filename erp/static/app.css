@@ -80,6 +80,9 @@ tr.void td{opacity:.5;text-decoration:line-through}
 .kpi .v{font-size:1.35em;font-weight:700;margin-top:4px;font-variant-numeric:tabular-nums}
 .kpi .s{font-size:.75em;color:var(--muted)}
 .filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;align-items:end}
+/* the Apply / Clear row: room for its buttons; when it wraps, the extra line (saved views) goes above, so Apply and Clear
+   stay level with the fields */
+.filters>.row{grid-column:span 2;flex-wrap:wrap-reverse;row-gap:6px}
 .toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
 .pager{display:flex;gap:8px;align-items:center;justify-content:flex-end;margin-top:8px;font-size:.85em;color:var(--muted)}
 .banner{border-radius:8px;padding:9px 12px;margin-bottom:12px;border:1px solid;font-size:.9em}

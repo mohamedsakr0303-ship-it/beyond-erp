@@ -202,7 +202,6 @@ def template_xlsx(db, name, lang="en", rows=None):
                     except ValueError:
                         pass
                 ws.cell(r, i, v)
-    ws.freeze_panes = ws.cell(FIRST_DATA_ROW, 1)
     ws.row_dimensions[HEADER_ROW].height = 32
     lst.sheet_state = "hidden"
     how = wb.create_sheet("How to fill" if not ar else "طريقة التعبئة")

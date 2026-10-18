@@ -414,6 +414,11 @@ def stock_table(db, warehouse_id=None, q=None, lang="en"):
                        r["last_date"] or "", r["value"]], "style": "item", "indent": 0} for r in data]
     rows.append({"cells": [L("total", lang), "", "", "", "", "", "", "", round(sum(r["value"] for r in data), 2)], "style": "grand",
                  "indent": 0})
+    if not any(r["sku"] for r in data):          # no item has a code: no empty Code column
+        cols = cols[1:]
+        for r in rows:
+            r["cells"] = r["cells"][1:]
+        rows[-1]["cells"][0] = L("total", lang)
     return {"title": L("stock", lang), "subtitle": f"{L('as_of', lang)} {acc.today()} · {db.setting('currency')}",
             "columns": cols, "rows": rows, "lang": lang}
 
@@ -1125,7 +1130,8 @@ def to_xlsx(table, company=""):
             bold = st in ("section", "header", "subtotal", "total", "grand")
             cell.font = Font(name="Arial", bold=bold, italic=st == "note", color="6B7280" if st == "note" else "111111")
             if isinstance(v, (int, float)):
-                cell.number_format = "0.0%" if f == "pct" else ("#,##0.00;[Red](#,##0.00);-" if f == "money" else "#,##0.##")
+                cell.number_format = "0.0%" if f == "pct" else ("#,##0.00;[Red](#,##0.00);-" if f == "money" else
+                                                                  ("#,##0" if float(v).is_integer() else "#,##0.###"))   # no stray "." on whole numbers
                 cell.alignment = Alignment(horizontal="right")
             if ci == 1 and row.get("indent"):
                 cell.alignment = Alignment(indent=row["indent"] * 2)
@@ -1140,7 +1146,6 @@ def to_xlsx(table, company=""):
     from openpyxl.utils import get_column_letter
     for i in range(2, n + 1):
         ws.column_dimensions[get_column_letter(i)].width = 18
-    ws.freeze_panes = "B6"
     ws.page_setup.orientation = "landscape" if n > 6 else "portrait"
     ws.page_setup.fitToWidth = 1
     ws.sheet_properties.pageSetUpPr.fitToPage = True

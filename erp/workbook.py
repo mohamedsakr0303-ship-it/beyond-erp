@@ -205,7 +205,6 @@ def build_workbook(db, template=False, data=None, hide=None, lang="en", extend=N
     for s in SHEETS:
         ws = wb.create_sheet(s["name"])
         ws.sheet_view.showGridLines = False
-        ws.freeze_panes = ws.cell(FIRST_DATA_ROW, 1)
         rows = data.get(s["name"], [])
         cols = s["cols"]
         letters = {c["key"]: L(i + 1) for i, c in enumerate(cols)}
@@ -503,7 +502,6 @@ def build_workbook(db, template=False, data=None, hide=None, lang="en", extend=N
         c.font = F(bold=True)
         c.number_format = MONEY
         c.border = Border(top=thin, bottom=Side(style="double"))
-    tb.freeze_panes = "C5"
     for i, sh in enumerate(POSTING_SHEETS):
         for j, lbl in enumerate(("opening", "period Dr", "period Cr")):
             c = tb.cell(4, 12 + 3 * i + j, f"{sh['name']} {lbl}")
@@ -1187,13 +1185,13 @@ def _scaffold_calculator(wb, db, colmap, F, fill, NAVY, BLUE, MONEY, L):
     for p in spec["derived"]:
         ws.cell(d, 6, lab(p.get("label") or p["key"], p.get("label_ar")))
         refs[p["key"]] = f"$G${d}"
-        ws.cell(d, 7, "=" + rentals.to_excel(p["expr"], refs)).number_format = "#,##0.##"
+        ws.cell(d, 7, "=" + rentals.to_excel(p["expr"], refs)).number_format = "General"
         d += 1
     if spec["area"].strip() in refs:
         area = refs[spec["area"].strip()]
     else:
         ws.cell(d, 6, lab("Area (m²)", "المساحة (م²)")).font = F(bold=True)
-        ws.cell(d, 7, "=" + rentals.to_excel(spec["area"], refs)).number_format = "#,##0.##"
+        ws.cell(d, 7, "=" + rentals.to_excel(spec["area"], refs)).number_format = "General"
         area = f"$G${d}"
         d += 1
 
@@ -1233,7 +1231,7 @@ def _scaffold_calculator(wb, db, colmap, F, fill, NAVY, BLUE, MONEY, L):
         q = ws.cell(row, 3, f"=MAX(ROUNDUP({qty[1:]},0),0)" if qty else None)
         if not qty:
             q.font = F(color=BLUE)
-        ws.cell(row, 4, f'=IF($A{row}="",0,N(C{row})*{fallback(code, "weight", row)}0{close("weight")})').number_format = "#,##0.#"
+        ws.cell(row, 4, f'=IF($A{row}="",0,N(C{row})*{fallback(code, "weight", row)}0{close("weight")})').number_format = "General"
         ws.cell(row, 6, f'=IF(N(J{row})>0,J{row},IF($A{row}="",0,{fallback(code, "monthly_rate", row)}0{close("monthly_rate")}))').number_format = MONEY
         ws.cell(row, 7, f"=N(C{row})*F{row}").number_format = MONEY
         ws.cell(row, 8, f'=IF($A{row}="",0,{fallback(code, "loss_price", row)}0{close("loss_price")})').number_format = MONEY
@@ -1243,7 +1241,7 @@ def _scaffold_calculator(wb, db, colmap, F, fill, NAVY, BLUE, MONEY, L):
     end = first + len(lines) - 1
     tot = end + 1
     ws.cell(tot, 1, "TOTAL  |  الإجمالي").font = F(bold=True)
-    for col, fmt in ((3, "#,##0"), (4, "#,##0.#"), (7, MONEY), (9, MONEY)):
+    for col, fmt in ((3, "#,##0"), (4, "General"), (7, MONEY), (9, MONEY)):
         c = ws.cell(tot, col, f"=SUM({L(col)}{first}:{L(col)}{end})")
         c.number_format, c.font = fmt, F(bold=True)
     sm = tot + 2
@@ -1282,7 +1280,7 @@ def _scaffold_calculator(wb, db, colmap, F, fill, NAVY, BLUE, MONEY, L):
         ws.cell(row, 1, lab(en, a))
         c = ws.cell(row, 2, v)
         c.font = F(color=BLUE)
-        c.number_format = "#,##0.##"
+        c.number_format = "General"
         ws.cell(row, 3, unit)
         at[en] = f"$B${row}"
     from openpyxl.worksheet.datavalidation import DataValidation
@@ -1308,9 +1306,9 @@ def _scaffold_calculator(wb, db, colmap, F, fill, NAVY, BLUE, MONEY, L):
             ws.cell(row, 2, "Yes").font = F(color=BLUE)
         ws.cell(row, 3, labels.get(r_["basis"], r_["basis"]) + f'  (cost {labels.get(r_.get("cost_basis") or "m2")})')
         c = ws.cell(row, 4, r_["price"])
-        c.font, c.number_format = F(color=BLUE), "#,##0.##"
+        c.font, c.number_format = F(color=BLUE), "General"
         qty = "1" if r_["basis"] == "rent_months" else measure.get(r_["basis"], "1")
-        ws.cell(row, 5, f"={qty}").number_format = "#,##0.##"
+        ws.cell(row, 5, f"={qty}").number_format = "General"
         gross = f"N({at['Monthly rent used']})*D{row}" if r_["basis"] == "rent_months" else f"E{row}*D{row}"
         ws.cell(row, 6, f'=IF(B{row}="Yes",MAX({gross},N(G{row})),0)').number_format = MONEY
         c = ws.cell(row, 7, r_.get("min_charge") or 0)
@@ -1332,7 +1330,6 @@ def _scaffold_calculator(wb, db, colmap, F, fill, NAVY, BLUE, MONEY, L):
     deliv = [first_s + i for i, r_ in enumerate(rates["services"]) if r_.get("when") != "return"]
     c = ws.cell(st + 2, 6, f"=N({at['Monthly rent used']})" + "".join(f"+F{x}" for x in deliv))
     c.number_format, c.font = MONEY, F(bold=True)
-    ws.freeze_panes = "A5"
 
 
 def _crew_calculator(wb, db, F, fill, NAVY, BLUE, MONEY):
@@ -1370,7 +1367,7 @@ def _crew_calculator(wb, db, F, fill, NAVY, BLUE, MONEY):
             ws.cell(r, 4, items[k][0])
             ws.cell(r, 5, items[k][1])
         ws.cell(r, 1).number_format = "yyyy-mm-dd"
-        ws.cell(r, 10, f'=IF(F{r}="","",N(F{r})*IF(N(G{r})=0,1,G{r})*IF(N(H{r})=0,1,H{r})*IF(N(I{r})=0,1,I{r}))').number_format = "#,##0.##"
+        ws.cell(r, 10, f'=IF(F{r}="","",N(F{r})*IF(N(G{r})=0,1,G{r})*IF(N(H{r})=0,1,H{r})*IF(N(I{r})=0,1,I{r}))').number_format = "General"
         ws.cell(r, 12, f'=IF(J{r}="",0,ROUND(J{r}*N(K{r}),2))').number_format = MONEY
         ws.cell(r, 13).number_format = MONEY
         ws.cell(r, 14, f'=IF(M{r}="","",N(M{r})-L{r})').number_format = MONEY
@@ -1378,7 +1375,7 @@ def _crew_calculator(wb, db, F, fill, NAVY, BLUE, MONEY):
     ws.cell(t, 4, "TOTAL  |  الإجمالي").font = F(bold=True)
     for col, f in ((10, f"=SUM(J{first}:J{t - 1})"), (12, f"=SUM(L{first}:L{t - 1})"), (13, f"=SUM(M{first}:M{t - 1})"), (14, f"=M{t}-SUMIFS(L{first}:L{t - 1},M{first}:M{t - 1},\"<>\")")):
         c = ws.cell(t, col, f)
-        c.font, c.number_format = F(bold=True), MONEY if col != 10 else "#,##0.##"
+        c.font, c.number_format = F(bold=True), MONEY if col != 10 else "General"
     ws.cell(t + 1, 4, "Difference = what was paid − what the sheet calculates, on the rows where a payment is typed").font = F(size=8, color="555555")
     # per crew summary
     s0 = t + 3
@@ -1388,11 +1385,10 @@ def _crew_calculator(wb, db, F, fill, NAVY, BLUE, MONEY):
     for k in range(8):
         r = s0 + 1 + k
         ws.cell(r, 2).font = F(color=BLUE)
-        ws.cell(r, 3, f'=IF(B{r}="","",SUMIFS(J{first}:J{t - 1},B{first}:B{t - 1},B{r}))').number_format = "#,##0.##"
+        ws.cell(r, 3, f'=IF(B{r}="","",SUMIFS(J{first}:J{t - 1},B{first}:B{t - 1},B{r}))').number_format = "General"
         ws.cell(r, 4, f'=IF(B{r}="","",SUMIFS(L{first}:L{t - 1},B{first}:B{t - 1},B{r}))').number_format = MONEY
         ws.cell(r, 5, f'=IF(B{r}="","",SUMIFS(M{first}:M{t - 1},B{first}:B{t - 1},B{r}))').number_format = MONEY
         ws.cell(r, 6, f'=IF(B{r}="","",D{r}-E{r})').number_format = MONEY
-    ws.freeze_panes = "A6"
 
 
 def _budget_sheet(wb, colmap, F, fill, NAVY, BLUE, MONEY, PCT, L):
@@ -1911,7 +1907,6 @@ def _dashboard(wb, data, colmap, posting, rng, pl_refs, bs_refs, n_bu, audit_ref
     end = cend + 2
     if "rentals" not in set(hide or ()) and "Rental Contracts" in colmap:
         end = _ongoing_rents(ws, colmap, cend + 3, F, fill, L)
-    ws.freeze_panes = "A4"
     ws.page_setup.orientation = "landscape"
     ws.page_setup.paperSize = ws.PAPERSIZE_A4
     ws.sheet_properties.pageSetUpPr.fitToPage = True
@@ -2446,7 +2441,6 @@ def _partner_pack(wb, data, colmap, posting, rng, within, upto, pl_refs, n_bu, a
         ws.column_dimensions[col].width = 18
     for c in range(11, 20):
         ws.column_dimensions[L(c)].hidden = True
-    ws.freeze_panes = "A4"
     ws.page_setup.orientation = "portrait"
     ws.page_setup.paperSize = ws.PAPERSIZE_A4
     ws.sheet_properties.pageSetUpPr.fitToPage = True
