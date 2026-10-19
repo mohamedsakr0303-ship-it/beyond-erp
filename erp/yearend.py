@@ -78,9 +78,11 @@ def _month_list(s, e):
     return out
 
 
-def checklist(db, start, end):
+def checklist(db, start, end, lang="en"):
     """What to look at before closing. state: ok | warn (should be fixed or knowingly accepted) | info."""
     out = []
+    T = (lambda en, ar: ar) if lang == "ar" else (lambda en, ar: en)  # noqa: E731
+    nm = lambda r: (r.get("name_ar") or r["name"]) if lang == "ar" else r["name"]  # noqa: E731 — an account's name in the reader's language
 
     def add(key, state, title, detail="", href=""):
         out.append({"key": key, "state": state, "title": title, "detail": detail, "href": href})
@@ -89,33 +91,33 @@ def checklist(db, start, end):
         try:
             fn()
         except Exception as e:     # noqa: BLE001 — one module's problem must not hide the rest of the list
-            add(fn.__name__, "info", "Could not check " + fn.__name__.strip("_").replace("_", " "), str(e)[:200])
+            add(fn.__name__, "info", T("Could not check ", "تعذر فحص ") + fn.__name__.strip("_").replace("_", " "), str(e)[:200])
 
     def _trial_balance():
         tb = acc.trial_balance(db, start, end)
-        add("trial_balance", "ok" if tb["balanced"] else "warn", "Trial balance balances" if tb["balanced"] else "Trial balance does not balance",
-            f"Debits {tb['totals']['debit']:,.2f} · credits {tb['totals']['credit']:,.2f}", "#/report/trial_balance?" + f"date_from={start}&date_to={end}")
+        add("trial_balance", "ok" if tb["balanced"] else "warn", T("Trial balance balances", "ميزان المراجعة متوازن") if tb["balanced"] else T("Trial balance does not balance", "ميزان المراجعة غير متوازن"),
+            T(f"Debits {tb['totals']['debit']:,.2f} · credits {tb['totals']['credit']:,.2f}", f"المدين {tb['totals']['debit']:,.2f} · الدائن {tb['totals']['credit']:,.2f}"), "#/report/trial_balance?" + f"date_from={start}&date_to={end}")
 
     def _approvals():
         n = db.one("SELECT COUNT(*) n FROM approvals WHERE status='pending' AND (date='' OR date<=?)", (end,))["n"]
-        add("approvals", "warn" if n else "ok", f"{n} entr{'ies' if n != 1 else 'y'} waiting for approval" if n else "Nothing waiting for approval",
-            "Approve or reject them — after closing they can no longer be posted in this year" if n else "", "#/approvals")
+        add("approvals", "warn" if n else "ok", T(f"{n} entr{'ies' if n != 1 else 'y'} waiting for approval", f"{n} قيد في انتظار الاعتماد") if n else T("Nothing waiting for approval", "لا يوجد ما ينتظر الاعتماد"),
+            T("Approve or reject them — after closing they can no longer be posted in this year", "اعتمدها أو ارفضها — بعد الإقفال لا يمكن ترحيلها في هذه السنة") if n else "", "#/approvals")
 
     def _banks():
-        rows = db.q("""SELECT a.code, a.name, (SELECT MAX(s.date_to) FROM bank_statements s WHERE s.account=a.code AND s.status='reconciled') rec,
+        rows = db.q("""SELECT a.code, a.name, a.name_ar, (SELECT MAX(s.date_to) FROM bank_statements s WHERE s.account=a.code AND s.status='reconciled') rec,
                               (SELECT COUNT(*) FROM bank_statements s WHERE s.account=a.code) n
                        FROM accounts a WHERE a.active=1 AND a.subtype='cash' AND a.role IN ('bank','bank2') OR
                              (a.subtype='cash' AND EXISTS (SELECT 1 FROM bank_statements s WHERE s.account=a.code))""")
         behind = [r for r in rows if r["n"] and (r["rec"] or "") < end]
         never = [r for r in rows if not r["n"]]
         if behind:
-            add("bank", "warn", "Bank reconciliation is not done to the year end",
-                "; ".join(f"{r['code']} {r['name']}: reconciled to {r['rec'] or 'never'}" for r in behind), "#/bankrec")
+            add("bank", "warn", T("Bank reconciliation is not done to the year end", "التسوية البنكية لم تتم حتى نهاية السنة"),
+                "؛ ".join(T(f"{r['code']} {nm(r)}: reconciled to {r['rec'] or 'never'}", f"{r['code']} {nm(r)}: مسوّى حتى {r['rec'] or 'لم يُسوَّ'}") for r in behind), "#/bankrec")
         elif rows and not never:
-            add("bank", "ok", "Banks are reconciled to the year end", "", "#/bankrec")
+            add("bank", "ok", T("Banks are reconciled to the year end", "البنوك مسوّاة حتى نهاية السنة"), "", "#/bankrec")
         if never:
-            add("bank_none", "info", "No bank statement imported for " + ", ".join(f"{r['code']} {r['name']}" for r in never),
-                "Importing the year's statements and reconciling them confirms the bank balances", "#/bankrec")
+            add("bank_none", "info", T("No bank statement imported for ", "لم يُستورد كشف بنك لـ ") + "، ".join(f"{r['code']} {nm(r)}" for r in never),
+                T("Importing the year's statements and reconciling them confirms the bank balances", "استيراد كشوف السنة وتسويتها يؤكد أرصدة البنوك"), "#/bankrec")
 
     def _depreciation():
         from . import assets
@@ -123,8 +125,9 @@ def checklist(db, start, end):
             return
         p = assets.plan_depreciation(db, end[:7])
         add("depreciation", "warn" if p["rows"] else "ok",
-            f"Depreciation not booked up to {end[:7]}: {p['total']:,.2f} on {len(p['rows'])} asset(s)" if p["rows"] else "Depreciation is booked for the whole year",
-            "Run depreciation up to the last month of the year" if p["rows"] else "", "#/depreciation")
+            T(f"Depreciation not booked up to {end[:7]}: {p['total']:,.2f} on {len(p['rows'])} asset(s)", f"الإهلاك غير مسجل حتى {end[:7]}: {p['total']:,.2f} على {len(p['rows'])} أصل")
+            if p["rows"] else T("Depreciation is booked for the whole year", "الإهلاك مسجل عن السنة كاملة"),
+            T("Run depreciation up to the last month of the year", "شغّل الإهلاك حتى آخر شهر في السنة") if p["rows"] else "", "#/depreciation")
 
     def _payroll():
         if not db.one("SELECT 1 FROM employees"):
@@ -135,46 +138,49 @@ def checklist(db, start, end):
             return
         first = min(used)
         missing = [m for m in _month_list(start, end) if m >= first and m not in posted]
-        add("payroll", "warn" if missing else "ok", f"Payroll not posted for {', '.join(missing)}" if missing else "Payroll is posted for every month",
+        add("payroll", "warn" if missing else "ok", T(f"Payroll not posted for {', '.join(missing)}", f"الرواتب غير مرحّلة عن {'، '.join(missing)}") if missing else T("Payroll is posted for every month", "الرواتب مرحّلة عن كل الشهور"),
             "", "#/payruns")
 
     def _recurring():
         from . import recurring
         due = [r for r in recurring.due_list(db, end) if r["due"] >= start]
-        add("recurring", "warn" if due else "ok", f"{len(due)} recurring entr{'ies' if len(due) != 1 else 'y'} due in the year not posted or skipped" if due
-            else "Recurring entries are all posted or skipped", ", ".join(sorted({r["name"] for r in due}))[:300], "#/recurring")
+        add("recurring", "warn" if due else "ok", T(f"{len(due)} recurring entr{'ies' if len(due) != 1 else 'y'} due in the year not posted or skipped",
+              f"{len(due)} قيد دوري مستحق في السنة لم يُرحّل أو يُتخطَّ") if due
+            else T("Recurring entries are all posted or skipped", "كل القيود الدورية مرحّلة أو متخطاة"), ", ".join(sorted({r["name"] for r in due}))[:300], "#/recurring")
 
     def _drafts():
         n = db.one("SELECT COUNT(*) n FROM extracts WHERE status='draft' AND (date IS NULL OR date<=?)", (end,))["n"]
-        add("invoices", "warn" if n else "ok", f"{n} invoice{'s' if n != 1 else ''} still draft" if n else "No draft invoices",
-            "Post or delete them: a draft is not in the books" if n else "", "#/invoices")
+        add("invoices", "warn" if n else "ok", T(f"{n} invoice{'s' if n != 1 else ''} still draft", f"{n} فاتورة ما زالت مسودة") if n else T("No draft invoices", "لا توجد فواتير مسودة"),
+            T("Post or delete them: a draft is not in the books", "رحّلها أو احذفها: المسودة ليست في الدفاتر") if n else "", "#/invoices")
 
     def _cash():
-        rows = db.q("""SELECT a.code, a.name, COALESCE(SUM(l.debit-l.credit),0) n FROM accounts a JOIN journal_lines l ON l.account=a.code
+        rows = db.q("""SELECT a.code, a.name, a.name_ar, COALESCE(SUM(l.debit-l.credit),0) n FROM accounts a JOIN journal_lines l ON l.account=a.code
                        JOIN journal_entries e ON e.id=l.entry_id WHERE e.status='posted' AND e.date<=? AND a.subtype='cash'
-                       GROUP BY a.code HAVING n<0""", (end,))
-        add("cash", "warn" if rows else "ok", "Cash / bank accounts below zero at the year end" if rows else "No cash or bank account below zero",
-            "; ".join(f"{r['code']} {r['name']}: {to_major(r['n']):,.2f}" for r in rows), "#/cash")
+                       GROUP BY a.code, a.name, a.name_ar HAVING n<0""", (end,))
+        add("cash", "warn" if rows else "ok", T("Cash / bank accounts below zero at the year end", "حسابات نقدية / بنكية بالسالب في نهاية السنة") if rows
+            else T("No cash or bank account below zero", "لا يوجد حساب نقدي أو بنكي بالسالب"),
+            "؛ ".join(f"{r['code']} {nm(r)}: {to_major(r['n']):,.2f}" for r in rows), "#/cash")
 
     def _open_pos():
         n = db.one("SELECT COUNT(*) n FROM purchase_orders WHERE status IN ('approved','partial') AND date<=?", (end,))["n"]
         if n:
-            add("purchase_orders", "info", f"{n} purchase order{'s' if n != 1 else ''} from the year not fully received",
-                "They carry into the next year as commitments — nothing to book", "#/pos")
+            add("purchase_orders", "info", T(f"{n} purchase order{'s' if n != 1 else ''} from the year not fully received", f"{n} أمر شراء من السنة لم يُستلم بالكامل"),
+                T("They carry into the next year as commitments — nothing to book", "تنتقل للسنة التالية كالتزامات — لا يلزم قيد"), "#/pos")
 
     def _earlier():
         prev = db.one("SELECT 1 FROM journal_entries WHERE status='posted' AND date<? LIMIT 1", (start,))
         if prev:
             s0, e0 = year_of(db, (_dt.date.fromisoformat(start) - _dt.timedelta(days=1)).isoformat())
             if not db.one("SELECT 1 FROM year_closes WHERE year_end=?", (e0,)):
-                add("earlier", "info", f"The year before ({s0} → {e0}) is not closed", "Usually years are closed in order", "#/year-end")
+                add("earlier", "info", T(f"The year before ({s0} → {e0}) is not closed", f"السنة السابقة ({s0} ← {e0}) غير مقفلة"),
+                    T("Usually years are closed in order", "تُقفل السنوات عادة بالترتيب"), "#/year-end")
 
     for f in (_trial_balance, _approvals, _banks, _depreciation, _payroll, _recurring, _drafts, _cash, _open_pos, _earlier):
         safe(f)
     return out
 
 
-def preview(db, year_end):
+def preview(db, year_end, lang="en"):
     s, e = year_of(db, year_end)
     if e != year_end:
         raise ValidationError(f"{year_end} is not the end of a financial year (the year runs {s} → {e})")
@@ -184,7 +190,7 @@ def preview(db, year_end):
     row = db.one("SELECT * FROM year_closes WHERE year_end=?", (e,))
     return {"start": s, "end": e, "net_profit": pnl["net_profit"], "revenue": pnl["net_sales"], "gross_profit": pnl["gross_profit"],
             "ebitda": pnl["ebitda"], "retained_before": retained, "retained_after": round(retained + pnl["net_profit"], 2),
-            "checks": checklist(db, s, e), "closed": dict(row) if row else None, "lock_date": db.setting("lock_date") or "",
+            "checks": checklist(db, s, e, lang), "closed": dict(row) if row else None, "lock_date": db.setting("lock_date") or "",
             "ended": e < acc.today()}
 
 

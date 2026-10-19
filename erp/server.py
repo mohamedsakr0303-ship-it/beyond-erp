@@ -22,7 +22,7 @@ from urllib.parse import parse_qs, urlparse
 
 from . import assets, bankrec, custody, entries, industries, payroll, equity, loans, recurring, rental_docs, rentals, sales, sales_docs, __version__
 from . import accounting as acc
-from . import auth, branding, cloud, countries, documents, einvoice, interchange, looks, reports
+from . import auth, branding, cloud, countries, documents, textl10n, einvoice, interchange, looks, reports
 from .db import ACTIONS, Database, MODULES, PERM_DEFAULTS, SUBMODULES, SUBTABS, SUBTYPES, to_major, to_minor
 
 STATIC = Path(__file__).resolve().parent / "static"
@@ -241,6 +241,7 @@ def setup(ctx):
         ctx.db.set_setting("company_name", acc.text(b["company_name"]))
     if b.get("language") in ("en", "ar"):
         ctx.db.set_setting("language", b["language"])
+        textl10n.seed_names(ctx.db, b["language"])          # the main store, the general chat room… in that language
     token, user = auth.login(ctx.db, b.get("username"), b.get("password"))
     ctx.db.log(user["username"], "setup", "first administrator created")
     if b.get("demo") in (True, 1, "1", "true", "on"):     # a new, unshared company can start with the demo company
@@ -362,6 +363,8 @@ def put_settings(ctx):
             if ctx.body[k] and ctx.body[k] not in ok_vals:
                 raise acc.ValidationError(f"{k}: unknown value '{ctx.body[k]}'")
     allowed = set(PUBLIC_SETTINGS) | {"backup_keep"}
+    if ctx.body.get("language") in ("en", "ar") and ctx.body["language"] != (ctx.db.setting("language") or "en"):
+        textl10n.seed_names(ctx.db, ctx.body["language"])     # the company's language changed: its starting records follow
     if "banks" in ctx.body:   # several bank accounts; one is the default used on documents
         seen, clean = set(), []
         for b in ctx.body["banks"] if isinstance(ctx.body["banks"], list) else []:
@@ -4282,6 +4285,8 @@ def report(ctx, name):
         else:
             ctx.require(perm, "view")
         table = reports.build(ctx.db, name, ctx.q)
+    # texts the app wrote (memos, kinds) in the report's language
+    table = textl10n.table(table, "ar" if (ctx.q.get("lang") or ctx.lang) == "ar" else "en")
     fmt = ctx.q.get("format") or "json"
     company = ctx.db.setting("company_name", "")
     fname = re.sub(r"[^\w\-]+", "_", table["title"])[:60] + f"_{acc.today()}"
@@ -4796,7 +4801,7 @@ def ai_policy_get(ctx):
     from . import ai
     p = ai.policy(ctx.db)
     out = {"policy": p if ctx.user.get("is_super") else {k: p[k] for k in ("enabled", "name", "avatar", "write", "model", "daily_limit")},
-           "allowed": ai.allowed(p, ctx.user), "models": ai.MODELS, "providers": ai.PROVIDERS, "used_today": ai.used_today(ctx.db, ctx.user),
+           "allowed": ai.allowed(p, ctx.user), "models": [[m, textl10n.text(lbl, ctx.lang)] for m, lbl in ai.MODELS], "providers": ai.PROVIDERS, "used_today": ai.used_today(ctx.db, ctx.user),
            "has_key": ai.has_key(ctx.db)}
     return ok(out)
 
@@ -4950,7 +4955,7 @@ def year_end_list(ctx):
 @route("GET", "/api/year-end/<end>", "accounting.yearend")
 def year_end_get(ctx, end):
     from . import yearend
-    return ok(yearend.preview(ctx.db, acc.clean_date(end)))
+    return ok(yearend.preview(ctx.db, acc.clean_date(end), ctx.lang))
 
 
 @route("POST", "/api/year-end/<end>/close", "accounting.yearend", "edit")
@@ -5559,6 +5564,8 @@ class Ctx:
         self.app, self.db, self.user, self.token, self.q, self.body, self.raw = app, db, user, token, q, body, raw
         self.server = app  # backup()/backups() live on the app object
         self.headers = headers
+        # the reader's language (screens send it; downloads say ?lang=)
+        self.lang = "ar" if (headers.get("x-lang") or (q or {}).get("lang") or "") == "ar" else "en"
 
     def can(self, module, level="view"):
         return auth.can(self.user, module, level)
@@ -5612,6 +5619,20 @@ def handle(app, method, target, headers, raw=b"", as_user=None, dry=False):
     as_user: run as this username without a session (replaying a change from the shared workspace).
     dry: validation run inside a transaction the caller rolls back (no backups).
     """
+    reply = _handle(app, method, target, headers, raw, as_user, dry)
+    lang = headers.get("x-lang") or (parse_qs(urlparse(target).query).get("lang") or [""])[-1]
+    if lang == "ar" and isinstance(reply, Reply) and reply.status >= 400 and "json" in (reply.ctype or ""):
+        try:                                   # the message in the reader's language
+            data = json.loads(reply.body)
+            if isinstance(data, dict) and isinstance(data.get("error"), str):
+                data["error"] = textl10n.error(data["error"], "ar")
+                reply.body = json.dumps(data, ensure_ascii=False, default=str).encode("utf-8")
+        except ValueError:
+            pass
+    return reply
+
+
+def _handle(app, method, target, headers, raw, as_user, dry):
     if dry:
         app = _DryRunApp(app)
     url = urlparse(target)
@@ -5694,6 +5715,9 @@ def handle(app, method, target, headers, raw=b"", as_user=None, dry=False):
                 reply = fn(ctx, **match.groupdict())
             if sc and method == "GET" and isinstance(reply, Reply) and reply.status == 200 and "json" in (reply.ctype or ""):
                 reply.body = json.dumps(scope.narrow(sc, url.path, json.loads(reply.body)), ensure_ascii=False, default=str).encode("utf-8")
+            if ctx.lang != "en" and method == "GET" and isinstance(reply, Reply) and reply.status == 200 and "json" in (reply.ctype or ""):
+                # texts the app wrote into the books (memos, schedule labels…) in the reader's language
+                reply.body = json.dumps(textl10n.walk(json.loads(reply.body), ctx.lang), ensure_ascii=False, default=str).encode("utf-8")
             return reply
         return ok({"error": "Not found"}, 404)
     except PermissionError as e:

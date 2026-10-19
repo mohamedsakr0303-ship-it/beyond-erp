@@ -152,7 +152,7 @@ AR = {
     "Office rent {month}": "إيجار المكتب {month}", "Electricity {month}": "الكهرباء {month}", "Clinic rent {month}": "إيجار العيادة {month}",
     "Showroom rent {month}": "إيجار المعرض {month}", "Office & dispatch rent {month}": "إيجار المكتب والتوزيع {month}",
     "Yard & office rent {month}": "إيجار الساحة والمكتب {month}", "Audit fee accrual {month}": "استحقاق أتعاب المراجعة {month}",
-    "Accrued audit fee": "أتعاب مراجعة مستحقة", "Accrued insurance premium": "قسط تأمين مستحق", "Monthly depreciation": "إهلاك شهري",
+    "Accrued audit fee": "أتعاب مراجعة مستحقة", "Audit fee accrual": "استحقاق أتعاب المراجعة", "Accrued insurance premium": "قسط تأمين مستحق", "Monthly depreciation": "إهلاك شهري",
     "Design software subscription": "اشتراك برنامج التصميم", "Social media campaign": "حملة على وسائل التواصل", "Legal & audit retainer": "أتعاب قانونية ومراجعة",
     "Clinic management & booking software": "برنامج إدارة العيادة والحجز",
     "Coffee & hospitality": "قهوة وضيافة", "Fittings and fixings": "مستلزمات تركيب", "Grout and silicone": "روبة وسيليكون", "Office supplies": "أدوات مكتبية",

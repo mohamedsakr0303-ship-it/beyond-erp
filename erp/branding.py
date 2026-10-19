@@ -71,6 +71,9 @@ def get(db):
     if b["boq_notes"] == DEFAULT_BOQ_NOTES:      # never changed: the usual terms of the company's country
         from . import countries
         b["boq_notes"] = countries.profile(db)["boq_notes"]
+    cur = (db.setting("currency", "") or "").upper()
+    if "cur_words" not in saved and cur and cur != "EGP":   # amounts in words name the company's own currency
+        b.update({"cur_words": cur, "cur_fraction": "", "cur_words_ar": cur, "cur_fraction_ar": ""})
     return b
 
 

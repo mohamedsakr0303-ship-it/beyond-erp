@@ -71,7 +71,7 @@ async function api(method, path, body, raw) {
 }
 async function apiCall(method, path, body, raw) {
   if (STATIC) return staticApi(method, path, body, raw);
-  const opt = { method, headers: { "X-Requested-With": "BeyondERP" }, credentials: "same-origin" };
+  const opt = { method, headers: { "X-Requested-With": "BeyondERP", "X-Lang": S.lang }, credentials: "same-origin" };
   if (raw) { opt.body = raw; opt.headers["Content-Type"] = "application/octet-stream"; }
   else if (body !== undefined) { opt.body = JSON.stringify(body); opt.headers["Content-Type"] = "application/json"; }
   const r = await fetch(path, opt);
@@ -2660,7 +2660,7 @@ PAGES.payables = async (view, parts, q) => {
       <td style="white-space:nowrap">${can("purchasing.payments", "edit") && r.balance > 0 ? `<button class="btn sm" data-a="pay" data-p="${esc(r.party)}" data-b="${r.balance}" data-acc="${r.account}">${t("m_payments")}</button>
         ${(S.boot.accounts.find(x => String(x.code) === String(r.account)) || {}).subtype === "payable" ? `<button class="btn sm" data-a="disc" data-p="${esc(r.party)}" data-b="${r.balance}" data-acc="${r.account}" title="${ar ? "المورد قبل مبلغاً أقل: إقفال الباقي كخصم" : "The supplier accepted less: close the rest as a discount"}">${ar ? "تسوية بخصم" : "Settle with discount"}</button>` : ""}` : ""}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${t("nothing")}</div>`}</div>
     ${d.deals.length ? `<div class="card"><h2>${t("deal_ref")}</h2><div class="tbl"><table><thead><tr><th>${t("deal_ref")}</th><th>${t("supplier")}</th><th class="num">${t("amount")}</th><th class="num">${t("savings")}</th><th class="num">${t("net_cost")}</th><th>${t("status")}</th></tr></thead><tbody>
-      ${d.deals.map(g => `<tr><td>${esc(g.ref)}</td><td>${esc(g.vendor)}</td><td class="num">${money(g.quoted)}</td><td class="num">${money(g.savings)}</td><td class="num">${money(g.cost)}</td><td>${esc(g.status)}${g.status === "Settled" && owedBy[g.vendor] > 0 ? ` <span class="chip warn" title="${ar ? "الحالة «تمت التسوية» لكن المورد ما زال له رصيد — سدده أو «تسوية بخصم»" : "Marked Settled, but this supplier is still owed money — pay it or use “Settle with discount”"}">${ar ? "ما زال مستحقاً" : "still owed"} ${money(owedBy[g.vendor])}</span>` : ""}</td></tr>`).join("")}</tbody></table></div></div>` : ""}`;
+      ${d.deals.map(g => `<tr><td>${esc(g.ref)}</td><td>${esc(g.vendor)}</td><td class="num">${money(g.quoted)}</td><td class="num">${money(g.savings)}</td><td class="num">${money(g.cost)}</td><td>${esc(tl(g.status))}${g.status === "Settled" && owedBy[g.vendor] > 0 ? ` <span class="chip warn" title="${ar ? "الحالة «تمت التسوية» لكن المورد ما زال له رصيد — سدده أو «تسوية بخصم»" : "Marked Settled, but this supplier is still owed money — pay it or use “Settle with discount”"}">${ar ? "ما زال مستحقاً" : "still owed"} ${money(owedBy[g.vendor])}</span>` : ""}</td></tr>`).join("")}</tbody></table></div></div>` : ""}`;
 };
 PAGES.receivables = async (view, parts, q) => {
   await reportPage(view, "receivables", q, ["dates"]);
@@ -4310,7 +4310,7 @@ PAGES.coa = async (view, parts, q) => {
     { k: "type", l: t("type"), type: "select", opts: types.map(x => [x, tl(x)]), v: a.type || "Expense", change: "atype", dis: a.used },
     { k: "subtype", l: t("statement_line"), type: "select", opts: [], v: a.subtype },
     { k: "active", l: t("active"), type: "checkbox", v: a.active !== 0 },
-    { html: a.role ? `<div class="banner info">${t("role")}: <b>${esc(a.role)}</b> — ${S.lang === "ar" ? "يمكن تغيير الرقم والاسم بحرية؛ النظام يتبع الدور." : "you can change the code and name freely; the system follows the role."}</div>` : "", span: "spanall" }]),
+    { html: a.role ? `<div class="banner info">${t("role")}: <b dir="ltr"><code>${esc(a.role)}</code></b> — ${S.lang === "ar" ? "يمكن تغيير الرقم والاسم بحرية؛ النظام يتبع الدور." : "you can change the code and name freely; the system follows the role."}</div>` : "", span: "spanall" }]),
   async v => { if (a.used) v.type = a.type; if (a.code && !a._new) await api("PUT", "/api/accounts/" + encodeURIComponent(a.code), v); else await api("POST", "/api/accounts", v); await refreshBoot(); toast(t("saved")); },
   { extraButtons: a.code && !a._new && !a.role && !a.used && can("accounting.coa", "edit") ? `<button type="button" class="btn danger" data-a="adel">${t("delete")}</button>` : "",
     onOpen: f => { S.H.atype = () => { const ty = $("[name=type]", f).value; const s = $("[name=subtype]", f); s.innerHTML = S.boot.enums.subtypes[ty].map(x => `<option value="${x}" ${x === a.subtype ? "selected" : ""}>${esc(sub(x))}</option>`).join(""); }; S.H.atype(); } });
@@ -4328,7 +4328,7 @@ PAGES.coa = async (view, parts, q) => {
     <input type="search" class="coa-q" placeholder="${L2("Find an account — code or name", "ابحث عن حساب — بالكود أو الاسم")}" data-input="coaq" style="min-width:220px;flex:1;max-width:360px">
     ${inactive ? `<label class="f chk"><input type="checkbox" data-change="coainact" ${q.inactive ? "checked" : ""}>${S.lang === "ar" ? "إظهار الحسابات غير النشطة" : "Show inactive accounts"} (${inactive})</label>` : ""}<span class="spacer"></span>${exportMenu("trial_balance", {})}</div>` +
     filterBar(q, ["asof"]) + types.map(ty => `<div class="card coa-card"><div class="row" style="justify-content:space-between;align-items:center"><h2>${esc(tl(ty))}</h2>${add ? `<button class="btn sm" data-a="anew" data-type="${ty}">+ ${L2("Add", "إضافة")} ${esc(tl(ty))}</button>` : ""}</div><div class="tbl"><table><thead><tr><th>${t("code")}</th><th>${t("account")}</th><th>${t("statement_line")}</th><th>${t("normal")}</th><th class="num">${t("balance")}</th></tr></thead><tbody>
-    ${rows.filter(a => a.type === ty && (a.active || q.inactive)).map(a => `<tr class="click coa-row ${a.active ? "" : "void"}" data-a="${ed ? "aedit" : ""}" data-id="${esc(a.code)}" data-s="${esc([a.code, a.name, a.name_ar, sub(a.subtype), a.role].join(" ").toLowerCase())}"><td><b>${esc(a.code)}</b></td><td>${esc(aname(a))} ${a.role ? `<span class="chip">${esc(a.role)}</span>` : ""}</td><td>${esc(sub(a.subtype))}</td><td>${tl(a.normal) === a.normal ? (S.lang === "ar" ? (a.normal === "Debit" ? "مدين" : "دائن") : a.normal) : ""}</td><td class="num ${a.balance < 0 ? "neg" : ""}">${a.balance ? money(a.balance) : "—"}</td></tr>`).join("")}</tbody></table></div></div>`).join("");
+    ${rows.filter(a => a.type === ty && (a.active || q.inactive)).map(a => `<tr class="click coa-row ${a.active ? "" : "void"}" data-a="${ed ? "aedit" : ""}" data-id="${esc(a.code)}" data-s="${esc([a.code, a.name, a.name_ar, sub(a.subtype), a.role].join(" ").toLowerCase())}"><td><b>${esc(a.code)}</b></td><td>${esc(aname(a))} ${a.role ? `<span class="chip" title="${esc(a.role)}">${esc(L2("System account", "حساب نظامي"))}</span>` : ""}</td><td>${esc(sub(a.subtype))}</td><td>${tl(a.normal) === a.normal ? (S.lang === "ar" ? (a.normal === "Debit" ? "مدين" : "دائن") : a.normal) : ""}</td><td class="num ${a.balance < 0 ? "neg" : ""}">${a.balance ? money(a.balance) : "—"}</td></tr>`).join("")}</tbody></table></div></div>`).join("");
 };
 
 // ------------------------------------------------------------------ offers
@@ -4591,7 +4591,7 @@ PAGES.data = async (view) => {
       <div class="f">${t("file")}<input type="file" id="impf" accept=".xlsx,.xlsm,.json,.csv,.zip,.sqlite3,.sqlite,.db"></div>
       <label class="f spanall">${L2("…or a Google Sheets link", "…أو رابط Google Sheets")}<input id="impurl" type="url" placeholder="https://docs.google.com/spreadsheets/d/…" dir="ltr"></label>
       <label class="f">${t("format")}<select id="impfmt"><option value="xlsx">${esc(L2("Excel workbook or sheet (.xlsx)", "مصنف أو ورقة Excel (.xlsx)"))}</option><option value="zip">${esc(L2("Excel + attached files (.zip)", "Excel + الملفات المرفقة (.zip)"))}</option><option value="json">${esc(L2("JSON backup (.json)", "نسخة JSON (.json)"))}</option><option value="csv">${esc(L2("CSV — one sheet (.csv)", "CSV — ورقة واحدة (.csv)"))}</option>${S.boot.user.is_super ? `<option value="sqlite">${esc(L2("Database backup file (.sqlite3)", "ملف النسخة الاحتياطية لقاعدة البيانات (.sqlite3)"))}</option>` : ""}<option value="legacy">${esc(L2("Older BEYOND workbook (v0.6 – v1.4)", "مصنف BEYOND قديم (v0.6 – v1.4)"))}</option></select></label>
-      <label class="f" id="impsheetl" style="display:none">CSV → <select id="impsheet">${sheets.map(s => `<option value="${esc(s.name)}">${esc(s.name)}</option>`).join("")}</select></label>
+      <label class="f" id="impsheetl" style="display:none">CSV → <select id="impsheet">${sheets.map(s => `<option value="${esc(s.name)}">${esc(S.lang === "ar" && s.ar ? s.ar : s.name)}</option>`).join("")}</select></label>
       <label class="f">${t("mode")}<select id="impmode"><option value="new">${esc(L2("New rows only — skip what is already in the books", "الجديد فقط — تخطي الموجود بالفعل"))}</option><option value="append">${t("append")}</option>${S.boot.user.is_super ? `<option value="replace">${t("replace")}</option>` : ""}</select></label>
       <label class="f chk"><input type="checkbox" id="impdry" checked>${t("dry_run")}</label>
       <button class="btn pri" data-a="imp">${t("import_btn")}</button></div><div id="impres" style="margin-top:12px"></div>
@@ -4789,8 +4789,8 @@ PAGES.einvoice = async (view, parts, q) => {
       ${filterBar(q, ["dates", "bu"])}
       <div class="row"><a class="btn" href="/api/einvoice-batch?${qs({ ...q, format: "json" })}">⬇ ${t("eta_batch_json")}</a><a class="btn" href="/api/einvoice-batch?${qs({ ...q, format: "xlsx" })}">⬇ ${t("eta_batch_xlsx")}</a></div></div>
     <div class="card" id="etaset"><h2>${t("eta_setup")}</h2><p class="muted">${S.lang === "ar" ? "الطريقة ٢ — الربط المباشر: يرسل النظام الفواتير الموقعة إلى المنظومة ويتابع حالتها. والتوقيع من خلال خدمة توقيع محلية متصلة بالتوكن." : "Option 2 — direct link: the app signs through your local signing service (USB token) and submits to the ETA API, then tracks status."}</p>
-      ${form([{ k: "eta_env", l: t("eta_env"), type: "select", opts: [["preprod", "Pre-production (testing)"], ["prod", "Production"]], v: st.eta_env },
-        { k: "eta_doc_version", l: t("eta_version"), type: "select", opts: [["1.0", "1.0 (signed)"], ["0.9", "0.9 (unsigned — pre-production only)"]], v: st.eta_doc_version },
+      ${form([{ k: "eta_env", l: t("eta_env"), type: "select", opts: [["preprod", L2("Pre-production (testing)", "بيئة التجربة (ما قبل الإنتاج)")], ["prod", L2("Production", "البيئة الفعلية (الإنتاج)")]], v: st.eta_env },
+        { k: "eta_doc_version", l: t("eta_version"), type: "select", opts: [["1.0", L2("1.0 (signed)", "1.0 (موقّعة)")], ["0.9", L2("0.9 (unsigned — pre-production only)", "0.9 (غير موقّعة — بيئة التجربة فقط)")]], v: st.eta_doc_version },
         { k: "eta_client_id", l: t("eta_client_id"), v: st.eta_client_id }, { k: "eta_client_secret", l: t("eta_client_secret"), type: "password", v: st.eta_client_secret },
         { k: "eta_signer_url", l: t("eta_signer"), v: st.eta_signer_url, ph: "http://127.0.0.1:18088/sign", span: "spanall" },
         { k: "eta_activity_code", l: t("eta_activity"), v: st.eta_activity_code, ph: "4330" }, { k: "eta_branch_id", l: t("eta_branch"), v: st.eta_branch_id },
@@ -4886,10 +4886,10 @@ PAGES.settings = async (view, parts, q) => {
       <div class="card" id="cocountry"><h2>${esc(L2("Country & documents", "الدولة والمستندات"))}</h2>${form(countryFields(st), 3)}</div>
       <div class="card"><h2>${t("bank_details")}</h2><p class="muted" style="margin-top:-4px">${L2("Add every account you use. The default one goes on new offers; each offer can pick another or enter its own.", "أضف كل الحسابات التي تستخدمها. الافتراضي يظهر في العروض الجديدة، ويمكن لكل عرض اختيار حساب آخر أو إدخال بيانات خاصة.")}</p><div id="banks"></div>
         ${ed ? `<button class="btn sm" type="button" data-a="bankadd">+ ${L2("Add bank account", "إضافة حساب بنكي")}</button>` : ""}</div>
-      <div class="card"><h2>${t("numbering")}</h2>${form([{ k: "offer_prefix", l: t("offer_prefix"), v: st.offer_prefix || "OFR-", help: "{YYYY} = year" },
+      <div class="card"><h2>${t("numbering")}</h2>${form([{ k: "offer_prefix", l: t("offer_prefix"), v: st.offer_prefix || "OFR-", help: L2("{YYYY} = year", "{YYYY} = السنة") },
         { k: "offer_digits", l: t("offer_digits"), type: "number", v: st.offer_digits || 4 }, { k: "offer_validity_days", l: t("offer_validity"), type: "number", v: st.offer_validity_days || 15 }], 3)}</div>
       <div class="card" id="regcard"><h2>${t("regional")}</h2>${form([
-        { k: "date_format", l: t("date_fmt"), type: "select", opts: [["YYYY-MM-DD", "2026-07-21"], ["DD/MM/YYYY", "21/07/2026"], ["DD MMM YYYY", "21 Jul 2026"]], v: rg.date_format || "YYYY-MM-DD" },
+        { k: "date_format", l: t("date_fmt"), type: "select", opts: [["YYYY-MM-DD", "2026-07-21"], ["DD/MM/YYYY", "21/07/2026"], ["DD MMM YYYY", L2("21 Jul 2026", "21 يوليو 2026")]], v: rg.date_format || "YYYY-MM-DD" },
         { k: "negative", l: t("neg_style"), type: "select", opts: [["paren", "(1,234.00)"], ["minus", "-1,234.00"]], v: rg.negative || "paren" },
         { k: "decimals", l: t("decimals"), type: "select", opts: [["2", "1,234.56"], ["0", "1,235"]], v: String(rg.decimals ?? "2") },
         { k: "digits", l: t("digits"), type: "select", opts: [["latin", t("dg_latin")], ["arabic", t("dg_arabic")]], v: rg.digits || "latin" }], 4)}</div>
@@ -5013,7 +5013,7 @@ PAGES.settings = async (view, parts, q) => {
   S.H.updcheck = el => window.BeyondUpdate && window.BeyondUpdate.ask(el);
   view.innerHTML = head + `<div class="card" id="updcard"><h2 class="row" style="gap:8px">${esc(L2("Updates", "التحديثات"))}<span class="spacer"></span><button class="btn sm" data-a="updcheck">↻ ${esc(L2("Check for updates", "البحث عن تحديثات"))}</button></h2>
       <p class="muted">${esc(L2("This app: version", "هذا التطبيق: الإصدار"))} ${esc(S.boot.version || "")}${window.BEYOND_BUILD ? ` <small>(${esc(String(window.BEYOND_BUILD).slice(0, 12))})</small>` : ""}. ${esc(STATIC ? L2("While the app is open it keeps its version until you press Update now. Everyone in a shared workspace works on the same version, so the newest one also loads the next time the app starts.", "طالما التطبيق مفتوح يبقى على إصداره حتى تضغط «حدِّث الآن». كل أعضاء مساحة العمل المشتركة يعملون على الإصدار نفسه، لذا يُحمَّل الأحدث أيضاً عند فتح التطبيق في المرة القادمة.")
-        : L2("Updates never install by themselves — when one is ready you choose when to install it.", "التحديثات لا تُثبَّت تلقائياً — عند توفر تحديث تختار أنت وقت تثبيته."))}</p></div>` + (sys ? `<div class="card"><h2>${t("system_info")}</h2><div class="grid g2"><div>Version ${esc(sys.version)}<br><span class="muted">${esc(sys.db_path)}</span><br>${(sys.db_size / 1048576).toFixed(2)} MB</div>
+        : L2("Updates never install by themselves — when one is ready you choose when to install it.", "التحديثات لا تُثبَّت تلقائياً — عند توفر تحديث تختار أنت وقت تثبيته."))}</p></div>` + (sys ? `<div class="card"><h2>${t("system_info")}</h2><div class="grid g2"><div>${esc(L2("Version", "الإصدار"))} ${esc(sys.version)}<br><span class="muted" dir="ltr">${esc(sys.db_path)}</span><br>${(sys.db_size / 1048576).toFixed(2)} MB</div>
       <div>${Object.entries(sys.counts).map(([k, v]) => `${esc(k)}: ${v}`).join(" · ")}<br><span class="muted">${sys.backups.length} backups: ${esc(sys.backups.slice(0, 3).join(", "))}</span></div></div>
       ${ed ? `<div class="row" style="margin-top:10px"><label class="f">${t("backups_keep")}<input id="bkeep" type="number" value="${esc(st.backup_keep || 14)}" style="max-width:100px"></label><button class="btn" data-a="maint">${t("maintenance")}</button><a class="btn" href="/api/backup">⬇ ${t("db_backup")}</a></div>` : ""}</div>
     ${STATIC ? "" : `<div class="card" id="liccard"><h2>${L2("Licence", "الترخيص")}</h2><div class="muted">${t("loading")}</div></div>`}
@@ -5292,7 +5292,7 @@ PAGES.audit = async (view, parts, q) => {
   const lq = { ...q, limit: q.limit || 100 };
   const rows = await api("GET", "/api/audit?" + qs(lq));
   view.innerHTML = filterBar(q, ["q", ["select", "username", t("username"), [...new Set(rows.map(r => r.username))].map(u => [u, u])]]) +
-    `<div class="card"><div class="tbl"><table><thead><tr><th>Time</th><th>${t("username")}</th><th>Action</th><th>Detail</th></tr></thead><tbody>
+    `<div class="card"><div class="tbl"><table><thead><tr><th>${L2("Time", "الوقت")}</th><th>${t("username")}</th><th>${L2("Action", "الإجراء")}</th><th>${L2("Detail", "التفاصيل")}</th></tr></thead><tbody>
     ${rows.map(r => `<tr><td>${esc(r.ts)}</td><td>${esc(r.username)}</td><td>${esc(r.action)}</td><td>${esc(r.detail)}</td></tr>`).join("")}</tbody></table></div>${pager(rows.length < lq.limit ? (Number(lq.offset || 0) + rows.length) : 99999, lq).replace("99999", "…")}</div>`;
 };
 
@@ -5370,7 +5370,7 @@ async function workspaceTab(view, head) {
       ${info.is_admin ? `<div class="row" style="margin-top:8px"><button class="btn" data-a="wscoren">${ar ? "حفظ الاسم" : "Save name"}</button><button class="btn" data-a="coswitch">⇄ ${ar ? "الشركات" : "Companies"}</button></div>` : `<div class="row" style="margin-top:8px"><button class="btn" data-a="coswitch">⇄ ${ar ? "الشركات" : "Companies"}</button></div>`}</div>` : ""}
   ${admin ? `<div class="card" id="wscfg"><h2>1 · ${ar ? "رابط المشروع" : "Project link"}</h2>
     ${st.preset ? `<p class="muted">${ar ? "هذه النسخة مربوطة مسبقاً بمشروع الشركة." : "This copy of the app comes pre-linked to your company's project."}</p>` : ""}
-    ${form([{ k: "url", l: "Project URL", v: st.url, ph: "https://abcdefgh.supabase.co" }, { k: "key", l: ar ? "المفتاح العام (anon public key)" : "anon public key", v: st.key, ph: "eyJhbGciOi…" }], 2)}
+    ${form([{ k: "url", l: ar ? "عنوان المشروع (Project URL)" : "Project URL", v: st.url, ph: "https://abcdefgh.supabase.co" }, { k: "key", l: ar ? "المفتاح العام (anon public key)" : "anon public key", v: st.key, ph: "eyJhbGciOi…" }], 2)}
     <div class="row" style="margin-top:8px"><button class="btn" data-a="wssave">${t("save")}</button><span class="muted" style="font-size:.85em">Supabase → Project Settings → API</span></div></div>
   <div class="card" id="wsin"><h2>2 · ${S.wsCreate ? (ar ? "إنشاء حساب" : "Create an account") : (ar ? "تسجيل الدخول" : "Sign in")}</h2>
     <div class="grid g2"><label class="f">${t("email")}<input name="email" type="email" value="${esc(st.email || "")}"></label><div></div>
@@ -5722,7 +5722,7 @@ PAGES["partner-exit"] = async (view, parts, q) => {
         <p class="muted" style="font-size:.85em">${L2("Every client payment lands in his account and every cost, loan to a partner and distribution leaves it, so each payment below is tagged to him. Unpaid supplier bills are not here until they are paid.", "كل دفعة من عميل تدخل حسابه وكل تكلفة وسلفة شريك وتوزيع تخرج منه، فكل دفعة أدناه منسوبة إليه. فواتير الموردين غير المدفوعة لا تظهر هنا حتى تُدفع.")}</p>
         <button class="btn sm" data-a="pxrows">${L2("Show all movements", "عرض كل الحركات")} (${f.rows.length})</button>
         <div id="pxmov" hidden><div class="tbl" style="margin-top:8px"><table><thead><tr><th>${t("date")}</th><th>${L2("Entry", "القيد")}</th><th>${L2("Group", "البند")}</th><th class="num">${L2("In", "وارد")}</th><th class="num">${L2("Out", "منصرف")}</th><th class="num">${L2("Funding balance", "رصيد التمويل")}</th></tr></thead><tbody>
-          ${f.rows.map(r => `<tr class="click" data-a="openv" data-id="${r.id}"><td>${fd(r.date)}</td><td>${esc(r.ref || "#" + r.id)} ${esc(r.memo || "")}<div class="lines">${esc(r.kind)}${r.party ? " · " + esc(r.party) : ""}</div></td><td>${esc(r.group)}</td><td class="num">${r.in ? money(r.in) : ""}</td><td class="num">${r.out ? money(r.out) : ""}</td><td class="num">${money(r.own_money)}</td></tr>`).join("")}</tbody></table></div></div>`
+          ${f.rows.map(r => `<tr class="click" data-a="openv" data-id="${r.id}"><td>${fd(r.date)}</td><td>${esc(r.ref || "#" + r.id)} ${esc(r.memo || "")}<div class="lines">${esc(tl(r.kind))}${r.party ? " · " + esc(r.party) : ""}</div></td><td>${esc(r.group)}</td><td class="num">${r.in ? money(r.in) : ""}</td><td class="num">${r.out ? money(r.out) : ""}</td><td class="num">${money(r.own_money)}</td></tr>`).join("")}</tbody></table></div></div>`
         : `<p class="muted">${L2("Choose the partner whose personal account the company's money runs through. His own money in the company is then worked out from every payment and receipt.", "اختر الشريك الذي تمر أموال الشركة بحسابه الشخصي، فتُحسب أمواله الخاصة في الشركة من كل دفعة ومقبوضة.")}</p>`}</div>`;
 };
 PAGES.partners = async (view, parts, q) => {
@@ -6509,7 +6509,7 @@ function rentItemForm(it) {
   it = it || { category: "scaffolding", unit: "piece", active: 1 };
   drawer(it.id ? `${t("edit")} — ${it.code}` : L2("New equipment item", "صنف معدات جديد"), form([
     ...inLang(["name", it.name], ["name_ar", it.name_ar], L2("Name", "الاسم"), { req: 1 }),
-    { k: "category", l: L2("Category", "الفئة"), type: "select", opts: RENT_CAT(), v: it.category }, { k: "unit", l: t("unit"), v: it.unit, ph: "piece / unit / m" },
+    { k: "category", l: L2("Category", "الفئة"), type: "select", opts: RENT_CAT(), v: it.category }, { k: "unit", l: t("unit"), v: it.unit, ph: L2("piece / unit / m", "قطعة / وحدة / م") },
     { k: "monthly_rate", l: L2("Rent per piece / month", "إيجار القطعة شهرياً"), type: "number", v: it.monthly_rate || "" },
     { k: "std_cost", l: L2("Reference cost (until a purchase is recorded)", "التكلفة المرجعية (لحين تسجيل شراء)"), type: "number", v: it.std_cost || "" },
     { k: "loss_price", l: L2("Loss / damage price (blank = latest cost + markup)", "سعر الفقد / التلف (فارغ = آخر تكلفة + النسبة)"), type: "number", v: it.loss_price_set || "" },
@@ -8747,8 +8747,8 @@ PAGES.industry = async (view) => {
     try { const r = await api("POST", "/api/industries/apply", { type: k }); toast(L2(`Done — ${r.accounts_added.length} account(s) added`, `تم — أُضيف ${r.accounts_added.length} حساب`)); await refreshBoot(); route(); } catch (e) { fail(e); } };
   view.innerHTML = `<div class="banner info">${L2("Pick what this company does. Each template switches on the sections it uses, adds the accounts it needs and sets payroll's departments, job titles, pay items and the crew calculator's work items. Download a ready Excel workbook for any type.", "اختر نشاط الشركة. كل قالب يفعّل الأقسام المستخدمة ويضيف الحسابات اللازمة ويضبط أقسام الرواتب والوظائف وبنود الأجر وبنود حاسبة الأطقم. ويمكن تحميل ملف إكسل جاهز لأي نشاط.")}</div>
     <div class="grid g2">${d.types.map(ty => `<div class="card"><h2>${esc(S.lang === "ar" ? ty.name_ar : ty.name)} ${d.current === ty.key ? `<span class="chip ok">${L2("current", "الحالي")}</span>` : ""}</h2>
-      <ul>${ty.guide.map(g => `<li>${esc(g)}</li>`).join("")}</ul>
-      <p class="muted">${L2("Business units are", "وحدات الأعمال")}: ${esc(ty.bu)} · ${L2("hidden", "مخفي")}: ${esc(ty.hide.join(", "))}${ty.accounts.length ? `<br>${L2("adds", "يضيف")}: ${ty.accounts.map(a => esc(a.code + " " + (S.lang === "ar" ? a.name_ar : a.name))).join(" · ")}` : ""}<br>${L2("crew work items", "بنود الأطقم")}: ${ty.work_items.map(w => esc(w.item + " (" + w.unit + ")")).join(" · ")}</p>
+      <ul>${(S.lang === "ar" && ty.guide_ar && ty.guide_ar.length ? ty.guide_ar : ty.guide).map(g => `<li>${esc(g)}</li>`).join("")}</ul>
+      <p class="muted">${L2("Business units are", "وحدات الأعمال")}: ${esc(S.lang === "ar" && ty.bu_ar ? ty.bu_ar : ty.bu)} · ${L2("hidden", "مخفي")}: ${esc(ty.hide.map(m => t("mod_" + m)).join("، "))}${ty.accounts.length ? `<br>${L2("adds", "يضيف")}: ${ty.accounts.map(a => esc(a.code + " " + (S.lang === "ar" ? a.name_ar : a.name))).join(" · ")}` : ""}<br>${L2("crew work items", "بنود الأطقم")}: ${ty.work_items.map(w => esc(S.lang === "ar" ? `${w.item_ar || w.item} (${w.unit_ar || w.unit})` : `${w.item} (${w.unit})`)).join(" · ")}</p>
       <div class="row">${ed ? `<button class="btn ${d.current === ty.key ? "" : "pri"}" data-a="indapply" data-k="${ty.key}">${L2("Use for this company", "استخدم لهذه الشركة")}</button>` : ""}${S.boot.user.is_admin && (dm.empty || S.boot.user.is_super) ? `<button class="btn" data-a="inddemo" data-k="${ty.key}">▶ ${L2("Try its demo", "جرّب بياناته التجريبية")}</button>` : ""}<a class="btn" href="/api/templates/workbook?type=${ty.key}&lang=${S.lang}">⇩ ${L2("Excel template", "قالب إكسل")}</a></div></div>`).join("")}</div>`;
 };
 
@@ -10855,7 +10855,7 @@ PAGES.machine = async (view, parts) => {
       ${e.usage.map(u => `<tr><td>${fd(u.date)}</td><td>${esc(u.bu_code || "")}</td><td class="num">${numf(u.hours)}</td><td class="num">${money(u.charge)}</td><td class="num">${u.fuel_cost ? money(u.fuel_cost) : ""}</td><td>${esc(u.operator || "")}</td>
         <td>${u.entry_id ? `<a href="#" data-a="openv" data-id="${u.entry_id}">#${u.entry_id}</a>` : ""}${can("equipment.usage", "edit") ? ` <button class="btn sm danger" data-a="usdel" data-id="${u.id}">✕</button>` : ""}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${L2("No hours logged yet.", "لا توجد ساعات مسجلة بعد.")}</div>`}</div>
     <div class="card"><h2>${L2("Maintenance history", "سجل الصيانة")}</h2>${e.logs.length ? `<div class="tbl stack"><table><thead><tr><th>${t("date")}</th><th>${t("type")}</th><th>${t("description")}</th><th class="num">${L2("Meter", "العداد")}</th><th class="num">${L2("Cost", "التكلفة")}</th><th></th></tr></thead><tbody>
-      ${e.logs.map(m => `<tr><td>${fd(m.date)}</td><td>${esc(m.kind)}${m.plan ? `<div class="lines">${esc(m.plan)}</div>` : ""}</td><td>${esc(m.description)}${m.vendor ? `<div class="lines">${esc(m.vendor)}</div>` : ""}</td><td class="num">${m.hours_at != null ? numf(m.hours_at) : ""}</td><td class="num">${m.cost ? money(m.cost) : ""}</td>
+      ${e.logs.map(m => `<tr><td>${fd(m.date)}</td><td>${esc(tl(m.kind))}${m.plan ? `<div class="lines">${esc(m.plan)}</div>` : ""}</td><td>${esc(m.description)}${m.vendor ? `<div class="lines">${esc(m.vendor)}</div>` : ""}</td><td class="num">${m.hours_at != null ? numf(m.hours_at) : ""}</td><td class="num">${m.cost ? money(m.cost) : ""}</td>
         <td>${m.entry_id ? `<a href="#" data-a="openv" data-id="${m.entry_id}">#${m.entry_id}</a>` : ""}${can("equipment.maintenance", "edit") ? ` <button class="btn sm danger" data-a="mtdel" data-id="${m.id}">✕</button>` : ""}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${L2("Nothing recorded yet.", "لا يوجد سجل بعد.")}</div>`}</div>`;
 };
 PAGES["equipment-usage"] = async (view, parts, q) => {
@@ -10884,7 +10884,7 @@ PAGES.maintenance = async (view) => {
         <td>${chipS(PLAN_ST[p.state][0], L2(PLAN_ST[p.state][1], PLAN_ST[p.state][2]))}</td><td style="white-space:nowrap">${can("equipment.maintenance", "add") ? `<button class="btn sm pri" data-a="pldone" data-id="${p.id}">✓ ${L2("Done", "تمت")}</button>` : ""}${can("equipment.maintenance", "edit") ? `<button class="btn sm" data-a="pledit" data-id="${p.id}">${t("edit")}</button>` : ""}</td></tr>`).join("")}</tbody></table></div>`
       : `<div class="empty">${L2("Add a plan per machine: every N days and/or every N working hours.", "أضف خطة لكل معدة: كل N يوم و/أو كل N ساعة تشغيل.")}</div>`}</div>
     <div class="card"><h2>${L2("Work done", "الأعمال المنفذة")}</h2>${d.logs.length ? `<div class="tbl stack"><table><thead><tr><th>${t("date")}</th><th>${L2("Machine", "المعدة")}</th><th>${t("type")}</th><th>${t("description")}</th><th class="num">${L2("Cost", "التكلفة")}</th></tr></thead><tbody>
-      ${d.logs.map(m => `<tr><td>${fd(m.date)}</td><td><a href="#/machine/${m.equipment_id}">${esc(m.code)}</a></td><td>${esc(m.kind)}${m.plan ? `<div class="lines">${esc(m.plan)}</div>` : ""}</td><td>${esc(m.description)}${m.vendor ? `<div class="lines">${esc(m.vendor)}</div>` : ""}</td><td class="num">${m.cost ? money(m.cost) : ""}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${L2("Nothing recorded yet.", "لا يوجد سجل بعد.")}</div>`}</div>`;
+      ${d.logs.map(m => `<tr><td>${fd(m.date)}</td><td><a href="#/machine/${m.equipment_id}">${esc(m.code)}</a></td><td>${esc(tl(m.kind))}${m.plan ? `<div class="lines">${esc(m.plan)}</div>` : ""}</td><td>${esc(m.description)}${m.vendor ? `<div class="lines">${esc(m.vendor)}</div>` : ""}</td><td class="num">${m.cost ? money(m.cost) : ""}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${L2("Nothing recorded yet.", "لا يوجد سجل بعد.")}</div>`}</div>`;
 };
 
 // ------------------------------------------------------------ attendance
@@ -10921,7 +10921,7 @@ PAGES.attendance = async (view, parts, q) => {
       <button class="btn" data-a="atday">${t("apply")}</button><span class="spacer"></span>${add ? `<button class="btn" data-a="atall">✓ ${L2("Mark everyone not marked as present", "تسجيل حضور غير المسجلين")}</button><button class="btn pri" data-a="atsave">${t("save")}</button>` : ""}</div></div>
     <div class="kpis">${kpiBox(L2("Present", "حاضر"), numf(s.present + s.half), "pos", s.half ? `${s.half} ${L2("half day", "نصف يوم")}` : "")}${kpiBox(L2("Absent / sick", "غياب / مرضي"), numf(s.absent + s.sick), s.absent + s.sick ? "neg" : "")}${kpiBox(L2("Leave", "إجازة"), numf(s.leave))}${kpiBox(L2("Not marked", "غير مسجل"), numf(s.unmarked), s.unmarked ? "warn" : "")}</div>
     <div class="card">${d.rows.length ? `<div class="tbl stack"><table><thead><tr><th>${L2("Employee", "الموظف")}</th><th>${t("status")}</th><th>${t("bu")}</th><th>${L2("Hours", "ساعات")}</th><th>${L2("Overtime", "إضافي")}</th><th>${L2("Output", "الإنتاج")}</th><th>${t("unit")}</th><th>${L2("Task", "العمل")}</th></tr></thead><tbody>
-      ${d.rows.map(r => `<tr data-emp="${r.employee_id}" data-marked="${r.marked ? 1 : 0}"><td><b>${esc(r.code)}</b> ${esc(r.name)}<div class="lines">${esc(r.job_title || "")} · ${esc(r.emp_type)}</div></td>
+      ${d.rows.map(r => `<tr data-emp="${r.employee_id}" data-marked="${r.marked ? 1 : 0}"><td><b>${esc(r.code)}</b> ${esc(r.name)}<div class="lines">${esc(r.job_title || "")} · ${esc(empTypeL(r.emp_type))}</div></td>
         <td><select data-f="status" ${add ? "" : "disabled"}><option value="">—</option>${optHtml(stOpts(AT_ST).map(([k, l]) => [k, l]), r.status)}</select></td>
         <td><select data-f="bu_id" ${add ? "" : "disabled"}>${optHtml(buOpts("—"), r.bu_id || "")}</select></td>
         <td><input data-f="hours" type="number" step="any" value="${r.hours ?? ""}" style="width:70px" ${add ? "" : "disabled"}></td><td><input data-f="overtime" type="number" step="any" value="${r.overtime || ""}" style="width:70px" ${add ? "" : "disabled"}></td>
@@ -10932,7 +10932,7 @@ PAGES.attendance = async (view, parts, q) => {
 
 // ------------------------------------------------------------ ETA e-receipts
 const ER_ST = { draft: ["", "Draft", "مسودة"], issued: ["warn", "Issued — not sent", "صادر — لم يُرسل"], submitted: ["ok", "Sent", "مُرسل"], valid: ["ok", "Valid", "صالح"], invalid: ["bad", "Invalid", "غير صالح"], rejected: ["bad", "Rejected", "مرفوض"] };
-const ER_PAY = [["C", L2("Cash", "نقدي")], ["V", L2("Visa / card", "فيزا / بطاقة")], ["CC", L2("Cash with contractor", "نقدي مع متعاقد")], ["VC", L2("Visa with contractor", "فيزا مع متعاقد")], ["VO", L2("Vouchers", "قسائم")], ["PR", L2("Promotion", "عرض ترويجي")], ["GC", L2("Gift card", "بطاقة هدية")], ["P", L2("Points", "نقاط")], ["O", L2("Other", "أخرى")]];
+const ER_PAY = () => [["C", L2("Cash", "نقدي")], ["V", L2("Visa / card", "فيزا / بطاقة")], ["CC", L2("Cash with contractor", "نقدي مع متعاقد")], ["VC", L2("Visa with contractor", "فيزا مع متعاقد")], ["VO", L2("Vouchers", "قسائم")], ["PR", L2("Promotion", "عرض ترويجي")], ["GC", L2("Gift card", "بطاقة هدية")], ["P", L2("Points", "نقاط")], ["O", L2("Other", "أخرى")]];
 function erForm(r, ret) {
   r = r || { kind: ret ? "return" : "sale", buyer_type: "P", payment_method: "C", lines: [{ qty: 1, vat_code: (S.boot.settings || {}).eta_receipt_vat_code || "" }] };
   const lineRow = (l = {}) => `<tr class="erl"><td><input data-f="description" value="${esc(l.description || "")}" style="min-width:160px"></td><td><input data-f="code" value="${esc(l.code || "")}" placeholder="EG-…" style="width:120px"></td>
@@ -10943,7 +10943,7 @@ function erForm(r, ret) {
     { k: "date", l: t("date"), type: "date", v: (r.issued_at || today()).slice(0, 10) }, { k: "time", l: L2("Time (UTC)", "الوقت (UTC)"), type: "time", v: (r.issued_at || "").slice(11, 16) },
     { k: "buyer_type", l: L2("Buyer", "المشتري"), type: "select", opts: [["P", L2("Person", "فرد")], ["B", L2("Business (tax no.)", "منشأة (رقم ضريبي)")], ["F", L2("Foreigner", "أجنبي")]], v: r.buyer_type },
     { k: "buyer_name", l: L2("Buyer name", "اسم المشتري"), v: r.buyer_name }, { k: "buyer_id", l: L2("National ID / tax no.", "الرقم القومي / الضريبي"), v: r.buyer_id }, { k: "buyer_mobile", l: L2("Mobile", "الموبايل"), v: r.buyer_mobile },
-    { k: "payment_method", l: t("method"), type: "select", opts: ER_PAY, v: r.payment_method }, { k: "bu_id", l: t("bu"), type: "select", opts: buOpts("—"), v: r.bu_id || "" }]) +
+    { k: "payment_method", l: t("method"), type: "select", opts: ER_PAY(), v: r.payment_method }, { k: "bu_id", l: t("bu"), type: "select", opts: buOpts("—"), v: r.bu_id || "" }]) +
     `<div class="tbl"><table class="ertbl"><thead><tr><th>${t("description")}</th><th>${L2("ETA item code", "كود الصنف")}</th><th>${t("unit")}</th><th>${t("qty")}</th><th>${L2("Price", "السعر")}</th><th>${t("discount")}</th><th>${t("vat_code")}</th><th class="num">${t("total")}</th><th></th></tr></thead><tbody>${r.lines.map(lineRow).join("")}</tbody></table></div>
     <div class="row" style="justify-content:space-between;margin:6px 0"><button type="button" class="btn sm" data-k="addl">+ ${L2("Item", "صنف")}</button><b id="ertot"></b></div>
     ${r.id ? "" : `<label class="f chk"><input type="checkbox" name="issue" checked>${L2("Issue now (chain it and post the sale)", "إصدار الآن (ربطه بالسلسلة وترحيل البيع)")}</label>`}`, async v => {
@@ -10986,7 +10986,7 @@ PAGES.ereceipts = async (view, parts, q) => {
       ${kpiBox(L2("VAT", "ض.ق.م"), issued.reduce((s, r) => s + (r.kind === "return" ? -r.vat : r.vat), 0))}${kpiBox(L2("Not sent yet", "لم يُرسل"), numf(rows.filter(r => r.status === "issued").length), rows.some(r => r.status === "issued") ? "warn" : "")}</div>
     ${filterBar(q, ["dates", ["select", "status", t("status"), stOpts(ER_ST)], "q"])}
     <div class="card">${rows.length ? `<div class="tbl stack"><table><thead><tr><th>${L2("Receipt", "الإيصال")}</th><th>${L2("Issued", "الإصدار")}</th><th>${L2("Buyer", "المشتري")}</th><th>${t("method")}</th><th class="num">${L2("Net", "الصافي")}</th><th class="num">${L2("VAT", "ض.ق.م")}</th><th class="num">${t("total")}</th><th>${t("status")}</th><th></th></tr></thead><tbody>
-      ${rows.map(r => `<tr data-bid="${r.id}"><td><b>${esc(r.number)}</b>${r.kind === "return" ? ` ${chipS("warn", L2("return", "مرتجع"))}` : ""}${r.uuid ? `<div class="lines" title="${esc(r.uuid)}">${esc(r.uuid.slice(0, 16))}…</div>` : ""}</td><td>${fd(r.issued_at.slice(0, 10))} ${esc(r.issued_at.slice(11, 16))}</td><td>${esc(r.buyer_name || "—")}</td><td>${esc((ER_PAY.find(p => p[0] === r.payment_method) || [, r.payment_method])[1])}</td>
+      ${rows.map(r => `<tr data-bid="${r.id}"><td><b>${esc(r.number)}</b>${r.kind === "return" ? ` ${chipS("warn", L2("return", "مرتجع"))}` : ""}${r.uuid ? `<div class="lines" title="${esc(r.uuid)}">${esc(r.uuid.slice(0, 16))}…</div>` : ""}</td><td>${fd(r.issued_at.slice(0, 10))} ${esc(r.issued_at.slice(11, 16))}</td><td>${esc(r.buyer_name || "—")}</td><td>${esc((ER_PAY().find(p => p[0] === r.payment_method) || [, r.payment_method])[1])}</td>
         <td class="num">${money(r.net)}</td><td class="num">${money(r.vat)}</td><td class="num"><b>${money(r.total)}</b></td><td>${chipS(ER_ST[r.status][0], L2(ER_ST[r.status][1], ER_ST[r.status][2]))}${r.error ? `<div class="lines neg" title="${esc(r.error)}">${esc(r.error.slice(0, 60))}</div>` : ""}</td>
         <td style="white-space:nowrap">${r.status === "draft" && add ? `<button class="btn sm pri" data-a="eriss" data-id="${r.id}">${L2("Issue", "إصدار")}</button>` : ""}${r.status === "draft" && ed ? `<button class="btn sm danger" data-a="erdel" data-id="${r.id}" data-n="${esc(r.number)}">✕</button>` : ""}${r.entry_id ? `<a href="#" data-a="openv" data-id="${r.entry_id}">#${r.entry_id}</a>` : ""}</td></tr>`).join("")}</tbody></table></div>`
       : `<div class="empty">${L2("Point-of-sale receipts to consumers (B2C) for the tax authority: each is chained to the one before by its UUID, posts the sale, and can be exported or sent. Set the POS details first (⚙ POS settings).", "إيصالات البيع للمستهلك (B2C) لمصلحة الضرائب: كل إيصال مرتبط بالسابق عبر معرّفه، ويُرحّل البيع، ويمكن تصديره أو إرساله. اضبط بيانات نقطة البيع أولاً.")}</div>`}</div>`;
@@ -11209,12 +11209,16 @@ const SUP_KINDS = () => [["bug", L2("Something isn't working", "شيء لا يع
 const SUP_STATUS = () => ({ sent: L2("Sent", "أُرسل"), answered: L2("Answered", "تم الرد"), solved: L2("Solved", "تم الحل") });
 const supEdition = () => STATIC ? (cloudOn() ? L2("Online (shared workspace)", "أونلاين (مساحة عمل مشتركة)") : L2("Browser, this device only", "المتصفح، هذا الجهاز فقط"))
   : (cloudOn() ? L2("Desktop + shared workspace", "سطح المكتب + مساحة عمل مشتركة") : L2("Desktop / offline", "سطح المكتب / بدون إنترنت"));
+// the diagnostics go to support as they are; on screen their names are in the reader's language
+const SUP_DIAG_L = () => ({ version: L2("Version", "الإصدار"), edition: L2("Edition", "النسخة"), company: L2("Company", "الشركة"), user: L2("User", "المستخدم"),
+  role: L2("Role", "الصلاحية"), screen: L2("Screen", "الشاشة"), language: L2("Language", "اللغة"), browser: L2("Browser", "المتصفح"),
+  display: L2("Display", "الشاشة (المقاس)"), online: L2("Online", "متصل بالإنترنت"), errors: L2("Recent errors", "آخر الأخطاء") });
 function supDiag() {
   const u = S.boot.user || {}, st = S.boot.settings || {};
   return { version: S.boot.version || "", edition: supEdition(), company: st.company_name || "", user: u.username || "",
-    role: u.is_super ? "super admin" : u.is_admin ? "admin" : "user", screen: (S.lastPage || "").slice(0, 120), language: S.lang,
+    role: u.is_super ? L2("super admin", "مسؤول أعلى") : u.is_admin ? L2("admin", "مسؤول") : L2("user", "مستخدم"), screen: (S.lastPage || "").slice(0, 120), language: S.lang,
     browser: navigator.userAgent.slice(0, 200), display: `${innerWidth}×${innerHeight} @${devicePixelRatio || 1}x`,
-    online: navigator.onLine ? "yes" : "no", errors: RECENT_ERRS.slice(-5).join(" | ") || "—" };
+    online: navigator.onLine ? L2("yes", "نعم") : L2("no", "لا"), errors: RECENT_ERRS.slice(-5).join(" | ") || "—" };
 }
 const supText = (t, withDiag) => {
   const kind = (SUP_KINDS().find(k => k[0] === t.kind) || [])[1] || t.kind;
@@ -11242,7 +11246,7 @@ PAGES.support = async view => {
         <label class="f">${esc(L2("In one line", "في سطر واحد"))}<input name="subject" required maxlength="200" dir="auto" placeholder="${esc(L2("e.g. The receipt voucher will not save", "مثال: سند القبض لا يُحفظ"))}"></label>
         <label class="f spanall">${esc(L2("Details", "التفاصيل"))}<textarea name="body" rows="6" dir="auto" placeholder="${esc(L2("What you did, what you expected, and what happened instead. Screenshots can be added in the chat after it opens.", "ما الذي فعلته، وما الذي توقعته، وما الذي حدث بدلاً منه. يمكن إضافة صور الشاشة في المحادثة بعد فتحها."))}"></textarea></label>
         <label class="f chk spanall"><input type="checkbox" name="diag" checked>${esc(L2("Include technical details (recommended)", "إرفاق التفاصيل الفنية (يُنصح به)"))}</label>
-        <details class="spanall sup-diag"><summary>${esc(L2("What is included", "ما الذي يُرفق"))}</summary><div class="lines">${Object.entries(d0).map(([k, v]) => `<div><b>${esc(k)}</b>: ${esc(v)}</div>`).join("")}</div>
+        <details class="spanall sup-diag"><summary>${esc(L2("What is included", "ما الذي يُرفق"))}</summary><div class="lines">${Object.entries(d0).map(([k, v]) => `<div><b>${esc(SUP_DIAG_L()[k] || k)}</b>: <span dir="auto">${esc(v)}</span></div>`).join("")}</div>
           <div class="muted" style="font-size:.85em">${esc(L2("No passwords, figures or customer data are ever included.", "لا تُرفق أي كلمات مرور أو أرقام أو بيانات عملاء."))}</div></details>
       </form>
       <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:12px">

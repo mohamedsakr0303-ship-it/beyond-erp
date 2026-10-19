@@ -19,7 +19,35 @@ from . import branding, countries
 from .accounting import ValidationError, text
 
 # ---------------------------------------------------------------- starter offer types
+# every company starts with a general quotation (English and Arabic); edit them or add your own in Settings
 DEFAULT_OFFER_TYPES = [
+    {"name": "Quotation", "lang": "en", "title": "QUOTATION : {project}",
+     "intro": "Dear {client},\nPlease find below our quotation for {project}.",
+     "sections": [
+         {"kind": "text", "heading": "SCOPE", "body": "1. Goods or services included\n2. Delivery or completion time\n3. Validity of this offer"},
+         {"kind": "pricing", "heading": "PRICE", "style": "lines", "words": True, "items": [{"desc": "Item or service", "amount": 0}],
+          "discount": 0, "vat": 0},
+         {"kind": "payment", "heading": "PAYMENT TERMS", "style": "lines",
+          "milestones": [{"label": "On order", "pct": 50}, {"label": "On delivery", "pct": 50}]},
+         {"kind": "bank", "heading": "BANK DETAILS", "style": "lines"},
+         {"kind": "signature", "heading": "ACCEPTANCE",
+          "body": "Client name: ____________________\nSignature: ____________________   Date: __________"}],
+     "closing": "Best regards,\n{company}"},
+    {"name": "عرض سعر", "lang": "ar", "title": "عرض سعر : {project}",
+     "intro": "السيد / {client}\nتحية طيبة وبعد،\nنتشرف بأن نقدم لسيادتكم عرض السعر التالي لـ {project}.",
+     "sections": [
+         {"kind": "text", "heading": "نطاق العرض", "body": "1. البضائع أو الخدمات المشمولة\n2. مدة التوريد أو التنفيذ\n3. مدة صلاحية العرض"},
+         {"kind": "pricing", "heading": "السعر", "style": "lines", "words": True, "items": [{"desc": "صنف أو خدمة", "amount": 0}],
+          "discount": 0, "vat": 0},
+         {"kind": "payment", "heading": "شروط السداد", "style": "lines",
+          "milestones": [{"label": "عند التعاقد", "pct": 50}, {"label": "عند التسليم", "pct": 50}]},
+         {"kind": "bank", "heading": "بيانات الحساب البنكي", "style": "lines"},
+         {"kind": "signature", "heading": "الموافقة",
+          "body": "اسم العميل: ____________________\nالتوقيع: ____________________   التاريخ: __________"}],
+     "closing": "وتفضلوا بقبول فائق الاحترام،\n{company}"},
+]
+# design & fit-out offers: added when the company's business type is interior design or contracting
+DESIGN_OFFER_TYPES = [
     {"name": "Design Package", "lang": "en", "title": "DESIGN PACKAGE :{project} ({client})",
      "intro": "Dear {client},\nKindly find this quotation (design package) for\n{project}",
      "sections": [
@@ -281,10 +309,12 @@ def words_ar(n):
 def money_words(v, lang, b):
     n = int(round(abs(float(v or 0)) * 100))
     i, f = n // 100, n % 100
-    if lang == "ar":
-        return f"فقط {words_ar(i)} {b['cur_words_ar'] or 'جنيه مصري'}" + \
-            (f" و{words_ar(f)} {b['cur_fraction_ar'] or 'قرش'}" if f else "") + " لا غير"
-    return f"{words_en(i)} {b['cur_words']}" + (f" and {words_en(f)} {b['cur_fraction']}" if f else "")
+    cur = (b.get("cur_words_ar") if lang == "ar" else b.get("cur_words")) or ""
+    frac = (b.get("cur_fraction_ar") if lang == "ar" else b.get("cur_fraction")) or ""
+    if lang == "ar":     # no name for the cents: "و 50/100"
+        return f"فقط {words_ar(i)} {cur}".rstrip() + \
+            ((f" و{words_ar(f)} {frac}" if frac else f" و {f}/100") if f else "") + " لا غير"
+    return f"{words_en(i)} {cur}".rstrip() + ((f" and {words_en(f)} {frac}" if frac else f" and {f}/100") if f else "")
 
 
 def doc_money(n, lang, code="EGP"):

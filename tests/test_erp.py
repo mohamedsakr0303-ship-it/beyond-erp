@@ -1708,6 +1708,56 @@ class SignInLockout(unittest.TestCase):
         self.assertTrue(auth.login(db, "lock", "rightpass1")[0])
 
 
+class ArabicTexts(unittest.TestCase):
+    """Texts the app writes (memos, messages, starting records) read in the person's language."""
+
+    def test_messages_and_memos(self):
+        import re as _re
+        from erp import errors_ar, textl10n
+        for en, ar in errors_ar.MESSAGES.items():           # every value in the English has its place in the Arabic
+            self.assertEqual(sorted(set(_re.findall(r"\{(\d)\}", ar))), [str(i) for i in range(1, en.count("{}") + 1)], en)
+        self.assertEqual(textl10n.error("amount is required", "ar"), "المبلغ مطلوب")
+        self.assertEqual(textl10n.error("voucher 12: description is required", "ar"), "السند 12: البيان مطلوب")
+        self.assertEqual(textl10n.error("Account 1101 is inactive", "ar"), "الحساب 1101 غير نشط")
+        self.assertEqual(textl10n.error("Please sign in", "en"), "Please sign in")
+        self.assertEqual(textl10n.error("Something new", "ar"), "Something new")   # unknown text is left as it is
+        self.assertEqual(textl10n.text("Supplier Discount", "ar"), "خصم مورد")
+        self.assertEqual(textl10n.text("Opening balance", "en"), "Opening balance")
+
+    def test_server_replies(self):
+        from erp import auth, server
+        db = Database(":memory:")
+        auth.create_user(db, {"username": "boss", "password": "pw123456"}, first=True)
+
+        class App:
+            pass
+        app = App()
+        app.db, app.backup = db, (lambda *a_, **k: None)
+        tok, _ = auth.login(db, "boss", "pw123456")
+        h = {"x-session": tok, "x-requested-with": "BeyondERP", "content-type": "application/json"}
+        r = server.handle(app, "POST", "/api/bus", {**h, "x-lang": "ar"}, b'{"code": "P1"}')
+        self.assertEqual(r.status, 400)
+        self.assertTrue(any("؀" <= c <= "ۿ" for c in json.loads(r.body)["error"]))
+        r = server.handle(app, "POST", "/api/bus", h, b'{"code": "P1"}')
+        self.assertFalse(any("؀" <= c <= "ۿ" for c in json.loads(r.body)["error"]))
+        self.assertEqual(json.loads(server.handle(app, "GET", "/api/nope?lang=ar", h).body)["error"], "غير موجود")
+
+    def test_starting_records_follow_the_language(self):
+        from erp import textl10n
+        db = Database(":memory:")
+        names = lambda: {w["name"] for w in db.q("SELECT name FROM warehouses")}   # noqa: E731
+        self.assertIn("Main Store", names())
+        textl10n.seed_names(db, "ar")
+        self.assertIn("المخزن الرئيسي", names())
+        textl10n.seed_names(db, "en")
+        self.assertIn("Main Store", names())
+
+    def test_offer_types_are_general(self):
+        from erp.documents import DEFAULT_OFFER_TYPES
+        self.assertEqual(len(DEFAULT_OFFER_TYPES), 2)
+        self.assertNotIn("Design", " ".join(t["name"] for t in DEFAULT_OFFER_TYPES))
+
+
 class OfflineLicence(unittest.TestCase):
     """Signed licences for the desktop edition: trial, read-only without a licence, users / installation / updates."""
 
@@ -2745,7 +2795,8 @@ class Documents(unittest.TestCase):
         self.assertTrue(name.endswith("Inv. Inv 2.xlsx"))
         self.assertIn("E", _zip.ZipFile(_io.BytesIO(data)).read("xl/worksheets/sheet1.xml").decode())
         t = documents.list_offer_types(self.db)[0]
-        oid = documents.save_offer(self.db, dict(t, type_id=t["id"], client="Mr. X", project="Flat"))
+        secs = [dict(x, items=[{"desc": "Works", "amount": 60000}], discount=10000) if x["kind"] == "pricing" else x for x in t["sections"]]
+        oid = documents.save_offer(self.db, dict(t, sections=secs, type_id=t["id"], client="Mr. X", project="Flat"))
         o = documents.get_offer(self.db, oid)
         self.assertEqual(o["net"], 50000)
         docx = _zip.ZipFile(_io.BytesIO(documents.offer_docx(self.db, o)))

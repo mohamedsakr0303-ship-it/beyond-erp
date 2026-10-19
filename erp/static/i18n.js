@@ -185,7 +185,8 @@ window.I18N = {
   "Indirect Labour (Cost-Centre Overhead)": ["Indirect labour (cost-centre overhead)", "عمالة غير مباشرة (مصروفات مركز تكلفة)"],
   "Administrative Salaries (Shared Overhead)": ["Administrative salaries (shared overhead)", "رواتب إدارية (مصروفات مشتركة)"],
   Receipt: ["Goods receipt", "استلام"], Issue: ["Material issue", "صرف"], Transfer: ["Transfer", "تحويل"], Adjustment: ["Count adjustment", "تسوية جرد"],
-  "Bank Transfer": ["Bank transfer", "تحويل بنكي"], Cash: ["Cash", "نقدي"], Cheque: ["Cheque", "شيك"], "Credit Card": ["Credit card", "بطاقة ائتمان"], Instapay: ["Instapay", "إنستاباي"],
+  "Bank Transfer": ["Bank transfer", "تحويل بنكي"], Open: ["Open", "مفتوح"], "Care Package": ["Care Package", "باقة رعاية"], "Insurance Claim": ["Insurance Claim", "مطالبة تأمين"], "Medical Invoice": ["Medical Invoice", "فاتورة طبية"], "Opening balance": ["Opening balance", "رصيد افتتاحي"], "Provider Fees": ["Provider Fees", "أتعاب مقدمي الخدمة"], "Revenue Recognition": ["Revenue Recognition", "إثبات إيراد"], price: ["Price", "السعر"], user: ["User", "المستخدم"], service: ["Service", "صيانة دورية"], repair: ["Repair", "إصلاح"], inspection: ["Inspection", "فحص"], Settled: ["Settled", "تمت التسوية"],
+  Daily: ["Daily", "يومي"], Monthly: ["Monthly", "شهري"], Hourly: ["Hourly", "بالساعة"], "Lump Sum": ["Lump sum", "مقطوعية"], "Supplier Discount": ["Supplier discount", "خصم مورد"], "Cash Transfer": ["Cash transfer", "تحويل نقدي"], Cash: ["Cash", "نقدي"], Cheque: ["Cheque", "شيك"], "Credit Card": ["Credit card", "بطاقة ائتمان"], Instapay: ["Instapay", "إنستاباي"],
   "In Progress": ["In progress", "قيد التنفيذ"], Tendering: ["Tendering", "مناقصة"], "On Hold": ["On hold", "متوقف"], Completed: ["Completed", "مكتمل"], Closed: ["Closed", "مغلق"],
 };
 window.SUBTYPE_LABELS = {

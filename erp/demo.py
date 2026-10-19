@@ -715,7 +715,7 @@ SETUP_TABLES = {"settings", "accounts", "warehouses", "tax_codes", "assets", "of
 _NOT_DATA_TABLES = {"users", "sessions", "audit_log", "accounts", "tax_codes", "user_groups", "settings", "account_roles"}
 _NOT_DATA_COLS = {"code", "kind", "status", "method", "basis", "cost_type", "gender", "payer", "place", "priority",
                   "direction", "interest_type", "schedule_type", "line_kind", "created_by", "updated_by", "username", "charge_type",
-                  "sku", "serial", "email", "phone", "url", "data", "mime", "uuid", "unit", "account", "lang"}
+                  "sku", "serial", "email", "phone", "url", "data", "mime", "uuid", "account", "lang"}
 _COMPANY_KEYS = ("company_name", "company_tagline", "company_legal_name", "company_address")
 
 
@@ -724,8 +724,11 @@ def tr(v, lang):
     if lang != "ar" or not isinstance(v, str) or not v.strip():
         return v
     from .demo_ar import AR, PROPER
+    from .textl10n import UNITS
     if v in AR:
         return AR[v]
+    if v in UNITS:                                    # units of measure
+        return UNITS[v]
     m = re.fullmatch(r"(.+?) (\d{4}-\d\d)", v)          # "Office rent 2026-09"
     if m and m.group(1) in AR:
         return f"{AR[m.group(1)]} {m.group(2)}"
@@ -934,6 +937,8 @@ def load(db, user="", replace=False, industry=None, lang="en"):
         raise ValidationError("These books already hold data — the demo only loads into an empty company (start a new company to try it)")
     a0, today = _anchor()
     S = sheets(industry)
+    from . import textl10n
+    textl10n.seed_names(db, "en")            # the demo refers to the starting records by their English names
     before = _texts(db) if lang == "ar" else frozenset()
     bu_has = lambda code: bool(db.one("SELECT 1 FROM business_units WHERE code=?", (code,)))
     sale_has = lambda code: bool(db.one("SELECT 1 FROM sales_orders WHERE code=?", (code,)))
@@ -1034,7 +1039,12 @@ def load(db, user="", replace=False, industry=None, lang="en"):
         for code, col in (("U-A204", (120, 160, 120)), ("U-V01", (200, 170, 90)), ("G-TILE", (170, 170, 170)), ("G-SAN", (230, 230, 240))):
             if prod_has(code):
                 sales.add_media(db, sales.get_product(db, code)["id"], {"kind": "photo", "data": _png(col), "thumb": _png(col, 48, 32)})
-        types = documents.list_offer_types(db) if bu_has("PRJ-D02") else []
+        if bu_has("PRJ-D02"):                   # the design offer of the fit-out project
+            from .documents import DESIGN_OFFER_TYPES
+            design = [ot for ot in DESIGN_OFFER_TYPES[:2] if ot["lang"] == ("ar" if lang == "ar" else "en")][0]   # in the company's language
+            if not db.one("SELECT 1 FROM offer_types WHERE name=?", (design["name"],)):
+                documents.save_offer_type(db, {**design})
+        types = [t for t in documents.list_offer_types(db) if t["name"] == design["name"]] if bu_has("PRJ-D02") else []
         if types:
             ty = types[0]
             documents.save_offer(db, {**{k: v for k, v in ty.items() if k not in ("id", "name")}, "type_id": ty["id"],
@@ -1046,23 +1056,24 @@ def load(db, user="", replace=False, industry=None, lang="en"):
             bu = db.one("SELECT code FROM business_units ORDER BY id LIMIT 1")["code"]
             wh = db.one("SELECT name FROM warehouses ORDER BY id LIMIT 1")["name"]
             mid = (today.replace(day=1) - _dt.timedelta(days=20)).isoformat()
+            buyer = tr("Laura Adams", lang)          # who raised them, named in the company's language
             p1 = purchasing.save(db, {"supplier": "Bright Building Materials", "date": mid, "bu_code": bu, "warehouse": wh, "vat_code": "VAT14",
                                       "expected": mid, "terms": "Delivery to site within 7 days. Payment 30 days from invoice.",
                                       "lines": [{"kind": "cost", "description": "Cement 50 kg bags", "qty": 200, "unit": "bag", "rate": 115, "account": "5010"},
                                                 {"kind": "cost", "description": "Steel rebar 12 mm", "qty": 2, "unit": "ton", "rate": 38500, "account": "5010"},
-                                                {"kind": "stock", "description": "Tile adhesive", "qty": 40, "unit": "bag", "rate": 95}]}, "Laura Adams")
+                                                {"kind": "stock", "description": "Tile adhesive", "qty": 40, "unit": "bag", "rate": 95}]}, buyer)
             purchasing.approve(db, p1, "admin")
             l1 = purchasing.get(db, p1)["lines"]
             purchasing.receive(db, p1, {"date": mid, "supplier_ref": "DN-4471", "lines": [{"line_id": l1[0]["id"], "qty": 120},
-                                                                                         {"line_id": l1[2]["id"], "qty": 40}]}, "Laura Adams")
+                                                                                         {"line_id": l1[2]["id"], "qty": 40}]}, buyer)
             p2 = purchasing.save(db, {"supplier": "Clearview Aluminium", "date": acc.today(), "bu_code": bu,
                                       "expected": (today + _dt.timedelta(days=14)).isoformat(),
                                       "lines": [{"kind": "cost", "description": "Aluminium windows — supply & install", "qty": 18, "unit": "m2",
-                                                 "rate": 3200, "account": "5020"}]}, "Laura Adams")
+                                                 "rate": 3200, "account": "5020"}]}, buyer)
             purchasing.approve(db, p2, "admin")
             purchasing.save(db, {"supplier": "Spark Electric", "date": acc.today(), "terms": "Quotation SE-221",
                                  "lines": [{"kind": "expense", "description": "Office UPS replacement", "qty": 1, "rate": 14500, "account": "6090"}]},
-                            "Laura Adams")
+                            buyer)
         # subscriptions: a maintenance visit (one extra beyond the plan), then bill every period started by today
         from . import services
         if sub_has("SUB-D02") and sub_has("SUB-D01"):
@@ -1120,6 +1131,7 @@ def load(db, user="", replace=False, industry=None, lang="en"):
         if industry in ("healthcare", "homecare"):
             _care_demo(db, industry, user, a0, today)
         translate_books(db, lang, before)        # the same data in the company's language
+        textl10n.seed_names(db, lang)
         db.conn.execute("INSERT OR REPLACE INTO settings(key,value) VALUES (?,?)", (TAG, acc.today()))
     return {"counts": res["counts"], "from": a0.isoformat(), "to": today.isoformat()}
 
