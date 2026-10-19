@@ -4740,7 +4740,8 @@ PAGES.data = async (view) => {
       <label class="f spanall">${L2("…or a Google Sheets link", "…أو رابط Google Sheets")}<input id="impurl" type="url" placeholder="https://docs.google.com/spreadsheets/d/…" dir="ltr"></label>
       <label class="f">${t("format")}<select id="impfmt"><option value="xlsx">${esc(L2("Excel workbook or sheet (.xlsx)", "مصنف أو ورقة Excel (.xlsx)"))}</option><option value="zip">${esc(L2("Excel + attached files (.zip)", "Excel + الملفات المرفقة (.zip)"))}</option><option value="json">${esc(L2("JSON backup (.json)", "نسخة JSON (.json)"))}</option><option value="csv">${esc(L2("CSV — one sheet (.csv)", "CSV — ورقة واحدة (.csv)"))}</option>${S.boot.user.is_super ? `<option value="sqlite">${esc(L2("Database backup file (.sqlite3)", "ملف النسخة الاحتياطية لقاعدة البيانات (.sqlite3)"))}</option>` : ""}<option value="legacy">${esc(L2("Older BEYOND workbook (v0.6 – v1.4)", "مصنف BEYOND قديم (v0.6 – v1.4)"))}</option></select></label>
       <label class="f" id="impsheetl" style="display:none">CSV → <select id="impsheet">${sheets.map(s => `<option value="${esc(s.name)}">${esc(S.lang === "ar" && s.ar ? s.ar : s.name)}</option>`).join("")}</select></label>
-      <label class="f">${t("mode")}<select id="impmode"><option value="new">${esc(L2("New rows only — skip what is already in the books", "الجديد فقط — تخطي الموجود بالفعل"))}</option><option value="append">${t("append")}</option>${S.boot.user.is_super ? `<option value="replace">${t("replace")}</option>` : ""}</select></label>
+      <label class="f spanall">${t("mode")}<select id="impmode" data-change="impmodehelp"><option value="new">${esc(L2("Only what is new — skip anything already in the books", "الجديد فقط — تخطي كل ما هو موجود في الدفاتر"))}</option><option value="append">${esc(L2("Add everything and update — import every row as it is", "إضافة الكل مع التحديث — استيراد كل صف كما هو"))}</option>${S.boot.user.is_super ? `<option value="replace">${esc(L2("Replace everything — erase the books, then load the file (super admin)", "استبدال الكل — مسح الدفاتر ثم تحميل الملف (المسؤول الأعلى)"))}</option>` : ""}</select>
+        <span class="muted" id="impmodehelp" style="font-weight:400"></span></label>
       <label class="f chk"><input type="checkbox" id="impdry" checked>${t("dry_run")}</label>
       <button class="btn pri" data-a="imp">${t("import_btn")}</button></div><div id="impres" style="margin-top:12px"></div>
       <details class="impfmts"><summary>${esc(L2("Everything you can import", "كل ما يمكن استيراده"))}</summary><ul class="muted">
@@ -4787,6 +4788,15 @@ PAGES.data = async (view) => {
       fmtSel.value = ["json", "csv", "zip"].includes(ext) ? ext : ["sqlite3", "sqlite", "db"].includes(ext) && $('option[value="sqlite"]', fmtSel) ? "sqlite" : "xlsx";
       fmtSel.dispatchEvent(new Event("change")); });
   }
+  // what each import mode does, under the choice
+  S.H.impmodehelp = () => { const el = $("#impmodehelp"), m = ($("#impmode") || {}).value; if (!el) return;
+    el.textContent = m === "new" ? L2("Safe to bring in the same file again: rows and records already in the books are skipped, and records you changed in the app are left exactly as you edited them. Use it to add what you typed in your sheet since the last import.",
+      "آمن لاستيراد الملف نفسه مرة أخرى: تُتخطى الصفوف والسجلات الموجودة بالفعل، وتبقى السجلات التي عدّلتها في التطبيق كما عدّلتها. استخدمه لإضافة ما كتبته في ملفك منذ آخر استيراد.")
+      : m === "append" ? L2("Every row in the file is imported. Lists with a code or name (accounts, contacts, items, projects…) are updated with the file's values, overwriting changes made in the app; entries, vouchers and other movements are added again even if they are already in the books — so only use it for a file you have not imported before.",
+        "يُستورد كل صف في الملف. القوائم التي لها كود أو اسم (الحسابات والجهات والأصناف والمشاريع…) تُحدَّث بقيم الملف فتحل محل ما عُدّل في التطبيق؛ والقيود والسندات والحركات تُضاف مرة أخرى حتى لو كانت موجودة — لذا استخدمه فقط لملف لم يُستورد من قبل.")
+      : L2("Everything in the books is erased (a backup is taken first) and replaced by the file — for restoring a full backup.",
+        "تُمسح كل الدفاتر (بعد أخذ نسخة احتياطية) وتُستبدل بالملف — لاستعادة نسخة احتياطية كاملة."); };
+  setTimeout(() => S.H.impmodehelp && S.H.impmodehelp(), 0);
   S.H.imp = async () => {
     const out = $("#impres"), link = ($("#impurl") || {}).value?.trim();
     let file = $("#impf").files[0];
@@ -11176,7 +11186,7 @@ const TOUR = () => [
   ['[data-g="g_tax"]', L2("Tax & e-invoicing", "الضرائب والفاتورة الإلكترونية"), L2("VAT and withholding, ETA e-invoices and e-receipts.", "ضريبة القيمة المضافة والخصم، والفاتورة والإيصال الإلكتروني."), "core"],
   ['[data-g="g_acc"]', L2("General accounting", "المحاسبة العامة"), L2("Journal and chart of accounts. Tick rows to edit, void or delete many at once; pick accounts by typing a code or a word.", "اليومية ودليل الحسابات. حدّد الصفوف لتعديل أو إلغاء أو حذف عدة قيود معاً؛ واختر الحساب بكتابة رقمه أو كلمة منه."), "core"],
   ['[data-g="g_rep"]', L2("Reports", "التقارير"), L2("Statements and lists — export to PDF, Excel or Word.", "القوائم والكشوف — تصدير PDF أو Excel أو Word."), "core"],
-  ['[data-g="g_sys"]', L2("Administration", "الإدارة"), L2("Settings, users, and Excel import & export — 'New rows only' adds just what is new in your sheet.", "الإعدادات والمستخدمون واستيراد وتصدير Excel — «الجديد فقط» يضيف ما استجد في ملفك."), "core"],
+  ['[data-g="g_sys"]', L2("Administration", "الإدارة"), L2("Settings, users, and Excel import & export — 'Only what is new' adds just what is new in your sheet.", "الإعدادات والمستخدمون واستيراد وتصدير Excel — «الجديد فقط» يضيف ما استجد في ملفك."), "core"],
   ['#nav a[href="#/chat"]', L2("Team chat", "دردشة الفريق"), L2("Rooms and direct messages with your team, with files and mentions.", "غرف ورسائل خاصة مع فريقك، مع الملفات والإشارات."), "core"],
   [".dd.bell", L2("Alerts", "التنبيهات"), L2("What needs attention: bills to issue, dues, checks.", "ما يحتاج انتباهك: فواتير للإصدار، مستحقات، مراجعات."), "core"],
   [".ucard", L2("You, settings and help", "حسابك والإعدادات والمساعدة"), L2("Settings, Help & support to report a problem or ask us, and this tour again.", "الإعدادات، و«المساعدة والدعم» لتبلغ عن مشكلة أو تسألنا، وهذه الجولة مرة أخرى."), "core"],
