@@ -1061,6 +1061,54 @@ def get_boq(db, boq_id):
     return b
 
 
+def fees_in(v):
+    """Fee % per section, from a dict ({"Electrical": 10, "*": 0.12}) or text ("Electrical=10%; HVAC=8%; *=12%").
+    Numbers above 1 are percents. Returns the stored JSON text ('' = no fees)."""
+    if v in (None, "", {}):
+        return ""
+    if isinstance(v, str):
+        try:
+            v = json.loads(v)
+        except ValueError:
+            pairs = {}
+            for part in re.split(r"[;\n،]", v):
+                if "=" in part or ":" in part:
+                    k, _, p = part.replace(":", "=", 1).partition("=")
+                    pairs[k.strip()] = p.strip()
+            v = pairs
+    if not isinstance(v, dict):
+        raise ValidationError("Fees: section = percent, e.g. Electrical=10%; *=12%")
+    out = {}
+    for k, p in v.items():
+        if p in (None, ""):
+            continue
+        x = num(str(p).replace("%", "").strip(), "fee %")
+        x = x / 100 if (x > 1 or "%" in str(p)) else x
+        if x < 0 or x > 5:
+            raise ValidationError("A fee % must be between 0 and 500%")
+        out[text(k) or "*"] = round(x, 6)
+    return json.dumps(out, ensure_ascii=False, sort_keys=True) if out else ""
+
+
+def fee_rows(fees_json, lines):
+    """[{category, pct, base, amount}] — each section's work (sum of its lines) times its fee % ("*" for the rest)."""
+    try:
+        fees = json.loads(fees_json or "{}") or {}
+    except ValueError:
+        fees = {}
+    if not fees:
+        return []
+    base = {}
+    for ln in lines:
+        base[ln.get("category") or ""] = base.get(ln.get("category") or "", 0) + ln["amount"]
+    out = []
+    for cat, b in base.items():
+        p = fees.get(cat, fees.get("*"))
+        if p:
+            out.append({"category": cat, "pct": p, "base": round(b, 2), "amount": round(b * p, 2)})
+    return out
+
+
 def save_extract(db, d, extract_id=None):
     bu = bu_id_or_none(db, d.get("bu_id") or d.get("bu_code"), required=True)
     number = text(d.get("number"), "invoice / extract number", required=True)
@@ -1078,7 +1126,9 @@ def save_extract(db, d, extract_id=None):
             seq_no = max(r["n"] or 0, r["c"] or 0) + 1
         vals = (bu, boq_id, number, clean_date(d.get("date")), text(d.get("customer")), vat_code, wht_code,
                 text(d.get("project")), text(d.get("work")), seq_no, prev, to_minor(num(d.get("deductions") or 0, "deductions")),
-                text(d.get("notes"), maxlen=2000), 1 if d.get("final") in (1, True, "1", "true", "yes", "Yes") else 0)
+                text(d.get("notes"), maxlen=2000), 1 if d.get("final") in (1, True, "1", "true", "yes", "Yes") else 0,
+                fees_in(d["fees"]) if "fees" in d else
+                ((db.one("SELECT fees FROM extracts WHERE id=?", (extract_id,)) or {}).get("fees") or "" if extract_id else ""))
         if extract_id:
             x = db.one("SELECT status FROM extracts WHERE id=?", (extract_id,))
             if not x:
@@ -1086,13 +1136,13 @@ def save_extract(db, d, extract_id=None):
             if x["status"] == "posted":
                 raise ValidationError("Posted extracts are locked — reverse the invoice entry first")
             db.conn.execute("UPDATE extracts SET bu_id=?,boq_id=?,number=?,date=?,customer=?,vat_code=?,wht_code=?,"
-                            "project=?,work=?,seq_no=?,prev_paid=?,deductions=?,notes=?,final=? WHERE id=?", vals + (extract_id,))
+                            "project=?,work=?,seq_no=?,prev_paid=?,deductions=?,notes=?,final=?,fees=? WHERE id=?", vals + (extract_id,))
             db.conn.execute("DELETE FROM extract_lines WHERE extract_id=?", (extract_id,))
         else:
             if db.one("SELECT 1 FROM extracts WHERE number=?", (number,)):
                 raise ValidationError(f"Invoice number {number} already exists")
             extract_id = db.conn.execute("INSERT INTO extracts(bu_id,boq_id,number,date,customer,vat_code,wht_code,project,work,"
-                                         "seq_no,prev_paid,deductions,notes,final) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", vals).lastrowid
+                                         "seq_no,prev_paid,deductions,notes,final,fees) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", vals).lastrowid
         for ln in lines:   # a line may earn into its own revenue account (rent, services, compensation...)
             if ln["account"] and ln["account"] != db.acct("service_deferred"):   # billed in advance, earned month by month
                 account_code(db, ln["account"], types=("Revenue",), field="revenue account")
@@ -1113,7 +1163,11 @@ def get_extract(db, xid):
         return None
     x["lines"] = [_line_out(ln) for ln in
                   db.q("SELECT * FROM extract_lines WHERE extract_id=? ORDER BY seq, id", (xid,))]
-    x["total"] = round(sum(ln["amount"] for ln in x["lines"]), 2)
+    x["works_total"] = round(sum(ln["amount"] for ln in x["lines"]), 2)
+    x["fee_rows"] = fee_rows(x.get("fees"), x["lines"])          # cost-plus: a fee % on top of each section
+    x["fee_total"] = round(sum(f["amount"] for f in x["fee_rows"]), 2)
+    x["fees_map"] = json.loads(x["fees"]) if x.get("fees") else {}
+    x["total"] = round(x["works_total"] + x["fee_total"], 2)
     x.update(invoice_taxes(db, x))
     if x["boq_id"]:
         contract = {ln["item_no"] or ln["description"]: ln["qty"]
@@ -1154,6 +1208,10 @@ def list_extracts(db, boq_id=None, bu_id=None, status=None, date_from=None, date
                 (" WHERE " + " AND ".join(w) if w else "") + " ORDER BY x.date DESC, x.id DESC", p)
     for r in rows:
         r["total"] = to_major(r.pop("total_minor"))
+        if r.get("fees"):            # cost-plus: the fees on top of the work
+            lines = [{"category": ln["category"], "amount": to_major(round(ln["qty"] * ln["price"] * (ln["pct"] if ln["pct"] is not None else 1)))}
+                     for ln in db.q("SELECT category, qty, price, pct FROM extract_lines WHERE extract_id=?", (r["id"],))]
+            r["total"] = round(r["total"] + sum(f["amount"] for f in fee_rows(r["fees"], lines)), 2)
     return rows
 
 

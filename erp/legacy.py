@@ -745,101 +745,136 @@ def _norm_invoice(v):
     return re.sub(r"0+(\d)", r"\1", t)
 
 
+def _doc(ws):
+    """A BOQ / invoice sheet read by its headings (docsheet): any name starting with Invoice / BOQ, any layout."""
+    from . import docsheet
+    return docsheet.read(ws.iter_rows(values_only=True), ws.title)
+
+
+def _invoice_line(number, ln, var):
+    """One executed line of an invoice sheet → an Invoice Lines row (None when nothing was executed)."""
+    ex, pct = ln["executed"], ln["pct"]
+    if not ex or not ln["price"] or (pct is not None and pct <= 0):
+        return None
+    return {"number": number, "category": ln["category"], "sub": ln["sub"], "item_no": ln["item_no"] or f"V-{var:02d}",
+            "description": ln["description"], "unit": ln["unit"], "qty": ex, "price": ln["price"],
+            "pct": "" if pct is None or abs(pct - 1) < 1e-9 else pct}
+
+
+def _fees_text(fees):
+    return "; ".join(f"{k or '*'}={v * 100:g}%" for k, v in fees.items())
+
+
+def _contract_boq(data, ws, d, bu, done):
+    """The contract quantities on an invoice sheet become the project's contract BOQ (once per project)."""
+    client, location = d["meta"].get("client", ""), d["meta"].get("location", "")
+    title = f"Contract BOQ — {client or location or bu}"
+    if title in done:
+        return title, 0
+    done.add(title)
+    n = 0
+    for ln in d["lines"]:
+        if ln["qty"] and ln["item_no"]:
+            data["BOQ Lines"].append({"title": title, "bu_code": bu, "rev": "Contract", "date": d["meta"].get("date", ""),
+                                      "client": client, "location": location, "category": ln["category"], "sub": ln["sub"],
+                                      "item_no": ln["item_no"], "description": ln["description"], "unit": ln["unit"],
+                                      "qty": ln["qty"], "price": ln["price"]})
+            n += 1
+    return title, n
+
+
 def _invoice_sheet_lines(wb, data, notes):
-    """V1.4: the register's invoice No. points at its sheet ('Invoice 01' = the 'Invoice 1' sheet); the executed
-    quantities on that sheet are the invoice's lines."""
+    """V1.4+: the register's invoice No. points at its sheet — any sheet whose name starts with Invoice / فاتورة /
+    مستخلص ('Invoice 1', 'Invoice 1 Site A' …), matched by name or by the revision written on it."""
+    from . import docsheet
     sheets = {}
     for ws in wb.worksheets:
-        if ws.title.lower().startswith("invoice") and ws.title.lower() not in ("invoice register", "invoice lines", "invoice print"):
-            sheets[_norm_invoice(ws.title)] = ws
-            sheets.setdefault(_norm_invoice(_meta_value(ws, ["الاصدار", "الإصدار", "Revision"])), ws)
+        if docsheet.kind_of(ws.title) == "invoice":
+            d = _doc(ws)
+            sheets[_norm_invoice(ws.title)] = (ws, d)
+            if d["meta"].get("number"):
+                sheets.setdefault(_norm_invoice(d["meta"]["number"]), (ws, d))
+            m = re.match(r"^(invoice\d+)", _norm_invoice(ws.title))      # 'Invoice 1 Site A' answers to 'Invoice 01' too
+            if m:
+                sheets.setdefault(m.group(1), (ws, d))
+    data.setdefault("BOQ Lines", [])
+    done = set()
     for inv in data["Sales Invoices"]:
-        ws = sheets.get(_norm_invoice(inv["number"]))
-        if ws is None:
+        hit = sheets.get(_norm_invoice(inv["number"]))
+        if hit is None:
             notes.append(f"Invoice '{inv['number']}': no sheet with its lines was found — add the lines in the app.")
             continue
-        inv["boq_title"] = f"Contract BOQ — {inv['number']}"
-        n, var, category, started = 0, 0, "", False
-        for row in ws.iter_rows(values_only=True):
-            first = str(_v(row[0]) or "")
-            if first == "م":
-                started = True
-                continue
-            m = _SECTION.match(first)
-            if m and not _v(row[1] if len(row) > 1 else None):
-                category = m.group(1).strip()
-                continue
-            if not started or len(row) < 6 or not _v(row[1]):
-                continue
-            ex, price = _f(row[4]), _f(row[5])
-            if not ex or not price:
-                continue
-            item = first.replace(" ", "")
-            if not _ITEM.match(item):          # a variation: work that was never in the BOQ (no item number)
-                var += 1
-                item = f"V-{var:02d}"
-            data["Invoice Lines"].append({"number": inv["number"], "category": category, "item_no": item,
-                                          "description": str(_v(row[1])).strip(), "unit": _v(row[2]) or "", "qty": ex,
-                                          "price": price})
+        ws, d = hit
+        inv["boq_title"], _ = _contract_boq(data, ws, d, inv["bu_code"], done)
+        _fill_invoice(data, inv, ws, d, notes)
+
+
+def _fill_invoice(data, inv, ws, d, notes):
+    n, var = 0, 0
+    for ln in d["lines"]:
+        if not ln["item_no"] and ln["executed"]:
+            var += 1
+        row = _invoice_line(inv["number"], ln, var)
+        if row:
+            data["Invoice Lines"].append(row)
             n += 1
-        notes.append(f"Invoice '{inv['number']}': {n} executed lines read from the '{ws.title}' sheet"
-                     + (f", {var} of them variations outside the BOQ (numbered V-01…)." if var else "."))
+    if d["paid"] is not None:
+        inv["prev_paid"] = d["paid"]
+    if d["fees"]:
+        inv["fees"] = _fees_text(d["fees"])
+    adj = sum(1 for ln in d["lines"] if ln.get("adjusted"))
+    notes.append(f"Invoice '{inv['number']}': {n} executed lines read from the '{ws.title}' sheet"
+                 + (f", {var} of them work outside the BOQ (numbered V-01…)" if var else "")
+                 + (f"; {adj} line(s) carry a hand-made actual total in the sheet — kept exactly (their completion % adjusted)" if adj else "")
+                 + (f"; paid by the owner so far: {d['paid']:,.2f}" if d["paid"] is not None else "")
+                 + (f"; fees: {_fees_text(d['fees'])}" if d["fees"] else "") + ".")
 
 
 def _read_boq_and_invoices(wb, data, notes, register=False):
+    from . import docsheet
     data.setdefault("BOQ Lines", [])
     data.setdefault("Sales Invoices", [])
     data.setdefault("Invoice Lines", [])
+    known = {_norm_invoice(i["number"]) for i in data["Sales Invoices"]}
+    done = {b["title"] for b in data["BOQ Lines"]}
     for ws in wb.worksheets:
-        title = ws.title.lower()
-        if title in ("invoice register", "invoice lines") or (register and title == "invoice print"):
-            continue
-        if title.startswith("boq"):
-            client = _meta_value(ws, ["Client", "العميل", "المشروع"]) or ""
-            location = _meta_value(ws, ["Location", "الموقع"]) or ""
-            rev = _meta_value(ws, ["Revision", "الاصدار", "الإصدار"]) or "Rev 01"
-            date = _date(_meta_value(ws, ["Date", "التاريخ"]))
+        kind = docsheet.kind_of(ws.title)
+        if kind == "boq":
+            d = _doc(ws)
+            m = d["meta"]
+            client, location, rev = m.get("client", ""), m.get("location", ""), m.get("number") or "Rev 01"
             bu = _find_bu(data, location, client)
+            title = f"BOQ — {client}".strip(" —") or ws.title
             n = 0
-            for cat, row in _item_rows(ws, 8):
-                qty, price = _f(row[3]), _f(row[4])
-                cost_total = _f(row[7]) if len(row) > 7 else 0
-                data["BOQ Lines"].append({
-                    "title": f"BOQ — {client}".strip(" —") or ws.title, "bu_code": bu, "rev": rev, "date": date,
-                    "client": client, "location": location, "category": cat, "item_no": str(_v(row[0])),
-                    "description": _v(row[1]), "unit": _v(row[2]) or "", "qty": qty, "price": price,
-                    "cost": round(cost_total / qty, 6) if qty and cost_total else ""})
+            for ln in d["lines"]:
+                data["BOQ Lines"].append({"title": title, "bu_code": bu, "rev": rev, "date": m.get("date", ""), "client": client,
+                                          "location": location, "category": ln["category"], "sub": ln["sub"],
+                                          "item_no": ln["item_no"], "description": ln["description"], "unit": ln["unit"],
+                                          "qty": ln["qty"], "price": ln["price"], "cost": ln["cost"] if ln["cost"] else ""})
                 n += 1
             if n:
-                notes.append(f"Sheet '{ws.title}': {n} BOQ lines imported as 'BOQ — {client}'"
+                notes.append(f"Sheet '{ws.title}': {n} BOQ lines imported as '{title}'"
                              + ("" if bu else " (no matching business unit — link it from the BOQ screen)") + ".")
-        elif title.startswith("invoice"):
-            client = _meta_value(ws, ["المشروع", "Project", "Client"]) or ""
-            location = _meta_value(ws, ["الموقع", "Location"]) or ""
-            number = re.sub(r"\s+", " ", str(_meta_value(ws, ["الاصدار", "الإصدار", "Revision"]) or ws.title)).strip()
-            date = _date(_meta_value(ws, ["التاريخ", "Date"]))
-            bu = _find_bu(data, location, client)
+        elif kind == "invoice":
+            d = _doc(ws)
+            m = d["meta"]
+            number = re.sub(r"\s+", " ", str(m.get("number") or ws.title)).strip()
+            if _norm_invoice(number) in known or _norm_invoice(ws.title) in known:
+                continue                     # already read through the Invoice Register
+            if register:
+                continue
+            bu = _find_bu(data, m.get("location"), m.get("client"))
             if not bu:
-                notes.append(f"Sheet '{ws.title}': no business unit matches '{client}' / '{location}' — skipped.")
+                notes.append(f"Sheet '{ws.title}': no business unit matches '{m.get('client', '')}' / '{m.get('location', '')}' — skipped.")
                 continue
-            boq_title = f"Contract BOQ — {number}"
-            contract, executed = 0, 0
-            for cat, row in _item_rows(ws, 9):
-                cq, ex, price = _f(row[3]), _f(row[4]), _f(row[5])
-                base = {"category": cat, "item_no": str(_v(row[0])), "description": _v(row[1]),
-                        "unit": _v(row[2]) or "", "price": price}
-                data["BOQ Lines"].append({**base, "title": boq_title, "bu_code": bu, "rev": "Contract", "date": date,
-                                          "client": client, "location": location, "qty": cq})
-                contract += 1
-                if ex and not register:
-                    data["Invoice Lines"].append({**base, "number": number, "qty": ex})
-                    executed += 1
-            if register:          # V1.3: the invoice itself comes from the Invoice Register; keep the contract BOQ
-                notes.append(f"Sheet '{ws.title}': contract BOQ ({contract} lines) imported as '{boq_title}' for {bu}.")
-                continue
-            if executed:
-                data["Sales Invoices"].append({"number": number, "date": date, "bu_code": bu,
-                                               "boq_title": boq_title, "status": "Draft", "customer": client})
-            notes.append(f"Sheet '{ws.title}': contract BOQ ({contract} lines) and progress billing '{number}' "
-                         f"({executed} executed lines) imported for {bu} as a DRAFT — open it under Sales Invoices, "
-                         "check it and press 'Save & post' to book the receivable and revenue.")
+            boq_title, contract = _contract_boq(data, ws, d, bu, done)
+            inv = {"number": number, "date": m.get("date", ""), "bu_code": bu, "boq_title": boq_title, "status": "Draft",
+                   "customer": m.get("client", "")}
+            before = len(data["Invoice Lines"])
+            _fill_invoice(data, inv, ws, d, notes)
+            if len(data["Invoice Lines"]) > before:
+                data["Sales Invoices"].append(inv)
+                known.add(_norm_invoice(number))
+                notes.append(f"Sheet '{ws.title}': progress billing '{number}' imported for {bu} as a DRAFT"
+                             + (f" with its contract BOQ ({contract} lines)" if contract else "")
+                             + " — open it under Sales Invoices, check it and press 'Save & post' to book it.")

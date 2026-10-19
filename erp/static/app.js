@@ -2772,8 +2772,9 @@ PAGES.extract = async (view, parts) => {
     // paid before: what is typed, else the amount worked out from the books (shown as the placeholder)
     const prev = prevIn && prevIn.value !== "" ? +prevIn.value : (x.prev_auto ? x.prev : +(prevAuto && prevAuto.dataset.v) || 0);
     const earlier = x.receivable_to_date - x.receivable, ded = dedIn ? +dedIn.value || 0 : x.deductions;
-    const due = earlier + tot + x.vat - x.wht - prev - ded;
-    $("#xtot", view).textContent = money(tot); $("#xtodate", view).textContent = money(earlier + tot); $("#xdue", view).textContent = money(due); };
+    const fee = x.fee_total || 0;      // fee % per section (set on the invoice screen), as last saved
+    const due = earlier + tot + fee + x.vat - x.wht - prev - ded;
+    $("#xtot", view).textContent = money(tot); $("#xtodate", view).textContent = money(earlier + tot + fee); $("#xdue", view).textContent = money(due); };
   const drawLines = () => { $("#xlines", view).innerHTML = `<table><thead><tr><th>#</th><th>${esc(L2("Description of works", "بيان الأعمال"))}</th><th>${t("unit")}</th><th class="num">%</th><th class="num">${esc(L2("Qty", "الكمية"))}</th><th class="num">${esc(L2("Rate", "الفئة"))}</th><th class="num">${esc(L2("Total", "الإجمالي"))}</th><th></th></tr></thead><tbody>
     ${lines.map((l, i) => `<tr><td>${i + 1}</td><td><input data-skip="1" data-input="xl" data-i="${i}" data-k="description" value="${esc(l.description)}" ${ed ? "" : "disabled"} style="min-width:220px;width:100%"></td>
       <td><input data-skip="1" data-input="xl" data-i="${i}" data-k="unit" value="${esc(l.unit || "")}" style="width:56px" ${ed ? "" : "disabled"}></td>
@@ -2816,7 +2817,7 @@ PAGES.extract = async (view, parts) => {
       <div class="card"><h2>${esc(L2("Works on this extract", "أعمال هذا المستخلص"))}</h2><div class="tbl" id="xlines"></div></div>
       ${x.earlier.length ? `<div class="card"><h2>${esc(L2("Earlier extracts on this site (printed above this one)", "مستخلصات سابقة على الموقع (تُطبع قبل هذا)"))}</h2>${x.earlier.map(e => `<div class="row"><a href="#/extract/${e.id}"><b>${esc(e.number)}</b></a> · #${e.seq_no || ""}<span class="spacer"></span>${money(e.total)}</div>`).join("")}</div>` : ""}</div>
     <div><div class="card xsum"><h2>${esc(L2("Totals", "الإجماليات"))}</h2>
-      ${rows(L2("This extract", "هذا المستخلص"), { id: "xtot" })}${rows(L2("Total works to date", "إجمالي الأعمال حتى تاريخه"), { id: "xtodate" })}
+      ${rows(L2("This extract", "هذا المستخلص"), { id: "xtot" })}${x.fee_total ? rows(L2("Fees", "الأتعاب"), x.fee_total) : ""}${rows(L2("Total works to date", "إجمالي الأعمال حتى تاريخه"), { id: "xtodate" })}
       ${x.vat_to_date ? rows(L2("VAT", "ضريبة القيمة المضافة"), x.vat_to_date) : ""}${x.wht_to_date ? rows(L2("Withholding tax", "خصم من المنبع"), -x.wht_to_date) : ""}
       ${rows(L2("Less paid before", "خصم ما سبق صرفه"), x.prev)}${x.deductions ? rows(L2("Deductions", "خصومات"), x.deductions) : ""}
       ${rows(L2("AMOUNT DUE", "المستحق"), { id: "xdue" }, "big")}
@@ -2841,21 +2842,25 @@ function paintLine(tr) {
   $$("input:not([type=hidden])", tr).forEach(i => { i.style.cssText = i.style.cssText.replace(/(font-weight|font-style|text-decoration|color|text-align):[^;]*;?/g, "") + lineCss(st); });
   $$("td", tr).forEach(td => { td.style.background = st.bg || ""; });
 }
-function linesEditor(lines, withCost, withContract) {
+// withPct: a completion % per line (invoices) — the line's amount is quantity × price × %
+const pctShown = l => l.pctp !== undefined ? l.pctp : (l.pct == null || l.pct === "" ? "" : +(l.pct * 100).toFixed(4));
+const lineAmt = l => (l.qty || 0) * (l.price || 0) * (l.pct == null || l.pct === "" ? 1 : +l.pct);
+function linesEditor(lines, withCost, withContract, withPct) {
   return `<div class="tbl le-wrap"><table id="le" tabindex="-1"><thead><tr><th>${t("item_no")}</th><th>${t("category")}</th><th style="min-width:260px">${t("description")}</th><th>${t("unit")}</th>
-    ${withContract ? `<th class="num">${t("contract_qty")}</th><th class="num">${t("billed_before")}</th>` : ""}<th class="num">${withContract ? t("executed") : t("qty")}</th><th class="num">${t("unit_price")}</th>${withCost ? `<th class="num">${t("unit_cost")}</th>` : ""}<th class="num">${t("amount")}</th><th></th></tr></thead><tbody>
+    ${withContract ? `<th class="num">${t("contract_qty")}</th><th class="num">${t("billed_before")}</th>` : ""}<th class="num">${withContract ? t("executed") : t("qty")}</th>${withPct ? `<th class="num" title="${esc(L2("Completion % — blank = 100%", "نسبة التنفيذ — فارغ = 100%"))}">${esc(L2("% done", "نسبة التنفيذ"))}</th>` : ""}<th class="num">${t("unit_price")}</th>${withCost ? `<th class="num">${t("unit_cost")}</th>` : ""}<th class="num">${t("amount")}</th><th></th></tr></thead><tbody>
     ${lines.map((l, i) => `<tr data-i="${i}"><td><input class="l-item_no" value="${esc(l.item_no)}" style="width:70px"></td><td><input class="l-category" value="${esc(l.category)}"></td>
       <td><input class="l-description" value="${esc(l.description)}"><input type="hidden" class="l-sub" value="${esc(l.sub || "")}"><input type="hidden" class="l-account" value="${esc(l.account || "")}"><input type="hidden" class="l-pct" value="${l.pct == null ? "" : l.pct}"><input type="hidden" class="l-cq" value="${l.contract_qty == null ? "" : l.contract_qty}"><input type="hidden" class="l-bb" value="${l.billed_before || ""}"><input type="hidden" class="l-style" value="${esc(JSON.stringify(l.style || {}))}"></td><td><input class="l-unit" value="${esc(l.unit)}" style="width:70px" list="units"></td>
       ${withContract ? `<td class="num">${l.contract_qty == null ? "—" : numf(l.contract_qty)}</td><td class="num">${numf(l.billed_before || 0)}</td>` : ""}
-      <td><input class="l-qty num" type="number" step="any" value="${l.qty ?? 0}" data-input="letot" style="width:90px"></td><td><input class="l-price num" type="number" step="any" value="${l.price ?? 0}" data-input="letot" style="width:110px"></td>
+      <td><input class="l-qty num" type="number" step="any" value="${l.qty ?? 0}" data-input="letot" style="width:90px"></td>${withPct ? `<td><input class="l-pctp num" type="number" step="any" min="0" value="${esc(pctShown(l))}" placeholder="100" data-input="letot" style="width:70px"></td>` : ""}<td><input class="l-price num" type="number" step="any" value="${l.price ?? 0}" data-input="letot" style="width:110px"></td>
       ${withCost ? `<td><input class="l-cost num" type="number" step="any" value="${l.cost ?? 0}" data-input="letot" style="width:110px"></td>` : ""}
-      <td class="num l-amt">${money((l.qty || 0) * (l.price || 0))}</td><td><button class="btn sm danger" data-a="lerm">✕</button></td></tr>`).join("")}</tbody></table></div>`;
+      <td class="num l-amt">${money(withPct ? lineAmt(l) : (l.qty || 0) * (l.price || 0))}</td><td><button class="btn sm danger" data-a="lerm">✕</button></td></tr>`).join("")}</tbody></table></div>`;
 }
 function readLines(keepEmpty) {
   return $$("#le tbody tr").map(tr => { const g = c => { const el = $(".l-" + c, tr); return el ? el.value : ""; };
     let style = {}; try { style = JSON.parse(g("style") || "{}") || {}; } catch { style = {}; }
     return { item_no: g("item_no"), category: g("category"), sub: g("sub"), description: g("description"), unit: g("unit"), qty: +g("qty") || 0, price: +g("price") || 0,
-      cost: +g("cost") || 0, account: g("account"), ...(g("pct") !== "" ? { pct: +g("pct") } : {}), style,
+      cost: +g("cost") || 0, account: g("account"), style,
+      ...($(".l-pctp", tr) ? (g("pctp").trim() !== "" ? { pct: (parseFloat(g("pctp")) || 0) / 100 } : {}) : g("pct") !== "" ? { pct: +g("pct") } : {}),
       ...(g("cq") !== "" ? { contract_qty: +g("cq") } : {}), ...(g("bb") !== "" ? { billed_before: +g("bb") } : {}) }; })
     .filter(l => keepEmpty || l.description.trim());
 }
@@ -3054,11 +3059,16 @@ PAGES.invoice = async (view, parts, q) => {
   const isNew = parts[1] === "new";
   let x = isNew ? { number: "", date: today(), bu_id: q.bu_id || "", boq_id: q.boq_id || "", lines: [], status: "draft", customer: "", vat_code: "", wht_code: "" } : await api("GET", "/api/extracts/" + parts[1]);
   if (isNew && q.dup) { const src = await api("GET", "/api/extracts/" + q.dup);   // a new draft copied from another invoice
-    x = { ...x, bu_id: src.bu_id, boq_id: src.boq_id || "", customer: src.customer || "", vat_code: src.vat_code || "", wht_code: src.wht_code || "",
+    x = { ...x, bu_id: src.bu_id, boq_id: src.boq_id || "", customer: src.customer || "", vat_code: src.vat_code || "", wht_code: src.wht_code || "", fees_map: src.fees_map || {},
       lines: (src.lines || []).map(({ id, extract_id, ...l }) => l) }; }
   if (isNew && q.boq_id) { const b = await api("GET", "/api/boqs/" + q.boq_id); x.bu_id = b.bu_id; x.lines = b.lines.map(l => ({ ...l, contract_qty: l.qty, qty: 0 })); }
   const boqs = can("estimating.boqs") ? await api("GET", "/api/boqs") : [];
   const locked = x.status === "posted" || !can("sales.invoices", isNew ? "add" : "edit");
+  // fee % per section on top of the work (cost-plus) — on by default where the country bills this way
+  const prof = S.boot.settings.country_profile || {};
+  let fees = Object.fromEntries(Object.entries(x.fees_map || {}).map(([k, v]) => [k, +(v * 100).toFixed(4)]));
+  let feesOn = Object.keys(fees).length > 0 || prof.invoice_style === "contract_actual";
+  const feeKey = c => c || "";
   const render = () => {
     const withContract = !!x.boq_id;
     view.innerHTML = `<div class="toolbar"><a class="btn" href="#/invoices">← ${t("m_invoices")}</a><span class="spacer"></span>
@@ -3070,8 +3080,9 @@ PAGES.invoice = async (view, parts, q) => {
         { k: "customer", l: t("customer"), v: x.customer, list: "custs", dis: locked, change: "xcust" }, { k: "vat_code", l: t("vat_code"), type: "select", opts: taxOpts("vat"), v: x.vat_code, dis: locked, change: "letot" },
         { k: "wht_code", l: t("wht_code"), type: "select", opts: taxOpts("wht"), v: x.wht_code, dis: locked, change: "letot" }], 4)}${datalist("custs", (S.boot.parties || []).filter(p => p.type !== "supplier").map(p => p.name))}</div>
       ${locked ? "" : `<div class="card">${priceSearchBox()}</div>`}
-      <div class="card"><h2>${t("lines")}</h2>${locked ? "" : gridBar("invoice")}${linesEditor(x.lines, false, withContract)}
+      <div class="card"><h2>${t("lines")}</h2>${locked ? "" : gridBar("invoice")}${linesEditor(x.lines, false, withContract, true)}
         <div class="row" style="margin-top:10px">${locked ? "" : `<button class="btn sm" data-a="leadd">${t("add_line")}</button>`}<span class="spacer"></span><b id="letot"></b></div></div>${unitsList()}
+      <div class="card" id="feecard"></div>
       ${!isNew && x.status === "posted" && can("sales.invoices") ? `<div class="card" id="etacard"><h2>${t("m_einv")}</h2><div id="etabody" class="muted">${t("loading")}</div></div>` : ""}`;
     if (locked) $$("#le input, #le button").forEach(e => { e.disabled = true; });
     if ($("#etacard")) etaPanel(x);
@@ -3081,15 +3092,43 @@ PAGES.invoice = async (view, parts, q) => {
   };
   const header = () => ({ bu_id: $("[name=bu_id]").value, number: $("[name=number]").value, date: $("[name=date]").value, boq_id: $("[name=boq_id]").value,
     customer: $("[name=customer]").value, vat_code: $("[name=vat_code]").value, wht_code: $("[name=wht_code]").value });
-  S.H.letot = () => { let s = 0; $$("#le tbody tr").forEach(tr => { const a = (+$(".l-qty", tr).value || 0) * (+$(".l-price", tr).value || 0); s += a; $(".l-amt", tr).textContent = money(a); });
-    const vc = $("[name=vat_code]"), wc = $("[name=wht_code]"); const vat = Math.round(s * rateOf(vc ? vc.value : "") * 100) / 100, wht = Math.round(s * rateOf(wc ? wc.value : "") * 100) / 100;
-    const el = $("#letot"); if (el) el.textContent = `${t("total")}: ${money(s)} · ${t("vat_amt")}: ${money(vat)} · ${t("gross")}: ${money(s + vat)} · ${t("wht_amt")}: (${money(wht)}) · ${t("net_receivable")}: ${money(s + vat - wht)} ${cur()}`; };
+  // the fee card: one % per section of the lines (and one for any other section); amounts follow the lines as they change
+  const drawFees = base => {
+    const box = $("#feecard"); if (!box) return;
+    if (!feesOn) { box.dataset.k = ""; box.classList.toggle("card", !locked); box.innerHTML = locked ? "" : `<button class="btn sm" data-a="feeon">+ ${esc(L2("Fee % per section (cost-plus)", "نسبة أتعاب لكل باب (التكلفة + نسبة)"))}</button>`; return 0; }
+    box.classList.add("card");
+    const cats = Object.keys(base), rate = c => fees[c] !== undefined && fees[c] !== "" ? +fees[c] : (fees["*"] !== undefined && fees["*"] !== "" ? +fees["*"] : 0);
+    const total = cats.reduce((a, c) => a + Math.round(base[c] * rate(c)) / 100, 0);
+    const inp = (c, v) => `<input class="num" type="number" step="any" min="0" data-skip="1" data-input="feeset" data-c="${esc(c)}" value="${esc(v ?? "")}" style="width:80px" ${locked ? "disabled" : ""}>`;
+    const keyNow = cats.join("\u0001");
+    if (box.dataset.k === keyNow && $("table", box)) {     // same sections: update the amounts only (keeps the cursor in place)
+      cats.forEach((c, i) => { const td = $(`#feeamt${i}`, box); if (td) td.textContent = money(Math.round(base[c] * rate(c)) / 100); const b2 = $(`#feebase${i}`, box); if (b2) b2.textContent = money(base[c]); });
+      const ft = $("#feetot", box); if (ft) ft.textContent = money(total); return total; }
+    box.dataset.k = keyNow;
+    box.innerHTML = `<h2>${esc(L2("Fee % per section", "نسبة الأتعاب لكل باب"))}</h2><p class="muted" style="margin-top:-4px">${esc(L2("Billed on top of each section's work. Blank = the rate for every other section (or none).", "تُضاف على أعمال كل باب. فارغ = نسبة باقي الأبواب (أو لا شيء)."))}</p>
+      <div class="tbl"><table><thead><tr><th>${t("category")}</th><th class="num">${esc(L2("Work", "الأعمال"))}</th><th class="num">%</th><th class="num">${t("amount")}</th></tr></thead><tbody>
+      ${cats.map((c, i) => `<tr><td>${esc(c || "—")}</td><td class="num" id="feebase${i}">${money(base[c])}</td><td class="num">${inp(c, fees[c])}</td><td class="num" id="feeamt${i}">${money(Math.round(base[c] * rate(c)) / 100)}</td></tr>`).join("")}
+      <tr><td><i>${esc(L2("Every other section", "باقي الأبواب"))}</i></td><td></td><td class="num">${inp("*", fees["*"])}</td><td></td></tr>
+      <tr><td><b>${esc(L2("Fees total", "إجمالي الأتعاب"))}</b></td><td></td><td></td><td class="num"><b id="feetot">${money(total)}</b></td></tr></tbody></table></div>
+      ${locked ? "" : `<button class="btn sm" type="button" data-a="feeoff">${esc(L2("No fees on this invoice", "بدون أتعاب على هذه الفاتورة"))}</button>`}`;
+    return total; };
+  S.H.feeon = () => { feesOn = true; S.H.letot(); };
+  S.H.feeoff = () => { feesOn = false; fees = {}; const box = $("#feecard"); if (box) box.dataset.k = ""; S.H.letot(); };
+  S.H.feeset = el => { fees[el.dataset.c] = el.value; S.H.letot(); };
+  S.H.letot = () => { let s = 0; const base = {};
+    $$("#le tbody tr").forEach(tr => { const pp = $(".l-pctp", tr), p = pp && pp.value.trim() !== "" ? (parseFloat(pp.value) || 0) / 100 : 1;
+      const a = (+$(".l-qty", tr).value || 0) * (+$(".l-price", tr).value || 0) * p; s += a; $(".l-amt", tr).textContent = money(a);
+      const c = feeKey(($(".l-category", tr) || {}).value || ""); base[c] = (base[c] || 0) + a; });
+    const fee = drawFees(base) || 0, all = s + fee;
+    const vc = $("[name=vat_code]"), wc = $("[name=wht_code]"); const vat = Math.round(all * rateOf(vc ? vc.value : "") * 100) / 100, wht = Math.round(all * rateOf(wc ? wc.value : "") * 100) / 100;
+    const el = $("#letot"); if (el) el.textContent = `${t("total")}: ${money(s)}${fee ? ` · ${L2("Fees", "الأتعاب")}: ${money(fee)}` : ""} · ${t("vat_amt")}: ${money(vat)} · ${t("gross")}: ${money(all + vat)} · ${t("wht_amt")}: (${money(wht)}) · ${t("net_receivable")}: ${money(all + vat - wht)} ${cur()}`; };
   S.H.xcust = el => { const p = (S.boot.parties || []).find(z => z.name === el.value); if (!p) return; if (p.default_vat && !$("[name=vat_code]").value) $("[name=vat_code]").value = p.default_vat; if (p.default_wht && !$("[name=wht_code]").value) $("[name=wht_code]").value = p.default_wht; S.H.letot(); };
   S.H.leadd = () => { x = { ...x, ...header(), lines: [...readLines(true), { description: "", qty: 1, price: 0 }] }; render(); };
   S.H.lerm = el => { el.closest("tr").remove(); S.H.letot(); };
   S.H.padd = el => { const r = S.cache.rates[+el.dataset.i]; x = { ...x, ...header(), lines: [...readLines(true).filter(l => l.description.trim()), { item_no: r.item_no, category: r.category, sub: r.sub, description: r.description, unit: r.unit, qty: 1, price: r.price }] }; render(); };
   S.H.xboq = async el => { if (!el.value) return; const b = await api("GET", "/api/boqs/" + el.value); x = { ...x, ...header(), bu_id: b.bu_id, lines: b.lines.map(l => ({ ...l, contract_qty: l.qty, qty: 0 })) }; render(); };
-  const save = async post => { const body = { ...header(), lines: readLines(), post };
+  const feeBody = () => feesOn ? Object.fromEntries(Object.entries(fees).filter(([, v]) => v !== "" && v != null && +v).map(([k, v]) => [k, `${+v}%`])) : {};
+  const save = async post => { const body = { ...header(), lines: readLines(), post, fees: feeBody() };
     const r = isNew ? await api("POST", "/api/extracts", body) : await api("PUT", "/api/extracts/" + x.id, body);
     Drafts.done(view); toast(post ? t("posted") : t("saved")); location.hash = "#/invoice/" + r.id; if (!isNew) route(); };
   S.H.xsave = () => save(false).catch(fail);
@@ -4800,6 +4839,20 @@ const Img = {
 const FONTS = ["system", "Inter", "Nunito Sans", "Cairo", "Arial", "Tahoma", "Segoe UI", "Calibri", "Verdana", "Helvetica", "Times New Roman", "Georgia", "Noto Sans Arabic", "Noto Naskh Arabic", "Cairo", "Traditional Arabic", "Courier New"];
 const DOC_FONTS = ["Arial", "Calibri", "Tahoma", "Segoe UI", "Times New Roman", "Georgia", "Cairo", "Traditional Arabic", "Bodoni MT Black", "Bodoni MT", "Garamond", "Century Gothic"];
 
+// countries: picking one sets the currency and how BOQs / invoices are laid out; each can still be changed on its own
+const countryOpts = () => [["", L2("— not set —", "— غير محدد —")], ...(S.boot.settings.countries || []).map(c => [c.code, S.lang === "ar" ? c.name_ar : c.name])];
+const STYLE_NAMES = () => ({ contract_actual: L2("Contract vs actual, completion %, fee % per section", "العقد مقابل الفعلي، نسبة التنفيذ، نسبة أتعاب لكل باب"),
+  simple: L2("Executed quantity × price", "الكمية المنفذة × السعر") });
+const countryOf = code => (S.boot.settings.countries || []).find(c => c.code === code);
+function countryFields(st) {
+  const c = countryOf(st.country), sn = STYLE_NAMES(), lang = { ar: "العربية", en: "English" };
+  return [{ k: "country", l: L2("Country", "الدولة"), type: "select", opts: countryOpts(), v: st.country || "", change: "cocountry",
+      help: L2("Sets the currency and the usual way of laying out BOQs and invoices there. More country defaults will follow.", "تضبط العملة والطريقة المعتادة لعرض المقايسات والفواتير هناك. ستُضاف إعدادات أخرى لكل دولة تباعاً.") },
+    { k: "invoice_style", l: L2("Invoice layout", "شكل الفاتورة / المستخلص"), type: "select", v: st.invoice_style || "",
+      opts: [["", L2("As usual in the country", "المعتاد في الدولة") + (c ? ` (${sn[c.invoice_style]})` : "")], ["contract_actual", sn.contract_actual], ["simple", sn.simple]] },
+    { k: "doc_lang", l: L2("BOQ & invoice language", "لغة المقايسة والفاتورة"), type: "select", v: st.doc_lang || "",
+      opts: [["", L2("As usual in the country", "المعتاد في الدولة") + (c ? ` (${lang[c.doc_lang]})` : "")], ["ar", lang.ar], ["en", lang.en]] }];
+}
 PAGES.settings = async (view, parts, q) => {
   const tabs = [["company", "tab_company", can("settings.company")], ["docs", "tab_docs", can("settings.branding")], ["look", "tab_look", true], ["theme", "tab_theme", true], ["notify", "tab_notify", true], ["perms", "tab_perms", true],
     ["menus", "tab_menus", can("settings.menus")], ["system", "tab_system", can("settings.system") || S.boot.user.is_admin],
@@ -4819,6 +4872,7 @@ PAGES.settings = async (view, parts, q) => {
       { k: "font_family", l: t("font_family") + " (" + t("default") + ")", type: "select", opts: FONTS.map(f => [f, f]), v: st.font_family || "system" },
       { k: "font_size", l: t("font_size") + " (" + t("default") + ")", type: "number", v: st.font_size || 15 },
       { k: "units", l: t("units"), v: (st.units || []).join(", "), span: "span2" }], 4)}</div>
+      <div class="card" id="cocountry"><h2>${esc(L2("Country & documents", "الدولة والمستندات"))}</h2>${form(countryFields(st), 3)}</div>
       <div class="card"><h2>${t("bank_details")}</h2><p class="muted" style="margin-top:-4px">${L2("Add every account you use. The default one goes on new offers; each offer can pick another or enter its own.", "أضف كل الحسابات التي تستخدمها. الافتراضي يظهر في العروض الجديدة، ويمكن لكل عرض اختيار حساب آخر أو إدخال بيانات خاصة.")}</p><div id="banks"></div>
         ${ed ? `<button class="btn sm" type="button" data-a="bankadd">+ ${L2("Add bank account", "إضافة حساب بنكي")}</button>` : ""}</div>
       <div class="card"><h2>${t("numbering")}</h2>${form([{ k: "offer_prefix", l: t("offer_prefix"), v: st.offer_prefix || "OFR-", help: "{YYYY} = year" },
@@ -4842,6 +4896,9 @@ PAGES.settings = async (view, parts, q) => {
     S.H.bankf = el => { banks[+el.dataset.i][el.dataset.k] = el.value; };
     drawBanks();
     if (!ed) $$("#cocard input, #cocard select").forEach(e => { e.disabled = true; });
+    S.H.cocountry = el => { const c = countryOf(el.value), cu = $("#cocard [name=currency]"); if (c && cu) cu.value = c.currency;
+      const box = $("#cocountry"), keep = readForm(box);     // the "as usual in the country" choices name the new country's ways
+      box.innerHTML = `<h2>${esc(L2("Country & documents", "الدولة والمستندات"))}</h2>` + form(countryFields({ ...keep, country: el.value }), 3); };
     S.H.cosave = async () => { const v = readForm($("#cocard")); const regional = {}; v.banks = banks; v.bank_default = bankDefault;
       ["date_format", "negative", "decimals", "digits"].forEach(k => { regional[k] = v[k]; delete v[k]; });
       v.regional = regional; v.units = v.units.split(",").map(x => x.trim()).filter(Boolean);
@@ -11084,7 +11141,8 @@ async function quickSetup(then) {
     <input data-skip="1" class="qs-ps num" type="number" step="any" min="0" max="100" value="${p.default_share != null ? +(p.default_share * 100).toFixed(2) : ""}" placeholder="%" style="flex:1" ${p.id ? "disabled" : ""}></div>`).join("");
   const f = drawer(L2("Quick setup", "الإعداد السريع"), `<p class="muted" style="margin-top:0">${esc(L2("The basics most companies set first. Everything can be changed later in Settings.", "الأساسيات التي تضبطها معظم الشركات أولاً. يمكن تغيير كل شيء لاحقاً من الإعدادات."))}</p>` + form([
       { k: "company_name", l: t("company_name"), v: st.company_name || "", ph: GEN_NAME() }, { k: "company_tagline", l: t("tagline"), v: st.company_tagline || "", ph: GEN_TAG() },
-      { k: "currency", l: t("currency"), v: st.currency || "EGP" }, { k: "fiscal_year_start", l: L2("Financial year starts (MM-DD)", "بداية السنة المالية (MM-DD)"), v: st.fiscal_year_start || "01-01", ph: "01-01" },
+      { ...countryFields(st)[0], change: "qscountry" }, { k: "currency", l: t("currency"), v: st.currency || "EGP" },
+      { k: "fiscal_year_start", l: L2("Financial year starts (MM-DD)", "بداية السنة المالية (MM-DD)"), v: st.fiscal_year_start || "01-01", ph: "01-01" },
       { html: `<label class="f spanall">${esc(L2("Logo (for documents and the sidebar)", "الشعار (للمستندات والقائمة الجانبية)"))}<input type="file" id="qslogo" accept="image/*" data-skip="1"></label>` }], 2) +
     (canEq ? `<h3 style="margin:16px 0 6px">${esc(L2("Partners", "الشركاء"))}</h3><p class="muted" style="margin-top:0">${esc(L2("Name and profit share. Leave empty if there are none yet.", "الاسم ونسبة الربح. اتركها فارغة إن لم يوجد بعد."))}</p>
       <div id="qsps">${rowsHtml(partners.length ? partners : [{}, {}])}</div><button type="button" class="btn sm" id="qsadd">+ ${esc(L2("Partner", "شريك"))}</button>
@@ -11092,7 +11150,7 @@ async function quickSetup(then) {
       <label class="f">${esc(L2("Profit kept in the company (reserve %)", "الربح المحتجز في الشركة (نسبة الاحتياطي %)"))}<input name="reserve_pct" type="number" step="any" min="0" max="100" value="${st.reserve_pct != null && st.reserve_pct !== "" ? +(st.reserve_pct * 100).toFixed(2) : ""}"></label>` : ""),
     async v => {
       const logoF = $("#qslogo").files[0];
-      const body = { company_name: v.company_name.trim(), company_tagline: v.company_tagline.trim(), currency: v.currency.trim() || "EGP", fiscal_year_start: v.fiscal_year_start.trim() || "01-01" };
+      const body = { company_name: v.company_name.trim(), company_tagline: v.company_tagline.trim(), country: v.country || "", currency: v.currency.trim() || "EGP", fiscal_year_start: v.fiscal_year_start.trim() || "01-01" };
       if (canEq) {
         for (const r of $$("#qsps .qs-p")) { const [n, s] = [$(".qs-pn", r), $(".qs-ps", r)]; if (n.disabled || !n.value.trim()) continue;
           await api("POST", "/api/partners", { name: n.value.trim(), default_share: (+s.value || 0) / 100 }); }
@@ -11106,6 +11164,7 @@ async function quickSetup(then) {
   const fund = () => { const sel = $("#qsfund", f); if (!sel) return; const cur = sel.value || st.funding_partner || "";
     const names = [...new Set($$(".qs-pn", f).map(x => x.value.trim()).filter(Boolean))];
     sel.innerHTML = `<option value="">— ${esc(L2("none — the company's own bank and cash", "لا يوجد — بنك الشركة وخزينتها"))} —</option>` + names.map(n => `<option ${n === cur ? "selected" : ""}>${esc(n)}</option>`).join(""); };
+  S.H.qscountry = el => { const c = countryOf(el.value), cu = $("[name=currency]", f); if (c && cu) cu.value = c.currency; };
   const add = $("#qsadd", f); if (add) add.addEventListener("click", () => { $("#qsps", f).insertAdjacentHTML("beforeend", rowsHtml([{}])); });
   f.addEventListener("input", e => { if (e.target.classList.contains("qs-pn")) fund(); }); fund();
 }

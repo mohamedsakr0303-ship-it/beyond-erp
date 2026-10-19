@@ -2071,6 +2071,8 @@ class Database:
                                     ("prev_paid", "INTEGER"), ("deductions", "INTEGER DEFAULT 0"), ("notes", "TEXT DEFAULT ''"),
                                     ("final", "INTEGER DEFAULT 0")])
         self._add_cols("extract_lines", [("pct", "REAL DEFAULT 1")])
+        # cost-plus billing: a fee % on top of each section's work ({"section": 0.1, "*": 0.12} — "*" = every other section)
+        self._add_cols("extracts", [("fees", "TEXT DEFAULT ''")])
         # items can carry their standard cost and selling price, so a price list can live here even with nothing in stock
         self._add_cols("stock_items", [("category", "TEXT DEFAULT ''"), ("std_cost", "INTEGER DEFAULT 0"), ("price", "INTEGER DEFAULT 0"),
                                        ("notes", "TEXT DEFAULT ''")])

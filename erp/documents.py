@@ -15,7 +15,7 @@ import re
 import zipfile
 
 from . import accounting as acc
-from . import branding
+from . import branding, countries
 from .accounting import ValidationError, text
 
 # ---------------------------------------------------------------- starter offer types
@@ -369,6 +369,7 @@ class Styles:
         d("itemNo", sz=9); d("itemDesc", sz=9, h="right", wrap=1); d("itemC", sz=9)
         d("itemNum", sz=9, num="money"); d("itemNumB", sz=9, b=1, num="moneyBlank"); d("itemNeed", sz=9, fill="#FFFF00")
         d("secTotL", b=1, sz=13, fill="#F2F2F2", border=2); d("secTotN", b=1, sz=13, fill="#F2F2F2", border=2, num="money")
+        d("itemPct", sz=9, num="pct"); d("secTotP", b=1, sz=13, fill="#F2F2F2", border=2, num="pct")
 
     def font_id(self, sz, bold=False, color=None, italic=False, underline=False):
         x = (f'<font>{"<b/>" if bold else ""}{"<i/>" if italic else ""}{"<u/>" if underline else ""}<sz val="{sz}"/><color rgb="FF{hex6(color or "#000000")}"/>'
@@ -386,7 +387,7 @@ class Styles:
         return self.fills.index(x)
 
     def define(self, name, b=0, sz=10, color=None, fill=None, border=1, h="center", v="center", wrap=0, num=None, i=0, u=0):
-        nf = 164 if num == "money" else 165 if num == "moneyBlank" else 0
+        nf = 164 if num == "money" else 165 if num == "moneyBlank" else 9 if num == "pct" else 0
         self.xfs.append(f'<xf numFmtId="{nf}" fontId="{self.font_id(sz, b, color, i, u)}" fillId="{self.fill_id(fill)}" '
                         f'borderId="{border}" xfId="0" applyFont="1" applyFill="1" applyBorder="1"'
                         + (' applyNumberFormat="1"' if nf else "") + f' applyAlignment="1"><alignment horizontal="{h}" '
@@ -661,11 +662,15 @@ def boq_model(db, kind, doc):
     b = branding.get(db)
     co = company(db)
     inv = kind == "invoice"
-    contract = acc.get_boq(db, doc["boq_id"]) if inv and doc.get("boq_id") else None
-    exq = {}
+    prof = countries.profile(db)
+    T = (lambda ar, en: ar) if prof["doc_lang"] == "ar" else (lambda ar, en: en)  # noqa: E731
+    simple = inv and prof["invoice_style"] == "simple"     # executed quantity × price, no contract columns
+    contract = acc.get_boq(db, doc["boq_id"]) if inv and doc.get("boq_id") and not simple else None
+    exq, amt = {}, {}
     if inv:
         for ln in doc["lines"]:
             exq[_lk(ln)] = exq.get(_lk(ln), 0) + (ln["qty"] or 0)
+            amt[_lk(ln)] = amt.get(_lk(ln), 0) + (ln.get("amount") if ln.get("amount") is not None else (ln["qty"] or 0) * ln["price"])
     if contract:
         keys = {_lk(z) for z in contract["lines"]}
         extra = [dict(ln, qty=0) for ln in doc["lines"] if _lk(ln) not in keys]
@@ -675,18 +680,25 @@ def boq_model(db, kind, doc):
     else:
         lines = doc["lines"]
     cats = _cats(lines)
-    val = (lambda ln: r2(exq.get(_lk(ln), 0) * ln["price"])) if inv else (lambda ln: r2(ln["qty"] * ln["price"]))
+    val = (lambda ln: r2(amt.get(_lk(ln), 0))) if inv else (lambda ln: r2(ln["qty"] * ln["price"]))
+
+    def done_pct(ln):            # completion % of what was executed (actual ÷ executed × price)
+        e = exq.get(_lk(ln), 0)
+        return (amt.get(_lk(ln), 0) / (e * ln["price"])) if e and ln["price"] else None
     whole = all(float(r2(ln["price"])).is_integer() and float(r2(ln["qty"] * ln["price"])).is_integer()
                 and float(val(ln)).is_integer() for ln in lines)
     st = Styles(b, "#,##0" if whole else "#,##0.00")
     S = st.S
-    N = 9 if inv else 7
-    col = {"q": 4, "e": 5, "pr": 6, "t": 7, "a": 8, "n": 9} if inv else {"q": 4, "pr": 5, "t": 6, "n": 7}
+    N = 8 if simple else 10 if inv else 7
+    col = ({"e": 4, "p": 5, "pr": 6, "a": 7, "n": 8} if simple else {"q": 4, "e": 5, "p": 6, "pr": 7, "t": 8, "a": 9, "n": 10}
+           if inv else {"q": 4, "pr": 5, "t": 6, "n": 7})
+    lead = col.get("t", col.get("a"))        # the first money column of the summary; labels span the columns before it
+    fees = {f["category"]: f for f in (doc.get("fee_rows") or [])} if inv else {}
     m = Sheet()
     client = doc.get("client") or doc.get("customer") or doc.get("bu_customer") or doc.get("bu_name") or ""
     location = doc.get("location") or doc.get("bu_location") or (contract or {}).get("location") or ""
-    meta = [("التاريخ", dmy(doc.get("date"))), ("المشروع", client), ("الموقع", location),
-            ("المستخلص" if inv else "الاصدار", doc.get("number") if inv else (doc.get("rev") or ""))]
+    meta = [(T("التاريخ", "Date"), dmy(doc.get("date"))), (T("المشروع", "Client"), client), (T("الموقع", "Location"), location),
+            (T("المستخلص", "Invoice no.") if inv else T("الاصدار", "Revision"), doc.get("number") if inv else (doc.get("rev") or ""))]
     for i, (k, v) in enumerate(meta):
         m.cell(1 + i, 1, k, S["label"])
         m.cell(1 + i, 2, v, S["value"])
@@ -694,23 +706,25 @@ def boq_model(db, kind, doc):
     for rr in range(1, 5):
         for k in range(3, N + 1):
             m.cell(rr, k, "", S["company"])
+    slogan = db.setting("company_tagline", "") or co["legal"]
     m.cell(1, 3, "", S["company"], rich=[{"t": co["name"], "b": 1, "sz": 20}] +
-           ([{"t": "\n" + co["legal"], "b": 1, "sz": 10}] if co["legal"] else []))
+           ([{"t": "\n" + slogan, "b": 1, "sz": 10}] if slogan else []))
     m.merges.append((1, 3, 4, N))
     r = 6
     # summary header
-    m.band(r, 1, col["t"] - 1, "إجمالي الأعمال", S["barDark"])
+    m.band(r, 1, lead - 1, T("إجمالي الأعمال", "Works summary"), S["barDark"])
     if inv:
-        m.cell(r, col["t"], "إجمالي\nالمقايسة", S["barDark"])
-        m.cell(r, col["a"], "إجمالي\nالفعلي", S["barDark"])
+        if "t" in col:
+            m.cell(r, col["t"], T("إجمالي\nالمقايسة", "Contract\ntotal"), S["barDark"])
+        m.cell(r, col["a"], T("إجمالي\nالفعلي", "Actual\ntotal") if "t" in col else T("الإجمالي", "Amount"), S["barDark"])
         m.cell(r, N, "", S["barDark"])
     else:
-        m.band(r, col["t"], N, "إجمالي المقايسة", S["barDark"])
+        m.band(r, col["t"], N, T("إجمالي المقايسة", "BOQ total"), S["barDark"])
     m.ht(r, 31.5)
     r += 1
-    m.band(r, 1, col["t"] - 1, "الأعمال الداخلية", S["barAccent"])
+    m.band(r, 1, lead - 1, T("الأعمال الداخلية", "Works"), S["barAccent"])
     if inv:
-        for k in (col["t"], col["a"], N):
+        for k in ((col["t"],) if "t" in col else ()) + (col["a"], N):
             m.cell(r, k, "", S["barAccent"])
     else:
         m.band(r, col["t"], N, "", S["barAccent"])
@@ -721,6 +735,11 @@ def boq_model(db, kind, doc):
         r += 1
     sum_tot = r
     r += 1
+    extra = {}                  # invoice: fees, total with fees, paid by the owner, still to pay
+    if inv:
+        for k in (["fees", "with_fees"] if fees else []) + ["paid", "rest"]:
+            extra[k] = r
+            r += 1
     notes = [x.strip() for x in (b["boq_notes"] or "").split("\n") if x.strip()] if not inv else []
     for t in notes:
         m.band(r, 1, N, t, S["note"])
@@ -731,8 +750,14 @@ def boq_model(db, kind, doc):
     m.ht(r, 18)
     r += 2
     cat_tot = {}
-    heads = (["م", "البيان", "الوحدة", "الكمية\nبالعقد", "المنفذ\nفعلي", "السعر", "الإجمالي\nبالعقد", "الإجمالي\nالفعلي", "ملاحظات"]
-             if inv else ["م", "البيان", "الوحدة", "الكمية", "السعر", "الإجمالي", "ملاحظات"])
+    # headings the import reads back (docsheet) in either language
+    heads = ([T("م", "No."), T("البيان", "Description"), T("الوحدة", "Unit"), T("الكمية\nالمنفذة", "Executed\nqty"),
+              T("نسبة\nالتنفيذ", "Completion\n%"), T("السعر", "Unit price"), T("الإجمالي", "Amount"), T("ملاحظات", "Notes")] if simple else
+             [T("م", "No."), T("البيان", "Description"), T("الوحدة", "Unit"), T("الكمية\nبالعقد", "Contract\nqty"),
+              T("المنفذ\nفعلي", "Executed\nqty"), T("نسبة\nالتنفيذ", "Completion\n%"), T("السعر", "Unit price"),
+              T("الإجمالي\nبالعقد", "Contract\ntotal"), T("الإجمالي\nالفعلي", "Actual\ntotal"), T("ملاحظات", "Notes")] if inv else
+             [T("م", "No."), T("البيان", "Description"), T("الوحدة", "Unit"), T("الكمية", "Qty"), T("السعر", "Unit price"),
+              T("الإجمالي", "Amount"), T("ملاحظات", "Notes")])
     for i, c in enumerate(cats):
         m.band(r, 1, N, f"{i + 1}- {c}" if c else f"{i + 1}-", S["secBar"])
         m.ht(r, 18)
@@ -753,27 +778,41 @@ def boq_model(db, kind, doc):
             m.cell(r, 1, ln.get("item_no") or "", L("itemNo"))
             m.cell(r, 2, ln["description"], L("itemDesc"))
             m.cell(r, 3, ln.get("unit") or "", L("itemC"))
-            m.cell(r, col["q"], "" if need else float(ln["qty"]), S["itemNeed"] if need else L("itemC"))
+            if "q" in col:
+                m.cell(r, col["q"], "" if need else float(ln["qty"]), S["itemNeed"] if need else L("itemC"))
             m.cell(r, col["pr"], float(ln["price"] or 0), L("itemNum"))
-            m.cell(r, col["t"], r2(ln["qty"] * ln["price"]), L("itemNum"), f"{ref(r, col['q'])}*{ref(r, col['pr'])}")
+            if "t" in col:
+                m.cell(r, col["t"], r2(ln["qty"] * ln["price"]), L("itemNum"), f"{ref(r, col['q'])}*{ref(r, col['pr'])}")
             if inv:
-                e = exq.get(_lk(ln), 0)
+                e, p = exq.get(_lk(ln), 0), done_pct(ln)
                 m.cell(r, col["e"], e or "", L("itemC"))
-                m.cell(r, col["a"], val(ln), L("itemNumB"), f"{ref(r, col['e'])}*{ref(r, col['pr'])}")
+                m.cell(r, col["p"], round(p, 6) if p is not None else "", L("itemPct"))
+                m.cell(r, col["a"], val(ln), L("itemNumB"), f"{ref(r, col['e'])}*IF({ref(r, col['p'])}=\"\",1,{ref(r, col['p'])})*{ref(r, col['pr'])}")
             m.cell(r, col["n"], ln.get("notes") or "", L("itemC"))
             m.ht(r, max(15.75, -(-len(ln["description"] or "") // 95) * 12 + 4))
             r += 1
         last = r - 1
         in_cat = [x for x in lines if (x.get("category") or "") == c]
-        m.band(r, 1, col["t"] - 1, "إجمالي " + c, S["secTotL"])
-        m.cell(r, col["t"], r2(sum(x["qty"] * x["price"] for x in in_cat)), S["secTotN"],
-               f"SUM({ref(first, col['t'])}:{ref(last, col['t'])})" if last >= first else "0")
+        m.band(r, 1, lead - 1, T("إجمالي ", "Total ") + c, S["secTotL"])
+        if "t" in col:
+            m.cell(r, col["t"], r2(sum(x["qty"] * x["price"] for x in in_cat)), S["secTotN"],
+                   f"SUM({ref(first, col['t'])}:{ref(last, col['t'])})" if last >= first else "0")
         if inv:
             m.cell(r, col["a"], r2(sum(val(x) for x in in_cat)), S["secTotN"],
                    f"SUM({ref(first, col['a'])}:{ref(last, col['a'])})" if last >= first else "0")
         m.cell(r, N, "", S["secTotL"])
         m.ht(r, 18)
         cat_tot[c] = r
+        if c in fees:            # cost-plus: the fee on this section's work
+            r += 1
+            f = fees[c]
+            m.band(r, 1, col["p"] - 1, T("نسبة الأتعاب", "Fee %") + (f" — {c}" if c else ""), S["secTotL"])
+            m.cell(r, col["p"], f["pct"], S["secTotP"])
+            for k in range(col["p"] + 1, col["a"]):
+                m.cell(r, k, "", S["secTotL"])
+            m.cell(r, col["a"], f["amount"], S["secTotN"], f"ROUND({ref(cat_tot[c], col['a'])}*{ref(r, col['p'])},2)")
+            m.cell(r, N, "", S["secTotL"])
+            fees[c] = {**f, "row": r}
         r += 2
     for i, c in enumerate(cats):
         sr = sum_rows[c]
@@ -781,25 +820,46 @@ def boq_model(db, kind, doc):
         tot = r2(sum(x["qty"] * x["price"] for x in in_cat))
         hi = not tot
         m.cell(sr, 1, i + 1, S["sumNoHi" if hi else "sumNo"])
-        m.band(sr, 2, col["t"] - 1, "إجمالي " + c, S["sumDescHi" if hi else "sumDesc"])
+        if inv and "t" not in col:
+            hi = not r2(sum(val(x) for x in in_cat))
+            m.cell(sr, 1, i + 1, S["sumNoHi" if hi else "sumNo"])
+        m.band(sr, 2, lead - 1, T("إجمالي ", "Total ") + c, S["sumDescHi" if hi else "sumDesc"])
         if inv:
-            m.cell(sr, col["t"], tot, S["sumNumHi" if hi else "sumNum"], ref(cat_tot[c], col["t"]))
+            if "t" in col:
+                m.cell(sr, col["t"], tot, S["sumNumHi" if hi else "sumNum"], ref(cat_tot[c], col["t"]))
             m.cell(sr, col["a"], r2(sum(val(x) for x in in_cat)), S["sumNumHi" if hi else "sumNum"], ref(cat_tot[c], col["a"]))
             m.cell(sr, N, "", S["sumDescHi" if hi else "sumDesc"])
         else:
             m.band(sr, col["t"], N, tot, S["sumNumHi" if hi else "sumNum"], ref(cat_tot[c], col["t"]))
         m.ht(sr, 15)
     rng = (lambda k: f"SUM({ref(sum_rows[cats[0]], k)}:{ref(sum_rows[cats[-1]], k)})" if cats else "0")
-    m.band(sum_tot, 1, col["t"] - 1, "إجمالي الأعمال الداخلية", S["totL"])
+    m.band(sum_tot, 1, lead - 1, T("إجمالي الأعمال الداخلية", "Works total"), S["totL"])
     total = r2(sum(x["qty"] * x["price"] for x in lines))
     if inv:
-        m.cell(sum_tot, col["t"], total, S["totN"], rng(col["t"]))
+        if "t" in col:
+            m.cell(sum_tot, col["t"], total, S["totN"], rng(col["t"]))
         m.cell(sum_tot, col["a"], r2(sum(val(x) for x in lines)), S["totN"], rng(col["a"]))
         m.cell(sum_tot, N, "", S["totL"])
     else:
         m.band(sum_tot, col["t"], N, total, S["totN"], rng(col["t"]))
     m.ht(sum_tot, 20)
-    cols = [8, 70, 9, 8, 8, 10, 15.3, 12.6, 14.7] if inv else [8, 72, 9, 9, 11, 15, 16]
+    if inv:
+        works = r2(sum(val(x) for x in lines))
+        fee_total = r2(sum(f["amount"] for f in fees.values()))
+        grand = r2(works + fee_total)
+        paid = r2((doc.get("prev_paid") or 0) / 100) if doc.get("prev_paid") is not None else 0
+        def tot_row(row, label, value, formula):
+            m.band(row, 1, col["a"] - 1, label, S["totL"])
+            m.cell(row, col["a"], value, S["totN"], formula)
+            m.cell(row, N, "", S["totL"])
+            m.ht(row, 18)
+        if fees:
+            tot_row(extra["fees"], T("إجمالي الأتعاب", "Fees total"), fee_total, "+".join(ref(f["row"], col["a"]) for f in fees.values() if "row" in f) or "0")
+            tot_row(extra["with_fees"], T("الإجمالي شامل الأتعاب", "Total with fees"), grand, f"{ref(sum_tot, col['a'])}+{ref(extra['fees'], col['a'])}")
+        last = extra["with_fees"] if fees else sum_tot
+        tot_row(extra["paid"], T("إجمالي المدفوع من المالك", "Total paid by the client"), paid, None)
+        tot_row(extra["rest"], T("المتبقي سداده", "Balance due"), r2(grand - paid), f"{ref(last, col['a'])}-{ref(extra['paid'], col['a'])}")
+    cols = [8, 70, 9, 9, 8, 11, 15.3, 14.7] if simple else [8, 70, 9, 8, 8, 8, 10, 15.3, 12.6, 14.7] if inv else [8, 72, 9, 9, 11, 15, 16]
     return m, st, cols, N, client
 
 
@@ -820,6 +880,7 @@ def invoice_file(db, xid, fmt="xlsx"):
 
 def _boq_like(db, kind, d, fmt, name):
     m, st, cols, N, client = boq_model(db, kind, d)
+    rtl = countries.profile(db)["doc_lang"] == "ar"
     fkind = f"{kind}_{'xlsx' if fmt == 'xlsx' else 'pdf'}"
     logo_img = branding.logo_for(db, fkind)
     wm = branding.watermark_for(db, fkind)
@@ -828,10 +889,15 @@ def _boq_like(db, kind, d, fmt, name):
     co = company(db)
     title = f"{d.get('number') or d.get('title') or ''}"
     if fmt == "xlsx":
-        data = write_xlsx(m, st, sheet="Invoice" if kind == "invoice" else "BOQ", rtl=True, cols=cols, title=title,
+        # the sheet name starts with Invoice / BOQ so the file imports back (any words after it are kept as they are)
+        tag = str(d.get("number") or "") if kind == "invoice" else str(d.get("rev") or "")
+        tag = (tag if not tag.lower().startswith(kind) else tag[len(kind):]).strip()
+        sheet = re.sub(r"[\[\]:*?/\\']", " ", ("Invoice " if kind == "invoice" else "BOQ ") + tag)
+        sheet = " ".join(sheet.split())[:31]
+        data = write_xlsx(m, st, sheet=sheet, rtl=rtl, cols=cols, title=title,
                           company_name=co["name"], footer=b["footer"], logo=logo, wm=wm)
         return data, safe_name(name) + ".xlsx"
-    return sheet_html(m, st, cols=cols, rtl=True, title=name, logo=logo, wm=wm, font=b["font"]).encode("utf-8"), None
+    return sheet_html(m, st, cols=cols, rtl=rtl, title=name, logo=logo, wm=wm, font=b["font"]).encode("utf-8"), None
 
 
 # ====================================================================== OFFERS

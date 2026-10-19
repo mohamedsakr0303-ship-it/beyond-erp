@@ -90,8 +90,11 @@ def build_document(db, extract_id, version=None):
     for r in db.q("SELECT item_no, description, eta_code FROM rates WHERE eta_code<>''"):
         codes[r["item_no"]] = codes[r["description"]] = r["eta_code"]
     lines, tax_totals = [], {}
-    for ln in x["lines"]:
-        net = _r(ln["qty"] * ln["price"])
+    fee_lines = [{"description": f"أتعاب {f['category'] or ''} {f['pct'] * 100:g}%".strip(), "qty": 1, "pct": 1, "price": f["amount"],
+                  "unit": "", "item_no": "FEE", "seq": i} for i, f in enumerate(x.get("fee_rows") or [])]
+    for ln in x["lines"] + fee_lines:
+        qty = ln["qty"] * (ln.get("pct") if ln.get("pct") is not None else 1)     # completion % is part of the quantity billed
+        net = _r(qty * ln["price"])
         items = []
         if vat:
             amt = _r(net * vat["rate"])
@@ -113,7 +116,7 @@ def build_document(db, extract_id, version=None):
             "description": ln["description"][:500], "itemType": "GS1" if code.isdigit() else "EGS",
             "itemCode": code, "unitType": UNIT_CODES.get((ln["unit"] or "").strip().lower(),
                                                         s.get("eta_default_unit") or "EA"),
-            "quantity": _r(ln["qty"]), "internalCode": str(ln["item_no"] or ln["seq"] + 1),
+            "quantity": _r(qty, 5), "internalCode": str(ln["item_no"] or ln["seq"] + 1),
             "salesTotal": net, "total": total, "valueDifference": 0.0, "totalTaxableFees": 0.0, "netTotal": net,
             "itemsDiscount": 0.0, "unitValue": {"currencySold": "EGP", "amountEGP": _r(ln["price"])},
             "discount": {"rate": 0.0, "amount": 0.0}, "taxableItems": items})

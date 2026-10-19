@@ -68,6 +68,9 @@ def get(db):
                     b["apply"][kind].update({f: bool(flags.get(f)) for f in ("logo", "wm") if f in flags})
         elif k in b:
             b[k] = v
+    if b["boq_notes"] == DEFAULT_BOQ_NOTES:      # never changed: the usual terms of the company's country
+        from . import countries
+        b["boq_notes"] = countries.profile(db)["boq_notes"]
     return b
 
 

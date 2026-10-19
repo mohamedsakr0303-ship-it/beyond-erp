@@ -22,7 +22,7 @@ from urllib.parse import parse_qs, urlparse
 
 from . import assets, bankrec, custody, entries, industries, payroll, equity, loans, recurring, rental_docs, rentals, sales, sales_docs, __version__
 from . import accounting as acc
-from . import auth, branding, cloud, documents, einvoice, interchange, looks, reports
+from . import auth, branding, cloud, countries, documents, einvoice, interchange, looks, reports
 from .db import ACTIONS, Database, MODULES, PERM_DEFAULTS, SUBMODULES, SUBTABS, SUBTYPES, to_major, to_minor
 
 STATIC = Path(__file__).resolve().parent / "static"
@@ -111,7 +111,7 @@ COMPANY_KEYS = ("company_name", "company_tagline", "company_address", "company_t
                 "font_size", "units", "fiscal_year_start", "language", "company_legal_name", "company_cr_no",
                 "company_city", "company_phone", "company_email", "company_website", "bank_name", "bank_account",
                 "bank_holder", "bank_swift", "bank_iban", "offer_validity_days", "offer_prefix", "offer_digits", "regional",
-                "banks", "bank_default")
+                "banks", "bank_default", "country", "invoice_style", "doc_lang")
 PUBLIC_SETTINGS = COMPANY_KEYS + ("demo_loaded", "desk_site", "workday_location", "menu_labels", "reserve_pct", "legal_reserve_pct", "legal_reserve_cap", "funding_partner", "funding_limit", "report_from", "report_to", "lock_date", "hidden_modules",
                                   "appearance", "po_self_approve_limit", "menu_layout", "form_custom", "duplicate_check", "two_step_required")
 JSON_SETTINGS = {"menu_labels": {}, "units": [], "hidden_modules": [], "appearance": {}, "regional": {}, "banks": [],
@@ -136,6 +136,8 @@ def settings_dict(db):
             out[k] = empty
     out["banks"] = documents.banks(db)   # includes the single bank of books from before the list existed
     out["bank_default"] = documents.default_bank(db)["id"]
+    out["country_profile"] = countries.profile(db)       # what the country (or its overrides) sets: invoice layout, language
+    out["countries"] = countries.listing()
     return out
 
 
@@ -354,6 +356,11 @@ def put_settings(ctx):
             raise PermissionError("Turn on two-step sign-in for yourself first (your profile), then require it for others")
     if "hidden_modules" in keys:
         ctx.require("settings.menus", "edit")
+    for k, ok_vals in (("country", set(countries.BY_CODE)), ("invoice_style", set(countries.STYLES)), ("doc_lang", {"ar", "en"})):
+        if k in keys:
+            ctx.body[k] = acc.text(ctx.body[k]).upper() if k == "country" else acc.text(ctx.body[k])
+            if ctx.body[k] and ctx.body[k] not in ok_vals:
+                raise acc.ValidationError(f"{k}: unknown value '{ctx.body[k]}'")
     allowed = set(PUBLIC_SETTINGS) | {"backup_keep"}
     if "banks" in ctx.body:   # several bank accounts; one is the default used on documents
         seen, clean = set(), []
@@ -4543,7 +4550,7 @@ def do_import(ctx):
         res = interchange.import_data(ctx.db, data, mode=mode, dry_run=dry, user=ctx.user["username"])
     except interchange.ImportErrors as e:
         return ok({"ok": False, "error": str(e), "errors": e.errors}, 400)
-    res["notes"] = data.get("_notes", []) + _future_dated(data)
+    res["notes"] = res.get("notes", []) + data.get("_notes", []) + _future_dated(data)
     if not dry:
         ctx.db.set_setting("onboarding", "done")
     ctx.log("import" + (".dry" if dry else ""), json.dumps(res["counts"]))

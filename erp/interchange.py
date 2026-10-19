@@ -345,6 +345,8 @@ SHEETS = [
               C("deductions", "Deductions (extract)", "خصومات", kind="money"),
               C("final", "Final Extract", "مستخلص ختامي", width=7, choices=["Yes", "No"], note="Yes = final (ختامي); blank = running (جاري)"),
               C("notes", "Extract Notes", "ملاحظات المستخلص", width=30),
+              C("fees", "Fee % by Section", "نسبة الأتعاب لكل باب", width=30,
+                note="cost-plus: a fee on top of each section's work, e.g. Electrical=10%; HVAC=8%; *=12% (* = every other section)"),
               C("amount", "Net Amount", "صافي المبلغ", kind="calc",
                 calc="=SUMIFS([[Invoice Lines.amount]],[[Invoice Lines.number]],{number})"),
               C("posted_amount", "Posted Amount", "المبلغ المرحّل", kind="calc", calc='=IF({status}="Draft",0,{amount})'),
@@ -576,7 +578,9 @@ def export_data(db):
                                       "project": x.get("project") or "", "work": x.get("work") or "",
                                       "prev_paid": "" if x.get("prev_paid") is None else to_major(x["prev_paid"]),
                                       "deductions": to_major(x.get("deductions") or 0) or "", "final": "Yes" if x.get("final") else "",
-                                      "notes": x.get("notes") or ""})
+                                      "notes": x.get("notes") or "",
+                                      "fees": "; ".join(f"{k}={v * 100:g}%" for k, v in sorted(json.loads(x["fees"]).items()))
+                                      if x.get("fees") else ""})
         for ln in db.q("SELECT * FROM extract_lines WHERE extract_id=? ORDER BY seq, id", (x["id"],)):
             pct = ln.get("pct")
             out["Invoice Lines"].append({"number": x["number"], "category": ln["category"], "sub": ln["sub"],
@@ -816,6 +820,11 @@ def read_xlsx(path):
             continue
         sheet = SHEET_BY_NAME.get(ws.title) or by_ar.get(ws.title.strip())   # English or Arabic workbook
         if not sheet:
+            from . import docsheet
+            if docsheet.kind_of(ws.title):    # a BOQ / invoice laid out as the client sees it ("Invoice 3 Site B", "BOQ …")
+                d = docsheet.read(ws.iter_rows(values_only=True), ws.title)
+                if d["lines"]:
+                    data.setdefault("_docs", []).append({"title": ws.title, **d})
             continue
         rows = list(ws.iter_rows(values_only=True))
         # header row: first row within the top 10 whose cells match at least 2 known columns
@@ -1695,6 +1704,70 @@ def only_new(db, data):
     return out, report
 
 
+def docs_to_rows(db, data):
+    """BOQ / invoice sheets read by their headings (docsheet) → BOQ Lines, Sales Invoices and Invoice Lines rows.
+    The project is the business unit whose code, name, location or client matches the sheet's details."""
+    docs = data.pop("_docs", None) or []
+    if not docs:
+        return []
+    bus = db.q("SELECT code, name, location, customer FROM business_units")
+
+    def find_bu(*hints):
+        hints = [str(h).strip().lower() for h in hints if h]
+        for b in bus:
+            vals = [str(b[k] or "").strip().lower() for k in ("code", "name", "location", "customer")]
+            if any(h and any(h == v or (len(h) > 3 and h in v) for v in vals if v) for h in hints):
+                return b["code"]
+        return ""
+    notes, contract_done = [], set()
+    for d in docs:
+        m = d["meta"]
+        bu = find_bu(m.get("location"), m.get("client"))
+        client, location = m.get("client", ""), m.get("location", "")
+        if d["kind"] == "boq":
+            title = f"BOQ — {client}".strip(" —") or d["title"]
+            for ln in d["lines"]:
+                data.setdefault("BOQ Lines", []).append({"title": title, "bu_code": bu, "rev": m.get("number") or "Rev 01",
+                                                         "date": m.get("date", ""), "client": client, "location": location,
+                                                         "category": ln["category"], "sub": ln["sub"], "item_no": ln["item_no"],
+                                                         "description": ln["description"], "unit": ln["unit"], "qty": ln["qty"],
+                                                         "price": ln["price"], "cost": ln["cost"] if ln["cost"] else ""})
+            notes.append(f"Sheet '{d['title']}': {len(d['lines'])} BOQ lines as '{title}'" + ("" if bu else " (no matching project — link it on the BOQ screen)"))
+            continue
+        if not bu:
+            notes.append(f"Sheet '{d['title']}': no project matches '{client}' / '{location}' — add the project, then import again")
+            continue
+        number = " ".join(str(m.get("number") or d["title"]).split())
+        title = f"Contract BOQ — {client or location or bu}"
+        if title not in contract_done and not db.one("SELECT 1 FROM boqs WHERE title=?", (title,)):
+            for ln in d["lines"]:
+                if ln["qty"] and ln["item_no"]:
+                    data.setdefault("BOQ Lines", []).append({"title": title, "bu_code": bu, "rev": "Contract", "date": m.get("date", ""),
+                                                             "client": client, "location": location, "category": ln["category"],
+                                                             "sub": ln["sub"], "item_no": ln["item_no"], "description": ln["description"],
+                                                             "unit": ln["unit"], "qty": ln["qty"], "price": ln["price"]})
+        contract_done.add(title)
+        var, n = 0, 0
+        for ln in d["lines"]:
+            ex, pct = ln["executed"], ln["pct"]
+            if not ex or not ln["price"] or (pct is not None and pct <= 0):
+                continue
+            if not ln["item_no"]:
+                var += 1
+            data.setdefault("Invoice Lines", []).append({"number": number, "category": ln["category"], "sub": ln["sub"],
+                                                         "item_no": ln["item_no"] or f"V-{var:02d}", "description": ln["description"],
+                                                         "unit": ln["unit"], "qty": ex, "price": ln["price"],
+                                                         "pct": "" if pct is None or abs(pct - 1) < 1e-9 else pct})
+            n += 1
+        if n:
+            data.setdefault("Sales Invoices", []).append({
+                "number": number, "date": m.get("date", ""), "bu_code": bu, "boq_title": title, "status": "Draft", "customer": client,
+                "prev_paid": d["paid"] if d["paid"] is not None else "",
+                "fees": "; ".join(f"{k or '*'}={v * 100:g}%" for k, v in d["fees"].items()) if d["fees"] else ""})
+            notes.append(f"Sheet '{d['title']}': invoice '{number}' ({n} executed lines) for {bu} as a draft")
+    return notes
+
+
 def import_data(db, data, mode="append", dry_run=False, user=""):
     """Import sheets. All-or-nothing: any row error rolls everything back and is reported.
     mode "new": only rows that are not in the books yet (see only_new), then as "append"."""
@@ -1702,6 +1775,7 @@ def import_data(db, data, mode="append", dry_run=False, user=""):
         raise acc.ValidationError("mode must be append, new or replace")
     errors, counts, stats = [], {}, {}
     skipped = None
+    doc_notes = docs_to_rows(db, data)       # invoice / BOQ sheets in the client's own layout
     if mode == "new":
         data, skipped = only_new(db, data)
         mode = "append"
@@ -1823,6 +1897,8 @@ def import_data(db, data, mode="append", dry_run=False, user=""):
         out.setdefault("skipped", {})[k] = out.get("skipped", {}).get(k, 0) + v
     if stats.get("updated"):
         out["updated"] = stats["updated"]
+    if doc_notes:
+        out["notes"] = doc_notes
     return out
 
 
@@ -2039,7 +2115,8 @@ def _imp_invoices(db, data, errors, counts, user, stats):
                  "boq_id": boq_id if boq_id or not old else old["boq_id"], "lines": lines[number],
                  "customer": r.get("customer"), "vat_code": r.get("vat_code"), "wht_code": r.get("wht_code"), "seq_no": r.get("extract_no"),
                  "project": r.get("project"), "work": r.get("work"), "prev_paid": r.get("prev_paid"), "deductions": r.get("deductions"),
-                 "final": r.get("final"), "notes": r.get("notes")}
+                 "final": r.get("final"), "notes": r.get("notes"),
+                 "fees": r.get("fees") if r.get("fees") not in (None, "") else (old or {}).get("fees") or ""}
             want_posted = str(r.get("status") or "Posted").lower() != "draft"
             if old:                        # what the file leaves blank stays as it was
                 for k, ok_ in (("customer", "customer"), ("vat_code", "vat_code"), ("wht_code", "wht_code"), ("seq_no", "seq_no"),
@@ -2052,7 +2129,7 @@ def _imp_invoices(db, data, errors, counts, user, stats):
                 cols = _LINE_COLS + ("account", "pct")
                 same = _same_lines(d["lines"], db.q("SELECT * FROM extract_lines WHERE extract_id=? ORDER BY seq, id", (old["id"],)), cols) \
                     and acc.clean_date(d["date"]) == old["date"] and acc.text(d.get("customer")) in ("", old["customer"] or "") \
-                    and (old["status"] == "posted") == want_posted
+                    and (old["status"] == "posted") == want_posted and acc.fees_in(d.get("fees")) == (old.get("fees") or "")
                 if same:
                     stats.setdefault("skipped", {}).setdefault(sheet, 0)
                     stats["skipped"][sheet] += 1

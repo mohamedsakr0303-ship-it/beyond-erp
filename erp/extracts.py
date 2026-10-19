@@ -86,6 +86,8 @@ def board(db, bu_id=None, status=None, q=None):
     sites, out = {}, []
     for r in rows:
         x = {**r, "works": to_major(r["works"])}
+        if r.get("fees"):
+            x["works"] = acc.get_extract(db, r["id"])["total"]       # cost-plus: with the fee on each section
         x.update(acc.invoice_taxes(db, {"total": x["works"], "vat_code": r["vat_code"], "wht_code": r["wht_code"], "customer": r["customer"]}))
         x["prev"], x["prev_auto"] = prev_paid(db, x)
         x["deductions"] = to_major(r["deductions"] or 0)
