@@ -1758,6 +1758,70 @@ class ArabicTexts(unittest.TestCase):
         self.assertNotIn("Design", " ".join(t["name"] for t in DEFAULT_OFFER_TYPES))
 
 
+class UndoAfterSaving(unittest.TestCase):
+    """'Undo' right after saving: only your own change, only for a while, never over later work or closed books."""
+
+    def setUp(self):
+        from erp import auth, server
+        self.db = db = Database(":memory:")
+        auth.create_user(db, {"username": "boss", "password": "pw123456"}, first=True)
+        auth.create_user(db, {"username": "other", "password": "pw123456", "is_admin": 1})
+
+        class App:
+            pass
+        self.app = App()
+        self.app.db, self.app.backup = db, (lambda *a_, **k: None)
+        self.tok = {u: auth.login(db, u, "pw123456")[0] for u in ("boss", "other")}
+        self.server = server
+
+    def call(self, m, p, b=None, who="boss"):
+        r = self.server.handle(self.app, m, p, {"x-session": self.tok[who], "x-requested-with": "BeyondERP",
+                                                "content-type": "application/json"}, json.dumps(b or {}).encode())
+        return r.status, json.loads(r.body or b"{}")
+
+    def names(self):
+        return {r["name"] for r in self.db.q("SELECT name FROM parties")}
+
+    def test_own_change_is_undone(self):
+        st, _ = self.call("POST", "/api/parties-master?_undo=uabc123", {"name": "Acme", "type": "customer"})
+        self.assertEqual(st, 200)
+        self.assertTrue(self.call("GET", "/api/ai-undo/uabc123")[1]["can_undo"])
+        self.assertEqual(self.call("POST", "/api/undo/uabc123", who="other")[0], 403)      # not theirs
+        self.assertEqual(self.call("POST", "/api/undo/uabc123")[0], 200)
+        self.assertNotIn("Acme", self.names())
+        self.assertEqual(self.call("POST", "/api/undo/uabc123")[0], 400)                   # only once
+        self.assertEqual(self.call("POST", "/api/undo/not-a-tag")[0], 400)
+
+    def test_delete_is_put_back(self):
+        _, r = self.call("POST", "/api/parties-master", {"name": "Keep", "type": "supplier"})
+        self.assertEqual(self.call("DELETE", f"/api/parties-master/{r['id']}?_undo=udel001")[0], 200)
+        self.assertNotIn("Keep", self.names())
+        self.assertEqual(self.call("POST", "/api/undo/udel001")[0], 200)
+        self.assertIn("Keep", self.names())
+
+    def test_later_work_and_age_are_respected(self):
+        _, r = self.call("POST", "/api/parties-master?_undo=ulater1", {"name": "Old", "type": "customer"})
+        self.call("PUT", f"/api/parties-master/{r['id']}", {"name": "Old", "type": "customer", "notes": "changed later"})
+        st, e = self.call("POST", "/api/undo/ulater1")
+        self.assertEqual(st, 400)
+        self.assertIn("changed again", e["error"])
+        self.call("POST", "/api/parties-master?_undo=uaged01", {"name": "Aged", "type": "customer"})
+        self.db.x("UPDATE ai_undo SET at='2000-01-01T00:00:00' WHERE change='uaged01'")
+        self.assertIn("minutes", self.call("POST", "/api/undo/uaged01")[1]["error"])
+        self.assertIn("Aged", self.names())
+
+    def test_closed_books_and_protected_records(self):
+        from erp import aiundo
+        rows = [{"tbl": "journal_entries", "old": None, "new": json.dumps({"date": "'2026-01-15'"})}]
+        self.db.set_setting("lock_date", "2026-03-31")
+        self.assertIn("closed books", aiundo.own_problem(self.db, rows))
+        self.db.set_setting("lock_date", "")
+        self.assertIsNone(aiundo.own_problem(self.db, rows))
+        self.assertIsNotNone(aiundo.own_problem(self.db, [{"tbl": "users", "old": None, "new": "{}"}]))
+        sent = [{"tbl": "extracts", "old": json.dumps({"eta_uuid": "'ABC'"}), "new": json.dumps({"eta_uuid": "'ABC'", "status": "'posted'"})}]
+        self.assertIn("tax authority", aiundo.own_problem(self.db, sent))
+
+
 class OfflineLicence(unittest.TestCase):
     """Signed licences for the desktop edition: trial, read-only without a licence, users / installation / updates."""
 

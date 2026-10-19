@@ -1830,3 +1830,12 @@ input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 4px color
 
 /* a menu screen / section locked in place (right-click → Lock) */
 #nav a.locked>span::after,#nav .grp.locked>span::after{content:"🔒";font-size:.62em;margin-inline-start:6px;opacity:.55;vertical-align:middle}
+/* undo / redo */
+.hist-btns{display:inline-flex;gap:4px;flex:none}
+.hist-btns .btn.icon{min-width:32px;justify-content:center;font-size:1.05em;line-height:1}
+.hist-btns .btn:disabled{opacity:.35;cursor:default}
+.toolbar .hist-btns{margin-inline-start:4px}
+.undo-toast{display:flex;align-items:center;gap:12px}
+.undo-toast .btn{background:transparent;color:inherit;border-color:currentColor}
+.tabs .hist-btns{margin-inline-start:auto;align-self:center}
+[dir=rtl] .hist-btns .btn{transform:scaleX(-1)}

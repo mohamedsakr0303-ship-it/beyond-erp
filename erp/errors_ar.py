@@ -789,6 +789,14 @@ MESSAGES = {
     'Deleting and voiding are switched off for you on this screen': 'الحذف والإلغاء متوقفان لك في هذه الشاشة',
     'Not allowed': 'غير مسموح',
     'No licence': 'لا يوجد ترخيص',
+    'Unknown change': 'تغيير غير معروف',
+    'Only the person who saved this can undo it': 'من حفظ هذا فقط يمكنه التراجع عنه',
+    'Undo is only for the last {} minutes — change or void it the usual way': 'التراجع متاح لآخر {1} دقيقة فقط — عدّله أو ألغِه بالطريقة المعتادة',
+    'Nothing to undo': 'لا يوجد ما يُتراجع عنه',
+    'This kind of change cannot be undone here — change it the usual way': 'هذا النوع من التغييرات لا يمكن التراجع عنه هنا — عدّله بالطريقة المعتادة',
+    'This setting cannot be undone here — change it in Settings': 'هذا الإعداد لا يمكن التراجع عنه هنا — غيّره من الإعدادات',
+    'This invoice was sent to the tax authority — it cannot be undone here': 'هذه الفاتورة أُرسلت لمصلحة الضرائب — لا يمكن التراجع عنها هنا',
+    'This change touches entries in closed books — it cannot be undone': 'هذا التغيير يمس قيوداً في فترة مقفلة — لا يمكن التراجع عنه',
 }
 
 FIELDS = {

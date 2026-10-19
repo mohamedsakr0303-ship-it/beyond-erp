@@ -4877,6 +4877,18 @@ def ai_undo(ctx, change):
     return ok(r)
 
 
+@route("POST", "/api/undo/<change>")
+def own_undo(ctx, change):
+    """Undo a save the person made a moment ago (the "Undo" after saving): every row back as it was, if nobody
+    changed it since, within a short while, and never in closed books."""
+    from . import aiundo
+    if not re.fullmatch(r"u[\w-]{5,59}", change):
+        raise acc.ValidationError("Unknown change")
+    r = aiundo.undo(ctx.db, change, ctx.user, own=True)
+    ctx.log("undo", change)
+    return ok(r)
+
+
 @route("POST", "/api/ai/preview")
 def ai_preview(ctx):
     """Run a change the assistant proposes without saving it, and report what it would do (checks, numbers, entries)."""
@@ -5707,7 +5719,7 @@ def _handle(app, method, target, headers, raw, as_user, dry):
             ctx.action = action
             ctx.cloud_hook = getattr(app, "cloud", None)
             ctx.scope = sc
-            ai_change = q.get("_ai") if method != "GET" else None
+            ai_change = (q.get("_ai") or q.get("_undo")) if method != "GET" else None   # the assistant's change, or a person's own save
             if ai_change and re.fullmatch(r"[\w-]{6,60}", ai_change):   # the assistant's change: recorded so it can be undone
                 from . import aiundo
                 reply = aiundo.capture(db, ai_change, user, lambda: fn(ctx, **match.groupdict()))

@@ -9,6 +9,9 @@ refused rather than overwrite their work).
 In the shared workspace the saved change is replayed on every device the same way, so every device records the same
 rows; the undo is an ordinary recorded change (POST /api/ai-undo), so every device reverts them the same way.
 Only the person who asked for the change, or a super administrator, can undo it.
+
+The same recording backs "Undo" right after a person saves something themselves (``?_undo=u…``): only their own change,
+only for a short while, and never one that touches entries dated in closed books.
 """
 import json
 
@@ -16,6 +19,7 @@ from .accounting import ValidationError, now_iso
 
 SKIP = {"sessions", "audit_log", "cloud_local", "ai_threads", "ai_usage", "ai_undo", "alert_feed"}
 KEEP = 5000          # changes kept for undo
+OWN_MINUTES = 30     # how long a person's own save can be undone
 
 
 def _tables(db):
@@ -83,11 +87,58 @@ def _current(db, tbl, rid, cols):
 def info(db, change):
     rows = db.q("SELECT tbl, op, COUNT(*) n FROM ai_undo WHERE change=? GROUP BY tbl, op", (str(change),))
     top = db.one("SELECT username, MIN(at) at, MAX(undone_at) undone FROM ai_undo WHERE change=?", (str(change),))
-    return {"rows": rows, "by": (top or {}).get("username"), "at": (top or {}).get("at"), "undone": (top or {}).get("undone")}
+    out = {"rows": rows, "by": (top or {}).get("username"), "at": (top or {}).get("at"), "undone": (top or {}).get("undone")}
+    if str(change).startswith("u"):              # a person's own save: can it be undone?
+        why = own_problem(db, db.q("SELECT * FROM ai_undo WHERE change=? ORDER BY seq", (str(change),)))
+        out["can_undo"], out["why"] = not why and not out["undone"], why
+    return out
 
 
-def undo(db, change, user):
-    """Put back every row the change touched — refused if any of them was changed again since."""
+def _closed_dates(db, rows):
+    """Entry dates in these recorded rows that fall in closed books (lock date or a closed year)."""
+    from . import yearend
+    lock = max((db.setting("lock_date") or "").strip(), yearend.last_closed_end(db) or "")
+    if not lock:
+        return []
+    out = []
+    for r in rows:
+        if r["tbl"] != "journal_entries":
+            continue
+        for img in (r["old"], r["new"]):
+            d = (json.loads(img).get("date") or "").strip("'") if img else ""
+            if d and d <= lock:
+                out.append(d)
+    return out
+
+
+# what a person's own "Undo" never puts back: sign-in and access, closed years, the e-receipt chain, chat (it has its own
+# edit / delete), the assistant's records, and the settings that guard the books
+OWN_DENY = {"users", "sessions", "api_keys", "cloud_local", "year_closes", "approvals", "ereceipts", "support_tickets",
+            "chat_rooms", "chat_members", "chat_messages", "chat_files", "chat_reactions", "chat_reads", "ai_threads", "ai_usage"}
+OWN_DENY_SETTINGS = ("lock_date", "two_step_required", "licence", "license", "install_id", "cloud", "workspace", "ai_")
+
+
+def own_problem(db, rows):
+    """Why a person's own save cannot be undone (None when it can)."""
+    if not rows:
+        return "Nothing to undo"
+    for r in rows:
+        if r["tbl"] in OWN_DENY:
+            return "This kind of change cannot be undone here — change it the usual way"
+        img = json.loads(r["new"] or r["old"] or "{}")
+        if r["tbl"] == "settings" and str(img.get("key", "")).strip("'").startswith(OWN_DENY_SETTINGS):
+            return "This setting cannot be undone here — change it in Settings"
+        if r["tbl"] == "extracts" and any(str(json.loads(x).get("eta_uuid") or "NULL") not in ("NULL", "''") for x in (r["old"], r["new"]) if x):
+            return "This invoice was sent to the tax authority — it cannot be undone here"
+    if _closed_dates(db, rows):
+        return "This change touches entries in closed books — it cannot be undone"
+    return None
+
+
+def undo(db, change, user, own=False):
+    """Put back every row the change touched — refused if any of them was changed again since.
+
+    own: a person undoing their own save (not the assistant's): only theirs, only for OWN_MINUTES, never in closed books."""
     change = str(change)[:60]
     rows = db.q("SELECT * FROM ai_undo WHERE change=? ORDER BY seq", (change,))
     if not rows:
@@ -96,6 +147,19 @@ def undo(db, change, user):
         raise ValidationError("This change was already undone")
     if not (user.get("is_super") or rows[0]["username"] == user["username"]):
         raise PermissionError("Only the person who asked for this change, or a super administrator, can undo it")
+    if own:
+        import datetime as _dt
+        if rows[0]["username"] != user["username"]:
+            raise PermissionError("Only the person who saved this can undo it")
+        try:
+            age = _dt.datetime.fromisoformat(now_iso()) - _dt.datetime.fromisoformat(rows[0]["at"])
+        except ValueError:
+            age = _dt.timedelta(0)
+        if age > _dt.timedelta(minutes=OWN_MINUTES):
+            raise ValidationError(f"Undo is only for the last {OWN_MINUTES} minutes — change or void it the usual way")
+        why = own_problem(db, rows)
+        if why:
+            raise ValidationError(why)
     cols = dict(_tables(db))
     last = {}
     for r in rows:

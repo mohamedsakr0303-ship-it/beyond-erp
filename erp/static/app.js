@@ -49,6 +49,8 @@ const STATIC = !!window.BEYOND_STATIC;   // browser-only build (static hosting):
 let API_WRITES = 0;   // saves still on their way (an update waits for them)
 async function api(method, path, body, raw) {
   if (method === "GET") return apiCall(method, path, body, raw);
+  if (typeof Hist !== "undefined" && Hist.tag && typeof path === "string" && path.startsWith("/api/") && !/[?&]_(ai|undo)=/.test(path)) {
+    path += (path.includes("?") ? "&" : "?") + "_undo=" + Hist.tag; Hist.writes++; }   // recorded, so it can be undone
   API_WRITES++;
   try { let r;
     try { r = await apiCall(method, path, body, raw); }
@@ -574,7 +576,12 @@ document.addEventListener("click", e => {
   if (pick) { if (e.target.tagName !== "INPUT") { const cb = $("input", pick); if (cb) cb.click(); } return; }
   const el = e.target.closest("[data-a]");
   if (el && S.H[el.dataset.a]) { if (!el.closest(".drawer")) S.lastClick = { a: el.dataset.a, ds: { ...el.dataset }, value: el.value, hash: location.hash, at: Date.now() };
-    e.preventDefault(); S.H[el.dataset.a](el, e); return; }
+    e.preventDefault();
+    const a = el.dataset.a, undoable = /(save|post|del|delete|void|remove)$/i.test(a) && !/^(ai|ch|ws)/.test(a);
+    const ut = undoable ? Hist.begin(/(del|delete|void|remove)$/i.test(a) ? "del" : "save") : null;
+    if (!ut) { S.H[a](el, e); return; }
+    let ok = true;
+    Promise.resolve().then(() => S.H[a](el, e)).catch(err => { ok = false; throw err; }).finally(() => Hist.end(ut, ok)); return; }
   const dd = e.target.closest(".dd > .btn");
   $$(".dd.open").forEach(d => { if (!dd || d !== dd.parentElement) d.classList.remove("open"); });
   if (dd) { e.preventDefault(); dd.parentElement.classList.toggle("open"); }
@@ -638,7 +645,7 @@ async function route() {
   view.className = "page"; view.innerHTML = `<div class="empty ld"><i class="ecl-ld"></i>${t("loading")}</div>`;
   host.replaceChildren(view);
   try { await page(view, parts, q); } catch (e) { view.innerHTML = `<div class="banner err">${esc(e.message)}</div>`; }
-  if (view.isConnected) { if ($("[data-a=xsave]", view)) Drafts.track(view, $("h1,h2", view)?.textContent || t("m_invoices"), { page: true }); Drafts.banner(view); }
+  if (view.isConnected) { if ($("[data-a=xsave]", view)) Drafts.track(view, $("h1,h2", view)?.textContent || t("m_invoices"), { page: true }); Drafts.banner(view); Hist.page(view); }
   if (parts.length === 1) addImportMenu(view, parts[0]).catch(() => {});
   stackify(view);
   if (view.isConnected) pageTo(0);                       // every screen opens at its top
@@ -747,6 +754,147 @@ const Drafts = {
       : `<p class="muted">${esc(L2("No drafts.", "لا توجد مسودات."))}</p>`, null, { readOnly: true });
   },
 };
+
+// ----------------------------------------------------------------- undo / redo
+// Every entry panel and every editing screen keeps the steps of what is typed, chosen, added or removed before it is
+// saved: ↶ / ↷ (Ctrl+Z, Ctrl+Y or Ctrl+Shift+Z) step back and forth, like Excel — a burst of typing in one box is one
+// step, and so is each line added, removed, pasted or filled. Nothing is saved by this; it only changes the screen.
+// Right after saving (or deleting) something, "Undo" in the message puts the books back as they were, on the server's
+// conditions: only the person's own change, only for a short while, only if nobody changed those records since, and
+// never in closed books or for documents already sent to the tax authority.
+const Hist = {
+  SKIP: "#fbar,.fbar,.toolbar,.pager,.bsel,[data-nohist],.pick-w .pick-in,.ch-comp,.ch-inbox,.chat,.pal-bg",
+  editable(box) { return Hist.els(box).length > 0; },
+  els(box) {
+    return $$("input,select,textarea", box).filter(el => !["file", "password", "button", "submit", "reset", "image"].includes(el.type)
+      && !el.classList.contains("pick-in") && !el.closest(Hist.SKIP) && !el.closest("#le"));
+  },
+  key: el => el.name || el.id || [...el.classList].sort().join(".") || el.tagName,
+  capture(box) {
+    const seen = {}, f = Hist.els(box).map(el => { const n = Hist.key(el), i = seen[n] = (seen[n] ?? -1) + 1;
+      return [n, i, el.type === "checkbox" || el.type === "radio" ? !!el.checked : el.value]; });
+    const st = { f };
+    if (box._gridSet && $("#le", box)) st.g = readLines(true);
+    return st;
+  },
+  async restore(box, st) {
+    const want = {}; st.f.forEach(([n, i]) => { want[n] = Math.max(want[n] || 0, i + 1); });
+    const inst = () => { const by = {}; Hist.els(box).forEach(el => { (by[Hist.key(el)] = by[Hist.key(el)] || []).push(el); }); return by; };
+    // lines: remove the extra ones (with the line's own ✕ when it has one) or add the missing ones, then put the values
+    for (let k = 0, last = ""; k < 200; k++) {
+      const by = inst();
+      const more = Object.keys(want).find(n => by[n] && by[n].length > want[n] && want[n] > 0);
+      const less = Object.keys(want).find(n => (by[n] ? by[n].length : 0) < want[n]);
+      const sig = JSON.stringify(Object.keys(by).map(n => [n, by[n].length]));
+      if (sig === last) break;
+      last = sig;
+      if (more) {
+        const el = by[more][by[more].length - 1], row = el.closest("tr,.lrow,.cl-row,li,[data-row]");
+        if (!row || !box.contains(row) || row.contains(by[more][0])) break;
+        const x = $$("[data-a]", row).find(b => /(del|rm|remove|x)$/i.test(b.dataset.a) && S.H[b.dataset.a] && !b.disabled);
+        if (x) await S.H[x.dataset.a](x); else row.remove();
+      } else if (less) {
+        let anc = by[less] ? by[less][by[less].length - 1].parentElement : null, add = null;
+        const usable = b => !b.disabled && S.H[b.dataset.a] && b.getClientRects().length;
+        while (anc && anc !== box.parentElement && !add) { add = $$("[data-a$=add]", anc).find(usable); anc = anc.parentElement; }
+        add = add || $$("[data-a$=add]", box).find(usable);
+        if (!add) break;
+        await S.H[add.dataset.a](add);
+      } else break;
+      await new Promise(r => setTimeout(r, 0));
+    }
+    const put = () => { const seen = {};
+      Hist.els(box).forEach(el => { const n = Hist.key(el), i = seen[n] = (seen[n] ?? -1) + 1;
+        const x = st.f.find(v => v[0] === n && v[1] === i); if (!x || el.disabled) return;
+        const now = el.type === "checkbox" || el.type === "radio" ? !!el.checked : el.value; if (now === x[2]) return;
+        if (el.type === "checkbox" || el.type === "radio") el.checked = !!x[2]; else el.value = x[2];
+        el.dispatchEvent(new Event("input", { bubbles: true })); el.dispatchEvent(new Event("change", { bubbles: true })); }); };
+    put(); await new Promise(r => setTimeout(r, 30)); put();   // a choice can bring its own fields: fill those too
+    if (st.g && box._gridSet) { GRID_NEXT = null; box._gridSet(st.g); await new Promise(r => setTimeout(r, 0)); }
+  },
+  attach(box) {
+    if (!box || box._hist) return box && box._hist;
+    const h = box._hist = { stack: [], i: -1, busy: false, t: 0 };
+    h.rec = () => { h.t = 0; if (h.busy || !box.isConnected) return;
+      const s = JSON.stringify(Hist.capture(box)); if (s === h.stack[h.i]) return Hist.paint(box);
+      h.stack.splice(h.i + 1); h.stack.push(s); if (h.stack.length > 200) h.stack.shift(); h.i = h.stack.length - 1; Hist.paint(box); };
+    h.soon = ms => { if (h.busy) return; clearTimeout(h.t); h.t = setTimeout(h.rec, ms); };
+    h.flush = () => { if (h.t) { clearTimeout(h.t); h.rec(); } };
+    box.addEventListener("input", e => { if (!e.target.closest(Hist.SKIP)) h.soon(e.target.matches("input[type=checkbox],input[type=radio],select") ? 60 : 600); });
+    box.addEventListener("change", e => { if (!e.target.closest(Hist.SKIP)) h.soon(60); });
+    new MutationObserver(() => h.soon(250)).observe(box, { childList: true, subtree: true });
+    setTimeout(h.rec, 350);      // the starting point, once pickers, drafts and defaults are in
+    Hist.paint(box);
+    return h;
+  },
+  async step(box, d) {
+    const h = box && box._hist; if (!h || h.busy) return false;
+    h.flush();
+    const to = h.i + d; if (to < 0 || to >= h.stack.length) return false;
+    h.busy = true; h.i = to;
+    try { await Hist.restore(box, JSON.parse(h.stack[to])); }
+    finally { setTimeout(() => { clearTimeout(h.t); h.t = 0; h.busy = false;
+      if (box.isConnected) h.stack[h.i] = JSON.stringify(Hist.capture(box));   // as it really is now
+      Hist.paint(box); }, 300); }
+    return true;
+  },
+  // the panel or screen being worked on
+  box() {
+    const a = document.activeElement, d = $(".drawer-bg #df");
+    return (a && a.closest && (a.closest(".drawer-bg #df") || a.closest("#view .page"))) || d || $("#view .page");
+  },
+  paint(box) {
+    const h = box && box._hist; if (!h) return;
+    if (box.classList.contains("page") && !$(".gbar", box) && !$(".hist-btns", box)) {     // a screen that redraws keeps its buttons
+      const bar = $(".toolbar", box) || $(".tabs", box);
+      if (bar) bar.insertAdjacentHTML("beforeend", Hist.buttons());
+      else box.insertAdjacentHTML("afterbegin", `<div class="toolbar hist-bar"><span class="spacer"></span>${Hist.buttons()}</div>`);
+    }
+    const scope = box.closest(".drawer") || box;
+    $$("[data-hist=undo]", scope).forEach(b => { b.disabled = h.i <= 0; });
+    $$("[data-hist=redo]", scope).forEach(b => { b.disabled = h.i >= h.stack.length - 1; });
+  },
+  buttons: () => `<span class="hist-btns"><button type="button" class="btn sm icon" data-hist="undo" disabled title="${esc(L2("Undo (Ctrl+Z)", "تراجع (Ctrl+Z)"))}" aria-label="${esc(L2("Undo", "تراجع"))}">↶</button><button type="button" class="btn sm icon" data-hist="redo" disabled title="${esc(L2("Redo (Ctrl+Y)", "إعادة (Ctrl+Y)"))}" aria-label="${esc(L2("Redo", "إعادة"))}">↷</button></span>`,
+  // a screen that edits something gets the buttons in its tool bar and its own steps
+  page(view) {
+    if (!view.isConnected || !Hist.editable(view)) return;
+    const edits = $("#le", view) || $$("form,[data-a$=save],[data-a$=post]", view).some(el => !el.closest(Hist.SKIP + ",.fbar,.drawer,.pager,.dd-menu"))
+      || (!$("#fbar", view) && Hist.els(view).length >= 4);        // a calculator or a sheet of figures
+    if (!edits) return;
+    Hist.attach(view);
+  },
+  // ---- after saving: Undo
+  tag: null, writes: 0,
+  begin(what) { if (Hist.tag) return null; Hist.tag = "u" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); Hist.writes = 0; return { tag: Hist.tag, hash: location.hash, what }; },
+  async end(t, ok) {
+    if (!t) return; const n = Hist.writes; Hist.tag = null;
+    if (!ok || !n) return;
+    let r; try { r = await apiCall("GET", "/api/ai-undo/" + t.tag); } catch { return; }
+    if (!r || !r.can_undo) return;
+    $$(".toast:not(.err):not(.busy):not(.undo-toast)").forEach(x => x.remove());   // this one says it instead
+    $$(".undo-toast").forEach(x => x.remove());
+    const el = document.createElement("div"); el.className = "toast undo-toast";
+    el.innerHTML = `<span>${esc(t.what === "del" ? L2("Deleted", "تم الحذف") : L2("Saved", "تم الحفظ"))}</span><button type="button" class="btn sm">↶ ${esc(L2("Undo", "تراجع"))}</button>`;
+    document.body.appendChild(el);
+    const gone = setTimeout(() => el.remove(), 12000);
+    $("button", el).addEventListener("click", async () => {
+      clearTimeout(gone); $("button", el).disabled = true;
+      try { const x = await api("POST", "/api/undo/" + t.tag, {}); el.remove(); toast(L2("Undone — put back as it was", "تم التراجع — أُعيد كما كان"));
+        try { await refreshBoot(); } catch { /* the screen refreshes anyway */ } if (location.hash !== t.hash) location.hash = t.hash; else route(); }
+      catch (e) { el.remove(); fail(e); } });
+  },
+};
+document.addEventListener("click", e => { const b = e.target.closest("[data-hist]"); if (!b) return; e.preventDefault();
+  const box = b.closest(".drawer") ? $("#df", b.closest(".drawer")) : b.closest(".page"); Hist.step(box, b.dataset.hist === "undo" ? -1 : 1); });
+document.addEventListener("keydown", e => {
+  if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+  const k = e.key.toLowerCase(), redo = k === "y" || (k === "z" && e.shiftKey);
+  if (k !== "z" && k !== "y") return;
+  if ($(".dlg-bg,.pal-bg") || (e.target.closest && e.target.closest(Hist.SKIP + ",[contenteditable]"))) return;   // their own undo
+  const box = Hist.box(); if (!box || !box._hist) return;
+  e.preventDefault();
+  Hist.step(box, redo ? 1 : -1);
+});
 
 // ----------------------------------------------------------------- shell
 function renderShell() {
@@ -1379,7 +1527,7 @@ function drawer(title, html, onSubmit, opts = {}) {
   if (!drawerEntry) { drawerEntry = location.hash; try { history.pushState({ berpDrawer: 1 }, ""); } catch { drawerEntry = null; } }
   const bg = document.createElement("div");
   bg.className = "drawer-bg";
-  bg.innerHTML = `<div class="drawer${opts.wide ? " wide" : ""}" role="dialog" aria-label="${esc(title)}"><div class="dhead"><button type="button" class="btn icon" data-a="closeDrawer" aria-label="${esc(t("close"))}">${BACK_ICON}</button><h3>${esc(title)}</h3></div><div id="derr"></div>
+  bg.innerHTML = `<div class="drawer${opts.wide ? " wide" : ""}" role="dialog" aria-label="${esc(title)}"><div class="dhead"><button type="button" class="btn icon" data-a="closeDrawer" aria-label="${esc(t("close"))}">${BACK_ICON}</button><h3>${esc(title)}</h3>${onSubmit && !opts.readOnly ? Hist.buttons() : ""}</div><div id="derr"></div>
     <form id="df">${html}<div class="foot">${opts.extraButtons || ""}<button class="btn" type="button" data-a="closeDrawer">${t(opts.readOnly ? "close" : "cancel")}</button>
     ${opts.readOnly ? "" : `<button class="btn pri" type="submit">${esc(opts.submitLabel || t("save"))}</button>`}</div></form></div>`;
   bg.addEventListener("mousedown", e => { if (e.target === bg) closeDrawer(); });
@@ -1392,13 +1540,16 @@ function drawer(title, html, onSubmit, opts = {}) {
     try { const miss = $$(".dz-in[data-req]", f).find(i => !i.files.length && i.closest(".dzf").style.display !== "none");
       if (miss) { miss.closest(".dropzone").classList.add("over"); setTimeout(() => miss.closest(".dropzone").classList.remove("over"), 1500);
         throw new Error(L2(`Attach a file: “${fieldName(miss.closest(".dzf"))}” is required`, `أرفق ملفاً: «${fieldName(miss.closest(".dzf"))}» إلزامي`)); }
-      const done = await onSubmit(readForm(f), f); Drafts.done(f); if (done !== false) { closeDrawer(); route(); } }
+      const ut = Hist.begin(); let done;
+      try { done = await onSubmit(readForm(f), f); } catch (er) { Hist.end(ut, false); throw er; }
+      Hist.end(ut, true); Drafts.done(f); if (done !== false) { closeDrawer(); route(); } }
     catch (err) { $("#derr").innerHTML = `<div class="banner err">${esc(err.message)}</div>`; $("#derr").scrollIntoView({ block: "nearest", behavior: "smooth" }); }
     finally { if (btn) btn.disabled = false; }
   });
   // with a mouse, start typing at once; on a phone that would pop the keyboard over half the form
   const first = $("input:not([type=hidden]),select", f); if (first && window.matchMedia && matchMedia("(pointer: fine)").matches) first.focus();
   if (opts.onOpen) opts.onOpen(f);
+  if (onSubmit && !opts.readOnly) Hist.attach(f);
   return f;
 }
 function closeDrawer(keepEntry) {
@@ -1699,7 +1850,7 @@ function docMenu(base, formats, extra = "") {
 // Delete after a clear confirmation; the server refuses anything still in use and says why.
 async function confirmDelete(what, path, after) {
   if (!actionOk(screenKey(), "delete")) { uiAlert(L2("Deleting and voiding are switched off for you on this screen.", "الحذف والإلغاء غير مسموحين لك في هذه الشاشة.")); return false; }
-  if (!await uiConfirm((S.lang === "ar" ? "حذف " : "Delete ") + what + (S.lang === "ar" ? "؟ لا يمكن التراجع." : "? This cannot be undone."))) return false;
+  if (!await uiConfirm((S.lang === "ar" ? "حذف " : "Delete ") + what + (S.lang === "ar" ? "؟" : "?"))) return false;
   try { await api("DELETE", path); if (after) await after(); closeDrawer(); toast(S.lang === "ar" ? "تم الحذف" : "Deleted"); route(); return true; }
   catch (e) { fail(e); return false; }
 }
@@ -2872,11 +3023,11 @@ function readLines(keepEmpty) {
 }
 // ---- the lines table behaves like a spreadsheet: select cells with the mouse (drag) or Shift + arrows, copy / cut /
 // paste blocks to and from Excel (Ctrl+C / X / V), Delete clears, Ctrl+D fills down, Enter moves down (a new line at the
-// end), Ctrl+B / I / U style the selected lines, Ctrl+Z undoes the last block change. Right-click a line for more.
+// end), Ctrl+B / I / U style the selected lines; Ctrl+Z / Ctrl+Y step back and forth (the screen's undo). Right-click a line for more.
 // `o`: { setLines(lines) — redraw with these lines, after() — totals again }
 const PALETTE = ["#000000", "#c00000", "#e36c09", "#9c6500", "#00703c", "#1f4e79", "#7030a0", "#7f7f7f"];
 const FILLS = ["#fff2cc", "#fce4d6", "#e2efda", "#ddebf7", "#ede7f6", "#f2f2f2", "#ffff00", "#d9d9d9"];
-let GRID_NEXT = null;     // a redraw hands its undo history and selection to the new table
+let GRID_NEXT = null;     // a redraw hands its selection to the new table
 function sheetGrid(o) {
   const tbl = $("#le"); if (!tbl) return;
   const carry = GRID_NEXT && Date.now() - GRID_NEXT.at < 2000 ? GRID_NEXT : null; GRID_NEXT = null;
@@ -2884,7 +3035,7 @@ function sheetGrid(o) {
   const cellsOf = tr => $$("input:not([type=hidden])", tr);
   const keyOf = inp => ([...inp.classList].find(c => c.startsWith("l-")) || "").slice(2);
   const NUM = new Set(["qty", "price", "cost"]);
-  let sel = null, anchor = null, dragging = false, undo = [], typed = false;
+  let sel = null, anchor = null, dragging = false;
   const at = (r, c) => { const tr = rows()[r]; return tr ? cellsOf(tr)[c] : null; };
   const pos = inp => { const tr = inp.closest("tr"); return { r: rows().indexOf(tr), c: cellsOf(tr).indexOf(inp) }; };
   const box = () => sel && { r0: Math.min(sel.a.r, sel.b.r), r1: Math.max(sel.a.r, sel.b.r), c0: Math.min(sel.a.c, sel.b.c), c1: Math.max(sel.a.c, sel.b.c) };
@@ -2895,8 +3046,7 @@ function sheetGrid(o) {
   const go = (r, c, extend) => { const n = rows().length; if (!n) return; r = Math.max(0, Math.min(n - 1, r)); c = Math.max(0, Math.min(cellsOf(rows()[r]).length - 1, c));
     if (extend) { select(sel ? sel.a : { r, c }, { r, c }); tbl.focus({ preventScroll: true }); at(r, c).scrollIntoView({ block: "nearest", inline: "nearest" }); }
     else { const i = at(r, c); select({ r, c }); i.focus(); if (i.select) i.select(); } };
-  const snap = () => { undo.push(JSON.stringify(readLines(true))); if (undo.length > 40) undo.shift(); typed = false; };
-  const redraw = (lines, keep) => { GRID_NEXT = { at: Date.now(), undo, sel: keep }; o.setLines(lines); };
+  const redraw = (lines, keep) => { GRID_NEXT = { at: Date.now(), sel: keep }; o.setLines(lines); };
   const clean = (k, v) => { v = String(v == null ? "" : v).replace(/\r/g, "");
     if (!NUM.has(k)) return v.replace(/\s*\n\s*/g, " ").trim();     // a line break inside an Excel cell: a space here
     const n = v.replace(/[٠-٩]/g, d => "٠١٢٣٤٥٦٧٨٩".indexOf(d)).replace(/[٬,\s]/g, "").replace("٫", ".").replace(/[^\d.\-eE]/g, "");
@@ -2915,9 +3065,9 @@ function sheetGrid(o) {
     return lines.join("\n"); };
   const setCell = (inp, v) => { if (!inp || inp.disabled) return; inp.value = clean(keyOf(inp), v); };
   const changed = () => { if (o.after) o.after(); };
-  const clear = () => { const b = box(); snap(); for (let r = b.r0; r <= b.r1; r++) for (let c = b.c0; c <= b.c1; c++) setCell(at(r, c), ""); changed(); };
+  const clear = () => { const b = box(); for (let r = b.r0; r <= b.r1; r++) for (let c = b.c0; c <= b.c1; c++) setCell(at(r, c), ""); changed(); };
   const paste = text => {
-    const grid = parseTSV(text); const b = box() || { r0: 0, c0: 0, r1: 0, c1: 0 }; snap();
+    const grid = parseTSV(text); const b = box() || { r0: 0, c0: 0, r1: 0, c1: 0 };
     if (grid.length === 1 && grid[0].length === 1 && multi()) {          // one value into a selection: fills it
       for (let r = b.r0; r <= b.r1; r++) for (let c = b.c0; c <= b.c1; c++) setCell(at(r, c), grid[0][0]);
       changed(); return; }
@@ -2931,15 +3081,15 @@ function sheetGrid(o) {
       return; }
     grid.forEach((row, dr) => row.forEach((v, dc) => setCell(at(b.r0 + dr, b.c0 + dc), v)));
     select({ r: b.r0, c: b.c0 }, { r: b.r0 + grid.length - 1, c: b.c0 + Math.max(...grid.map(x => x.length)) - 1 }); changed(); };
-  const fillDown = () => { const b = box(); if (!b || b.r1 === b.r0) return; snap();
+  const fillDown = () => { const b = box(); if (!b || b.r1 === b.r0) return;
     for (let c = b.c0; c <= b.c1; c++) { const v = (at(b.r0, c) || {}).value; for (let r = b.r0 + 1; r <= b.r1; r++) setCell(at(r, c), v); } changed(); };
   const selRows = tr => { const b = box(), i = tr ? rows().indexOf(tr) : -1;
     if (b && (i < 0 || (i >= b.r0 && i <= b.r1))) return rows().slice(b.r0, b.r1 + 1);
     return tr ? [tr] : []; };
-  const restyle = (trs, fn) => { snap(); trs.forEach(tr => { const h = $(".l-style", tr); let st = {}; try { st = JSON.parse(h.value || "{}") || {}; } catch { st = {}; }
+  const restyle = (trs, fn) => { trs.forEach(tr => { const h = $(".l-style", tr); let st = {}; try { st = JSON.parse(h.value || "{}") || {}; } catch { st = {}; }
     st = fn(st) || {}; Object.keys(st).forEach(k => { if (!st[k]) delete st[k]; }); h.value = JSON.stringify(st); paintLine(tr); }); };
   const toggle = (trs, k) => { const on = trs.every(tr => { try { return JSON.parse($(".l-style", tr).value || "{}")[k]; } catch { return false; } }); restyle(trs, st => ({ ...st, [k]: on ? 0 : 1 })); };
-  const rowOp = (trs, op) => { const lines = readLines(true), idx = trs.map(tr => rows().indexOf(tr)).sort((x, y) => x - y); snap();
+  const rowOp = (trs, op) => { const lines = readLines(true), idx = trs.map(tr => rows().indexOf(tr)).sort((x, y) => x - y);
     const first = idx[0], last = idx[idx.length - 1], blank = () => ({ description: "", qty: 0, price: 0, cost: 0, style: {} });
     if (op === "above") lines.splice(first, 0, ...idx.map(blank));
     else if (op === "below") lines.splice(last + 1, 0, ...idx.map(blank));
@@ -2953,7 +3103,7 @@ function sheetGrid(o) {
     redraw(lines, { a: { r: r0, c: 0 }, b: { r: op === "del" ? r0 : r0 + idx.length - 1, c: 0 } }); };
   o.api = { toggle: k => toggle(selRows(), k), color: (k, v) => restyle(selRows(), st => ({ ...st, [k]: v })), align: v => restyle(selRows(), st => ({ ...st, align: v })),
     plain: () => restyle(selRows(), () => ({})), rows: (op, tr) => rowOp(selRows(tr), op) };
-  if (carry) undo = carry.undo;
+  const page = tbl.closest(".page"); if (page) page._gridSet = lines => o.setLines(lines);   // undo / redo put lines back
   rows().forEach(paintLine);
   if (carry && carry.sel) { const s0 = carry.sel; setTimeout(() => { const i = at(s0.a.r, s0.a.c); if (i) { i.focus(); select(s0.a, s0.b); } }, 0); }
   if (o.readOnly) return o.api;
@@ -2964,7 +3114,6 @@ function sheetGrid(o) {
   tbl.addEventListener("mouseover", e => { if (!dragging) return; const i = e.target.closest("input:not([type=hidden])"); if (!i) return;
     const p = pos(i); if (p.r !== sel.a.r || p.c !== sel.a.c) { select(sel.a, p); if (document.activeElement !== tbl) { tbl.focus({ preventScroll: true }); window.getSelection().removeAllRanges(); } } });
   tbl.addEventListener("focusin", e => { const i = e.target.closest("input:not([type=hidden])"); if (i && !dragging && !(sel && multi() && document.activeElement === tbl)) select(pos(i)); });
-  tbl.addEventListener("input", () => { typed = true; });
   tbl.addEventListener("keydown", e => {
     const mod = e.ctrlKey || e.metaKey, inInput = e.target.matches("input"), b = box();
     const caretEdge = dir => { const i = e.target; if (!inInput || i.type === "number") return true; try { return dir < 0 ? i.selectionStart === 0 && i.selectionEnd === 0 : i.selectionEnd === i.value.length; } catch { return true; } };
@@ -2975,7 +3124,7 @@ function sheetGrid(o) {
       if (step[1] && !multi() && !caretEdge((e.key === "ArrowLeft") !== rtl ? -1 : 1)) return;
       e.preventDefault(); go(cur.r + step[0], cur.c + step[1]); return; }
     if (e.key === "Enter" && !mod) { e.preventDefault();
-      if (!e.shiftKey && cur.r === rows().length - 1) { const lines = readLines(true); snap(); lines.push({ description: "", qty: 0, price: 0, cost: 0, style: {} }); redraw(lines, { a: { r: cur.r + 1, c: cur.c } }); return; }
+      if (!e.shiftKey && cur.r === rows().length - 1) { const lines = readLines(true); lines.push({ description: "", qty: 0, price: 0, cost: 0, style: {} }); redraw(lines, { a: { r: cur.r + 1, c: cur.c } }); return; }
       go(cur.r + (e.shiftKey ? -1 : 1), cur.c); return; }
     if ((e.key === "Delete" || e.key === "Backspace") && multi()) { e.preventDefault(); clear(); return; }
     if (!mod) { if (!inInput && e.key.length === 1 && b) { const i = at(cur.r, cur.c); if (i) { select(cur); i.focus(); i.value = ""; } } return; }
@@ -2983,7 +3132,6 @@ function sheetGrid(o) {
     if (k === "d") { e.preventDefault(); fillDown(); }
     else if (k === "b" || k === "i" || k === "u") { e.preventDefault(); toggle(selRows(), k); }
     else if (k === "a" && !inInput) { e.preventDefault(); const n = rows().length - 1; select({ r: 0, c: 0 }, { r: n, c: cellsOf(rows()[n]).length - 1 }); }
-    else if (k === "z" && !e.shiftKey && (!inInput || !typed || multi()) && undo.length) { e.preventDefault(); const prev = JSON.parse(undo.pop()); GRID_NEXT = { at: Date.now(), undo, sel: sel }; o.setLines(prev); }
   });
   tbl.addEventListener("copy", e => { if (!multi()) return; e.preventDefault(); e.clipboardData.setData("text/plain", tsv()); });
   tbl.addEventListener("cut", e => { if (!multi()) return; e.preventDefault(); e.clipboardData.setData("text/plain", tsv()); clear(); });
@@ -3019,7 +3167,7 @@ function sheetGrid(o) {
 }
 // the bar above the lines: styles for the selected lines, more lines, Excel in
 function gridBar(kind) {
-  return `<div class="gbar"><div class="gbar-g">
+  return `<div class="gbar"><div class="gbar-g">${Hist.buttons()}</div><div class="gbar-g">
       <button type="button" class="btn sm" data-a="gfmt" data-k="b" title="${esc(L2("Bold (Ctrl+B)", "عريض (Ctrl+B)"))}"><b>B</b></button>
       <button type="button" class="btn sm" data-a="gfmt" data-k="i" title="${esc(L2("Italic (Ctrl+I)", "مائل (Ctrl+I)"))}"><i>I</i></button>
       <button type="button" class="btn sm" data-a="gfmt" data-k="u" title="${esc(L2("Underline (Ctrl+U)", "تسطير (Ctrl+U)"))}"><u>U</u></button>
@@ -3031,8 +3179,8 @@ function gridBar(kind) {
       <button type="button" class="btn sm" data-a="gplain" title="${esc(L2("Clear formatting", "مسح التنسيق"))}">⌫</button></div>
     <div class="gbar-g"><button type="button" class="btn sm" data-a="gmore">+ 10 ${esc(L2("lines", "سطور"))}</button>
       <label class="btn sm">⬆ ${esc(L2("Import from Excel", "استيراد من Excel"))}<input type="file" accept=".xlsx,.xlsm" hidden data-change="gimport" data-kind="${kind}"></label></div>
-    <span class="muted gbar-tip">${esc(L2("Select cells by dragging or Shift + arrows · Ctrl+C / Ctrl+V to and from Excel · Ctrl+D fills down · right-click a line for more",
-      "حدّد الخلايا بالسحب أو Shift + الأسهم · Ctrl+C / Ctrl+V من وإلى Excel · Ctrl+D تعبئة لأسفل · زر الفأرة الأيمن على السطر للمزيد"))}</span></div>`;
+    <span class="muted gbar-tip">${esc(L2("Select cells by dragging or Shift + arrows · Ctrl+C / Ctrl+V to and from Excel · Ctrl+D fills down · Ctrl+Z undo · Ctrl+Y redo · right-click a line for more",
+      "حدّد الخلايا بالسحب أو Shift + الأسهم · Ctrl+C / Ctrl+V من وإلى Excel · Ctrl+D تعبئة لأسفل · Ctrl+Z تراجع · Ctrl+Y إعادة · زر الفأرة الأيمن على السطر للمزيد"))}</span></div>`;
 }
 function wireGridBar(g, setLines) {
   S.H.gfmt = el => g.toggle(el.dataset.k);
