@@ -377,9 +377,9 @@ def save(db, d, lid=None, user=""):
     old = get(db, lid) if lid else None
     direction = d.get("direction") or (old and old["direction"])
     if direction not in DIRECTIONS:
-        raise ValidationError("Choose whether the company borrowed or lent the money")
+        raise ValidationError("Specify whether the company borrowed or lent the funds.")
     if old and direction != old["direction"] and _entries(db, old["code"]):
-        raise ValidationError("This loan has entries — it cannot switch between borrowed and lent")
+        raise ValidationError("This loan has entries; it cannot be changed between borrowed and lent.")
     code = text(d.get("code"), maxlen=30) or (old["code"] if old else next_code(db))
     party = text(d.get("party"), "lender" if direction == "borrowed" else "borrower", required=True)
     term = int(num(d.get("term_months") if d.get("term_months") not in (None, "") else 12, "term (months)"))
@@ -415,7 +415,7 @@ def save(db, d, lid=None, user=""):
         raise ValidationError("Enter the term in months (or choose a flexible schedule)")
     first_due = acc.clean_date(d.get("first_due"), "first installment") if d.get("first_due") else ""
     if first_due and first_due < start:
-        raise ValidationError("The first installment cannot be before the loan starts")
+        raise ValidationError("The first instalment cannot precede the loan start date.")
     custom = []
     if stype == "custom":
         for r in d.get("schedule") or []:
@@ -450,9 +450,9 @@ def save(db, d, lid=None, user=""):
         if old:
             has = _entries(db, old["code"])
             if has and code != old["code"]:
-                raise ValidationError("This loan has entries — its code cannot change")
+                raise ValidationError("This loan has entries; its code cannot be changed.")
             if has and account != old["account"] and _sum(db, old, old["account"]):
-                raise ValidationError("Money is already booked on the old loan account — it cannot change")
+                raise ValidationError("Amounts are recorded on the previous loan account; it cannot be changed.")
             db.conn.execute("UPDATE loans SET code=?, direction=?, party=?, purpose=?, account=?, interest_account=?, "
                             "accrued_account=?, start_date=?, principal=?, opening_balance=?, opening_date=?, rate=?, "
                             "interest_type=?, fixed_interest=?, term_months=?, frequency=?, first_due=?, schedule_type=?, "
@@ -472,7 +472,7 @@ def save(db, d, lid=None, user=""):
 def delete(db, lid):
     ln = get(db, lid)
     if _entries(db, ln["code"]):
-        raise ValidationError("This loan has journal entries — void them first, or write the loan off / close it")
+        raise ValidationError("This loan has journal entries. Void them first, or write off or close the loan.")
     db.x("DELETE FROM loans WHERE id=?", (ln["id"],))
 
 
@@ -481,8 +481,7 @@ def set_status(db, lid, closed, date=None):
     if closed:
         st = status(db, ln)
         if st["outstanding"] or st["accrued"]:
-            raise ValidationError(f"The loan still has {st['outstanding'] + st['accrued']:,.2f} outstanding — "
-                                  "record the last payment or write it off first")
+            raise ValidationError((f"{st['outstanding'] + st['accrued']:,.2f} remains outstanding on the loan. Record the final payment or write it off first."))
         db.x("UPDATE loans SET status='closed', closed_on=? WHERE id=?", (acc.clean_date(date or acc.today()), ln["id"]))
     else:
         db.x("UPDATE loans SET status='active', closed_on='' WHERE id=?", (ln["id"],))
@@ -497,7 +496,7 @@ def plan(db, lid, action, d):
     """The entry an action would post: {kind, date, memo, lines, meta, notes}. Nothing is saved."""
     ln = get(db, lid)
     if ln["status"] == "closed" and action != "fee":
-        raise ValidationError("This loan is closed — reopen it first")
+        raise ValidationError("This loan is closed. Reopen it first.")
     borrowed = ln["direction"] == "borrowed"
     date = acc.clean_date(d.get("date") or acc.today())
     party = ln["party"]

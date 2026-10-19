@@ -67,7 +67,7 @@ def save(db, d, user="", po_id=None):
         if po_id:
             po = get(db, po_id)
             if po["status"] not in ("draft", "approved") or any(ln["received"] for ln in po["lines"]):
-                raise ValidationError("Only an order nothing was received on can be changed — close it and raise a new one")
+                raise ValidationError("Only an order with no receipts can be changed. Close it and raise a new order.")
             db.conn.execute(f"UPDATE purchase_orders SET {', '.join(k + '=?' for k in vals)}, status='draft', approved_by='', "
                             "approved_at='' WHERE id=?", list(vals.values()) + [po["id"]])
             db.conn.execute("DELETE FROM po_lines WHERE po_id=?", (po["id"],))
@@ -143,7 +143,7 @@ def set_status(db, po_id, status, reason=""):
         if po["status"] not in ("draft", "approved"):
             raise ValidationError(f"A {po['status']} order cannot be cancelled")
         if po["received_value"]:
-            raise ValidationError("Something was already received — close the order instead (the rest is no longer needed)")
+            raise ValidationError("Goods have already been received. Close the order instead (remainder not required).")
     elif status == "closed":
         if po["status"] not in ("approved", "partial"):
             raise ValidationError("Only an approved or part-received order can be closed")

@@ -126,7 +126,7 @@ def check_sku(db, sku, item_id=None):
         return
     for r in db.q("SELECT id, name, sku FROM stock_items WHERE sku IS NOT NULL AND sku<>''"):
         if r["id"] != item_id and sku_key(r["sku"]) == k:
-            raise ValidationError(f"Code {sku} is already used by “{r['name']}” — a code can belong to one item only")
+            raise ValidationError(f"Code {sku} is already used by “{r['name']}”. Each code can belong to one item only.")
 
 
 def similar(db, name, limit=8):

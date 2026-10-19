@@ -1,18 +1,52 @@
-"""My day: field staff start and end their working day from the phone (with the place, when the company asks for it
-and the person allows it), and close it with a short daily report the app drafts from what they did in it.
+"""Check-in and check-out: staff record each work session from the phone or browser, as many sessions a day as
+needed (the day's hours are their total). The place is recorded when the company asks for it; when the company lists
+work sites, check-ins must be within a site's radius unless the person is allowed to work from anywhere. Checking out
+can carry a short work summary that the app drafts from the person's activity.
 
-Managers see the team's days: who started, where and when, hours, and each day's report."""
+Managers see the team's sessions: who checked in, where and when, hours, late arrivals and early departures."""
+import math
 from . import accounting as acc
 from .accounting import ValidationError, now_iso, text
 
 LOCATION = ("off", "ask", "required")
 
 
+def _need(db, username):
+    """Location rule for this person: off / ask / required, and the sites they must be at (empty = anywhere)."""
+    from .hrrequests import policy
+    pol = policy(db)
+    need = db.setting("workday_location") or "ask"
+    sites = [] if username in pol["anywhere"] else pol["sites"]
+    return ("required" if sites else need), sites
+
+
+def _metres(a_lat, a_lng, b_lat, b_lng):
+    r = 6371000
+    p1, p2 = math.radians(a_lat), math.radians(b_lat)
+    dp, dl = p2 - p1, math.radians(b_lng - a_lng)
+    h = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * r * math.asin(math.sqrt(h))
+
+
+def _site(sites, lat, lng, accu):
+    """The work site this position is at, or a ValidationError naming the nearest one."""
+    if not sites:
+        return ""
+    best = None
+    for s in sites:
+        dist = _metres(lat, lng, s["lat"], s["lng"])
+        if dist <= s["radius"] + min(accu or 0, 100):
+            return s["name"]
+        if best is None or dist < best[0]:
+            best = (dist, s["name"])
+    raise ValidationError(f"You are {best[0] / 1000:.1f} km from {best[1]}. Check in from a work site.")
+
+
 def _loc(d, need):
     lat, lng = d.get("lat"), d.get("lng")
     if lat in (None, "") or lng in (None, ""):
         if need == "required":
-            raise ValidationError("This company asks for your location when you start or end the day — allow location for this app and try again")
+            raise ValidationError("This company requires your location to check in or out. Allow location access for this application and try again.")
         return None, None, None
     try:
         lat, lng = float(lat), float(lng)
@@ -77,11 +111,12 @@ def delete(db, wid):
 
 def start(db, user, d):
     if (cur := today_of(db, user)) and not cur["end_at"]:
-        raise ValidationError("Your day is already started")
-    need = db.setting("workday_location") or "ask"
+        raise ValidationError("You are already checked in.")
+    need, sites = _need(db, user["username"])
     lat, lng, accu = _loc(d, need)
-    wid = db.x("INSERT INTO workdays(username, date, start_at, start_lat, start_lng, start_acc, note) VALUES (?,?,?,?,?,?,?)",
-               (user["username"], acc.today(), now_iso(), lat, lng, accu, text(d.get("note"), maxlen=500))).lastrowid
+    site = _site(sites, lat, lng, accu) if lat is not None else ""
+    wid = db.x("INSERT INTO workdays(username, date, start_at, start_lat, start_lng, start_acc, note, start_site) VALUES (?,?,?,?,?,?,?,?)",
+               (user["username"], acc.today(), now_iso(), lat, lng, accu, text(d.get("note"), maxlen=500), site)).lastrowid
     sync_attendance(db, user["username"], acc.today())
     return wid
 
@@ -89,11 +124,12 @@ def start(db, user, d):
 def finish(db, user, d):
     cur = today_of(db, user)
     if not cur or cur["end_at"]:
-        raise ValidationError("Start your day first")
-    need = db.setting("workday_location") or "ask"
+        raise ValidationError("Check in first.")
+    need, sites = _need(db, user["username"])
     lat, lng, accu = _loc(d, need)
-    db.x("UPDATE workdays SET end_at=?, end_lat=?, end_lng=?, end_acc=?, report=? WHERE id=?",
-         (now_iso(), lat, lng, accu, text(d.get("report"), maxlen=4000), cur["id"]))
+    site = _site(sites, lat, lng, accu) if lat is not None else ""
+    db.x("UPDATE workdays SET end_at=?, end_lat=?, end_lng=?, end_acc=?, report=?, end_site=? WHERE id=?",
+         (now_iso(), lat, lng, accu, text(d.get("report"), maxlen=4000), site, cur["id"]))
     sync_attendance(db, user["username"], cur["date"])
     return cur["id"]
 
@@ -122,10 +158,40 @@ def activity(db, username, date=None):
     return "\n".join(out)
 
 
+def _late_early(pol, first, last, excused):
+    """Minutes late (first check-in after start + grace) and early (last check-out before end), net of permissions."""
+    def mins(iso):
+        return int(iso[11:13]) * 60 + int(iso[14:16])
+    late = early = 0
+    if pol.get("start") and first and "late" not in excused and "offsite" not in excused:
+        s = int(pol["start"][:2]) * 60 + int(pol["start"][3:5])
+        late = max(0, mins(first) - s) if mins(first) - s > int(pol.get("grace") or 0) else 0
+    if pol.get("end") and last and "early" not in excused and "offsite" not in excused:
+        e = int(pol["end"][:2]) * 60 + int(pol["end"][3:5])
+        early = max(0, e - mins(last))
+    return late, early
+
+
+def _now_hours(r):
+    """Hours of a session; an open session counts up to now."""
+    if r["end_at"]:
+        return _hours(r)
+    a = acc._dt.datetime.fromisoformat(r["start_at"][:19])
+    b = acc._dt.datetime.fromisoformat(now_iso()[:19])
+    return round(max(0, (b - a).total_seconds()) / 3600, 2)
+
+
 def mine(db, user):
+    from . import hrrequests
     cur = today_of(db, user)
-    return {"today": cur, "location": db.setting("workday_location") or "ask", "draft": activity(db, user["username"]),
-            "employee": employee_of(db, user["username"])}
+    sessions = db.q("SELECT * FROM workdays WHERE username=? AND date=? ORDER BY start_at", (user["username"], acc.today()))
+    need, sites = _need(db, user["username"])
+    emp = employee_of(db, user["username"])
+    return {"today": cur, "sessions": sessions, "hours": round(sum(_now_hours(r) for r in sessions), 2),
+            "open": bool(cur and not cur["end_at"]), "location": need, "sites": [x["name"] for x in sites],
+            "draft": activity(db, user["username"]), "employee": emp, "policy": {k: hrrequests.policy(db)[k] for k in ("start", "end", "grace")},
+            "balance": hrrequests.balance(db, user["username"]), "requests": hrrequests.listing(db, username=user["username"])[:50],
+            "advance": hrrequests.advance_balance(db, emp["name"]) if emp else 0}
 
 
 def team(db, date_from=None, date_to=None, username=None):
@@ -133,14 +199,25 @@ def team(db, date_from=None, date_to=None, username=None):
     if username:
         w.append("username=?")
         p.append(username)
+    from .hrrequests import excused, policy
+    pol = policy(db)
     rows = db.q(f"SELECT * FROM workdays WHERE {' AND '.join(w)} ORDER BY date DESC, start_at", p)
-    linked = {}
+    linked, days = {}, {}
     for r in rows:
         r["hours"] = _hours(r) if r["end_at"] else None
         if r["username"] not in linked:
             linked[r["username"]] = employee_of(db, r["username"])
         e = linked[r["username"]]
         r["employee"] = f"{e['code']} — {e['name']}" if e else ""
+        days.setdefault((r["username"], r["date"]), []).append(r)
+    for (u, day), rs in days.items():
+        first = min(x["start_at"] for x in rs)
+        ends = [x["end_at"] for x in rs if x["end_at"]]
+        last = max(ends) if ends and all(x["end_at"] for x in rs) else None
+        late, early = _late_early(pol, first, last, excused(db, u, day))
+        for x in rs:
+            x["late"] = late if x["start_at"] == first else 0
+            x["early"] = early if last and x["end_at"] == last else 0
     started = {r["username"] for r in rows if r["date"] == acc.today()}
     # people who usually start their day here (any day in the last two weeks) but have not today
     usual = {r["username"] for r in db.q("SELECT DISTINCT username FROM workdays WHERE date>=?",

@@ -121,10 +121,10 @@ def book_funding(db, date=None, user=""):
     """Bring the funding partner's capital in the books up (or down) to the money he has actually put in."""
     led = funding_ledger(db, date_to=date)
     if not led:
-        raise acc.ValidationError("Choose the funding partner first")
+        raise acc.ValidationError("Choose the funding partner first.")
     diff = to_minor(led["unbooked"])
     if not diff:
-        raise acc.ValidationError("His capital in the books already equals the money he has put in")
+        raise acc.ValidationError("The partner's capital per the books already equals the funds contributed.")
     cap = db.acct("capital")
     bank = db.acct("bank")
     amt = to_major(abs(diff))

@@ -161,9 +161,9 @@ def save(db, d, cid=None, user=""):
         if old:
             has = _entries(db, old["code"])
             if has and code != old["code"]:
-                raise ValidationError("This custody has entries — its code cannot change")
+                raise ValidationError("This custody has entries; its code cannot be changed.")
             if has and account != old["account"]:
-                raise ValidationError("Money is already booked on the old custody account — it cannot change")
+                raise ValidationError("Amounts are recorded on the previous custody account; it cannot be changed.")
             db.conn.execute("UPDATE custodies SET code=?, holder=?, kind=?, purpose=?, account=?, float_amount=?, issued_on=?, "
                             "due_date=?, opening_balance=?, bu_id=?, notes=? WHERE id=?", vals + (old["id"],))
             return old["id"]
@@ -180,7 +180,7 @@ def save(db, d, cid=None, user=""):
 def delete(db, cid):
     c = get(db, cid)
     if _entries(db, c["code"]):
-        raise ValidationError("This custody has journal entries — void them first, or settle and close it")
+        raise ValidationError("This custody has journal entries. Void them first, or settle and close it.")
     db.x("DELETE FROM custodies WHERE id=?", (c["id"],))
 
 
@@ -189,8 +189,7 @@ def set_status(db, cid, closed, date=None):
     if closed:
         bal = status(db, c)["balance"]
         if bal:
-            raise ValidationError(f"The custody balance is {bal:,.2f} — settle, return, reimburse or deduct it to reach "
-                                  "zero before closing")
+            raise ValidationError((f"The custody balance is {bal:,.2f}. Settle, return, reimburse or deduct it to zero before closing."))
         db.x("UPDATE custodies SET status='closed', closed_on=? WHERE id=?", (acc.clean_date(date or acc.today()), c["id"]))
     else:
         db.x("UPDATE custodies SET status='open', closed_on='' WHERE id=?", (c["id"],))
@@ -205,7 +204,7 @@ def plan(db, cid, action, d):
     """What an action would post: a list of entries (a settlement splits by business unit). Nothing is saved."""
     c = get(db, cid)
     if c["status"] == "closed":
-        raise ValidationError("This custody is closed — reopen it first")
+        raise ValidationError("This custody is closed. Reopen it first.")
     date = acc.clean_date(d.get("date") or acc.today())
     holder = c["holder"]
     bal = c["opening_balance"] + _moves(db, c)

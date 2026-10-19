@@ -336,7 +336,7 @@ def save_employee(db, d, eid=None):
 def delete_employee(db, eid):
     e = get_employee(db, eid)
     if db.one("SELECT 1 FROM payroll_lines WHERE employee_id=?", (e["id"],)):
-        raise ValidationError("This employee is on a payroll run — mark them as left instead")
+        raise ValidationError("This employee is included in a payroll run. Mark the employee as left instead.")
     db.x("DELETE FROM employees WHERE id=?", (e["id"],))
 
 
@@ -403,7 +403,7 @@ def _month_end(period):
 def save_lines(db, rid, lines):
     r = _run(db, rid)
     if r["status"] != "draft":
-        raise ValidationError("This run is posted — unpost it to change it")
+        raise ValidationError("This payroll run is posted. Unpost it to make changes.")
     for ln in lines or []:
         eid = ln.get("employee_id") or (get_employee(db, ln["employee"])["id"] if ln.get("employee") else None)
         if not eid:
@@ -492,7 +492,7 @@ def unpost_run(db, rid, user=""):
 def delete_run(db, rid):
     r = _run(db, rid)
     if r["status"] != "draft":
-        raise ValidationError("Unpost the run first")
+        raise ValidationError("Unpost the payroll run first.")
     db.x("DELETE FROM payroll_lines WHERE run_id=?", (r["id"],))
     db.x("DELETE FROM payroll_runs WHERE id=?", (r["id"],))
 
@@ -570,7 +570,7 @@ def save_crew(db, d, cid=None):
 def delete_crew(db, cid):
     c = db.one("SELECT * FROM crew_sheets WHERE id=?", (cid,))
     if c and c["entry_id"]:
-        raise ValidationError("A payment is recorded for this sheet — delete that entry first")
+        raise ValidationError("A payment is recorded for this sheet. Delete that entry first.")
     db.x("DELETE FROM crew_sheets WHERE id=?", (cid,))
 
 

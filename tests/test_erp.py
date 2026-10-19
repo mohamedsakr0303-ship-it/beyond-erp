@@ -454,14 +454,14 @@ class Api(unittest.TestCase):
         self.assertEqual(self.call(admin, "PUT", "/api/bus-allocation", {"allocations": {str(r["id"]): 1.2}})[0], 400)
         # deleting: users (never yourself / the last admin), and only records nothing depends on
         me = self.call(admin, "GET", "/api/bootstrap")[1]["user"]
-        self.assertIn("yourself", self.call(admin, "DELETE", f"/api/users/{me['id']}")[1]["error"])
+        self.assertIn("your own account", self.call(admin, "DELETE", f"/api/users/{me['id']}")[1]["error"])
         st, tmp = self.call(admin, "POST", "/api/users", {"username": "temp", "password": "temp12345"})
         self.assertEqual(self.call(admin, "DELETE", f"/api/users/{tmp['id']}")[0], 200)
         self.assertIsNone(self.db.one("SELECT 1 FROM users WHERE username='temp'"))
         self.assertEqual(self.call(admin, "POST", "/api/tax-codes", {"code": "TMP", "name": "t", "kind": "vat", "rate": 0.1})[0], 200)
         self.assertEqual(self.call(admin, "DELETE", "/api/tax-codes/TMP")[0], 200)
         self.call(admin, "POST", "/api/parties-master", {"name": "Cust", "type": "customer", "default_vat": "VAT14"})
-        self.assertIn("untick Active", self.call(admin, "DELETE", "/api/tax-codes/VAT14")[1]["error"])
+        self.assertIn("Clear Active", self.call(admin, "DELETE", "/api/tax-codes/VAT14")[1]["error"])
         pid = self.db.one("SELECT id FROM parties WHERE name='Cust'")["id"]
         self.call(admin, "POST", "/api/extracts", {"bu_id": r["id"], "number": "INV-D", "customer": "Cust",
                                                     "lines": [{"description": "x", "qty": 1, "price": 5}]})
@@ -1804,7 +1804,7 @@ class UndoAfterSaving(unittest.TestCase):
         self.call("PUT", f"/api/parties-master/{r['id']}", {"name": "Old", "type": "customer", "notes": "changed later"})
         st, e = self.call("POST", "/api/undo/ulater1")
         self.assertEqual(st, 400)
-        self.assertIn("changed again", e["error"])
+        self.assertIn("were changed after", e["error"])
         self.call("POST", "/api/parties-master?_undo=uaged01", {"name": "Aged", "type": "customer"})
         self.db.x("UPDATE ai_undo SET at='2000-01-01T00:00:00' WHERE change='uaged01'")
         self.assertIn("minutes", self.call("POST", "/api/undo/uaged01")[1]["error"])
@@ -3446,7 +3446,7 @@ class ChatProfilesAssistant(unittest.TestCase):
         self.call("acc", "POST", "/api/chat/rooms/1/read", {"last": m["id"]})
         st, err = self.call("boss", "PUT", f"/api/chat/messages/{m['id']}", {"body": "too late"})
         self.assertEqual(st, 400)
-        self.assertIn("seen", err["error"])
+        self.assertIn("has been read", err["error"])
         self.assertEqual(self.call("acc", "GET", "/api/chat/updates?since=0")[1]["unread"], 0)
         st, dm = self.call("eng", "POST", "/api/chat/dm", {"user_id": 2})
         self.assertEqual(self.call("eng", "POST", "/api/chat/dm", {"user_id": 2})[1]["id"], dm["id"])   # one room per pair
@@ -3491,7 +3491,7 @@ class ChatProfilesAssistant(unittest.TestCase):
         self.assertEqual(self.call("eng", "POST", "/api/bus", bu, **aih)[0], 403)
         st, err = self.call("boss", "POST", "/api/bus", bu, **aih)
         self.assertEqual(st, 403)                                                              # not reviewed: refused
-        self.assertIn("checked and reviewed", err["error"])
+        self.assertIn("validated and reviewed", err["error"])
         rv = self.call("eng", "POST", "/api/ai/preview", {"method": "POST", "path": "/api/bus", "body": bu})[1]
         self.assertFalse(rv["ok"])                                                             # the engineer may not
         self.assertNotIn("review", rv)
@@ -3664,7 +3664,7 @@ class AssistantAnyProvider(unittest.TestCase):
         ai.save_policy(db, u, {"provider": "custom", "base_url": f"http://127.0.0.1:{srv.server_port}/web", "model": "kimi-k3"})
         with self.assertRaises(ai.AIError) as cm:
             ai.complete(db, u, {"messages": [{"role": "user", "content": "hi"}]})
-        self.assertIn("did not answer like an AI API", str(cm.exception))
+        self.assertIn("did not respond as an AI API", str(cm.exception))
         self.assertIn("<!doctype html>", str(cm.exception))
         srv.shutdown()
 
@@ -5192,6 +5192,58 @@ class MyDay(unittest.TestCase):
         self.assertIsNotNone(t["rows"][0]["hours"])
 
 
+    def test_sessions_sites_and_requests(self):
+        """Several check-ins a day add up; work sites restrict where people check in unless they may work anywhere;
+        requests are approved into Time & Attendance and advances are paid into Employee advances."""
+        from erp import hrrequests, workdays
+        db = Database(":memory:")
+        auth.create_user(db, {"username": "boss", "password": "secret123"}, first=True)
+        auth.create_user(db, {"username": "tech", "password": "secret123", "perms": {"team": "add"}})
+        boss, tech = (db.one("SELECT * FROM users WHERE username=?", (u,)) for u in ("boss", "tech"))
+        db.x("INSERT INTO employees(code, name, username, status) VALUES ('E1', 'Field Technician', 'tech', 'active')")
+        emp = db.one("SELECT id FROM employees WHERE code='E1'")["id"]
+        workdays.start(db, tech, {})
+        workdays.finish(db, tech, {})
+        workdays.start(db, tech, {})                                  # checking in again after checking out
+        m = workdays.mine(db, tech)
+        self.assertEqual((len(m["sessions"]), m["open"]), (2, True))
+        hrrequests.save_policy(db, {"sites": [{"name": "Main office", "lat": 30.0444, "lng": 31.2357, "radius": 200}]})
+        with self.assertRaises(a.ValidationError):
+            workdays.finish(db, tech, {})                             # sites listed: location required
+        with self.assertRaises(a.ValidationError):
+            workdays.finish(db, tech, {"lat": 30.10, "lng": 31.30})   # several km away
+        workdays.finish(db, tech, {"lat": 30.0450, "lng": 31.2360, "accuracy": 10})
+        self.assertEqual(db.one("SELECT end_site FROM workdays ORDER BY id DESC LIMIT 1")["end_site"], "Main office")
+        hrrequests.save_policy(db, {"anywhere": ["tech"]})
+        workdays.start(db, tech, {})                                  # allowed anywhere
+        # leave → attendance; rejecting removes it
+        rid = hrrequests.submit(db, tech, {"kind": "annual", "date_from": "2030-03-03", "date_to": "2030-03-05", "reason": "Family"})
+        with self.assertRaises(a.ValidationError):
+            hrrequests.submit(db, tech, {"kind": "sick", "date_from": "2030-03-04"})   # overlaps
+        with self.assertRaises(PermissionError):
+            hrrequests.decide(db, tech, rid, True)                    # own request
+        hrrequests.decide(db, boss, rid, True)
+        self.assertEqual(db.one("SELECT COUNT(*) n FROM attendance WHERE employee_id=? AND status='leave'", (emp,))["n"], 3)
+        self.assertEqual(hrrequests.balance(db, "tech", "2030")["taken"], 3)
+        hrrequests.decide(db, boss, rid, False, "Busy period")
+        self.assertEqual(db.one("SELECT COUNT(*) n FROM attendance WHERE employee_id=? AND status='leave'", (emp,))["n"], 0)
+        self.assertTrue(db.one("SELECT 1 FROM alert_feed WHERE username='tech'"))
+        # late-arrival permission excuses lateness
+        lid = hrrequests.submit(db, tech, {"kind": "late", "date_from": a.today(), "time_to": "11:00"})
+        hrrequests.decide(db, boss, lid, True)
+        self.assertEqual(hrrequests.excused(db, "tech", a.today()), {"late"})
+        # salary advance
+        aid = hrrequests.submit(db, tech, {"kind": "advance", "amount": 1500})
+        with self.assertRaises(a.ValidationError):
+            hrrequests.pay_advance(db, boss, aid, {})                 # not approved yet
+        hrrequests.decide(db, boss, aid, True)
+        eid = hrrequests.pay_advance(db, boss, aid, {"method": "Cash"})
+        self.assertEqual(hrrequests.advance_balance(db, "Field Technician"), 1500)
+        with self.assertRaises(a.ValidationError):
+            hrrequests.decide(db, boss, aid, False)                   # paid: void the entry first
+        self.assertTrue(eid)
+
+
 class KnowledgeBaseAndApiKeys(unittest.TestCase):
     def test_kb(self):
         from erp import kb
@@ -5576,5 +5628,5 @@ class ImprovementsPack(unittest.TestCase):
         db.x("UPDATE journal_entries SET memo='edited by someone' WHERE id=?", (eid,))
         st, r = self.call("boss", "POST", "/api/ai-undo/chg002", {})
         self.assertEqual(st, 400)
-        self.assertIn("changed again", r["error"])
+        self.assertIn("were changed after", r["error"])
         self.assertTrue(db.one("SELECT 1 FROM journal_entries WHERE id=?", (eid,)))

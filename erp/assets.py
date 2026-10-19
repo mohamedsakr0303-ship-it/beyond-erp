@@ -281,9 +281,9 @@ def save(db, d, aid=None, user=""):
         if old:  # a new cost, residual value or life applies to the depreciation not booked yet
             st = status(db, old)
             if code != old["code"] and _entries(db, old["code"]):
-                raise ValidationError("This asset has journal entries — its code cannot change")
+                raise ValidationError("This asset has journal entries; its code cannot be changed.")
             if st["depreciation"] and accum != old["accum_account"]:
-                raise ValidationError("Depreciation is already booked to the old accumulated account — it cannot change")
+                raise ValidationError("Depreciation is already recorded to the previous accumulated depreciation account; it cannot be changed.")
             db.conn.execute("UPDATE fixed_assets SET code=?, name=?, account=?, accum_account=?, expense_account=?, "
                             "acquired=?, cost=?, salvage=?, life_months=?, depr_start=?, opening_depr=?, bu_id=?, "
                             "location=?, serial=?, notes=?, method=?, factor=? WHERE id=?", vals + (old["id"],))
@@ -323,8 +323,7 @@ def _book_purchase(db, d, code, name, account, cost, date, how, bu_id, user):
 def delete(db, aid):
     a = get(db, aid)
     if _entries(db, a["code"]):
-        raise ValidationError("This asset has journal entries (purchase, depreciation or disposal) — void them first, "
-                              "or dispose of the asset instead")
+        raise ValidationError("This asset has journal entries (purchase, depreciation or disposal). Void them first, or dispose of the asset.")
     db.x("DELETE FROM fixed_assets WHERE id=?", (a["id"],))
 
 

@@ -114,7 +114,7 @@ def save(db, d, rid=None):
     start = acc.clean_date(d.get("start") or (old and old["start"]), "first date")
     end = acc.clean_date(d["end_date"], "end date") if d.get("end_date") else ""
     if end and end < start:
-        raise ValidationError("The end date is before the first date")
+        raise ValidationError("The end date is before the start date.")
     count = int(num(d.get("max_count") or 0, "number of times"))
     mode = d.get("mode") if d.get("mode") in ("auto", "review") else (old["mode"] if old else "review")
     payload = d.get("payload") if isinstance(d.get("payload"), dict) else (_j(old["payload"], {}) if old else {})

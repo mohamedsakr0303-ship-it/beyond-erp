@@ -142,7 +142,7 @@ def _table(data, filename=""):
         try:
             import openpyxl
         except ImportError:
-            raise ValidationError("Excel files need openpyxl — save the statement as CSV instead")
+            raise ValidationError("Excel files require openpyxl. Save the statement as CSV instead.")
         wb = openpyxl.load_workbook(io.BytesIO(raw), data_only=True, read_only=True)
         ws = wb.worksheets[0]
         return [list(r) for r in ws.iter_rows(values_only=True)]
@@ -376,8 +376,7 @@ def parse(data, filename="", order=None, mapping=None):
         cols.update({k: int(v) for k, v in mapping.items() if v not in (None, "")})
         head_i = head_i if head_i is not None else -1
     if head_i is None:
-        raise ValidationError("Could not find the column headings (date, description, debit / credit or amount) — "
-                              "check the file, or paste the lines with a heading row")
+        raise ValidationError("Column headings (date, description, debit / credit or amount) not found. Check the file, or paste the lines with a heading row.")
     body = rows[head_i + 1:]
     cell = lambda r, k: r[cols[k]] if k in cols and cols[k] < len(r) else None  # noqa: E731
     if not order:   # day/month or month/day: the first part above 12 settles it
@@ -447,7 +446,7 @@ def _lines_in(lines):
 def save(db, d, sid=None):
     old = get(db, sid) if sid else None
     if old and old["status"] == "reconciled":
-        raise ValidationError("This statement is reconciled — reopen it to change it")
+        raise ValidationError("This statement is reconciled. Reopen it to make changes.")
     account = _account(db, d.get("account") or (old and old["account"]))
     lines = _lines_in(d.get("lines")) if "lines" in d else None
     df = acc.clean_date(d.get("date_from") or (old and old["date_from"]) or (lines[0]["date"] if lines else None), "statement start")
@@ -544,7 +543,7 @@ def _unmatch_line(db, account, line_id):
 
 def _open(s):
     if s["status"] == "reconciled":
-        raise ValidationError("This statement is reconciled — reopen it first")
+        raise ValidationError("This statement is reconciled. Reopen it first.")
 
 
 def match(db, sid, line_id, entry_ids):
@@ -799,11 +798,11 @@ def reconcile(db, sid, d=None, user=""):
     _open(s)
     sm = summary(db, s)
     if sm["open_lines"]:
-        raise ValidationError(f"{sm['open_lines']} bank line(s) are still open — match, book or ignore them")
+        raise ValidationError(f"{sm['open_lines']} bank line(s) remain open. Match, record or ignore them.")
     if abs(sm["difference"]) > 0.004:
         raise ValidationError(f"There is still a difference of {sm['difference']:,.2f}")
     if sm["stale"]:
-        raise ValidationError("Some matches lost their voucher — match them again")
+        raise ValidationError("Some matches lost their voucher. Match them again.")
     db.x("UPDATE bank_statements SET status='reconciled', reconciled_on=?, reconciled_by=? WHERE id=?",
          (acc.clean_date((d or {}).get("date") or acc.today()), user, s["id"]))
 
@@ -812,7 +811,7 @@ def reopen(db, sid):
     s = get(db, sid)
     later = db.one("SELECT name FROM bank_statements WHERE account=? AND status='reconciled' AND date_from>? LIMIT 1", (s["account"], s["date_to"]))
     if later:
-        raise ValidationError(f"Reopen the later statement {later['name']} first")
+        raise ValidationError(f"Reopen the later statement {later['name']} first.")
     db.x("UPDATE bank_statements SET status='open', reconciled_on='', reconciled_by='' WHERE id=?", (s["id"],))
 
 

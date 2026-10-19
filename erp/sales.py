@@ -140,7 +140,7 @@ def save_product(db, d, pid=None):
     if status not in STATUSES:
         raise ValidationError("Unknown status")
     if old and old["status"] in ("reserved", "sold", "delivered") and status != old["status"] and _open_sale(db, old["id"]):
-        raise ValidationError(f"{old['code']} is on sale {_open_sale(db, old['id'])} — cancel that sale to change its status")
+        raise ValidationError(f"{old['code']} is in sale {_open_sale(db, old['id'])}. Cancel that sale to change its status.")
     rev = text(d.get("revenue_account"))
     if rev:
         acc.account_code(db, rev, types=("Revenue",), field="revenue account")
@@ -233,7 +233,7 @@ def list_products(db, q=None, kind=None, category=None, status=None, bu_id=None)
 def delete_product(db, pid):
     p = get_product(db, pid)
     if db.one("SELECT 1 FROM sale_lines WHERE product_id=?", (p["id"],)):
-        raise ValidationError(f"{p['code']} appears on sales — hide it instead of deleting it")
+        raise ValidationError(f"{p['code']} appears in sales. Hide it instead of deleting it.")
     db.x("DELETE FROM products WHERE id=?", (p["id"],))
 
 
@@ -259,8 +259,7 @@ def add_media(db, pid, d):
         except (ValueError, TypeError):
             raise ValidationError("The file could not be read")
         if size > MAX_FILE:
-            raise ValidationError(f"The file is {size / 1048576:.1f} MB — the limit is {MAX_FILE // 1048576} MB. "
-                                  "Upload it to YouTube / Sketchfab / Google Drive and add the link instead.")
+            raise ValidationError((f"The file is {size / 1048576:.1f} MB; the limit is {MAX_FILE // 1048576} MB. Upload it to a hosting service and add the link instead."))
         data = raw
     elif not url:
         raise ValidationError("Upload a file or paste a link")
@@ -340,7 +339,7 @@ def build_schedule(price, plan, sale_date):
             raise ValidationError("Add the payments of the custom plan")
         total = sum(r["amount"] for r in rows)
         if total < price - EPS:
-            raise ValidationError(f"The custom payments add up to {to_major(total):,.2f} — less than the price {to_major(price):,.2f}")
+            raise ValidationError(f"The custom payments total {to_major(total):,.2f}, which is less than the price of {to_major(price):,.2f}.")
         return sorted(rows, key=lambda r: r["due"]), total - price
     # installments
     if plan.get("down") not in (None, ""):
@@ -397,7 +396,7 @@ def _lines_in(db, lines):
         if qty <= 0:
             raise ValidationError("Quantity must be more than zero")
         if p and p["kind"] == "unit" and qty != 1:
-            raise ValidationError(f"{p['code']} is a single unit — quantity must be 1")
+            raise ValidationError(f"{p['code']} is a single unit; the quantity must be 1.")
         price = to_minor(num(ln.get("price") if ln.get("price") not in (None, "") else (to_major(p["price"]) if p else 0), "price"))
         disc = to_minor(num(ln.get("discount"), "discount"))
         if disc < 0 or disc > round(qty * price):
@@ -454,7 +453,7 @@ def save(db, d, sid=None):
     """Create or change a draft sale (units on it are reserved)."""
     old = get(db, sid) if sid else None
     if old and old["status"] != "draft":
-        raise ValidationError("Only a draft sale can be changed — cancel it and make a new one")
+        raise ValidationError("Only a draft sale can be changed. Cancel it and create a new sale.")
     code = text(d.get("code"), maxlen=30) or (old["code"] if old else _next(db, "sales_orders", "SO-"))
     customer = text(d.get("customer"), "customer", required=True, maxlen=200)
     date = acc.clean_date(d.get("date") or (old and old["date"]) or _today())
@@ -510,7 +509,7 @@ def save(db, d, sid=None):
 def delete(db, sid):
     s = get(db, sid)
     if s["status"] != "draft":
-        raise ValidationError("Only a draft can be deleted — cancel a confirmed sale instead")
+        raise ValidationError("Only a draft can be deleted. Cancel a confirmed sale instead.")
     with db.tx():
         _set_units(db, _units_of(db, s["id"]), "available")
         db.conn.execute("DELETE FROM sales_orders WHERE id=?", (s["id"],))
@@ -752,7 +751,7 @@ def deliver(db, sid, d=None, user=""):
 
 def _collect(db, s, d, user):
     if s["status"] not in ("confirmed", "delivered"):
-        raise ValidationError("Confirm the sale before receiving money on it")
+        raise ValidationError("Confirm the sale before receiving payments on it.")
     date = _date(d, s)
     f = figures(db, s)
     target = _target(db, s)
@@ -860,8 +859,7 @@ def cancel(db, sid, d=None, user=""):
         raise ValidationError("Already cancelled")
     f = figures(db, s)
     if f["paid"] > EPS or f["in_cheques"] > EPS:
-        raise ValidationError("Money received on this sale must be refunded first (Refund) and pending cheques returned "
-                              "(mark them bounced / returned)")
+        raise ValidationError("Amounts received on this sale must be refunded first, and pending cheques returned (marked bounced or returned).")
     date = _date(d, s)
     with db.tx():
         for e in reversed(_entries(db, s)):

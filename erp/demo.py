@@ -934,7 +934,7 @@ def load(db, user="", replace=False, industry=None, lang="en"):
     industries.apply). Refuses on books that already hold data unless replace (wipes first)."""
     from . import (assets, bankrec, documents, interchange, recurring, rentals, sales)
     if not is_empty(db) and not replace:
-        raise ValidationError("These books already hold data — the demo only loads into an empty company (start a new company to try it)")
+        raise ValidationError("These books already contain data. Demo data loads into an empty company only; create a new company to try it.")
     a0, today = _anchor()
     S = sheets(industry)
     from . import textl10n

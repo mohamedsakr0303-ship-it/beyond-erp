@@ -67,7 +67,7 @@ def save_profile(db, uid, d):
         if avatar and not re.match(r"^data:image/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$", avatar):
             raise ChatError("The picture must be a PNG, JPEG, WebP or GIF image")
         if len(avatar) > 400_000:
-            raise ChatError("The picture is too large — choose a smaller one")
+            raise ChatError("The image is too large. Choose a smaller one.")
     prefs = cur["prefs"]
     if isinstance(d.get("prefs"), dict):
         new = d["prefs"]
@@ -99,7 +99,7 @@ def save_profile(db, uid, d):
             if snd and not re.match(r"^data:audio/(mpeg|mp3|wav|x-wav|ogg|webm|aac|mp4|x-m4a);base64,[A-Za-z0-9+/=]+$", snd):
                 raise ChatError("The sound must be an MP3, WAV, OGG, WebM or M4A file")
             if len(snd) > MAX_SOUND:
-                raise ChatError("That sound is too long — pick a clip under about 250 KB (a few seconds)")
+                raise ChatError("The sound file is too large. The limit is 250 KB.")
             if snd:
                 prefs["notify_sound"] = snd
             else:
@@ -412,7 +412,7 @@ def edit(db, user, mid, d):
     if room["archived_at"]:
         raise ChatError("This room is archived")
     if _seen_by_others(db, m):
-        raise ChatError("Someone has already seen this message — it can no longer be edited")
+        raise ChatError("This message has been read and can no longer be edited.")
     body = str(d.get("body") or "").strip()[:MAX_BODY_CHARS]
     if not body and not db.one("SELECT 1 FROM chat_files WHERE message_id=?", (m["id"],)):
         raise ChatError("A message cannot be empty")
@@ -426,7 +426,7 @@ def remove(db, user, mid):
         if m["user_id"] != user["id"]:
             raise PermissionError("Only the author or a super administrator can remove a message")
         if _seen_by_others(db, m):
-            raise ChatError("Someone has already seen this message — ask a super administrator to remove it")
+            raise ChatError("This message has been read. Only a super administrator can remove it.")
     db.x("UPDATE chat_messages SET body='', mentions='[]', deleted_at=? WHERE id=?", (acc.now_iso(), m["id"]))
     db.x("DELETE FROM chat_files WHERE message_id=?", (m["id"],))
     db.x("DELETE FROM chat_reactions WHERE message_id=?", (m["id"],))

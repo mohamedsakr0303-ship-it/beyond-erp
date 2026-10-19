@@ -24,7 +24,7 @@ def _route(ctx, method, path, body=None):
         if not match:
             continue
         if module and not auth.can(ctx.user, module, level):
-            raise PermissionError("You do not have permission for this")
+            raise PermissionError("You do not have permission for this action.")
         act = request_action(method, path, {})
         if module and act and not auth.action_ok(ctx.user, module, act):
             raise PermissionError(ACTION_DENIED[act])
@@ -44,7 +44,7 @@ def _route(ctx, method, path, body=None):
 
 def _need(ctx, module, level="edit"):
     if not any(ctx.can(m, level) for m in ((module,) if isinstance(module, str) else module)):
-        raise PermissionError("You do not have permission for this")
+        raise PermissionError("You do not have permission for this action.")
 
 
 # ------------------------------------------------------------------ journal entries / vouchers
@@ -54,7 +54,7 @@ def _entry(ctx, eid, level="edit"):
     if not e:
         raise ValidationError("Entry not found")
     if not (ctx.can("accounting.journal", level) or ctx.can(KIND_MODULE.get(e["kind"], "accounting.journal"), level)):
-        raise PermissionError("You do not have permission for this voucher type")
+        raise PermissionError("You do not have permission for this voucher type.")
     if e["kind"] == "Work in Progress":
         raise ValidationError("Work in progress is kept up to date automatically")
     return e
@@ -205,7 +205,7 @@ def run(ctx, d):
             fn(ctx, rid, d)
             done.append(rid)
         except (ValidationError, LookupError, PermissionError, ValueError) as e:
-            failed.append({"id": rid, "error": str(e) or "You do not have permission for this"})
+            failed.append({"id": rid, "error": str(e) or "You do not have permission for this action."})
         except Exception as e:  # noqa: BLE001 — one record's failure must not stop or undo the others
             failed.append({"id": rid, "error": f"Could not change it ({e.__class__.__name__})"})
     ctx.log(f"bulk.{target}.{action}", f"{len(done)} done, {len(failed)} not: {', '.join(done)[:300]}")

@@ -115,8 +115,7 @@ def parse(data, kind="boq"):
         if best:
             break
     if not best:
-        raise ValidationError("No table found — the sheet needs a header row with at least Description and Qty or Price "
-                              "(البيان والكمية أو السعر)")
+        raise ValidationError("No table found. The sheet needs a header row with at least Description and Qty or Price.")
     ws, rows, hi, h = best
     get = lambda r, k: r[h[k]].value if k in h and h[k] < len(r) else None  # noqa: E731
     lines, category, sub, skipped = [], "", "", 0

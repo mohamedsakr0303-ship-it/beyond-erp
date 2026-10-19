@@ -57,7 +57,7 @@ def clean_look(d):
         if not isinstance(d["fontData"], str) or not _FONT.match(d["fontData"]):
             raise LookError("The font must be a WOFF2, WOFF, TTF or OTF file")
         if len(d["fontData"]) > MAX_FONT:
-            raise LookError("That font file is too large — pick one under about 650 KB (WOFF2 files are the smallest)")
+            raise LookError("The font file is too large. The limit is 650 KB; WOFF2 files are smallest.")
         out["fontData"] = d["fontData"]
         out["fontName"] = acc.text(d.get("fontName") or "My font")[:60]
     if d.get("density") in ("comfortable", "compact"):
@@ -76,7 +76,7 @@ def clean_look(d):
         if not isinstance(src, str) or not _IMG.match(src):
             raise LookError("A background must be a PNG, JPEG, WebP or GIF picture")
         if len(src) > MAX_IMAGE:
-            raise LookError("That picture is too large — choose a smaller one")
+            raise LookError("The image is too large. Choose a smaller one.")
         total += len(src)
         try:
             op = max(0.0, min(1.0, float(im.get("op", 0.15))))
@@ -84,7 +84,7 @@ def clean_look(d):
             op = 0.15
         imgs[slot] = {"src": src, "op": round(op, 2), "fit": im.get("fit") if im.get("fit") in FITS else "cover"}
     if total > MAX_IMAGES:
-        raise LookError("Too many large pictures — use smaller ones")
+        raise LookError("The images are too large in total. Use smaller ones.")
     if imgs:
         out["images"] = imgs
     return out

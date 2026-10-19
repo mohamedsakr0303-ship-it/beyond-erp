@@ -973,9 +973,32 @@ CREATE TABLE IF NOT EXISTS workdays (
     end_at     TEXT,
     end_lat    REAL, end_lng REAL, end_acc REAL,
     note       TEXT NOT NULL DEFAULT '',
-    report     TEXT NOT NULL DEFAULT ''
+    report     TEXT NOT NULL DEFAULT '',
+    start_site TEXT NOT NULL DEFAULT '',
+    end_site   TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS workdays_user_date ON workdays(username, date);
+-- Employee requests (hrrequests.py): leave, sick leave, permissions, overtime and salary advances, with approval
+CREATE TABLE IF NOT EXISTS hr_requests (
+    id            INTEGER PRIMARY KEY,
+    username      TEXT NOT NULL,
+    employee_id   INTEGER REFERENCES employees(id) ON DELETE SET NULL,
+    kind          TEXT NOT NULL,
+    date_from     TEXT NOT NULL,
+    date_to       TEXT NOT NULL DEFAULT '',
+    time_from     TEXT NOT NULL DEFAULT '',
+    time_to       TEXT NOT NULL DEFAULT '',
+    hours         REAL NOT NULL DEFAULT 0,
+    amount        INTEGER NOT NULL DEFAULT 0,
+    reason        TEXT NOT NULL DEFAULT '',
+    status        TEXT NOT NULL DEFAULT 'pending',
+    decided_by    TEXT NOT NULL DEFAULT '',
+    decided_at    TEXT NOT NULL DEFAULT '',
+    decision_note TEXT NOT NULL DEFAULT '',
+    entry_id      INTEGER,
+    created_at    TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS hr_requests_user ON hr_requests(username, status);
 -- Company subscriptions & recurring bills (billsubs.py): what the company pays every week / month / year, how its cost
 -- is carried (shared overhead, company cost not allocated, one project, split) and who is reminded when
 CREATE TABLE IF NOT EXISTS cost_subs (
@@ -1894,7 +1917,7 @@ SUBMODULES = {
     "shop": ["products", "orders", "installments", "subscriptions"],
     "stock": ["balances", "moves", "warehouses", "counts"],
     "rentals": ["contracts", "fleet", "calculator"],
-    "payroll": ["employees", "attendance", "runs", "entries", "crew", "settings", "workdays"],
+    "payroll": ["employees", "attendance", "requests", "runs", "entries", "crew", "settings", "workdays"],
     "assets": ["overview", "cash", "register", "depreciation"],
     "accounting": ["journal", "ledger", "coa", "loans", "bankrec", "recurring", "budgets", "approvals", "yearend"],
     "partners": ["equity", "transactions", "ownership"],
@@ -2026,6 +2049,7 @@ class Database:
         have = self._add_cols("accounts", [("name_ar", "TEXT DEFAULT ''")])
         self._add_cols("rental_lines", [("cost", "INTEGER NOT NULL DEFAULT 0")])
         self._add_cols("users", [("is_super", "INTEGER NOT NULL DEFAULT 0")])
+        self._add_cols("workdays", [("start_site", "TEXT NOT NULL DEFAULT ''"), ("end_site", "TEXT NOT NULL DEFAULT ''")])
         self._add_cols("users", [("group_key", "TEXT NOT NULL DEFAULT ''")])
         self._add_cols("users", [("needs_approval", "INTEGER NOT NULL DEFAULT 0")])
         self._add_cols("user_groups", [("look", "TEXT DEFAULT ''")])
@@ -2333,7 +2357,7 @@ class Database:
         """Account code for a system role (e.g. 'bank', 'ar'), whatever it is currently numbered."""
         r = self.one("SELECT code FROM accounts WHERE role=?", (role,))
         if not r:
-            raise LookupError(f"No account is assigned the '{role}' role — fix it in Chart of Accounts")
+            raise LookupError(f"No account is assigned the '{role}' role. Assign it in the chart of accounts.")
         return r["code"]
 
     def log(self, username, action, detail=""):

@@ -155,7 +155,7 @@ def _validate_lines(db, lines):
     for ln in lines:
         acc = text(ln.get("account"))
         if not acc:
-            raise ValidationError("A line has no account — fill in the account code")
+            raise ValidationError("A line has no account. Enter the account code.")
         if acc not in accounts:
             raise ValidationError(f"Unknown account {acc!r}")
         d = to_minor(num(ln.get("debit"), "debit"))
@@ -176,8 +176,7 @@ def _validate_lines(db, lines):
     if dr == 0:
         raise ValidationError("Entry total must be greater than zero")
     if len(touched) == 1:
-        raise ValidationError("The debit and the credit are on the same account, so nothing would change — "
-                              "choose the account the money comes from and the one it goes to")
+        raise ValidationError("Debit and credit are on the same account. Choose the source and destination accounts.")
     if dr != cr:
         raise ValidationError(f"Debits ({to_major(dr):,.2f}) must equal credits ({to_major(cr):,.2f})")
     return out
@@ -187,7 +186,7 @@ def check_open(db, date):
     """Refuse changes dated on or before the lock date ("books closed up to")."""
     lock = (db.setting("lock_date") or "").strip()
     if lock and str(date or "") <= lock:
-        raise ValidationError(f"The books are closed up to {lock} — change the lock date in Settings to post or edit on {date}")
+        raise ValidationError(f"The books are closed up to {lock}. Change the lock date in Settings to post or edit on {date}.")
 
 
 # set by replace_doc(): the next posted entry overwrites this one instead of adding a new entry
@@ -683,7 +682,7 @@ def edit_entry(db, eid, d, user=""):
         check_open(db, clean_date(d.get("date") or e["date"]))
         if db.one("SELECT 1 FROM stock_moves WHERE entry_id=?", (eid,)) or db.one("SELECT 1 FROM material_lines WHERE entry_id=?", (eid,)) or \
                 db.one("SELECT 1 FROM extracts WHERE entry_id=?", (eid,)):
-            raise ValidationError("This entry belongs to a stock move or invoice — reverse it and re-enter instead")
+            raise ValidationError("This entry belongs to a stock movement or invoice. Reverse it and re-enter.")
         vlines = _validate_lines(db, d.get("lines") or e["lines"])
         snap = {k: e[k] for k in ("date", "memo", "bu_code", "party", "lines")}
         snap.update(ref=e["ref"], edited_at=now_iso(), edited_by=user)
@@ -753,9 +752,9 @@ def delete_account(db, code):
     if not a:
         raise ValidationError("Account not found")
     if a["role"]:
-        raise ValidationError("System accounts cannot be deleted (you can rename or renumber them)")
+        raise ValidationError("System accounts cannot be deleted; they can be renamed or renumbered.")
     if db.one("SELECT 1 FROM journal_lines WHERE account=? LIMIT 1", (code,)):
-        raise ValidationError("Account has postings — deactivate it instead")
+        raise ValidationError("The account has postings. Deactivate it instead.")
     db.x("DELETE FROM accounts WHERE code=?", (code,))
 
 
@@ -867,7 +866,7 @@ def stock_move(db, d, user=""):
             counted = num(d.get("counted"), "counted quantity")
             diff = counted - lvl["qty"]
             if abs(diff) < 1e-9:
-                raise ValidationError("Count matches the system — nothing to adjust")
+                raise ValidationError("The count matches the books. No adjustment is required.")
             rate = lvl["avg_cost"] or to_minor(num(d.get("rate"), "unit cost"))
             value = int(round(abs(diff) * rate))
             adj = db.acct("stock_adjust")
@@ -1134,7 +1133,7 @@ def save_extract(db, d, extract_id=None):
             if not x:
                 raise ValidationError("Extract not found")
             if x["status"] == "posted":
-                raise ValidationError("Posted extracts are locked — reverse the invoice entry first")
+                raise ValidationError("Posted extracts are locked. Reverse the invoice entry first.")
             db.conn.execute("UPDATE extracts SET bu_id=?,boq_id=?,number=?,date=?,customer=?,vat_code=?,wht_code=?,"
                             "project=?,work=?,seq_no=?,prev_paid=?,deductions=?,notes=?,final=?,fees=? WHERE id=?", vals + (extract_id,))
             db.conn.execute("DELETE FROM extract_lines WHERE extract_id=?", (extract_id,))
@@ -1778,7 +1777,7 @@ def replace_doc(db, eid, fn, d, user="", **kw):
         check_open(db, e["date"])
         if db.one("SELECT 1 FROM stock_moves WHERE entry_id=?", (eid,)) or \
                 db.one("SELECT 1 FROM extracts WHERE entry_id=?", (eid,)):
-            raise ValidationError("This entry belongs to a stock move or invoice — reverse it and re-enter instead")
+            raise ValidationError("This entry belongs to a stock movement or invoice. Reverse it and re-enter.")
         _REPLACE["eid"] = eid
         try:
             out = fn(db, d, user, **kw)

@@ -184,8 +184,7 @@ def sign(db, doc):
 def _http(method, url, body=None, headers=None, timeout=40):
     import sys
     if sys.platform == "emscripten":
-        raise acc.ValidationError("The direct ETA link needs the desktop or self-hosted version — browsers block "
-                                  "these connections. Use 'Generate for import' (JSON / Excel) here instead.")
+        raise acc.ValidationError("The direct e-invoicing connection requires the desktop or self-hosted edition, as browsers block these connections. Use Generate for import (JSON / Excel) instead.")
     req = urllib.request.Request(url, data=body, method=method, headers=headers or {})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -214,7 +213,7 @@ def _token(db):
                                    "client_secret": s["eta_client_secret"], "scope": "InvoicingAPI"}).encode()
     res = _http("POST", f"{id_base}/connect/token", body, {"Content-Type": "application/x-www-form-urlencoded"})
     if not res.get("access_token"):
-        raise acc.ValidationError("ETA login failed — check client ID / secret and environment")
+        raise acc.ValidationError("E-invoicing sign-in failed. Check the client ID, secret and environment.")
     return res["access_token"]
 
 

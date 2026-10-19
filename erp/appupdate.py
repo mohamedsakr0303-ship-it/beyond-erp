@@ -78,11 +78,11 @@ def install(backup, stop):
     """Back up the books, download the installer, start it silently and close this copy (Windows)."""
     info = check()
     if not (info["newer"] and info["can_install"]):
-        raise ValueError("No update to install here — download it from the website instead")
+        raise ValueError("No update is available to install here. Download it from the website.")
     backup("before-update")
     data = _fetch(info["url"], 600)
     if len(data) < 1_000_000 or data[:2] != b"MZ":
-        raise ValueError("The download was incomplete — please try again")
+        raise ValueError("The download was incomplete. Try again.")
     path = Path(tempfile.mkdtemp(prefix="beyond-update-")) / installer_name()
     path.write_bytes(data)
     flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)

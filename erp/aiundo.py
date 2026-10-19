@@ -142,7 +142,7 @@ def undo(db, change, user, own=False):
     change = str(change)[:60]
     rows = db.q("SELECT * FROM ai_undo WHERE change=? ORDER BY seq", (change,))
     if not rows:
-        raise ValidationError("Nothing recorded for this change — it cannot be undone from here")
+        raise ValidationError("Nothing is recorded for this change. It cannot be undone here.")
     if rows[0]["undone_at"]:
         raise ValidationError("This change was already undone")
     if not (user.get("is_super") or rows[0]["username"] == user["username"]):
@@ -156,7 +156,7 @@ def undo(db, change, user, own=False):
         except ValueError:
             age = _dt.timedelta(0)
         if age > _dt.timedelta(minutes=OWN_MINUTES):
-            raise ValidationError(f"Undo is only for the last {OWN_MINUTES} minutes — change or void it the usual way")
+            raise ValidationError(f"Undo is available for {OWN_MINUTES} minutes only. Edit or void the record instead.")
         why = own_problem(db, rows)
         if why:
             raise ValidationError(why)
@@ -174,8 +174,7 @@ def undo(db, change, user, own=False):
         if (now and json.loads(now)) != (want and json.loads(want)):
             moved.append(tbl)
     if moved:
-        raise ValidationError(f"{len(moved)} record(s) were changed again after the assistant's change "
-                              f"({', '.join(sorted(set(moved))[:5])}) — undo it by hand so their later work is kept")
+        raise ValidationError((f"{len(moved)} record(s) were changed after the assistant's change ({', '.join(sorted(set(moved))[:5])}). Undo it manually to keep the later work."))
     import re
     ok_lit = re.compile(r"^(NULL|-?\d+(\.\d+)?([eE][-+]?\d+)?|'(?:[^']|'')*'|X'[0-9A-Fa-f]*')$", re.S)
 
@@ -183,7 +182,7 @@ def undo(db, change, user, own=False):
         o = json.loads(img)
         bad = [c for c, v in o.items() if c not in cols[tbl] or not isinstance(v, str) or not ok_lit.match(v)]
         if bad:
-            raise ValidationError("The recorded change is not in the expected form — it cannot be undone from here")
+            raise ValidationError("The recorded change is not in the expected format. It cannot be undone here.")
         return o
     with db.tx():
         for r in reversed(rows):

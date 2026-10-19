@@ -61,8 +61,7 @@ def add(db, owner, oid, d, user=""):
         except (ValueError, TypeError):
             raise ValidationError("The file could not be read")
         if size > MAX_FILE:
-            raise ValidationError(f"The file is {size / 1048576:.1f} MB — the limit is {MAX_FILE // 1048576} MB. "
-                                  "Shrink it (or save the photo smaller), or add a link to it instead.")
+            raise ValidationError((f"The file is {size / 1048576:.1f} MB; the limit is {MAX_FILE // 1048576} MB. Reduce its size or add a link instead."))
         data = raw
     elif not url:
         raise ValidationError("Choose a file or paste a link")

@@ -204,9 +204,9 @@ def update_user(db, uid, d, acting_user_id):
     if u.get("is_super") and (not is_super or not active):
         supers = db.one("SELECT COUNT(*) AS n FROM users WHERE is_super=1 AND active=1")["n"]
         if supers <= 1:
-            raise ValidationError("At least one active super administrator must remain — make someone else super administrator first")
+            raise ValidationError("At least one active super administrator must remain. Assign another super administrator first.")
     if uid == acting_user_id and not active:
-        raise ValidationError("You cannot deactivate yourself")
+        raise ValidationError("You cannot deactivate your own account.")
     email = clean_email(db, d.get("email", u.get("email")), uid)
     stored = json.loads(u["perms"] or "{}")
     perms = clean_perms(d.get("perms") or stored)
@@ -238,7 +238,7 @@ def delete_user(db, uid, acting_user_id):
     if not u:
         raise ValidationError("User not found")
     if uid == acting_user_id:
-        raise ValidationError("You cannot delete yourself — ask another administrator")
+        raise ValidationError("You cannot delete your own account. Ask another administrator.")
     if u["is_admin"] and u["active"]:
         admins = db.one("SELECT COUNT(*) AS n FROM users WHERE is_admin=1 AND active=1")["n"]
         if admins <= 1:
@@ -264,7 +264,7 @@ def _throttle(key):
     _fails[key] = recent
     if len(recent) >= MAX_FAILS:
         wait = int((LOCK_MINUTES * 60 - (now - recent[0])) // 60) + 1
-        raise ValidationError(f"Too many wrong passwords — try again in {wait} minute{'s' if wait != 1 else ''}")
+        raise ValidationError(f"Too many incorrect passwords. Try again in {wait} minute{'s' if wait != 1 else ''}.")
 
 
 # ------------------------------------------------------------------ two-step sign-in (authenticator app, RFC 6238)
@@ -348,7 +348,7 @@ def totp_enable(db, uid, secret, code):
         raise ValidationError("Start again: the setup key is not valid")
     from .db import CLOCK
     if CLOCK["at"] is None and not totp_ok(secret, code):          # (a replay from the shared workspace was checked where it was typed)
-        raise ValidationError("That code does not match — check the time on the phone and type the newest code")
+        raise ValidationError("The code does not match. Check the phone's time and enter the latest code.")
     db.x("UPDATE users SET totp_secret=?, totp_used='[]' WHERE id=?", (secret, int(uid)))
     return recovery_codes(secret)
 
@@ -399,7 +399,7 @@ def create_api_key(db, user_id, name, read_only=True, by=""):
     shown once; only its hash is kept."""
     name = text(name, "name", required=True, maxlen=80)
     if db.one("SELECT COUNT(*) n FROM api_keys WHERE user_id=? AND revoked_at IS NULL", (int(user_id),))["n"] >= 20:
-        raise ValidationError("This person already has 20 keys — revoke some first")
+        raise ValidationError("This user already has 20 keys. Revoke some first.")
     key = API_PREFIX + secrets.token_urlsafe(30)
     kid = db.x("INSERT INTO api_keys(user_id, name, key_hash, prefix, read_only, created_by, created_at) VALUES (?,?,?,?,?,?,datetime('now'))",
                (int(user_id), name, hashlib.sha256(key.encode()).hexdigest(), key[:12], 1 if read_only else 0, by)).lastrowid

@@ -316,7 +316,7 @@ def put_settings(ctx):
         req = lambda fc: {(r, k) for r, fs in (fc or {}).items() if isinstance(fs, dict) for k, o in fs.items() if isinstance(o, dict) and o.get("req")}  # noqa: E731
         old = json.loads(ctx.db.setting("form_custom") or "{}") if ctx.db.setting("form_custom") else {}
         if req(old) != req(ctx.body.get("form_custom") if isinstance(ctx.body.get("form_custom"), dict) else {}):
-            raise PermissionError("Only a super administrator (or someone they allow) can make fields required")
+            raise PermissionError("Only a super administrator, or an authorised user, can make fields required.")
     if "menu_labels" in keys and not ctx.can("settings.layout", "edit"):
         ctx.require("settings.menus", "edit")
     if keys & set(COMPANY_KEYS):
@@ -354,7 +354,7 @@ def put_settings(ctx):
         if ctx.body["two_step_required"] not in ("", "admins", "all"):
             raise acc.ValidationError("two_step_required is '', 'admins' or 'all'")
         if ctx.body["two_step_required"] and not ctx.user.get("two_step") and getattr(ctx.app, "static", False) is not True:
-            raise PermissionError("Turn on two-step sign-in for yourself first (your profile), then require it for others")
+            raise PermissionError("Enable two-step sign-in for yourself first (profile), then require it for others.")
     if "hidden_modules" in keys:
         ctx.require("settings.menus", "edit")
     for k, ok_vals in (("country", set(countries.BY_CODE)), ("invoice_style", set(countries.STYLES)), ("doc_lang", {"ar", "en"})):
@@ -408,7 +408,7 @@ def put_settings(ctx):
                 raise acc.ValidationError("The financial year start looks like 01-01 (month-day)") from None
             v = f"{_m:02d}-{_d:02d}"
             if v != (ctx.db.setting("fiscal_year_start") or "01-01") and ctx.db.one("SELECT 1 FROM year_closes"):
-                raise acc.ValidationError("Closed financial years follow the current start date — reopen them before changing it")
+                raise acc.ValidationError("Closed financial years depend on the current start date. Reopen them before changing it.")
         if k == "font_size":
             v = str(max(11, min(22, int(float(v or 15)))))
         if k in ("reserve_pct", "legal_reserve_pct", "legal_reserve_cap"):
@@ -552,7 +552,7 @@ def bu_allocation(ctx):
     """Set every unit's share of the shared (indirect) operating expenses at once. Total may not exceed 100%."""
     alloc = {int(k): acc.num(v, "allocation") for k, v in (ctx.body.get("allocations") or {}).items()}  # fractions
     if sum(alloc.values()) > 1.00001:
-        raise acc.ValidationError(f"Allocations add up to {sum(alloc.values()) * 100:.2f}% — the total cannot exceed 100%")
+        raise acc.ValidationError(f"Allocations total {sum(alloc.values()) * 100:.2f}%; the total cannot exceed 100%.")
     with ctx.db.tx():
         for bid, v in alloc.items():
             ctx.db.conn.execute("UPDATE business_units SET overhead_pct=? WHERE id=?", (round(v, 6), bid))
@@ -563,7 +563,7 @@ def bu_allocation(ctx):
 @route("DELETE", "/api/bus/<bid>", "business_units.units", "edit")
 def del_bu(ctx, bid):
     if ctx.db.one("SELECT 1 FROM journal_entries WHERE bu_id=? LIMIT 1", (int(bid),)):
-        raise acc.ValidationError("This business unit has transactions — set its status to Closed instead")
+        raise acc.ValidationError("This business unit has transactions. Set its status to Closed instead.")
     ctx.db.x("DELETE FROM business_units WHERE id=?", (int(bid),))
     ctx.log("bu.delete", bid)
     return ok()
@@ -1062,7 +1062,7 @@ def bills_pay(ctx, sid):
     from . import approvals, billsubs
     ctx.require("purchasing.expenses", "add")
     if approvals.needs_approval(ctx.db, ctx.user):
-        raise PermissionError("Your entries wait for approval — ask someone who can post entries to record this payment")
+        raise PermissionError("Your entries require approval. Ask a user with posting rights to record this payment.")
     r = billsubs.pay(ctx.db, sid, ctx.body, ctx.user["username"])
     ctx.log("bill.pay", sid)
     return ok(push_hint(r, *billsubs.reminder(ctx.db, sid)))
@@ -1118,6 +1118,69 @@ def workdays_delete(ctx, wid):
     r = workdays.delete(ctx.db, wid)
     ctx.log("workday.delete", f"{r['username']} {r['date']}")
     return ok()
+
+
+@route("GET", "/api/att-policy", "payroll.workdays")
+def att_policy_get(ctx):
+    from . import hrrequests
+    return ok({**hrrequests.policy(ctx.db), "location": ctx.db.setting("workday_location") or "ask"})
+
+
+@route("PUT", "/api/att-policy", "payroll.workdays", "edit")
+def att_policy_put(ctx):
+    from . import hrrequests
+    if "location" in ctx.body:
+        if ctx.body["location"] not in ("off", "ask", "required"):
+            raise acc.ValidationError("Choose a location option.")
+        ctx.db.set_setting("workday_location", ctx.body["location"])
+    p = hrrequests.save_policy(ctx.db, ctx.body)
+    ctx.log("attendance.policy", "")
+    return ok(p)
+
+
+# ================================================================= employee requests (hrrequests.py)
+@route("GET", "/api/hr-requests", "team.myday")
+def hr_requests_list(ctx):
+    from . import hrrequests
+    q = ctx.q
+    everyone = q.get("all") and ctx.can("payroll.requests")
+    rows = hrrequests.listing(ctx.db, None if everyone else ctx.user["username"], q.get("status"), q.get("kind"),
+                              q.get("date_from"), q.get("date_to"))
+    if everyone and q.get("username"):
+        rows = [r for r in rows if r["username"] == q["username"]]
+    return ok({"rows": rows, "kinds": {k: v[:2] for k, v in hrrequests.KINDS.items()}, "can_decide": ctx.can("payroll.requests", "edit")})
+
+
+@route("POST", "/api/hr-requests", "team.myday", "add")
+def hr_requests_add(ctx):
+    from . import hrrequests
+    rid = hrrequests.submit(ctx.db, ctx.user, ctx.body)
+    ctx.log("request.add", rid)
+    return ok({"id": rid})
+
+
+@route("POST", "/api/hr-requests/<rid>/cancel", "team.myday", "add")
+def hr_requests_cancel(ctx, rid):
+    from . import hrrequests
+    hrrequests.cancel(ctx.db, ctx.user, rid)
+    ctx.log("request.cancel", rid)
+    return ok()
+
+
+@route("POST", "/api/hr-requests/<rid>/decide", "payroll.requests", "edit")
+def hr_requests_decide(ctx, rid):
+    from . import hrrequests
+    r = hrrequests.decide(ctx.db, ctx.user, rid, bool(ctx.body.get("approve")), ctx.body.get("note") or "")
+    ctx.log("request." + r["status"], rid)
+    return ok(r)
+
+
+@route("POST", "/api/hr-requests/<rid>/pay", "payroll.requests", "edit")
+def hr_requests_pay(ctx, rid):
+    from . import hrrequests
+    eid = hrrequests.pay_advance(ctx.db, ctx.user, rid, ctx.body)
+    ctx.log("request.pay", f"{rid} entry {eid}")
+    return ok({"entry_id": eid})
 
 
 @route("GET", "/api/workdays", "payroll.workdays")
@@ -1212,7 +1275,7 @@ def _alert_body(ctx):
         params = {"to": ctx.user["username"]}
     b["params"] = params
     if not automations.allowed(ctx.user, b.get("trigger")):
-        raise PermissionError("You can't see what that alert watches")
+        raise PermissionError("You do not have access to the data this alert monitors.")
     return b
 
 
@@ -1626,7 +1689,7 @@ def list_docs(ctx, dtype):
 
 
 KIND_MODULE = {"Revenue Recognition": "shop.subscriptions", "Supplier Discount": "purchasing.payments", "Direct Cost": "purchasing.costs", "Operating Expense": "purchasing.expenses",
-               "Payment Voucher": "purchasing.payments", "Payroll Accrual": "payroll", "Receipt Voucher": "sales.receipts",
+               "Payment Voucher": "purchasing.payments", "Salary Advance": "payroll.requests", "Payroll Accrual": "payroll", "Receipt Voucher": "sales.receipts",
                "Sales Invoice": "sales.invoices", "Capital Contribution": "partners.transactions",
                "Owner Drawing": "partners.transactions", "Capital Withdrawal": "partners.transactions",
                "Partner Loan": "partners.transactions", "Partner Loan Repayment": "partners.transactions",
@@ -1810,14 +1873,13 @@ def extract_reopen(ctx, xid):
     """Adjust an issued invoice / extract: its invoice entry is voided (kept in the audit trail) and it becomes a draft
     again. Not once the tax authority has it: cancel the e-invoice first."""
     if not (ctx.can("sales.invoices", "edit") or ctx.can("sales.extracts", "edit")):
-        raise PermissionError("You need edit rights on sales invoices to reopen one")
+        raise PermissionError("Edit rights on sales invoices are required to reopen an invoice.")
     x = ctx.db.one("SELECT * FROM extracts WHERE id=?", (int(xid),))
     if not x:
         raise acc.ValidationError("Invoice not found")
     st = str(x.get("eta_status") or "").lower()
     if x.get("eta_uuid") and st and not any(w in st for w in ("cancel", "reject", "invalid")):
-        raise acc.ValidationError(f"This invoice was sent to the tax authority (e-invoice status: {x['eta_status']}) — "
-                                  "cancel the e-invoice first, then reopen it")
+        raise acc.ValidationError((f"This invoice was submitted to the tax authority (e-invoice status: {x['eta_status']}). Cancel the e-invoice first, then reopen it."))
     if x["status"] == "posted" and x["entry_id"]:
         acc.void_entry(ctx.db, x["entry_id"], ctx.body.get("reason") or "Extract reopened to adjust", ctx.user["username"])
     ctx.log("extract.reopen", xid)
@@ -1865,7 +1927,7 @@ def extract_post(ctx, xid):
 def extract_del(ctx, xid):
     x = ctx.db.one("SELECT status FROM extracts WHERE id=?", (int(xid),))
     if x and x["status"] == "posted":
-        raise acc.ValidationError("Posted invoices cannot be deleted — reverse the invoice entry first")
+        raise acc.ValidationError("Posted invoices cannot be deleted. Reverse the invoice entry first.")
     bu = ctx.db.one("SELECT bu_id FROM extracts WHERE id=?", (int(xid),))
     ctx.db.x("DELETE FROM extracts WHERE id=?", (int(xid),))
     if bu:
@@ -1984,7 +2046,7 @@ def wh_edit(ctx, wid):
 @route("DELETE", "/api/warehouses/<wid>", "stock.warehouses", "edit")
 def wh_del(ctx, wid):
     if ctx.db.one("SELECT 1 FROM stock_moves WHERE warehouse_id=? LIMIT 1", (int(wid),)):
-        raise acc.ValidationError("Warehouse has stock history — deactivate it instead")
+        raise acc.ValidationError("The warehouse has stock history. Deactivate it instead.")
     ctx.db.x("DELETE FROM warehouses WHERE id=?", (int(wid),))
     return ok()
 
@@ -1995,8 +2057,7 @@ def item_del(ctx, iid):
     if not it:
         raise acc.ValidationError("Not found")
     if ctx.db.one("SELECT 1 FROM stock_moves WHERE item_id=? LIMIT 1", (int(iid),)):
-        raise acc.ValidationError(f"{it['name']} has stock movements — only items without any movements can be deleted "
-                                  "(void the movements first if they were a mistake)")
+        raise acc.ValidationError((f"{it['name']} has stock movements. Only items without movements can be deleted; void erroneous movements first."))
     ctx.db.x("DELETE FROM stock_items WHERE id=?", (int(iid),))
     ctx.log("item.delete", it["name"])
     return ok()
@@ -2109,7 +2170,7 @@ def partner_del(ctx, pid):
     p = ctx.db.one("SELECT name FROM partners WHERE id=?", (int(pid),))
     if p and ctx.db.one("SELECT 1 FROM journal_entries e WHERE e.party=? OR EXISTS (SELECT 1 FROM journal_lines l "
                         "WHERE l.entry_id=e.id AND l.party=?) LIMIT 1", (p["name"], p["name"])):
-        raise acc.ValidationError("Partner has transactions and cannot be removed — untick “Still a partner” instead")
+        raise acc.ValidationError("The partner has transactions and cannot be removed. Clear Active partner instead.")
     ctx.db.x("DELETE FROM partners WHERE id=?", (int(pid),))
     return ok()
 
@@ -2346,7 +2407,7 @@ def po_delete(ctx, pid):
     from . import purchasing
     po = purchasing.get(ctx.db, pid)
     if po["receipts"]:
-        raise acc.ValidationError("Vouchers were posted against this order — cancel or close it instead")
+        raise acc.ValidationError("Vouchers have been posted against this order. Cancel or close it instead.")
     ctx.db.x("DELETE FROM purchase_orders WHERE id=?", (po["id"],))
     return ok({})
 
@@ -3258,6 +3319,12 @@ def alerts(ctx):
         out.insert(0, {"level": "bad", "en": f"Your entries sent back for changes: {sent_back}",
                        "ar": f"قيود أُعيدت إليك للتعديل: {sent_back}", "href": "#/approvals?status=rejected", "count": sent_back,
                        "kind": "approvals_back"})
+    if ctx.can("payroll.requests", "edit"):
+        from . import hrrequests
+        n = hrrequests.pending_count(ctx.db)
+        if n:
+            out.insert(0, {"level": "warn", "en": f"Employee requests awaiting approval: {n}", "ar": f"طلبات موظفين في انتظار الاعتماد: {n}",
+                           "href": "#/requests?status=pending", "count": n, "kind": "hr_requests"})
     follow = []
     if ctx.can("crm.followups"):
         from . import crm
@@ -3524,8 +3591,7 @@ def party_del(ctx, pid):
         raise acc.ValidationError("Not found")
     x = ctx.db.one("SELECT number FROM extracts WHERE customer=? LIMIT 1", (p["name"],))
     if x:
-        raise acc.ValidationError(f"{p['name']} is the customer on invoice {x['number']} — its tax ID and address are "
-                                  "needed for that invoice and its e-invoice, so it cannot be deleted")
+        raise acc.ValidationError((f"{p['name']} is the customer on invoice {x['number']}. Its tax ID and address are required for that invoice and its e-invoice, so it cannot be deleted."))
     ctx.db.x("DELETE FROM parties WHERE id=?", (int(pid),))
     ctx.log("party.delete", p["name"])
     return ok()
@@ -3554,8 +3620,7 @@ def tax_code_del(ctx, code):
             or db.one("SELECT id FROM journal_entries WHERE meta LIKE ? OR meta LIKE ? LIMIT 1",
                       (f'%"vat_code": "{code}"%', f'%"wht_code": "{code}"%')))
     if used:
-        raise acc.ValidationError(f"Tax code {code} is used on invoices, vouchers or customers — untick Active to stop "
-                                  "using it instead (it stays on past documents)")
+        raise acc.ValidationError((f"Tax code {code} is used on invoices, vouchers or customers. Clear Active to stop using it; it remains on past documents."))
     db.x("DELETE FROM tax_codes WHERE code=?", (code,))
     ctx.log("tax_code.delete", code)
     return ok()
@@ -3737,7 +3802,7 @@ def con_del(ctx, cid):
     from . import contracts
     c = contracts.get(ctx.db, cid)
     if c["certificates"] or any(v["status"] == "approved" for v in c["variations"]):
-        raise acc.ValidationError("This contract has certificates or approved variations — mark it terminated instead")
+        raise acc.ValidationError("This contract has certificates or approved variations. Mark it as terminated instead.")
     ctx.db.x("DELETE FROM contracts WHERE id=?", (c["id"],))
     ctx.log("contract.delete", c["code"])
     return ok()
@@ -3917,7 +3982,7 @@ def prq_del(ctx, pid):
     from . import procurement
     pr = procurement.get(ctx.db, pid)
     if pr["status"] == "ordered":
-        raise acc.ValidationError("Orders were raised from this request — cancel those orders instead")
+        raise acc.ValidationError("Orders have been raised from this request. Cancel those orders instead.")
     ctx.db.x("DELETE FROM purchase_requests WHERE id=?", (pr["id"],))
     return ok()
 
@@ -4092,6 +4157,16 @@ def att_save(ctx):
     return ok({"saved": n})
 
 
+@route("DELETE", "/api/attendance/<eid>/<date>", "payroll.attendance", "edit")
+def att_delete(ctx, eid, date):
+    date = acc.clean_date(date)
+    n = ctx.db.x("DELETE FROM attendance WHERE employee_id=? AND date=?", (int(eid), date)).rowcount
+    if not n:
+        raise acc.ValidationError("No attendance is recorded for this employee on this date.")
+    ctx.log("attendance.delete", f"{eid} {date}")
+    return ok()
+
+
 @route("GET", "/api/attendance-summary", "payroll.attendance.summary")
 def att_summary(ctx):
     from . import labour
@@ -4217,7 +4292,7 @@ def dashboard_groups(ctx):
 def _need_super_dash(ctx):
     from . import dashboards
     if not dashboards.designer(ctx.user, ctx.can):
-        raise PermissionError("Only a super administrator — or someone they allow to design dashboards — can change the dashboards")
+        raise PermissionError("Only a super administrator, or a user authorised to design dashboards, can change dashboards.")
 
 
 @route("POST", "/api/dashboard/groups")
@@ -4438,7 +4513,7 @@ def demo_load(ctx):
         raise acc.ValidationError("The demo company can only be loaded into empty books. Back up, erase the data in "
                                   "Settings → System, then load the demo.")
     if not demo.is_empty(ctx.db):
-        raise acc.ValidationError("These books already hold data — the demo company can only be loaded into empty books.")
+        raise acc.ValidationError("These books already contain data. The demo company can only be loaded into empty books.")
     if ctx.body.get("confirmed") is not True:
         raise acc.ValidationError("Confirm the warning to load the demo company")
     # with a business type: that type is set up first (its accounts, menus, payroll lists), then only its kind of data
@@ -4591,7 +4666,7 @@ def _licence_seat(ctx):
     from . import licence
     st = licence.status(ctx.db)
     if st["state"] == "licensed" and st["users"] >= int(st["licence"].get("users") or 1):
-        raise acc.ValidationError(f"The licence covers {st['licence'].get('users')} active users — deactivate someone, or buy more users")
+        raise acc.ValidationError(f"The licence covers {st['licence'].get('users')} active users. Deactivate a user or purchase additional users.")
 
 
 def _need_super(ctx, what):
@@ -4827,7 +4902,7 @@ def ai_context(ctx):
     from . import ai
     p = ai.policy(ctx.db)
     if not ai.allowed(p, ctx.user):
-        raise PermissionError("The AI assistant is switched off for you")
+        raise PermissionError("The AI assistant is not enabled for you.")
     return ok({"base": ai.base_prompt(p), "context": ai.context(ctx.db, ctx.user), "tools": ai.tools(p),
                "write": p["write"], "name": p["name"]})
 
@@ -4858,7 +4933,7 @@ def ai_extract(ctx):
     """An Excel / Word / PowerPoint file attached to the assistant, as text it can read."""
     from . import ai
     if not ai.allowed(ai.policy(ctx.db), ctx.user):
-        raise PermissionError("The AI assistant is switched off for you")
+        raise PermissionError("The AI assistant is not enabled for you.")
     return ok(ai.extract_text(ctx.body.get("name"), ctx.body.get("data")))
 
 
@@ -4939,9 +5014,9 @@ def two_step_off(ctx):
     if not u["totp_secret"]:
         return ok({"on": False})
     if (ctx.db.setting("two_step_required") == "all" or (ctx.db.setting("two_step_required") == "admins" and u["is_admin"])) and CLOCK["at"] is None:
-        raise acc.ValidationError("Two-step sign-in is required for you in this company — a super administrator can change that")
+        raise acc.ValidationError("Two-step sign-in is required for you in this company. A super administrator can change this.")
     if CLOCK["at"] is None and not (auth.totp_ok(u["totp_secret"], ctx.body.get("code")) or auth.check_password(ctx.body.get("password") or "", u["pw_hash"])):
-        raise acc.ValidationError("Type a code from your authenticator app (or your password) to turn it off")
+        raise acc.ValidationError("Enter a code from your authenticator app, or your password, to disable it.")
     auth.totp_disable(ctx.db, u["id"])
     ctx.log("two-step.off", u["username"])
     return ok({"on": False})
@@ -5116,7 +5191,7 @@ def branding_default_logo(ctx):
 @route("PUT", "/api/branding/image/<key>", "settings.branding", "edit")
 def branding_image(ctx, key):
     if key in ("app_logo", "app_icon") and not ctx.user.get("platform_owner"):
-        raise PermissionError("The BeyondERP logo and icon are fixed — put your company's logo on its documents (Settings → Branding)")
+        raise PermissionError("The BeyondERP logo and icon cannot be changed. Add your company logo to documents in Settings → Branding.")
     branding.set_asset(ctx.db, key, ctx.body if ctx.body.get("data") else None)
     ctx.log("branding.image", key + ("" if ctx.body.get("data") else " removed"))
     return ok()
@@ -5252,7 +5327,7 @@ def offer_type_del(ctx, tid):
 
 
 # ============================================================ erase all data
-ERASE_TRANSACTIONS = ("entry_tags", "workdays", "desk_rows", "desk_threads", "care_visit_lines", "care_visits", "care_claims", "care_packages", "crm_followups", "crm_activities", "crm_deals", "approvals", "sub_cert_lines", "sub_certificates", "pr_quote_lines", "pr_quotes", "pr_lines", "purchase_requests", "stock_count_lines",
+ERASE_TRANSACTIONS = ("entry_tags", "workdays", "hr_requests", "desk_rows", "desk_threads", "care_visit_lines", "care_visits", "care_claims", "care_packages", "crm_followups", "crm_activities", "crm_deals", "approvals", "sub_cert_lines", "sub_certificates", "pr_quote_lines", "pr_quotes", "pr_lines", "purchase_requests", "stock_count_lines",
                       "stock_counts", "equipment_usage", "maintenance_logs", "attendance", "ereceipts", "sub_recognitions", "sub_visits", "sub_invoices", "subscriptions", "po_receipts", "po_lines", "purchase_orders", "bank_lines", "bank_statements", "recurring_runs", "sale_cheques", "sale_installments", "sale_lines", "sales_orders", "stock_moves", "stock_levels", "extract_lines", "extracts", "ownership_changes", "journal_lines",
                       "journal_entries", "offers", "loans", "custodies", "rent_moves", "rental_invoices", "rental_charges",
                       "rental_handovers", "rental_lines", "rentals", "rent_lots")
@@ -5341,8 +5416,7 @@ def cloud_session(ctx):
     u = ctx.db.one("SELECT * FROM users WHERE active=1 AND (lower(email)=? OR lower(username)=?) "
                    "ORDER BY lower(email)=? DESC LIMIT 1", (email, email, email))
     if not u:
-        raise acc.ValidationError(f"{email} can use the workspace but no app user has this email yet — an administrator "
-                                  "opens Users, edits (or adds) the person and enters this address in Email")
+        raise acc.ValidationError((f"{email} has workspace access but no app user has this email. An administrator should add or edit the user in Users and enter this email address."))
     import secrets
     token = secrets.token_urlsafe(32)
     ctx.db.x("INSERT INTO sessions(token,user_id,expires) VALUES (?,?,datetime('now',?))",
@@ -5378,19 +5452,17 @@ def cloud_first_join(ctx):
             live = [c for c in info.get("companies") or [] if c.get("active") and not c.get("pending")]
             sync.disconnect()
             if not live:
-                raise acc.ValidationError("You are not a member of any company yet — open the website to create one or "
-                                          "to join one with its invite code")
+                raise acc.ValidationError("You are not a member of any company. Use the website to create a company or join one with an invite code.")
             return ok({"choose": live})   # several companies: the screen asks which one, then signs in again
         if not info.get("is_member"):
-            raise acc.ValidationError("This account is not a member of this company — ask its administrator to add you")
+            raise acc.ValidationError("This account is not a member of this company. Ask its administrator to add you.")
         sync.join()
     except (PermissionError, RuntimeError, cloud.Offline, cloud.NeedsUpdate) as e:
         sync.disconnect()
         raise acc.ValidationError(str(e)) from None
     found = _workspace_login(ctx, name, pw)
     if not found:
-        raise acc.ValidationError("Signed in, but no app user matches this account — ask an administrator to add your "
-                                  "email or username in Users")
+        raise acc.ValidationError("Signed in, but no app user matches this account. Ask an administrator to add your email or username in Users.")
     token, user = found
     ctx.db.log(user["username"], "login")
     return ctx.with_session(ok({"user": user}), token)
@@ -5662,7 +5734,7 @@ def _handle(app, method, target, headers, raw, as_user, dry):
             if method != "GET" and api_key["read_only"]:
                 return ok({"error": "This API key is read-only"}, 403)
             if API_KEY_BLOCKED.match(url.path):
-                return ok({"error": "API keys cannot do this — sign in to the app"}, 403)
+                return ok({"error": "API keys cannot perform this action. Sign in to the application."}, 403)
         elif method != "GET" and headers.get("x-requested-with") != "BeyondERP":
             return ok({"error": "Missing X-Requested-With header"}, 403)
         body = {}
@@ -5690,12 +5762,12 @@ def _handle(app, method, target, headers, raw, as_user, dry):
             if not match:
                 continue
             if not public and not user:
-                return ok({"error": "Please sign in"}, 401)
+                return ok({"error": "Sign in to continue."}, 401)
             if headers.get("x-ai-call") == "1" and as_user is None:   # a call the AI assistant makes for this person
                 from . import ai
                 ai.guard(db, user, method, url.path, raw, headers, route_module(method, url.path) or module)   # policy; changes only after check + review
             if module and not auth.can(user, module, level):
-                return ok({"error": "You do not have permission for this"}, 403)
+                return ok({"error": "You do not have permission for this action."}, 403)
             action = request_action(method, url.path, q)
             if module and not auth.action_ok(user, module, action):
                 return ok({"error": ACTION_DENIED[action]}, 403)
@@ -5704,13 +5776,12 @@ def _handle(app, method, target, headers, raw, as_user, dry):
                 from . import licence
                 st = licence.status(db)
                 if not st["can_write"]:
-                    return ok({"error": f"{st.get('problem') or 'No licence'} — the books are read-only (view, print and export "
-                                        "still work). Enter a licence key in Settings → System → Licence.", "licence": st["state"]}, 402)
+                    return ok({"error": (f"{st.get('problem') or 'No licence'}. The books are read-only; viewing, printing and exporting remain available. Enter a licence key in Settings → System → Licence."), "licence": st["state"]}, 402)
             if (user and not public and as_user is None and not api_key and getattr(app, "static", False) is not True
                     and not user.get("two_step") and not TWO_STEP_FREE.match(url.path)):
                 need = db.setting("two_step_required") or ""
                 if need == "all" or (need == "admins" and user.get("is_admin")):
-                    return ok({"error": "Turn on two-step sign-in first (your profile → Two-step sign-in)", "two_step_setup": True}, 403)
+                    return ok({"error": "Enable two-step sign-in first (profile → Two-step sign-in).", "two_step_setup": True}, 403)
             from . import scope
             sc = scope.of(db, user) if not public else None
             if sc:                                    # a person limited to some projects
@@ -5733,7 +5804,7 @@ def _handle(app, method, target, headers, raw, as_user, dry):
             return reply
         return ok({"error": "Not found"}, 404)
     except PermissionError as e:
-        return ok({"error": str(e) or "You do not have permission for this"}, 403)
+        return ok({"error": str(e) or "You do not have permission for this action."}, 403)
     except (acc.ValidationError, LookupError, ValueError, json.JSONDecodeError) as e:
         return ok({"error": str(e)}, 400)
     except Exception as e:  # noqa: BLE001

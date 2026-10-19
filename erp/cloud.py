@@ -369,8 +369,7 @@ class Supabase:
             return self._call("POST", "/functions/v1/login", {"username": username, "password": password})
         except RuntimeError as e:
             if getattr(e, "status", 0) == 404:
-                raise PermissionError("Signing in with a username is not set up on this workspace yet — use the email "
-                                      "address (the administrator deploys the “login” function, see the setup guide)") from None
+                raise PermissionError("Username sign-in is not configured for this workspace. Use the email address, or ask the administrator to deploy the login function (see the setup guide).") from None
             raise
 
     def refresh(self, refresh_token):
@@ -403,7 +402,7 @@ class CloudSync:
     def client(self):
         url, key = local_get(self.db, "url"), local_get(self.db, "key")
         if not url or not key:
-            raise PermissionError("Connect this device to a workspace first (Settings → Workspace)")
+            raise PermissionError("Connect this device to a workspace first (Settings → Workspace).")
         return Supabase(url, key)
 
     def configure(self, url, key):
@@ -415,7 +414,7 @@ class CloudSync:
 
     def _save_session(self, s):
         if not s or not s.get("access_token"):
-            raise PermissionError("Sign-in failed — confirm your email first if Supabase sent you a link")
+            raise PermissionError("Sign-in failed. If a confirmation link was sent, confirm your email first.")
         self._token, self._token_exp = s["access_token"], time.time() + int(s.get("expires_in") or 3600) - 60
         local_set(self.db, "refresh", s.get("refresh_token"))
         local_set(self.db, "email", ((s.get("user") or {}).get("email") or local_get(self.db, "email") or "").lower())
@@ -452,7 +451,7 @@ class CloudSync:
 
     def _co(self):
         if not self.company:
-            raise PermissionError("Choose a company first (Settings → Workspace)")
+            raise PermissionError("Choose a company first (Settings → Workspace).")
         return self.company
 
     def rpc(self, name, params=None):
@@ -464,9 +463,9 @@ class CloudSync:
     def choose_company(self, cid):
         cid = (cid or "").strip()
         if self.active and cid != self.company:
-            raise RuntimeError("This device is connected to another company — disconnect it first")
+            raise RuntimeError("This device is connected to another company. Disconnect it first.")
         if not any(c["id"] == cid and c.get("active") and not c.get("pending") for c in self.companies()):
-            raise PermissionError("You are not a member of that company")
+            raise PermissionError("You are not a member of that company.")
         local_set(self.db, "company", cid)
         return self.info()
 
@@ -516,7 +515,7 @@ class CloudSync:
         """Delete a company for good (its super administrators, typing its name). Not the one this device follows."""
         cid = (cid or "").strip()
         if cid and cid == self.company:
-            raise RuntimeError("This device follows this company — disconnect it first, then delete it")
+            raise RuntimeError("This device is connected to this company. Disconnect it before deleting.")
         return self.rpc("delete_company", {"p_company": cid, "p_name": name})
 
     def new_invite_code(self):
@@ -527,7 +526,7 @@ class CloudSync:
         """Start a new company from this device's books (you become its administrator)."""
         with self.lock:
             if self.active:
-                raise RuntimeError("This device is already connected to a company — disconnect it first")
+                raise RuntimeError("This device is already connected to a company. Disconnect it first.")
             c, tok = self.client(), self.token()
             name = (name or self.db.setting("company_name") or "My company").strip()
             co = c.rpc("create_company", {"p_name": name}, tok)
@@ -550,11 +549,11 @@ class CloudSync:
             if info.get("needs_company"):
                 raise PermissionError("Choose which company to open")
             if not info.get("is_member"):
-                raise PermissionError("This account is not a member of this company yet — ask its administrator")
+                raise PermissionError("This account is not yet a member of this company. Contact its administrator.")
             rows = c.select("snapshots", f"select=seq,version,data&company_id=eq.{self.company}&order=seq.desc&limit=1", tok)
             if not rows:
                 if not info.get("is_admin"):
-                    raise RuntimeError("This company's books are not set up yet — its administrator opens it first")
+                    raise RuntimeError("This company's books are not set up. Its administrator must open them first.")
                 # a brand-new company: its administrator starts its books here (empty, with the company's name)
                 if hasattr(self.app, "backup"):
                     self.app.backup("before-new-company")
@@ -595,7 +594,7 @@ class CloudSync:
                                        f"&order=seq.asc&limit={PULL_PAGE}", self.token())
                 for op in rows:
                     if int(op["seq"]) != last_seq(self.db) + 1:
-                        raise RuntimeError("The workspace log has a gap — try again in a moment")
+                        raise RuntimeError("The workspace log is incomplete. Try again shortly.")
                     apply(self.app, op)
                     n += 1
                 if len(rows) < PULL_PAGE:
@@ -626,12 +625,12 @@ class CloudSync:
                     reply = apply(self.app, op)
                     self._maybe_snapshot(force=is_heavy(op["method"], op["path"]))
                     return reply
-                return ok({"error": "The workspace is very busy — please try again"}, 409)
+                return ok({"error": "The workspace is busy. Try again."}, 409)
             except Offline as e:
                 self.status.update(state="offline", error=str(e))
                 return ok({"error": f"{e}. Changes need a connection to the shared workspace."}, 503)
             except NeedsUpdate as e:
-                return ok({"error": f"A newer app version ({e}) has written to the workspace — update this app first"}, 409)
+                return ok({"error": f"A newer version ({e}) has written to the workspace. Update this application first."}, 409)
             except PermissionError as e:
                 self.status.update(state="signed_out", error=str(e))
                 return ok({"error": f"Workspace: {e}"}, 403)

@@ -176,7 +176,7 @@ def save(db, d, rid=None):
     if rid:
         r = get(db, rid)
         if r["status"] != "draft":
-            raise ValidationError("An issued receipt cannot be changed — issue a return for it")
+            raise ValidationError("An issued receipt cannot be changed. Issue a return instead.")
         db.x(f"UPDATE ereceipts SET {', '.join(k + '=?' for k in vals)} WHERE id=?", list(vals.values()) + [r["id"]])
         return r["id"]
     number = text(d.get("number")) or next_number(db)
@@ -210,7 +210,7 @@ def issue(db, rid, user=""):
         raise ValidationError("Already issued")
     last = db.one("SELECT issued_at FROM ereceipts WHERE uuid<>'' ORDER BY issued_at DESC, id DESC LIMIT 1")
     if last and last["issued_at"] > r["issued_at"]:
-        raise ValidationError(f"Receipts are chained in time order — this one is dated before the last issued ({last['issued_at']})")
+        raise ValidationError(f"Receipts are chained in date order; this one is dated before the last issued receipt ({last['issued_at']}).")
     prev = _last_uuid(db)
     raw = {**r, "lines": r["lines"]}
     doc, problems, t = build(db, raw, prev)
@@ -238,7 +238,7 @@ def issue(db, rid, user=""):
 def delete(db, rid):
     r = get(db, rid)
     if r["status"] != "draft":
-        raise ValidationError("An issued receipt is part of the chain and cannot be deleted — issue a return for it")
+        raise ValidationError("An issued receipt is part of the chain and cannot be deleted. Issue a return instead.")
     db.x("DELETE FROM ereceipts WHERE id=?", (r["id"],))
 
 
@@ -300,7 +300,7 @@ def _pos_token(db):
         "pososversion": s.get("eta_pos_os_version") or "", "posmodelframework": s.get("eta_pos_model") or "",
         "presharedkey": s.get("eta_pos_presharedkey") or ""})
     if not res.get("access_token"):
-        raise ValidationError("ETA POS login failed — check the POS credentials and environment")
+        raise ValidationError("E-receipt POS sign-in failed. Check the POS credentials and environment.")
     return res["access_token"]
 
 

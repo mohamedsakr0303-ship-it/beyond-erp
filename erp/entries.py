@@ -138,7 +138,7 @@ def post(db, tid, d, user=""):
         else:
             chosen = text(d.get(side + "_account"))
             if r.get("missing"):
-                raise ValidationError(f"No account holds the '{r['missing']}' role — fix it in Chart of Accounts")
+                raise ValidationError(f"No account holds the '{r['missing']}' role. Assign it in the chart of accounts.")
             if chosen not in r["choose"]:
                 raise ValidationError(f"Choose the {side} account")
             codes[side] = chosen

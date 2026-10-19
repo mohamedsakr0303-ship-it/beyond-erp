@@ -393,10 +393,10 @@ def delete_item(db, iid):
     it = get_item(db, iid)
     if db.one("SELECT 1 FROM rent_lots WHERE item_id=?", (it["id"],)) or \
             db.one("SELECT 1 FROM rent_kit_lines WHERE item_id=?", (it["id"],)):
-        raise ValidationError("This item has stock or is part of a frame / kit — deactivate it instead")
+        raise ValidationError("This item has stock or belongs to a set. Deactivate it instead.")
     for r in db.q("SELECT components FROM rental_lines"):
         if any(str(c.get("item_id")) == str(it["id"]) for c in _j(r["components"], [])):
-            raise ValidationError("This item is used on a rental — deactivate it instead")
+            raise ValidationError("This item is used on a rental. Deactivate it instead.")
     db.x("DELETE FROM rent_items WHERE id=?", (it["id"],))
 
 
@@ -461,9 +461,9 @@ def delete_lot(db, lot_id, user=""):
     if not lot:
         raise ValidationError("Stock lot not found")
     if db.one("SELECT 1 FROM rent_moves WHERE lot_id=?", (lot_id,)):
-        raise ValidationError("Pieces from this lot have been rented or scrapped — it cannot be removed")
+        raise ValidationError("Pieces from this lot have been rented or scrapped; it cannot be removed.")
     if lot_depreciation(db).get(lot["code"], {}).get("booked"):
-        raise ValidationError("Depreciation is booked on this lot — void that depreciation run first")
+        raise ValidationError("Depreciation is recorded on this lot. Void that depreciation run first.")
     with db.tx():
         for e in db.q(f"SELECT id FROM journal_entries e WHERE {acc.LIVE} AND e.ref=?", (f"RENT:LOT:{lot['code']}",)):
             acc.void_entry(db, e["id"], "Stock lot removed", user)
@@ -1007,7 +1007,7 @@ def _clean_lines(db, raw):
                        components=comps, inputs=r.get("inputs") if isinstance(r.get("inputs"), dict) else {},
                        model_id=int(r["model_id"]) if str(r.get("model_id") or "").isdigit() else None)
             if not comps:
-                raise ValidationError("A square-metre line needs its pieces — work them out with the calculator")
+                raise ValidationError("A per-m² line requires its pieces. Calculate them with the calculator.")
         else:
             ct = r.get("charge_type") or "other"
             if ct not in CHARGE_TYPES:
@@ -1044,7 +1044,7 @@ def save(db, d, rid=None, user=""):
     """Create or change a quote / contract (header and lines)."""
     old = get(db, rid) if rid else None
     if old and old["status"] in ("closed", "cancelled"):
-        raise ValidationError("This rental is closed — reopen it first")
+        raise ValidationError("This rental is closed. Reopen it first.")
     client = text(d.get("client"), "client", required=True)
     lines = _clean_lines(db, d.get("lines"))
     if not lines:
@@ -1100,7 +1100,7 @@ def delete(db, rid):
     r = get(db, rid)
     if db.one("SELECT 1 FROM rental_handovers WHERE rental_id=? AND status='confirmed'", (r["id"],)) or \
             db.one("SELECT 1 FROM rental_invoices WHERE rental_id=?", (r["id"],)):
-        raise ValidationError("Equipment was delivered or invoiced on this rental — cancel or close it instead")
+        raise ValidationError("Equipment has been delivered or invoiced on this rental. Cancel or close it instead.")
     db.x("DELETE FROM rentals WHERE id=?", (r["id"],))
 
 
@@ -1132,7 +1132,7 @@ def action(db, rid, what, d, user=""):
             _ensure_bu(db, get(db, r["id"]))
         elif what == "sign":   # the contract, signed by both parties
             if not r["po_number"]:
-                raise ValidationError("Record the client's purchase order first")
+                raise ValidationError("Record the client's purchase order first.")
             us, them = text(d.get("signed_us"), "our signatory", required=True), text(d.get("signed_client"), "client's signatory", required=True)
             db.conn.execute("UPDATE rentals SET signed_us=?, signed_client=?, signed_on=? WHERE id=?",
                             (us, them, acc.clean_date(d.get("signed_on") or acc.today()), r["id"]))
@@ -1140,7 +1140,7 @@ def action(db, rid, what, d, user=""):
             db.conn.execute("UPDATE rentals SET signed_us='', signed_client='', signed_on='' WHERE id=?", (r["id"],))
         elif what == "cancel":
             if db.one("SELECT 1 FROM rental_handovers WHERE rental_id=? AND status='confirmed'", (r["id"],)):
-                raise ValidationError("Equipment was delivered — return it and close the rental instead")
+                raise ValidationError("Equipment has been delivered. Return it and close the rental instead.")
             db.conn.execute("UPDATE rentals SET status='cancelled', closed_on=? WHERE id=?", (acc.today(), r["id"]))
             return
         elif what == "deposit":
@@ -1148,11 +1148,11 @@ def action(db, rid, what, d, user=""):
         elif what == "close":
             held = _held(db, r["id"])
             if held:
-                raise ValidationError("Pieces are still on site — record their return first")
+                raise ValidationError("Pieces remain on site. Record their return first.")
             if deposit_balance(db, r):
-                raise ValidationError(f"{to_major(deposit_balance(db, r)):,.2f} of security deposit is still held — refund it or apply it first")
+                raise ValidationError(f"{to_major(deposit_balance(db, r)):,.2f} of security deposit is still held. Refund or apply it first.")
             if db.one("SELECT 1 FROM rental_charges WHERE rental_id=? AND extract_id IS NULL", (r["id"],)):
-                raise ValidationError("Some charges are not invoiced yet — invoice them (or delete them) first")
+                raise ValidationError("Some charges are not invoiced. Invoice or delete them first.")
             db.conn.execute("UPDATE rentals SET status='closed', closed_on=? WHERE id=?", (acc.clean_date(d.get("date") or acc.today()), r["id"]))
             return
         elif what == "reopen":
@@ -1415,7 +1415,7 @@ def handover_template(db, rid, kind):
 def _clean_handover(db, r, d):
     kind = d.get("kind")
     if kind not in ("delivery", "return"):
-        raise ValidationError("Delivery or return?")
+        raise ValidationError("Specify delivery or return.")
     lines = {ln["id"] for ln in db.q("SELECT id FROM rental_lines WHERE rental_id=? AND kind<>'charge'", (r["id"],))}
     data = d.get("data") or {}
     units = {}
@@ -1451,7 +1451,7 @@ def save_handover(db, rid, d, hid=None):
         if not h:
             raise ValidationError("Handover not found")
         if h["status"] == "confirmed":
-            raise ValidationError("This handover is confirmed — undo it first to change it")
+            raise ValidationError("This handover is confirmed. Undo it before making changes.")
     kind, data, checklist = _clean_handover(db, r, d)
     vals = (kind, text(d.get("number"), maxlen=60) or f"{r['code']}/{kind[0].upper()}", acc.clean_date(d.get("date") or acc.today()),
             json.dumps(data, ensure_ascii=False), json.dumps(checklist, ensure_ascii=False),
@@ -1475,21 +1475,20 @@ def confirm_handover(db, hid, user=""):
     r = get(db, h["rental_id"])
     data, checklist = _j(h["data"], {}), _j(h["checklist"], [])
     if not (h["signed"] and h["our_name"] and h["client_name"]):
-        raise ValidationError("Both parties must sign the handover — enter both names and tick 'signed'")
+        raise ValidationError("Both parties must sign the handover. Enter both names and select Signed.")
     kind, date = h["kind"], h["date"]
     with db.tx():
         if kind == "delivery":
             if r["status"] in ("closed", "cancelled"):
                 raise ValidationError("This rental is closed")
             if not r["po_number"]:
-                raise ValidationError("No purchase order yet — record the client's PO before delivering anything")
+                raise ValidationError("No purchase order recorded. Record the client's PO before any delivery.")
             if not r["signed_on"]:
-                raise ValidationError("The contract is not signed yet — record both signatures on the contract first")
+                raise ValidationError("The contract is not signed. Record both signatures on the contract first.")
             if r["deposit"] and r["deposit_first"] and deposit_balance(db, r) < r["deposit"]:
-                raise ValidationError(f"The security deposit ({to_major(r['deposit']):,.2f}) must be received before delivering — "
-                                      f"{to_major(deposit_balance(db, r)):,.2f} received so far")
+                raise ValidationError((f"The security deposit ({to_major(r['deposit']):,.2f}) must be received before delivery; {to_major(deposit_balance(db, r)):,.2f} received to date."))
             if any(c["ok"] == "no" for c in checklist) and h["decision"] != "unsafe":
-                raise ValidationError("A safety check failed — fix it, or record the handover as 'not safe'")
+                raise ValidationError("A safety check failed. Correct it, or record the handover as unsafe.")
             if not h["decision"]:
                 raise ValidationError("Record the final decision: safe to use, or not safe")
             short = []
@@ -1551,9 +1550,9 @@ def undo_handover(db, hid, user=""):
     last = db.one("SELECT id FROM rental_handovers WHERE rental_id=? AND status='confirmed' ORDER BY date DESC, confirmed_at DESC, id DESC LIMIT 1",
                   (h["rental_id"],))
     if last["id"] != h["id"]:
-        raise ValidationError("Undo the later handovers first")
+        raise ValidationError("Undo the later handovers first.")
     if db.one("SELECT 1 FROM rental_invoices WHERE rental_id=? AND period_to>=?", (h["rental_id"], h["date"])):
-        raise ValidationError("Rent is already invoiced past this date — delete that draft invoice (or credit it) first")
+        raise ValidationError("Rent is already invoiced beyond this date. Delete that draft invoice, or issue a credit note, first.")
     if db.one("SELECT 1 FROM rental_charges WHERE handover_id=? AND extract_id IS NOT NULL", (h["id"],)):
         raise ValidationError("Charges from this handover are already invoiced")
     r = get(db, h["rental_id"])
@@ -1627,7 +1626,7 @@ def deposit(db, r, d, user=""):
     """receive (Dr cash / Cr client deposits), refund (the reverse) or apply to what the client owes (Dr deposits / Cr receivables)."""
     what = d.get("type")
     if what not in ("receive", "refund", "apply"):
-        raise ValidationError("Receive, refund or apply the deposit?")
+        raise ValidationError("Specify receive, refund or apply the deposit.")
     amount = to_minor(num(d.get("amount"), "amount", allow_zero=False))
     held = deposit_balance(db, r)
     if what != "receive" and amount > held:
@@ -1638,7 +1637,7 @@ def deposit(db, r, d, user=""):
     if what == "apply":
         owed = -to_minor(acc.party_balance(db, db.acct("ar"), party))
         if amount > owed:
-            raise ValidationError(f"{party} only owes {to_major(max(owed, 0)):,.2f} on invoices — apply at most that, or refund the rest")
+            raise ValidationError(f"{party} owes only {to_major(max(owed, 0)):,.2f} on invoices. Apply up to that amount, or refund the remainder.")
         other = {"account": db.acct("ar"), "credit": to_major(amount), "party": party}
         lines = [{"account": dep, "debit": to_major(amount), "party": party}, other]
         memo = f"Security deposit applied to {party}'s invoices ({r['code']})"
@@ -1695,7 +1694,7 @@ def delete_charge(db, cid):
     if not c:
         raise ValidationError("Charge not found")
     if c["extract_id"]:
-        raise ValidationError("This charge is on an invoice — delete the draft invoice first")
+        raise ValidationError("This charge is on an invoice. Delete the draft invoice first.")
     db.x("DELETE FROM rental_charges WHERE id=?", (c["id"],))
 
 

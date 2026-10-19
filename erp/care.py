@@ -187,7 +187,7 @@ def save_visit(db, d, user, vid=None):
         if not old:
             raise ValidationError("Visit not found")
         if old["entry_id"]:
-            raise ValidationError("This visit is already billed — void its invoice first to change it")
+            raise ValidationError("This visit is billed. Void its invoice first to change it.")
     place = "home" if d.get("place") == "home" else "clinic"
     pkg = None
     if str(d.get("package_id") or "").isdigit():
@@ -348,7 +348,7 @@ def unbill_visit(db, vid, user, reason=""):
     if not v["entry_id"]:
         raise ValidationError("This visit is not billed")
     if v["claim_id"]:
-        raise ValidationError("This visit is in an insurance claim — it cannot be unbilled")
+        raise ValidationError("This visit is included in an insurance claim and cannot be unbilled.")
     with db.tx():
         for eid in (v["entry_id"], v["cost_entry_id"]):
             if eid:

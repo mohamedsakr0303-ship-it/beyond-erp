@@ -184,7 +184,7 @@ def check_call(db, user, method, path):
     permissions are checked as usual on top of this."""
     p = policy(db)
     if not allowed(p, user):
-        raise PermissionError("The AI assistant is switched off for you")
+        raise PermissionError("The AI assistant is not enabled for you.")
     if ALWAYS_BLOCKED.match(path):
         raise PermissionError("The AI assistant cannot use this part of the ERP")
     if method != "GET" and p["write"] == "off":
@@ -261,19 +261,19 @@ def guard(db, user, method, path, raw, headers, module):
         return
     r = _REVIEWS.get(headers.get("x-ai-review") or "")
     if not r or not r["ok"]:
-        raise PermissionError("The assistant's change was not checked and reviewed first — it was not saved")
+        raise PermissionError("The assistant's change was not validated and reviewed. It was not saved.")
     try:
         i = int(headers.get("x-ai-batch") or 0)          # which change of a reviewed batch (0 for a single change)
     except ValueError:
         i = -1
     if r["user"] != user["id"] or not 0 <= i < len(r["items"]) or r["items"][i] != (method, path, _canon(raw)):
-        raise PermissionError("This change is not the one that was reviewed — it was not saved")
+        raise PermissionError("This change differs from the one reviewed. It was not saved.")
     if i > r["next"]:
-        raise PermissionError("The reviewed changes must be saved in order — it was not saved")
+        raise PermissionError("Reviewed changes must be saved in order. It was not saved.")
     if now().timestamp() - r["at"] > REVIEW_TTL:
-        raise PermissionError("The review has expired — ask the assistant to check the change again")
+        raise PermissionError("The review has expired. Ask the assistant to validate the change again.")
     if i == 0 and r["next"] == 0 and fingerprint(db) != r["fp"]:
-        raise PermissionError("The books changed since this change was reviewed — ask the assistant to check it again")
+        raise PermissionError("The books have changed since the review. Ask the assistant to validate the change again.")
     r["next"] = max(r["next"], i + 1)                   # (a retry of the same change, e.g. a busy workspace, is allowed)
 
 
@@ -291,7 +291,7 @@ def preview_many(app, user, changes):
     if not changes:
         raise AIError("No changes to check")
     if len(changes) > MAX_BATCH:
-        raise AIError(f"At most {MAX_BATCH} changes in one batch — split it")
+        raise AIError(f"A batch is limited to {MAX_BATCH} changes. Split the request.")
     for c in changes:
         if c["method"] not in ("POST", "PUT", "DELETE") or not str(c["path"]).startswith("/api/"):
             raise AIError("Only POST, PUT or DELETE on an /api/ path")
@@ -558,7 +558,7 @@ def extract_text(name, data):
     except AIError:
         raise
     except Exception:
-        raise AIError(f"{name} could not be opened — is it a valid file?") from None
+        raise AIError(f"{name} could not be opened. Check that the file is valid.") from None
     import html
     text = html.unescape("\n".join(out))
     return {"text": text[:TEXT_LIMIT], "cut": len(text) > TEXT_LIMIT}
@@ -569,9 +569,9 @@ def request_params(db, user, d):
     super administrator's instructions and the tool set cannot be changed from the page."""
     p = policy(db)
     if not allowed(p, user) and not (d.get("test") and user.get("is_super")):   # the super administrator may test it while off
-        raise PermissionError("The AI assistant is switched off for you — ask a super administrator")
+        raise PermissionError("The AI assistant is not enabled for you. Contact a super administrator.")
     if p["daily_limit"] and used_today(db, user) >= p["daily_limit"] and not user.get("is_super"):
-        raise AIError(f"Daily limit reached ({p['daily_limit']} requests) — try again tomorrow")
+        raise AIError(f"Daily limit reached ({p['daily_limit']} requests). Try again tomorrow.")
     test = bool(d.get("test"))
     if test:                  # Settings → Test connection: one short question, no tools
         if not user.get("is_super"):
@@ -644,7 +644,7 @@ def from_openai(resp):
         err = (resp or {}).get("error") if isinstance(resp, dict) else None
         if err:
             raise AIError("The AI provider refused the request: " + str(err.get("message") if isinstance(err, dict) else err))
-        raise AIError("The AI provider's reply had no answer in it — check the address and the model name. It said: "
+        raise AIError("The AI provider's response contained no answer. Check the address and model name. Response: "
                       + (json.dumps(resp, ensure_ascii=False)[:300] if resp else "(nothing)"))
     ch = resp["choices"][0]
     m = ch.get("message") or {}
@@ -691,8 +691,7 @@ def _complete_openai(db, user, p, params):
         try:
             resp = json.loads(raw)
         except ValueError:
-            raise AIError(f"The address {url} did not answer like an AI API (it sent back: {raw.strip()[:160]!r}) — "
-                          "check the provider's address in Settings → AI assistant")
+            raise AIError((f"The address {url} did not respond as an AI API (response: {raw.strip()[:160]!r}). Check the provider address in Settings → AI assistant."))
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", "replace")
         try:
@@ -701,12 +700,12 @@ def _complete_openai(db, user, p, params):
         except Exception:  # noqa: BLE001
             msg = body.strip()[:200]
         if e.code in (401, 403):
-            raise AIError("The AI provider refused the key — a super administrator should check it in Settings → AI assistant")
+            raise AIError("The AI provider rejected the key. A super administrator should check it in Settings → AI assistant.")
         if e.code == 429:
-            raise AIError("The AI provider is busy (rate limit) — try again in a minute")
+            raise AIError("The AI provider is busy (rate limit). Try again shortly.")
         raise AIError(f"The AI provider refused the request ({e.code}){': ' + str(msg) if msg else ''}")
     except (urllib.error.URLError, TimeoutError, OSError) as e:
-        raise AIError(f"Could not reach the AI provider at {p['base_url']} — {getattr(e, 'reason', e)}")
+        raise AIError(f"The AI provider at {p['base_url']} could not be reached: {getattr(e, 'reason', e)}")
     _count(db, user)
     return from_openai(resp)
 
@@ -718,7 +717,7 @@ def complete(db, user, d):
         return _complete_openai(db, user, p, params)
     key = _local(db).local_get(db, "ai_key")
     if not key:
-        raise AIError("No AI provider key is installed yet — a super administrator adds it in Settings → AI assistant")
+        raise AIError("No AI provider key is installed. A super administrator adds it in Settings → AI assistant.")
     try:
         import anthropic
     except ImportError:
@@ -727,15 +726,15 @@ def complete(db, user, d):
     try:
         resp = client.beta.messages.create(**params)
     except anthropic.AuthenticationError:
-        raise AIError("The AI provider refused the key — a super administrator should check it in Settings → AI assistant")
+        raise AIError("The AI provider rejected the key. A super administrator should check it in Settings → AI assistant.")
     except anthropic.RateLimitError:
-        raise AIError("The AI provider is busy (rate limit) — try again in a minute")
+        raise AIError("The AI provider is busy (rate limit). Try again shortly.")
     except anthropic.BadRequestError as e:
         raise AIError(f"The AI provider refused the request: {e.message}")
     except anthropic.APIStatusError as e:
-        raise AIError(f"The AI provider had a problem ({e.status_code}) — try again")
+        raise AIError(f"The AI provider reported an error ({e.status_code}). Try again.")
     except anthropic.APIConnectionError:
-        raise AIError("Could not reach the AI provider — check the internet connection")
+        raise AIError("The AI provider could not be reached. Check the internet connection.")
     _count(db, user)
     return resp.to_dict()
 
@@ -750,7 +749,7 @@ def prepare_for_browser(db, user, d):
         _count(db, user)
         return {"provider": "openai", "url": url, "headers": headers, "body": body}
     if not key:
-        raise AIError("No AI provider key is installed yet — a super administrator adds it in Settings → AI assistant")
+        raise AIError("No AI provider key is installed. A super administrator adds it in Settings → AI assistant.")
     _count(db, user)
     return {"provider": "anthropic", "params": params, "key": key}
 
@@ -775,7 +774,7 @@ def save_thread(db, user, d, tid=None):
         raise AIError("Nothing to save")
     blob = json.dumps(msgs, ensure_ascii=False)
     if len(blob) > 8_000_000:
-        raise AIError("This conversation is too long to keep — start a new one")
+        raise AIError("This conversation is too long to save. Start a new one.")
     title = acc.text(d.get("title"))[:120] or "Conversation"
     ts = acc.now_iso()
     if tid:

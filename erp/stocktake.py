@@ -23,7 +23,7 @@ def next_code(db):
 def start(db, d, user=""):
     wh = acc._warehouse(db, d.get("warehouse_id") or d.get("warehouse"))
     if db.one("SELECT 1 FROM stock_counts WHERE warehouse_id=? AND status='counting'", (wh["id"],)):
-        raise ValidationError(f"A count of {wh['name']} is already open — post or cancel it first")
+        raise ValidationError(f"A count of {wh['name']} is already open. Post or cancel it first.")
     items = db.q("SELECT l.item_id, l.qty, l.avg_cost FROM stock_levels l JOIN stock_items i ON i.id=l.item_id "
                  "WHERE l.warehouse_id=? AND (ABS(l.qty)>1e-9 OR ?) ORDER BY i.name", (wh["id"], 1 if d.get("include_zero") else 0))
     with db.tx():
@@ -117,7 +117,7 @@ def delete(db, cid):
     """Delete a count that is still open or was cancelled. A posted count stays: its adjustments are in the books."""
     c = get(db, cid)
     if c["status"] == "posted":
-        raise ValidationError("A posted count cannot be deleted — its stock adjustments are in the books")
+        raise ValidationError("A posted count cannot be deleted; its stock adjustments are recorded in the books.")
     with db.tx():
         db.conn.execute("DELETE FROM stock_count_lines WHERE count_id=?", (c["id"],))
         db.conn.execute("DELETE FROM stock_counts WHERE id=?", (c["id"],))

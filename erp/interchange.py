@@ -955,7 +955,7 @@ def export_extras(db, files=True, secrets=False):
             "entry_meta": _entry_meta_export(db), "attachments": _attachments_export(db) if files else [],
             "purchase_orders": _po_export(db), "services": _svc_export(db), "chat": _chat_export(db),
             "dashboard_groups": db.q("SELECT key, name, name_ar, layout, sort, look FROM user_groups ORDER BY sort, id"),
-            "line_styles": _line_styles_export(db), "crm": _crm_export(db), "care": _care_export(db), "desk": _desk_export(db), "automations": {t: db.q(f"SELECT * FROM {t} ORDER BY id") for t in ("automations", "automation_log")}, "workdays": db.q("SELECT * FROM workdays ORDER BY id"), "kb_pages": db.q("SELECT * FROM kb_pages ORDER BY id"), "entry_tags": _tags_export(db),
+            "line_styles": _line_styles_export(db), "crm": _crm_export(db), "care": _care_export(db), "desk": _desk_export(db), "automations": {t: db.q(f"SELECT * FROM {t} ORDER BY id") for t in ("automations", "automation_log")}, "workdays": db.q("SELECT * FROM workdays ORDER BY id"), "hr_requests": db.q("SELECT * FROM hr_requests ORDER BY id"), "kb_pages": db.q("SELECT * FROM kb_pages ORDER BY id"), "entry_tags": _tags_export(db),
             "bu_groups": {r["code"]: r["grp"] for r in db.q("SELECT code, grp FROM business_units WHERE grp<>''")}, "site": site_extras(db),
             "people": _people_export(db), "approvals": _approvals_export(db), "history": _history_export(db),
             "bills": __import__("erp.billsubs", fromlist=["x"]).export_rows(db),
@@ -1506,6 +1506,13 @@ def _imp_extras(db, ex, mode, counts):
             keys = [k for k in cols if k in row]
             db.conn.execute(f"INSERT INTO workdays({','.join(keys)}) VALUES ({','.join('?' * len(keys))})", [row[k] for k in keys])
         counts["Working days"] = len(ex["workdays"])
+    if isinstance(ex.get("hr_requests"), list) and ex["hr_requests"] and (mode == "replace" or not db.one("SELECT 1 FROM hr_requests")):
+        db.conn.execute("DELETE FROM hr_requests")
+        cols = [r["name"] for r in db.q("PRAGMA table_info(hr_requests)")]
+        for row in ex["hr_requests"]:
+            keys = [k for k in cols if k in row]
+            db.conn.execute(f"INSERT INTO hr_requests({','.join(keys)}) VALUES ({','.join('?' * len(keys))})", [row[k] for k in keys])
+        counts["Employee requests"] = len(ex["hr_requests"])
     if isinstance(ex.get("automations"), dict) and ex["automations"].get("automations") and (mode == "replace" or not db.one("SELECT 1 FROM automations")):
         db.conn.execute("DELETE FROM automation_log")
         db.conn.execute("DELETE FROM automations")
@@ -1612,7 +1619,7 @@ def to_csv(db, sheet_name, template=False):
     return ("﻿" + buf.getvalue()).encode("utf-8")
 
 
-WIPE_ORDER = ("year_closes", "cost_subs", "entry_tags", "kb_pages", "workdays", "automation_log", "automations", "desk_rows", "desk_threads", "care_visit_lines", "care_visits", "care_claims", "care_packages", "care_services", "care_patients", "crm_followups", "crm_activities", "crm_deals", "sub_cert_lines", "sub_certificates", "variation_orders", "contract_lines", "contracts", "pr_quote_lines", "pr_quotes",
+WIPE_ORDER = ("year_closes", "cost_subs", "entry_tags", "kb_pages", "workdays", "hr_requests", "automation_log", "automations", "desk_rows", "desk_threads", "care_visit_lines", "care_visits", "care_claims", "care_packages", "care_services", "care_patients", "crm_followups", "crm_activities", "crm_deals", "sub_cert_lines", "sub_certificates", "variation_orders", "contract_lines", "contracts", "pr_quote_lines", "pr_quotes",
               "pr_lines", "purchase_requests", "stock_count_lines", "stock_counts", "equipment_usage", "maintenance_logs", "maintenance_plans",
               "equipment", "attendance", "ereceipts", "project_tasks", "project_phases", "payroll_lines", "payroll_runs", "crew_sheets", "employees", "sub_recognitions", "sub_visits", "sub_invoices", "subscriptions", "service_plans", "attachments", "po_receipts", "po_lines", "purchase_orders", "budgets", "bank_lines", "bank_statements", "bank_rules", "recurring_runs", "recurring", "sale_cheques", "sale_installments", "sale_lines", "sales_orders", "product_media", "products", "rent_moves", "rental_invoices", "rental_charges", "rental_handovers", "rental_lines", "rentals", "rent_lots",
               "rent_kit_lines", "rent_kits", "rent_models", "rent_items", "loans", "custodies", "parties", "ownership_changes", "fixed_assets", "stock_moves", "stock_levels", "stock_items", "extract_lines", "extracts", "boq_lines", "boqs",
@@ -2137,7 +2144,7 @@ def _imp_invoices(db, data, errors, counts, user, stats):
                 if old["status"] == "posted":
                     st = str(old.get("eta_status") or "").lower()
                     if old.get("eta_uuid") and st and not any(w in st for w in ("cancel", "reject", "invalid")):
-                        raise acc.ValidationError(f"Invoice {number} was sent to the tax authority — cancel the e-invoice first, then import the change")
+                        raise acc.ValidationError(f"Invoice {number} was submitted to the tax authority. Cancel the e-invoice first, then import the change.")
                     if old["entry_id"]:
                         acc.void_entry(db, old["entry_id"], "Updated from an imported file", user)
                 xid = acc.save_extract(db, d, extract_id=old["id"])

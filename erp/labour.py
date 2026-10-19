@@ -193,7 +193,7 @@ def fill_payroll(db, run_id):
     from . import payroll
     r = payroll._run(db, run_id)
     if r["status"] != "draft":
-        raise ValidationError("This run is posted — unpost it to change it")
+        raise ValidationError("This payroll run is posted. Unpost it to make changes.")
     run = payroll.get_run(db, r["id"])
     have = {ln["employee_id"]: ln for ln in run["lines"]}
     lines = []

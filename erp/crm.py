@@ -259,7 +259,7 @@ def offer_lines(o):
     from . import documents
     sec = documents.pricing(o)
     if not sec:
-        raise ValidationError("This offer has no prices yet — fill in its pricing (or choose the client's package) first")
+        raise ValidationError("This offer has no prices. Complete its pricing, or choose the client's package, first.")
     lines = [{"category": o.get("project") or "", "description": text(i.get("desc"), maxlen=2000) or "Item", "unit": text(i.get("unit")) or "LS",
               "qty": float(i.get("qty") or 1), "price": round(float(i.get("amount") or 0) / float(i.get("qty") or 1), 6)}
              for i in sec.get("items") or [] if text(i.get("desc")) or float(i.get("amount") or 0)]

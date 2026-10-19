@@ -12,7 +12,7 @@ def save(db, d, user, kid=None, any_article=False):
         if not r:
             raise ValidationError("Not found")
         if r["created_by"] != user["username"] and not (any_article or user.get("is_admin")):
-            raise PermissionError("Only its writer, or someone with full rights on the knowledge base, can change this article")
+            raise PermissionError("Only the author, or a user with full rights on the knowledge base, can edit this article.")
         db.x("UPDATE kb_pages SET title=?, body=?, category=?, pinned=?, updated_by=?, updated_at=? WHERE id=?", vals + (user["username"], now_iso(), int(kid)))
         return int(kid)
     return db.x("INSERT INTO kb_pages(title, body, category, pinned, created_by, created_at, updated_by, updated_at) VALUES (?,?,?,?,?,?,?,?)",
@@ -24,7 +24,7 @@ def delete(db, kid, user, any_article=False):
     if not r:
         raise ValidationError("Not found")
     if r["created_by"] != user["username"] and not (any_article or user.get("is_admin")):
-        raise PermissionError("Only its writer, or someone with full rights on the knowledge base, can delete this article")
+        raise PermissionError("Only the author, or a user with full rights on the knowledge base, can delete this article.")
     db.x("DELETE FROM kb_pages WHERE id=?", (int(kid),))
 
 

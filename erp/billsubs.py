@@ -66,7 +66,7 @@ def _clean(db, d):
         if len(split) < 2:
             raise ValidationError("Split between at least two projects")
         if abs(sum(s["pct"] for s in split) - 100) > 0.01:
-            raise ValidationError(f"The split adds up to {sum(s['pct'] for s in split):g}% — it must be 100%")
+            raise ValidationError(f"The split totals {sum(s['pct'] for s in split):g}%; it must equal 100%.")
     to = [u for u in (d.get("remind_to") or []) if isinstance(u, str) and db.one("SELECT 1 FROM users WHERE username=?", (u,))]
     rtime = text(d.get("remind_time"), maxlen=5) or "09:00"
     if not acc.re.match(r"^\d{1,2}:\d{2}$", rtime):

@@ -118,7 +118,7 @@ def delete(db, eq_id):
     e = get(db, eq_id)
     if db.one("SELECT 1 FROM equipment_usage WHERE equipment_id=? AND entry_id IS NOT NULL UNION "
               "SELECT 1 FROM maintenance_logs WHERE equipment_id=? AND entry_id IS NOT NULL", (e["id"], e["id"])):
-        raise ValidationError("This machine has posted usage or maintenance — retire it instead")
+        raise ValidationError("This equipment has posted usage or maintenance. Retire it instead.")
     db.x("DELETE FROM equipment WHERE id=?", (e["id"],))
 
 

@@ -34,7 +34,7 @@ def _role(db, role, fallback=None):
     except LookupError:
         if fallback:
             return fallback
-        raise ValidationError(f"No account has the '{role}' role — set it in the chart of accounts")
+        raise ValidationError(f"No account has the '{role}' role. Assign it in the chart of accounts.")
 
 
 def next_code(db, kind):
@@ -88,7 +88,7 @@ def save(db, d, cid=None):
             if lines and old["certificates"] and any(c["status"] == "posted" for c in old["certificates"]):
                 keep = {(ln["description"]) for ln in old["lines"]}
                 if not keep <= {x[1] for x in lines}:
-                    raise ValidationError("Lines already certified cannot be removed — add new lines instead")
+                    raise ValidationError("Certified lines cannot be removed. Add new lines instead.")
             db.conn.execute(f"UPDATE contracts SET {', '.join(k + '=?' for k in vals)} WHERE id=?", list(vals.values()) + [old["id"]])
             cid = old["id"]
             if d.get("lines") is not None:
@@ -190,7 +190,7 @@ def decide_vo(db, vid, decision, user=""):
 def delete_vo(db, vid):
     v = db.one("SELECT * FROM variation_orders WHERE id=?", (int(vid),))
     if v and v["status"] == "approved":
-        raise ValidationError("An approved variation cannot be deleted — reject it first")
+        raise ValidationError("An approved variation cannot be deleted. Reject it first.")
     db.x("DELETE FROM variation_orders WHERE id=?", (int(vid),))
 
 
@@ -273,7 +273,7 @@ def advance_outstanding(db, code, party, before=None):
 def save_certificate(db, cid, d, cert_id=None):
     c = get(db, cid)
     if c["kind"] != "sub":
-        raise ValidationError("Certificates are for subcontracts — bill the client from Sales → Invoices / extracts")
+        raise ValidationError("Certificates apply to subcontracts. Bill the client from Sales → Invoices.")
     by_line = {ln["id"]: ln for ln in c["lines"]}
     rows = []
     for i, ln in enumerate(d.get("lines") or [], start=1):
@@ -304,7 +304,7 @@ def save_certificate(db, cid, d, cert_id=None):
             xid = x["id"]
         else:
             if any(x["status"] == "draft" for x in c["certificates"]):
-                raise ValidationError("Finish (approve or delete) the draft certificate first")
+                raise ValidationError("Approve or delete the draft certificate first.")
             number = (max([x["number"] for x in c["certificates"]] or [0])) + 1
             xid = db.conn.execute("INSERT INTO sub_certificates(contract_id,number,date,period_to,deductions,status,notes) VALUES (?,?,?,?,?,?,?)",
                                   (c["id"], number, date, acc.clean_date(d.get("period_to"), "period to") if d.get("period_to") else "",
@@ -313,7 +313,7 @@ def save_certificate(db, cid, d, cert_id=None):
                             [(xid, *r) for r in rows])
         x = _cert_row(db, c, db.one("SELECT * FROM sub_certificates WHERE id=?", (xid,)))
         if x["this_period"] < 0:
-            raise ValidationError("Quantities to date are below the previous certificate — enter cumulative quantities")
+            raise ValidationError("Quantities to date are below the previous certificate. Enter cumulative quantities.")
     return xid
 
 
@@ -368,7 +368,7 @@ def reopen_certificate(db, cert_id, user=""):
         row = next(r for r in c["certificates"] if r["id"] == x["id"])
         st = c["statement"]
         if st["retention_held"] + 0.005 < row["retention"] or st["payable"] + 0.005 < row["net_payable"]:
-            raise ValidationError("Part of this certificate was already paid or its retention released — void that first")
+            raise ValidationError("Part of this certificate has been paid or its retention released. Void that first.")
     with db.tx():
         if x["entry_id"] and db.one("SELECT 1 FROM journal_entries WHERE id=? AND status='posted'", (x["entry_id"],)):
             acc.void_entry(db, x["entry_id"], "Certificate reopened", user)
@@ -378,7 +378,7 @@ def reopen_certificate(db, cert_id, user=""):
 def delete_certificate(db, cert_id):
     x = db.one("SELECT * FROM sub_certificates WHERE id=?", (int(cert_id),))
     if x and x["status"] != "draft":
-        raise ValidationError("Only a draft certificate can be deleted — reopen it first")
+        raise ValidationError("Only a draft certificate can be deleted. Reopen it first.")
     db.x("DELETE FROM sub_certificates WHERE id=?", (int(cert_id),))
 
 

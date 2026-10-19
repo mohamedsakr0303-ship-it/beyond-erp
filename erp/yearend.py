@@ -199,7 +199,7 @@ def close(db, year_end, user, notes=""):
     if p["closed"]:
         raise ValidationError(f"The year ending {year_end} is already closed")
     if not p["ended"]:
-        raise ValidationError(f"The year ends on {p['end']} — it can be closed from the day after")
+        raise ValidationError(f"The year ends on {p['end']}; it can be closed from the following day.")
     lock = db.setting("lock_date") or ""
     with db.tx():
         db.x("INSERT INTO year_closes(year_start, year_end, net_profit, prev_lock, checks, notes, closed_by, closed_at) VALUES (?,?,?,?,?,?,?,?)",
@@ -214,7 +214,7 @@ def reopen(db, year_end):
     if not row:
         raise ValidationError("This year is not closed")
     if db.one("SELECT 1 FROM year_closes WHERE year_end>?", (year_end,)):
-        raise ValidationError("Reopen the later years first")
+        raise ValidationError("Reopen the later years first.")
     with db.tx():
         db.x("DELETE FROM year_closes WHERE id=?", (row["id"],))
         if (db.setting("lock_date") or "") == row["year_end"]:

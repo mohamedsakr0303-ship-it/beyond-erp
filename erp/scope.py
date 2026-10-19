@@ -99,7 +99,7 @@ def guard(db, sc, method, path, q, body):
             if len(sc.ids) == 1:
                 q["bu_id"] = str(sc.first())
             else:
-                raise ValidationError("Choose one of your projects for this report")
+                raise ValidationError("Choose one of your permitted projects for this report.")
     if path == "/api/dashboard" and not q.get("bu_id") and sc.ids:
         q["bu_id"] = str(sc.first())
     m = ONE_ENTRY.match(path)
@@ -123,7 +123,7 @@ def guard(db, sc, method, path, q, body):
             if not sc.ok(v):
                 _deny("You can only record on your own projects")
         if method == "POST" and POSTING.match(path) and not named:
-            raise ValidationError("Choose one of your projects")
+            raise ValidationError("Choose one of your permitted projects.")
 
 
 def _keep(sc, row):

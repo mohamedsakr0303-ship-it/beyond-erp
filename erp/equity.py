@@ -119,7 +119,7 @@ def _apply(st, fn):
 def _check_total(vec, what="Ownership"):
     total = sum(vec.values())
     if total > 1 + EPS:
-        raise ValidationError(f"{what} would add up to {total * 100:.2f}% — it cannot be more than 100%")
+        raise ValidationError(f"{what} would total {total * 100:.2f}%; the maximum is 100%.")
     if any(v < -EPS for v in vec.values()):
         raise ValidationError(f"{what} cannot be negative")
 
@@ -144,11 +144,11 @@ def undo_change(db, cid=None, entry_id=None):
         raise ValidationError("Ownership change not found")
     last = _latest_change(db)
     if last["id"] != ch["id"]:
-        raise ValidationError(f"Ownership changed again later ({last['kind']} on {last['date']}) — undo that first")
+        raise ValidationError(f"Ownership changed again later ({last['kind']} on {last['date']}). Undo that change first.")
     if not entry_id and ch["entry_id"]:
         e = db.one("SELECT status, reversed_by FROM journal_entries WHERE id=?", (ch["entry_id"],))
         if e and e["status"] == "posted" and not e["reversed_by"]:
-            raise ValidationError(f"Void or reverse journal entry #{ch['entry_id']} instead — that undoes this change too")
+            raise ValidationError(f"Void or reverse journal entry #{ch['entry_id']} instead; this also undoes the change.")
     acc.check_open(db, ch["date"])
     before = json.loads(ch["before"])
     for p in db.q("SELECT id FROM partners"):  # partners added by the change drop back to no share
@@ -208,7 +208,7 @@ def _shares_from(db, d, st, base):
     if mode == "set":
         given = {str(k): _pct(v, "share") for k, v in (d.get("shares") or {}).items() if str(v).strip() != ""}
         if abs(sum(given.values()) - 1) > 0.0001:
-            raise ValidationError(f"The new shares add up to {sum(given.values()) * 100:.2f}% — they must add up to 100%")
+            raise ValidationError(f"The new shares total {sum(given.values()) * 100:.2f}%; they must total 100%.")
         return lambda vec: {pid: given.get(pid, 0) for pid in vec}
     raise ValidationError("Unknown ownership option")
 
@@ -316,7 +316,7 @@ def plan_interest(db, d):
     end = _dt.date.fromisoformat(acc.clean_date(d.get("date")))
     rate = (_pct(d.get("rate"), "interest rate") if d.get("rate") not in (None, "") else (p["loan_rate"] or 0))
     if not rate:
-        raise ValidationError(f"{p['name']}'s loans are interest-free — set an interest rate first")
+        raise ValidationError(f"{p['name']}'s loans are interest-free. Set an interest rate first.")
     loan = _role(db, "partner_loans")
     last = None
     for r in db.q(f"SELECT meta FROM journal_entries e WHERE {acc.LIVE} AND e.reversed_by IS NULL AND kind='Partner Loan Interest' "
@@ -398,7 +398,7 @@ def plan_admit(db, d):
     """A new partner invests in the company for a share of it; everyone else is diluted in proportion."""
     name = text(d.get("name"), "new partner's name", required=True)
     if db.one("SELECT 1 FROM partners WHERE name=?", (name,)):
-        raise ValidationError(f"{name} is already a partner — use a capital contribution or a share transfer")
+        raise ValidationError(f"{name} is already a partner. Use a capital contribution or a share transfer.")
     date = acc.clean_date(d.get("date"))
     amount = num(d.get("amount"), "amount invested")
     n = _pct(d.get("share"), "share")
@@ -419,7 +419,7 @@ def plan_admit(db, d):
         lines.append(_L(capital, name, credit=credited))
         if diff and method == "premium":
             if diff < 0:
-                raise ValidationError("The investment is less than the book value of the share — use the bonus method")
+                raise ValidationError("The investment is below the book value of the share. Use the bonus method.")
             lines.append(_L(_role(db, "share_premium"), "", credit=diff))
             notes.append(f"{diff:,.2f} above the book value of {n * 100:.2f}% goes to share premium.")
         elif diff and method == "bonus":
@@ -461,7 +461,7 @@ def plan_exit(db, d):
     pid = str(p["id"])
     others = {k: s for k, s in st["shares"].items() if k != pid and st["active"].get(k)}
     if not others:
-        raise ValidationError("The last partner cannot leave — transfer the share to a new partner instead")
+        raise ValidationError("The last partner cannot retire. Transfer the share to a new partner instead.")
     b = balances(db, p["name"], date)
     book = round(b["capital"] + b["current"], 2)
     settle = num(d.get("settlement"), "settlement") if d.get("settlement") not in (None, "") else book
@@ -508,7 +508,7 @@ def plan_exit(db, d):
         out[pid] = 0
         return out
     if given and abs(sum(given.values()) - 1) > 0.0001:
-        raise ValidationError(f"The new shares add up to {sum(given.values()) * 100:.2f}% — they must add up to 100%")
+        raise ValidationError(f"The new shares total {sum(given.values()) * 100:.2f}%; they must total 100%.")
     return _plan("Partner Exit", text(d.get("memo")) or f"{p['name']} leaves the company", p["name"],
                  lines if any(ln["debit"] or ln["credit"] for ln in lines) and len(lines) > 1 else [], date,
                  {"settlement": settle, "book_value": book}, fn, notes, flags={"leaves": pid})
@@ -527,7 +527,7 @@ def plan_distribute(db, d):
         shares = {k: p["default_share"] or 0 for k, p in ps.items() if (p["default_share"] or 0) > EPS}
         tot = sum(shares.values())
         if not tot:
-            raise ValidationError("Set the partners' shares first")
+            raise ValidationError("Set the partners' shares first.")
         split, left = {}, total
         for i, (k, s) in enumerate(sorted(shares.items())):
             split[k] = left if i == len(shares) - 1 else round(total * s / tot, 2)
@@ -731,16 +731,14 @@ def plan_appropriate(db, d):
         raise ValidationError("The period starts after it ends")
     for a in appropriations(db):
         if a["period_from"] and a["period_from"] <= end.isoformat() and a["period_to"] >= start.isoformat():
-            raise ValidationError(f"Profit for {a['period_from']} to {a['period_to']} is already shared (entry #{a['id']}) — "
-                                  "choose a period after it, or void that entry first")
+            raise ValidationError((f"Profit for {a['period_from']} to {a['period_to']} has already been appropriated (entry #{a['id']}). Choose a later period, or void that entry first."))
     sf, st_ = start.isoformat(), end.isoformat()
     ps = db.q("SELECT * FROM partners WHERE active=1 ORDER BY id")
     if not ps:
-        raise ValidationError("Add the partners first")
+        raise ValidationError("Add the partners first.")
     ratio, typed = profit_ratios(db, ps)
     if abs(sum(ratio.values()) - 1) > 0.0001:
-        raise ValidationError(f"The {'profit-sharing ratios' if typed else 'partners’ shares'} add up to "
-                              f"{sum(ratio.values()) * 100:.2f}% — they must add up to 100%")
+        raise ValidationError((f"The {'profit-sharing ratios' if typed else 'partners’ shares'} total {sum(ratio.values()) * 100:.2f}%; they must total 100%."))
     names = {str(p["id"]): p["name"] for p in ps}
     notes = []
     if typed and any(r <= EPS for r in ratio.values()):
@@ -763,8 +761,7 @@ def plan_appropriate(db, d):
             continue
         vec = {k: over.get(b["id"], {}).get(k, ratio[k]) for k in ratio}
         if abs(sum(vec.values()) - 1) > 0.0001:
-            raise ValidationError(f"The partners' shares in business unit {b['code']} add up to "
-                                  f"{sum(vec.values()) * 100:.2f}% — they must add up to 100%")
+            raise ValidationError((f"The partners' shares in business unit {b['code']} total {sum(vec.values()) * 100:.2f}%; they must total 100%."))
         for k, v in _split(bp, vec).items():
             base[k] += v
         in_units += bp
@@ -820,7 +817,7 @@ def plan_appropriate(db, d):
     for k, r in rows.items():
         r["residual"] = base[k] - charges[k]
     if not (profit or any(r["salary"] or r["ioc"] or r["iod"] or r["drawings"] for r in rows.values())):
-        raise ValidationError("Nothing to share for this period — no profit or loss, salaries, interest or drawings")
+        raise ValidationError("Nothing to appropriate for this period: no profit or loss, salaries, interest or drawings.")
     # 4 · the entry
     M = to_major
     cur, appr = _role(db, "partner_current"), _role(db, "appropriation")
