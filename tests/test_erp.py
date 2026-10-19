@@ -1508,9 +1508,9 @@ class ServiceSubscriptions(unittest.TestCase):
         self.assertTrue(S.listing(db)["mrr"] > 0)
         p = S.save_plan(db, {"name": "Yearly maintenance", "price": 12000, "period_months": 12, "visits": 2, "extra_visit_price": 500})
         m = S.save_plan(db, {"name": "Support", "kind": "software", "price": 1000, "period_months": 1})
-        a1 = S.save(db, {"customer": "Laila Samir", "plan_id": p, "covers": "Villa 3", "start": "2025-01-10", "term_months": 12, "auto_renew": 0})
-        s2 = S.save(db, {"customer": "Karim Fahmy", "plan_id": m, "start": "2025-01-01"})
-        S.save(db, {"customer": "Karim Fahmy", "plan_id": m, "parent_id": s2, "title": "Extra module", "price": 300, "period_months": 1, "start": "2025-01-01"})
+        a1 = S.save(db, {"customer": "Emily Clark", "plan_id": p, "covers": "Villa 3", "start": "2025-01-10", "term_months": 12, "auto_renew": 0})
+        s2 = S.save(db, {"customer": "James Carter", "plan_id": m, "start": "2025-01-01"})
+        S.save(db, {"customer": "James Carter", "plan_id": m, "parent_id": s2, "title": "Extra module", "price": 300, "period_months": 1, "start": "2025-01-01"})
         for k in range(3):
             S.save_visit(db, a1, {"date": f"2025-0{3 + k}-05", "description": "Check"})
         third = db.one("SELECT charge FROM sub_visits WHERE sub_id=? ORDER BY date DESC LIMIT 1", (a1,))["charge"]
@@ -1519,7 +1519,7 @@ class ServiceSubscriptions(unittest.TestCase):
         inv = db.q("SELECT x.number FROM sub_invoices i JOIN extracts x ON x.id=i.extract_id WHERE i.sub_id=?", (s2,))
         self.assertEqual(len(inv), 3)                                                   # Jan, Feb, Mar (add-on on the same invoices)
         self.assertEqual(db.one("SELECT COUNT(DISTINCT extract_id) n FROM sub_invoices i JOIN subscriptions s ON s.id=i.sub_id "
-                                "WHERE s.customer='Karim Fahmy' AND i.period_from<'2025-04-01'")["n"], 3)
+                                "WHERE s.customer='James Carter' AND i.period_from<'2025-04-01'")["n"], 3)
         dfr = db.acct("service_deferred")
         bal = lambda acct: db.one("SELECT COALESCE(SUM(credit-debit),0) n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id "  # noqa: E731
                                   "WHERE e.status='posted' AND l.account=? AND e.ref LIKE 'SUB-0%'", (acct,))["n"]
@@ -1926,7 +1926,7 @@ class Contacts(unittest.TestCase):
 
     def test_directory_and_summary(self):
         db = seeded()
-        pid = a.save_party(db, {"name": "Osama Driver", "category": "Driver", "phone": "01001234567",
+        pid = a.save_party(db, {"name": "Osama Driver", "category": "Driver", "phone": "0001234567",
                                 "vehicle": "ABC 123", "bank_details": "CIB 1000"})
         p = db.one("SELECT * FROM parties WHERE id=?", (pid,))
         self.assertEqual((p["category"], p["type"], p["vehicle"]), ("driver", "supplier", "ABC 123"))
@@ -1934,8 +1934,8 @@ class Contacts(unittest.TestCase):
         self.assertEqual(db.one("SELECT type FROM parties WHERE id=?", (cid,))["type"], "customer")
         nid = a.save_party(db, {"name": "Plain"})                     # old callers: no category → customer as before
         self.assertEqual(db.one("SELECT type FROM parties WHERE id=?", (nid,))["type"], "customer")
-        a.save_party(db, {"name": "Eng. Fathy", "category": "Subcontractor", "type": "both"})
-        self.assertEqual(db.one("SELECT type, category FROM parties WHERE name='Eng. Fathy'"), {"type": "both", "category": "subcontractor"})
+        a.save_party(db, {"name": "Rapid Plumbing", "category": "Subcontractor", "type": "both"})
+        self.assertEqual(db.one("SELECT type, category FROM parties WHERE name='Rapid Plumbing'"), {"type": "both", "category": "subcontractor"})
         a.record_expense(db, {"description": "Trip", "amount": 800, "vendor": "Osama Driver", "paid": 300, "date": "2026-03-01"})
         a.record_payment(db, {"party": "Osama Driver", "amount": 200, "date": "2026-03-05"})
         s = a.contact_summary(db, "Osama Driver")
@@ -4703,7 +4703,7 @@ class DefaultLogoAndMaterials(unittest.TestCase):
         demo.load(db)
         wh = db.one("SELECT id, name FROM warehouses LIMIT 1")
         bu = db.one("SELECT id, code FROM business_units LIMIT 1")
-        eid = a.record_journal(db, {"date": "2026-10-05", "memo": "Tiles and paint", "party": "El-Nour", "bu_id": bu["id"],
+        eid = a.record_journal(db, {"date": "2026-10-05", "memo": "Tiles and paint", "party": "Bright Supplies", "bu_id": bu["id"],
                                     "items": [{"item": "Porcelain 60x120", "unit": "m2", "qty": 50, "rate": 420, "warehouse_id": wh["id"]},
                                               {"item": "Wall paint 18L", "unit": "drum", "qty": 4, "rate": 1500}],
                                     "lines": [{"account": "1010", "credit": 27000}]})
@@ -4948,7 +4948,7 @@ class PublicDesk(unittest.TestCase):
         st, pg = self.visitor("public_page", {"p_token": tok})
         self.assertEqual((st, pg["kind"], pg["title"]), (200, "booking", "Book a visit"))
         st, b = self.visitor("public_send", {"p_token": tok, "p_kind": "booking", "p_payload": {
-            "slot": "2031-03-04 10:30", "name": "Mona Adel", "phone": "01001234567", "service": "GP consultation", "service_id": sid}})
+            "slot": "2031-03-04 10:30", "name": "Anna Bell", "phone": "0001234567", "service": "GP consultation", "service_id": sid}})
         self.assertEqual(st, 200, b)
         self.assertEqual(self.visitor("public_send", {"p_token": tok, "p_kind": "booking", "p_payload": {"slot": "2031-03-04 10:30", "name": "X"}})[0], 409)
         self.assertEqual(self.visitor("public_send", {"p_token": tok, "p_kind": "lead", "p_payload": {"name": "X"}})[0], 400)
@@ -4956,7 +4956,7 @@ class PublicDesk(unittest.TestCase):
         res = self.pull(op)
         self.assertEqual([r["state"] for r in res], ["done"])
         v = self.db.one("SELECT v.*, p.name, p.phone FROM care_visits v JOIN care_patients p ON p.id=v.patient_id")
-        self.assertEqual((v["date"], v["time"], v["status"], v["name"], v["phone"]), ("2031-03-04", "10:30", "booked", "Mona Adel", "01001234567"))
+        self.assertEqual((v["date"], v["time"], v["status"], v["name"], v["phone"]), ("2031-03-04", "10:30", "booked", "Anna Bell", "0001234567"))
         self.assertEqual(self.pull(op), [])                                  # each row once
         # the visitor moves it, then cancels; the visit follows
         self.assertEqual(self.visitor("public_manage", {"p_token": tok, "p_ref": b["ref"], "p_manage": "wrong", "p_action": "view"})[0], 403)
@@ -4968,7 +4968,7 @@ class PublicDesk(unittest.TestCase):
         # the team confirms; the visitor sees it
         st, dd = self.call(op, "GET", "/api/desk?from=2030-01-01")
         bk = dd["bookings"][0]
-        self.assertEqual((bk["slot"], bk["name"]), ("2031-03-05 11:00", "Mona Adel"))
+        self.assertEqual((bk["slot"], bk["name"]), ("2031-03-05 11:00", "Anna Bell"))
         self.cloud(op, "desk_reply", {"p_page": bk["page_id"], "p_ref": bk["ref"], "p_kind": "confirm", "p_body": "See you then"})
         self.assertEqual(self.call(op, "POST", f"/api/desk/rows/{bk['id']}/answer", {"how": "confirmed"})[0], 200)
         st, mine = self.visitor("public_manage", {"p_token": tok, "p_ref": b["ref"], "p_manage": b["manage"]})
@@ -4997,17 +4997,17 @@ class PublicDesk(unittest.TestCase):
         st, mine = self.visitor("public_manage", {"p_token": guest["token"], "p_ref": g["ref"], "p_manage": g["manage"]})
         self.assertEqual([m["body"] for m in mine["messages"]], ["Do you do home visits?", "Yes, every day"])
         # an offer signed online: accepted, signature kept with it
-        st, o = self.call(op, "POST", "/api/offers", {"client": "Mona Adel", "project": "Home care plan", "status": "Sent",
+        st, o = self.call(op, "POST", "/api/offers", {"client": "Anna Bell", "project": "Home care plan", "status": "Sent",
                                                       "sections": [{"kind": "pricing", "heading": "Fees", "items": [{"desc": "Monthly nursing", "amount": 9000}]}]})
         self.assertEqual(st, 200, o)
         st, summ = self.call(op, "GET", f"/api/desk/offer/{o['id']}")
         self.assertEqual((summ["net"], summ["sections"][0]["items"][0]["desc"]), (9000, "Monthly nursing"))
         sign = self.cloud(op, "desk_page_save", {"p_id": None, "p_kind": "sign", "p_title": "Offer", "p_config": summ})
         png = "data:image/png;base64," + __import__("base64").b64encode(b"\x89PNG\r\n\x1a\n" + b"0" * 40).decode()
-        self.visitor("public_send", {"p_token": sign["token"], "p_kind": "signature", "p_payload": {"offer_id": o["id"], "name": "Mona Adel", "image": png}})
+        self.visitor("public_send", {"p_token": sign["token"], "p_kind": "signature", "p_payload": {"offer_id": o["id"], "name": "Anna Bell", "image": png}})
         self.pull(op)
         self.assertEqual(self.db.one("SELECT status FROM offers WHERE id=?", (o["id"],))["status"], "Accepted")
-        self.assertTrue(self.db.one("SELECT 1 FROM attachments WHERE owner='offer' AND owner_id=? AND title LIKE 'Signed by Mona Adel%'", (o["id"],)))
+        self.assertTrue(self.db.one("SELECT 1 FROM attachments WHERE owner='offer' AND owner_id=? AND title LIKE 'Signed by Anna Bell%'", (o["id"],)))
         # a switched-off page stops answering
         self.cloud(op, "desk_page_save", {"p_id": page["id"], "p_kind": "booking", "p_title": "Book a visit", "p_config": None, "p_active": False})
         self.assertEqual(self.visitor("public_page", {"p_token": tok})[0], 404)

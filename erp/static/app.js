@@ -1280,7 +1280,7 @@ async function renderOnboarding() {
       $("#lerr").innerHTML = "";
       try {
         if (kind() === "clean") { busy(true); return await finish(); }
-        if (kind() === "demo") { if (!await demoWarn($("#obtype").value)) return; busy(true, ar ? "جارٍ تجهيز الشركة التجريبية…" : "Setting up the demo company…"); await api("POST", "/api/demo", { industry: $("#obtype").value, confirmed: true }); return await finish(); }
+        if (kind() === "demo") { if (!await demoWarn($("#obtype").value)) return; busy(true, ar ? "جارٍ تجهيز الشركة التجريبية…" : "Setting up the demo company…"); await api("POST", "/api/demo", { industry: $("#obtype").value, confirmed: true, lang: S.lang }); return await finish(); }
         if (checked) { busy(true, ar ? "جارٍ الاستيراد…" : "Importing…"); const { r } = await upload(false); checked = null;
           toast(Object.entries(r.counts).map(([k, v]) => `${k}: ${v}`).slice(0, 4).join(" · ")); return await finish(); }
         busy(true, ar ? "جارٍ الفحص…" : "Checking…");
@@ -1435,7 +1435,7 @@ function form(fields, cols = 2) {
     if (f.type === "file") return dropZone({ name: f.k, accept: f.accept, multiple: f.multiple, label: f.l, help: f.help, req: f.req, cls: f.span });
     const attrs = `name="${f.k}" ${f.req ? "required" : ""} ${f.multiple ? "multiple" : ""} ${f.accept ? `accept="${esc(f.accept)}"` : ""} ${f.ph ? `placeholder="${esc(f.ph)}"` : ""} ${f.change ? `data-change="${f.change}"` : ""} ${f.input ? `data-input="${f.input}"` : ""} ${f.dis ? "disabled" : ""}`;
     let ctl;
-    if (f.type === "select") ctl = `<select ${attrs}>${(f.opts || []).map(o => { const [v, l] = Array.isArray(o) ? o : [o, tl(o)]; return `<option value="${esc(v)}" ${String(v) === String(f.v ?? "") ? "selected" : ""}>${esc(l)}</option>`; }).join("")}</select>`;
+    if (f.type === "select") ctl = `<select ${attrs}>${keepOpt(f.opts || [], f.v).map(o => { const [v, l] = Array.isArray(o) ? o : [o, tl(o)]; return `<option value="${esc(v)}" ${String(v) === String(f.v ?? "") ? "selected" : ""}>${esc(l)}</option>`; }).join("")}</select>`;
     else if (f.type === "textarea") ctl = `<textarea ${attrs} rows="3">${esc(f.v)}</textarea>`;
     else if (f.type === "checkbox") return `<label class="f chk ${f.span || ""}"><input type="checkbox" ${attrs} ${f.v ? "checked" : ""}>${esc(f.l)}${f.req ? `<b class="req" aria-hidden="true">✱</b>` : ""}</label>`;
     // an on/off button: only the button itself switches (red = off, green = on)
@@ -1589,6 +1589,8 @@ const accByRole = r => (S.boot.accounts.find(a => a.role === r) || {}).code || "
 const buOpts = (blank) => [...(blank ? [["", blank]] : []), ...S.boot.bus.map(b => [b.id, `${b.code} — ${b.name}`])];
 const whOpts = () => S.boot.warehouses.filter(w => w.active).map(w => [w.id, w.name]);
 const methodOpts = () => S.boot.enums.methods;
+// a value saved earlier stays selectable even when it is no longer offered (e.g. a method of another country)
+const keepOpt = (opts, v) => v == null || v === "" || opts.some(o => String(Array.isArray(o) ? o[0] : o) === String(v)) ? opts : [...opts, v];
 const unitsList = () => datalist("units", S.boot.settings.units || []);
 const taxOpts = kind => [["", t("no_tax")], ...(S.boot.tax_codes || []).filter(x => x.kind === kind && x.active).map(x => [x.code, `${x.code} — ${S.lang === "ar" && x.name_ar ? x.name_ar : x.name}`])];
 const partyDefaults = (f, field) => { const el = $(`[name=${field}]`, f); if (!el) return;
@@ -4579,7 +4581,7 @@ PAGES.data = async (view) => {
       <a class="btn" href="/api/export/workbook?lang=${S.lang}">⬇ ${t("full_wb")}</a>
       <a class="btn pri" href="/api/export/workbook?files=1&lang=${S.lang}" title="${esc(L2("The workbook plus every attached bill, receipt and contract, in a folder per month (2026-03 March 2026…). Import the .zip back to restore the files too.", "الملف مع كل الفواتير والإيصالات والعقود المرفقة، في مجلد لكل شهر. استورد ملف الـ zip لاستعادة الملفات أيضاً."))}">⬇ ${esc(L2("Excel + attached files (.zip, a folder per month)", "Excel + الملفات المرفقة (zip، مجلد لكل شهر)"))}</a>
       <a class="btn" href="/api/templates/workbook?lang=${S.lang}">⬇ ${t("empty_tpl")}</a>
-      <a class="btn" href="/api/demo/workbook">⬇ ${L2("Import template filled with demo data (Excel)", "قالب الاستيراد مملوء ببيانات تجريبية (Excel)")}</a>
+      <a class="btn" href="/api/demo/workbook?lang=${S.lang}">⬇ ${L2("Import template filled with demo data (Excel)", "قالب الاستيراد مملوء ببيانات تجريبية (Excel)")}</a>
       <a class="btn" href="/api/export/json">⬇ ${t("json_backup")}</a>${S.boot.user.is_super ? `<a class="btn" href="/api/backup" title="${esc(L2("The whole database as one file (.sqlite3) — restore it from Import data on the right.", "قاعدة البيانات كاملة في ملف واحد (.sqlite3) — استعدها من «استيراد البيانات».")) }">⬇ ${t("db_backup")}</a>` : ""}
       ${S.boot.user.is_super ? `<label class="f chk" title="${esc(L2("API keys made for outside tools, the e-invoice / e-receipt (ETA) credentials and the AI provider key (desktop app). Keep a backup with keys somewhere safe.", "مفاتيح API للأدوات الخارجية، وبيانات دخول الفاتورة / الإيصال الإلكتروني، ومفتاح مزوّد الذكاء الاصطناعي (تطبيق سطح المكتب). احفظ النسخة التي بها مفاتيح في مكان آمن."))}"><input type="checkbox" id="expsec" checked>${esc(L2("Include the keys of connected tools (API keys, e-invoice credentials, AI key) — keep the file safe", "تضمين مفاتيح الأدوات المتصلة (مفاتيح API، بيانات الفاتورة الإلكترونية، مفتاح الذكاء الاصطناعي) — احفظ الملف بأمان"))}</label>` : ""}
       <div class="row"><select id="csvs">${sheets.map(s => `<option value="${esc(s.name)}">${esc(S.lang === "ar" ? s.ar : s.name)}</option>`).join("")}</select>
@@ -4616,8 +4618,8 @@ PAGES.data = async (view) => {
   let dm = { empty: false, loaded: "" }; try { dm = await api("GET", "/api/demo"); } catch { /* no permission */ }
   const demoCard = document.createElement("div"); demoCard.className = "card";
   demoCard.innerHTML = `<h2>${L2("Demo company", "الشركة التجريبية")}</h2>
-    <p class="muted" style="margin-top:0">${L2("“Nile Demo Co.” — about six months of an invented business on every screen: projects (cost-plus, fixed price, flexible) with costs, negotiation discounts, payroll, VAT & withholding, a BOQ and invoices, stock, fixed assets, loans, cash custody, equipment rentals with a signed handover and deposit, unit sales on installments with cheques, recurring entries and bank statements (one reconciled, one to do). Use it to test every function or to train people.", "«شركة النيل التجريبية» — حوالي ستة أشهر من نشاط وهمي على كل الشاشات: مشروعات بتكاليفها وخصومات التفاوض والرواتب والضرائب والمقايسة والفواتير والمخزون والأصول والقروض والعهد وتأجير المعدات بمحضر تسليم وتأمين وبيع وحدات بالتقسيط بشيكات وقيود متكررة وكشوف بنك (واحد مسوّى وواحد للتجربة). استخدمها لتجربة كل الوظائف أو للتدريب.")}</p>
-    <div class="row" style="gap:6px;flex-wrap:wrap"><a class="btn" href="/api/demo/workbook">⬇ ${L2("Demo company — Excel workbook (every sheet filled)", "الشركة التجريبية — ملف Excel (كل الأوراق مملوءة)")}</a>
+    <p class="muted" style="margin-top:0">${L2("“Sample Company” — about six months of an invented business on every screen: projects (cost-plus, fixed price, flexible) with costs, negotiation discounts, payroll, VAT & withholding, a BOQ and invoices, stock, fixed assets, loans, cash custody, equipment rentals with a signed handover and deposit, unit sales on installments with cheques, recurring entries and bank statements (one reconciled, one to do). Use it to test every function or to train people.", "«الشركة النموذجية» — حوالي ستة أشهر من نشاط وهمي على كل الشاشات: مشروعات بتكاليفها وخصومات التفاوض والرواتب والضرائب والمقايسة والفواتير والمخزون والأصول والقروض والعهد وتأجير المعدات بمحضر تسليم وتأمين وبيع وحدات بالتقسيط بشيكات وقيود متكررة وكشوف بنك (واحد مسوّى وواحد للتجربة). استخدمها لتجربة كل الوظائف أو للتدريب.")}</p>
+    <div class="row" style="gap:6px;flex-wrap:wrap"><a class="btn" href="/api/demo/workbook?lang=${S.lang}">⬇ ${L2("Demo company — Excel workbook (every sheet filled)", "الشركة التجريبية — ملف Excel (كل الأوراق مملوءة)")}</a>
     ${S.boot.user.is_admin && dm.empty ? `<select id="demoind" style="width:auto">${(dm.industries || []).map(k => `<option value="${k}"${k === dm.current ? " selected" : ""}>${esc(L2("Demo", "تجريبي") + ": " + indName(k))}</option>`).join("")}
       <option value=""${dm.current ? "" : " selected"}>${esc(L2("Everything (every screen filled)", "كل شيء (كل الشاشات مملوءة)"))}</option></select>` : ""}
     ${S.boot.user.is_admin ? `<p class="muted" style="flex-basis:100%;margin:4px 0 0">${L2("Each business type gets its own demo: only what that kind of business does, under its own name.", "لكل نوع نشاط بياناته التجريبية الخاصة: فقط ما يقوم به هذا النشاط وباسم مناسب له.")}</p>` : ""}
@@ -4626,7 +4628,7 @@ PAGES.data = async (view) => {
     ${dm.loaded ? `<p class="muted">${L2("Demo data loaded on", "تم تحميل البيانات التجريبية في")} ${fd(dm.loaded)} — ${L2("erase it from Settings → System when you are done.", "امسحها من الإعدادات ← النظام عند الانتهاء.")}</p>` : ""}`;
   view.appendChild(demoCard);
   S.H.demoload = async el => { const k = ($("#demoind") || {}).value || ""; if (!await demoWarn(k)) return; el.disabled = true; el.textContent = L2("Loading…", "جارٍ التحميل…");
-    try { await api("POST", "/api/demo", { industry: k, confirmed: true }); await refreshBoot(); toast(L2("Demo company loaded", "تم تحميل الشركة التجريبية")); location.hash = "#/dashboard"; } catch (e) { fail(e); el.disabled = false; } };
+    try { await api("POST", "/api/demo", { industry: k, confirmed: true, lang: S.lang }); await refreshBoot(); toast(L2("Demo company loaded", "تم تحميل الشركة التجريبية")); location.hash = "#/dashboard"; } catch (e) { fail(e); el.disabled = false; } };
   S.H.impopen = el => importWizard(el.dataset.sheet);
   S.H.csv = () => openApi("/api/export/csv?" + qs({ sheet: $("#csvs").value }));
   S.H.csvt = () => openApi("/api/export/csv?" + qs({ sheet: $("#csvs").value, template: 1 }));
@@ -8003,7 +8005,7 @@ function visitForm(s, v) {
 // ------------------------------------------------------------ purchase orders
 const PO_ST = { draft: ["Draft", "مسودة", "warn"], approved: ["Approved", "معتمد", ""], partial: ["Part received", "استلام جزئي", "warn"], received: ["Received", "تم الاستلام", "ok"], closed: ["Closed", "مغلق", ""], cancelled: ["Cancelled", "ملغى", "bad"] };
 const poChip = st => `<span class="chip ${PO_ST[st][2]}">${esc(L2(PO_ST[st][0], PO_ST[st][1]))}</span>`;
-const optHtml = (opts, v) => opts.map(o => Array.isArray(o) ? o : [o, o]).map(([k, l]) => `<option value="${esc(k)}" ${String(k) === String(v ?? "") ? "selected" : ""}>${esc(l)}</option>`).join("");
+const optHtml = (opts, v) => keepOpt(opts, v).map(o => Array.isArray(o) ? o : [o, o]).map(([k, l]) => `<option value="${esc(k)}" ${String(k) === String(v ?? "") ? "selected" : ""}>${esc(l)}</option>`).join("");
 PAGES.pos = async (view, parts, q) => {
   q = { status: "open", ...q };
   const d = await api("GET", "/api/purchase-orders?" + qs(q));
@@ -8737,7 +8739,7 @@ PAGES.industry = async (view) => {
     if (!dm.empty) return uiAlert(L2("These books already hold data, so a demo can't be loaded here — demo data only goes into empty books. To try it, use a new company (or back up, then erase the data in Settings → System).", "هذه الدفاتر بها بيانات، لذا لا يمكن تحميل بيانات تجريبية هنا — تُحمَّل في دفاتر فارغة فقط. للتجربة استخدم شركة جديدة (أو خذ نسخة احتياطية ثم امسح البيانات من الإعدادات ← النظام)."));
     if (!await demoWarn(k)) return;
     el.disabled = true; el.textContent = L2("Loading…", "جارٍ التحميل…");
-    try { await api("POST", "/api/demo", { industry: k, confirmed: true }); await refreshBoot(); toast(L2("Demo loaded", "تم تحميل البيانات التجريبية")); location.hash = "#/dashboard"; }
+    try { await api("POST", "/api/demo", { industry: k, confirmed: true, lang: S.lang }); await refreshBoot(); toast(L2("Demo loaded", "تم تحميل البيانات التجريبية")); location.hash = "#/dashboard"; }
     catch (e) { fail(e); el.disabled = false; } };
   const ed = can("settings.menus", "edit");
   S.H.indapply = async el => { const k = el.dataset.k, ty = d.types.find(x => x.key === k);

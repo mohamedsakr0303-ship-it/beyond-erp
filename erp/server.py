@@ -217,7 +217,7 @@ def bootstrap(ctx):
                          "default_wht FROM parties ORDER BY name"),
         "contact_categories": list(acc.CONTACT_CATEGORIES),
         "offer_types": [{"id": t["id"], "name": t["name"]} for t in db.q("SELECT id, name FROM offer_types ORDER BY id")],
-        "enums": {"billing_bases": acc.BILLING_BASES, "methods": acc.PAYMENT_METHODS,
+        "enums": {"billing_bases": acc.BILLING_BASES, "methods": countries.methods(db),
                   "payroll_types": list(acc.PAYROLL_TYPES), "stock_types": acc.STOCK_MOVE_TYPES,
                   "entry_kinds": acc.ENTRY_KINDS + sorted({k for k in entries.kinds(db) if k not in acc.ENTRY_KINDS}),
                   "subtypes": SUBTYPES, "modules": MODULES,
@@ -248,7 +248,7 @@ def setup(ctx):
         kind = b.get("business_type") if b.get("business_type") in demo.INDUSTRY_KEYS else None
         if kind:
             industries.apply(ctx.db, kind, True)
-        demo.load(ctx.db, user["username"], industry=kind)
+        demo.load(ctx.db, user["username"], industry=kind, lang=b.get("language") if b.get("language") in ("en", "ar") else "en")
     return ctx.with_session(ok({"user": user}), token)
 
 
@@ -4393,7 +4393,9 @@ def template_sheet(ctx):
         from . import demo
         from .db import Database
         ind = ctx.q.get("industry") if ctx.q.get("industry") in demo.INDUSTRY_KEYS else None
-        demo_rows = (demo.all_sheets(lambda: Database(":memory:")) if name == "Bank Statement Lines" else demo.sheets(ind)).get(name) or []
+        lang = "ar" if ctx.q.get("lang") == "ar" else "en"
+        demo_rows = (demo.all_sheets(lambda: Database(":memory:"), lang) if name == "Bank Statement Lines"
+                     else demo.translate_sheets(demo.sheets(ind), lang)).get(name) or []
     fname = re.sub(r"\W+", "_", name).strip("_") + ("_demo" if demo_rows is not None else "_template")
     if (ctx.q.get("format") or "xlsx") == "csv":
         return download(importkit.template_csv(name, demo_rows), fname + ".csv", "text/csv; charset=utf-8")
@@ -4438,7 +4440,8 @@ def demo_load(ctx):
     kind = ctx.body.get("industry") if ctx.body.get("industry") in demo.INDUSTRY_KEYS else None
     if kind:
         industries.apply(ctx.db, kind, True)
-    r = demo.load(ctx.db, ctx.user["username"], industry=kind)
+    lang = ctx.body.get("lang") if ctx.body.get("lang") in ("en", "ar") else (ctx.db.setting("language") or "en")
+    r = demo.load(ctx.db, ctx.user["username"], industry=kind, lang=lang)    # the same data, in the person's language
     ctx.db.set_setting("onboarding", "done")
     ctx.log("demo.load", json.dumps(r["counts"])[:300])
     return ok(r)
@@ -4448,7 +4451,8 @@ def demo_load(ctx):
 def demo_workbook(ctx):
     from . import demo
     from .db import Database
-    return download(demo.workbook_bytes(lambda: Database(":memory:")), "BEYOND_ERP_Demo_Company.xlsx", XLSX)
+    lang = "ar" if ctx.q.get("lang") == "ar" else "en"
+    return download(demo.workbook_bytes(lambda: Database(":memory:"), lang), "BEYOND_ERP_Demo_Company.xlsx", XLSX)
 
 
 @route("POST", "/api/import-preview/analyze")

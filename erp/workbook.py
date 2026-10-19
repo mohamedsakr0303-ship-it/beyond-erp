@@ -15,6 +15,7 @@ import json
 import re
 
 from . import accounting as acc
+from . import countries
 from .db import SUBTYPES, to_major
 from .interchange import FIRST_DATA_ROW, HEADER_ROW, POSTING_SHEETS, ROLE, SHEET_BY_NAME, SHEETS, export_data, input_cols
 
@@ -291,7 +292,8 @@ def build_workbook(db, template=False, data=None, hide=None, lang="en", extend=N
         for i, c in enumerate(cols, start=1):
             rng = f"{L(i)}{FIRST_DATA_ROW}:{L(i)}{max(last, FIRST_DATA_ROW + 200)}"
             if c.get("choices"):
-                src = list_range(f"{s['name']}.{c['key']}", c["choices"])
+                ch = countries.methods(db) if c["choices"] is acc.PAYMENT_METHODS else c["choices"]   # the country's own methods
+                src = list_range(f"{s['name']}.{c['key']}", ch)
                 dv = DataValidation(type="list", formula1=src, allow_blank=True)
             elif c["kind"] == "acct":
                 dv = DataValidation(type="list", formula1=f"'Chart of Accounts'!$A${FIRST_DATA_ROW}:$A$3000",

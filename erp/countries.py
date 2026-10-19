@@ -52,8 +52,19 @@ STYLES = ("contract_actual", "simple")
 
 # what is known per country, beyond the facts in COUNTRIES
 PROFILES = {
-    "EG": {"invoice_style": "contract_actual", "e_invoice": "eta", "boq_notes": branding.DEFAULT_BOQ_NOTES},
+    "EG": {"invoice_style": "contract_actual", "e_invoice": "eta", "boq_notes": branding.DEFAULT_BOQ_NOTES,
+           "methods": ["Instapay"]},
 }
+# payment methods that exist only in some countries (still accepted everywhere, so older records keep their value)
+LOCAL_METHODS = {m for p in PROFILES.values() for m in p.get("methods", [])}
+
+
+def methods(db):
+    """The payment methods offered on screens and templates: the universal ones plus the company country's own."""
+    from . import accounting as acc
+    code = (db.setting("country", "") or "").upper()
+    extra = PROFILES.get(code, {}).get("methods", [])
+    return [m for m in acc.PAYMENT_METHODS if m not in LOCAL_METHODS or m in extra]
 
 
 def listing():

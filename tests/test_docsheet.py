@@ -193,5 +193,37 @@ class MyDayAttendance(unittest.TestCase):
         self.assertEqual(db.one("SELECT status FROM attendance WHERE employee_id=?", (eid,))["status"], "leave")
 
 
+
+class UniversalDemoAndMethods(unittest.TestCase):
+    def test_local_payment_method_only_in_its_country(self):
+        db = Database(":memory:")
+        self.assertNotIn("Instapay", countries.methods(db))
+        db.set_setting("country", "EG")
+        self.assertIn("Instapay", countries.methods(db))
+        self.assertIn("Instapay", a.PAYMENT_METHODS)          # older records keep their value
+
+    def test_demo_is_universal_and_translated(self):
+        from erp import demo, interchange
+        from erp.demo_ar import AR
+        choices = {str(x) for sh in interchange.SHEETS for c in sh["cols"] for x in (c.get("choices") or [])}
+        self.assertEqual(sorted(set(AR) & choices), [])       # codes and choices are never translated
+        text = open(Path(__file__).resolve().parent.parent / "erp" / "demo.py", encoding="utf-8").read()
+        for local in ("Cairo", "Giza", "Nile", "Egypt", "Zamalek", "Fahmy", "+20 "):
+            self.assertNotIn(local, text)
+        en, ar = Database(":memory:"), Database(":memory:")
+        demo.load(en)
+        demo.load(ar, lang="ar")
+        names = lambda db: [r["name"] for r in db.q("SELECT name FROM parties ORDER BY id")]  # noqa: E731
+        self.assertEqual(len(names(en)), len(names(ar)))
+        self.assertIn("James Carter", names(en))
+        self.assertIn(AR["James Carter"], names(ar))
+        self.assertEqual(ar.setting("company_name"), AR[en.setting("company_name")])
+        for db in (en, ar):
+            self.assertEqual([c["check"] for c in a.audit(db) if not c["ok"]], [])
+        tb = lambda db: round(sum(r["n"] for r in db.q("SELECT SUM(debit-credit) n FROM journal_lines GROUP BY account")), 2)  # noqa: E731
+        self.assertEqual(a.income_statement(en)["net_profit"], a.income_statement(ar)["net_profit"])    # the same numbers
+        self.assertEqual(tb(en), tb(ar))
+
+
 if __name__ == "__main__":
     unittest.main()

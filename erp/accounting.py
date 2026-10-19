@@ -1989,11 +1989,11 @@ def save_party(db, d, party_id=None):
     if v["type"] not in ("customer", "supplier", "both", "employee", "other"):
         v["type"] = _CATEGORY_TYPE.get(v["category"], "other" if v["category"] else "customer")
     v["receiver_type"] = v["receiver_type"] if v["receiver_type"] in ("B", "P", "F") else "B"
-    v["country"] = (v["country"] or "EG").upper()[:2]
+    v["country"] = (v["country"] or db.setting("country", "") or "EG").upper()[:2]     # the company's own country by default
     if v["tax_id"] and v["receiver_type"] == "B" and v["country"] == "EG" and not re.fullmatch(r"\d{9}", v["tax_id"]):
         raise ValidationError("An Egyptian tax registration number has 9 digits")
-    if v["national_id"] and not re.fullmatch(r"\d{14}", v["national_id"]):
-        raise ValidationError("A national ID has 14 digits")
+    if v["national_id"] and v["country"] == "EG" and not re.fullmatch(r"\d{14}", v["national_id"]):
+        raise ValidationError("An Egyptian national ID has 14 digits")
     for k in ("default_vat", "default_wht"):
         if v[k]:
             tax_code(db, v[k], "vat" if k == "default_vat" else "wht")
