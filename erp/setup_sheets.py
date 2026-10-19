@@ -44,8 +44,9 @@ def _specs(C):
                  + [C("insured", "Insured", "مؤمن عليه", width=7, choices=["Yes", "No"]),
                     C("insurable_wage", "Insurable Wage (blank = basic + allowances)", "أجر الاشتراك", kind="money"),
                     C("insurance_no", "Insurance No.", "الرقم التأميني", width=12), C("taxed", "Salary Tax", "ضريبة كسب العمل", width=7, choices=["Yes", "No"]),
-                    C("method", "Paid By", "طريقة الصرف", choices=acc.PAYMENT_METHODS), C("bank_account", "Bank / InstaPay", "الحساب", width=16),
-                    C("phone", "Mobile", "الموبايل", width=12), C("status", "Status", "الحالة", width=7, choices=["active", "left"]),
+                    C("method", "Paid By", "طريقة الصرف", choices=acc.PAYMENT_METHODS), C("bank_account", "Bank / wallet", "الحساب", width=16),
+                    C("phone", "Mobile", "الموبايل", width=12), C("username", "App user", "مستخدم التطبيق", width=14,
+                                                                   note="The person's sign-in name: their start / end of day fills their attendance"), C("status", "Status", "الحالة", width=7, choices=["active", "left"]),
                     C("notes", "Notes", "ملاحظات", width=18)]},
         {"name": "Payroll Run", "ar": "مسير الرواتب", "module": "payroll", "setup": True,
          "title": "One row per employee per month. Monthly staff: type unpaid absent days; daily / hourly / piece: the days, hours or units. "

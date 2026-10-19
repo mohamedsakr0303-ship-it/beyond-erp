@@ -150,5 +150,48 @@ class Country(unittest.TestCase):
         self.assertEqual(a.get_extract(db, xid)["total"], 200)
 
 
+
+class LoanStatus(unittest.TestCase):
+    def test_imported_open_loan_counts_in_totals(self):
+        from erp import loans
+        db = Database(":memory:")
+        acc = {k: v for k, v in loans.default_accounts(db, "lent").items() if k in ("account", "interest_account", "accrued_account")}
+        loans.import_rows(db, [{**acc, "code": "LN-1", "direction": "lent", "party": "P", "start_date": "2026-10-07",
+                                "principal": 18000000, "opening_balance": 16500000, "opening_date": "2026-10-07", "status": "open",
+                                "interest_type": "none", "schedule": "[]"}])
+        self.assertEqual(db.one("SELECT status FROM loans")["status"], "active")
+        db.x("UPDATE loans SET status='open'")                 # as an older import left it
+        t = loans.register(db)["totals"]["lent"]
+        self.assertEqual((t["count"], t["outstanding"]), (1, 165000))
+        self.assertEqual(len(loans.register(db, state="active")["rows"]), 1)
+
+
+
+class MyDayAttendance(unittest.TestCase):
+    def test_linked_day_fills_attendance_and_delete_clears_it(self):
+        from erp import auth, payroll, workdays
+        db = Database(":memory:")
+        auth.create_user(db, {"username": "worker1", "password": "Pass-word-123"})
+        auth.create_user(db, {"username": "boss", "password": "Pass-word-123"})
+        eid = payroll.save_employee(db, {"name": "Worker", "username": "worker1"})
+        with self.assertRaises(a.ValidationError):
+            payroll.save_employee(db, {"name": "Other", "username": "worker1"})          # one employee per user
+        u = {"username": "worker1"}
+        workdays.start(db, u, {})
+        att = db.one("SELECT * FROM attendance WHERE employee_id=?", (eid,))
+        self.assertEqual((att["status"], att["notes"]), ("present", workdays.MYDAY))
+        wid = workdays.finish(db, u, {"report": "done"})
+        self.assertIsNotNone(workdays.mine(db, u)["employee"])
+        workdays.start(db, {"username": "boss"}, {})                                      # not on the list: kept, no attendance
+        self.assertIsNone(workdays.mine(db, {"username": "boss"})["employee"])
+        self.assertEqual(db.one("SELECT COUNT(*) n FROM attendance")["n"], 1)
+        workdays.delete(db, wid)
+        self.assertIsNone(db.one("SELECT 1 FROM attendance WHERE employee_id=?", (eid,)))
+        # a manager's own attendance entry is never changed by a day
+        db.x("INSERT INTO attendance(date,employee_id,status,hours,notes) VALUES (?,?,?,?,?)", (a.today(), eid, "leave", 0, "approved leave"))
+        workdays.start(db, u, {})
+        self.assertEqual(db.one("SELECT status FROM attendance WHERE employee_id=?", (eid,))["status"], "leave")
+
+
 if __name__ == "__main__":
     unittest.main()

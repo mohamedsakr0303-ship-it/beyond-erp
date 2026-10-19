@@ -42,6 +42,8 @@ button,input,select,textarea{font:inherit;color:inherit}
 .g4{grid-template-columns:repeat(4,minmax(0,1fr))}.g6{grid-template-columns:repeat(6,minmax(0,1fr))}
 .span2{grid-column:span 2}.spanall{grid-column:1/-1}
 label.f,div.f{display:flex;flex-direction:column;gap:4px;font-size:.78em;color:var(--muted);font-weight:600}
+/* side-by-side fields: a label stays on one line so the boxes in a row line up (the full text shows on hover) */
+@media (min-width:561px){.grid>label.f>.fl,.grid>div.f>.fl{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
 label.f.chk,div.f.chk{flex-direction:row;align-items:center;gap:8px;font-size:.85em;justify-self:start;width:fit-content;max-width:100%}
 input,select,textarea{background:var(--input);border:1px solid var(--line);border-radius:8px;padding:8px 10px;width:100%;min-width:0}
 input[type=checkbox]{width:auto}

@@ -1196,8 +1196,8 @@ class LegacyJournalWorkbook(unittest.TestCase):
         ws.title = "Master Project Register"
         ws.append(["Project ID", "Client Name", "Project Type", "Location", "Total Area (Sqm)", "Start Date", "Status",
                    "Total Contract Value", "Billing Basis / Fee Type", "Supervision Fee %"])
-        ws.append(["PRJ-2026-002", "Villa B", "Villa", "Palm Hills", 950, "2026-09-17", "In Progress", 0, "Measured (BOQ rates)", 0.5757])
-        ws.append(["PRJ-2026-003", "Flat C", "Flat", "Cairo", 100, "2026-09-20", "In Progress", 0, "Cost-Plus %", 0.25])
+        ws.append(["PRJ-2026-002", "Villa B", "Villa", "Site A", 950, "2026-09-17", "In Progress", 0, "Measured (BOQ rates)", 0.5757])
+        ws.append(["PRJ-2026-003", "Flat C", "Flat", "Site B", 100, "2026-09-20", "In Progress", 0, "Cost-Plus %", 0.25])
         ca = wb.create_sheet("Cost Allocation")
         ca.append(["BEYOND DESIGN | COST ALLOCATION RULES"])
         ca.append(["Allocation rule", "Billable to client?", "Pooled amount (from journal)", "PRJ-2026-002", "PRJ-2026-003"])
@@ -1216,11 +1216,11 @@ class LegacyJournalWorkbook(unittest.TestCase):
             gj.append(r)
         reg = wb.create_sheet("Invoice Register")
         reg.append(["Invoice No", "Date", "Project", "Client", "Location", "Type", "Status", "Gross this invoice", "Posted to journal?"])
-        reg.append(["Invoice 01", "2026-09-23", "PRJ-2026-002", "Villa B", "Palm Hills", "Interim", "Draft", 3500, "No — draft"])
+        reg.append(["Invoice 01", "2026-09-23", "PRJ-2026-002", "Villa B", "Site A", "Interim", "Draft", 3500, "No — draft"])
         inv = wb.create_sheet("Invoice 1")
         inv.append(["BEYOND DESIGN", None, "23/9/2026", "التاريخ"])
         inv.append(["Villa B", "المشروع"])
-        inv.append(["Palm Hills", "الموقع"])
+        inv.append(["Site A", "الموقع"])
         inv.append(["Invoice  01", "الاصدار"])
         inv.append(["1- أعمال الهدم والبناء"])
         inv.append(["م", "البيان", "الوحدة", "الكميه بالعقد", "المنفذ فعلي", "السعر", "الاجمالي بالعقد", "الإجمالي الفعلي"])
@@ -1278,7 +1278,7 @@ class LegacyJournalWorkbook(unittest.TestCase):
         ng.append(["Date", "Deal Ref", "Project", "Vendor / subcontractor", "What was negotiated", "Quoted", "Settled at", "Saving", "Treatment"])
         ng.append(["2026-03-02", "HANI-2", "PRJ-2026-001", "Hani", "Tiles", 15000, 14000, 1000, "Keep — bill the client the quoted price"])
         do = wb.create_sheet("Design Offer")
-        for k, v in (("Date", "2026-10-07"), ("Client", "Mr. Aly Amr"), ("Project / unit", "Muruj"), ("Scope line 1", "Layout"),
+        for k, v in (("Date", "2026-10-07"), ("Client", "Client name"), ("Project / unit", "Unit 1"), ("Scope line 1", "Layout"),
                      ("Total cost", 60000), ("Discount", 10000), ("Advance %", 0.6), ("After renders %", 0.2), ("After approval %", 0.2)):
             do.append([None, k, v])
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
@@ -1291,7 +1291,7 @@ class LegacyJournalWorkbook(unittest.TestCase):
                          [("HANI-2", 15000, 1000, "keep")])
         from erp import documents
         offers = documents.list_offers(db)
-        self.assertEqual([(o["client"], documents.offer_totals(documents.pricing(o))["net"]) for o in offers], [("Mr. Aly Amr", 50000)])
+        self.assertEqual([(o["client"], documents.offer_totals(documents.pricing(o))["net"]) for o in offers], [("Client name", 50000)])
         tb = {r["code"]: round(r["debit"] - r["credit"], 2) for r in a.trial_balance(db)["rows"]}
         self.assertEqual((tb.get("1331"), tb.get("1330")), (180000, None))
         self.assertEqual(db.one("SELECT name FROM accounts WHERE code='1331'")["name"], "Partner loans — owed by partners (سلف الشركاء)")
@@ -2191,7 +2191,7 @@ class LiveWorkInProgress(unittest.TestCase):
     def test_cost_plus_drafts_and_funding_account(self):
         db = Database(":memory:")
         db.x("INSERT INTO business_units(code,name,basis,fee_pct,wip_mode) VALUES ('CP','O West','Cost-Plus %',0.25,'cost_plus'),"
-             "('MS','Palm','Fixed Price',0,'drafts'),('NO','Plain','Cost-Plus %',0.25,'')")
+             "('MS','Site A','Fixed Price',0,'drafts'),('NO','Plain','Cost-Plus %',0.25,'')")
         db.x("INSERT INTO partners(name,default_share) VALUES ('Funder',1)")
         db.set_setting("funding_partner", "Funder")
         fund = db.acct("funding_partner")
@@ -2860,8 +2860,8 @@ class Documents(unittest.TestCase):
 class Taxes(unittest.TestCase):
     def setUp(self):
         self.db = seeded()
-        a.save_party(self.db, {"name": "Client Co", "type": "customer", "tax_id": "123456789", "governate": "Cairo",
-                               "region": "Nasr City", "street": "Makram Ebeid", "building": "5"})
+        a.save_party(self.db, {"name": "Client Co", "type": "customer", "tax_id": "123456789", "governate": "Metro",
+                               "region": "Uptown", "street": "Main Street", "building": "5"})
 
     def test_purchase_vat_and_withholding(self):
         a.record_project_cost(self.db, {"bu_code": "PRJ-1", "description": "tiles", "vendor": "TileCo", "qty": 1,
@@ -2896,10 +2896,10 @@ class EInvoice(unittest.TestCase):
     def test_document_and_serialization(self):
         from erp import einvoice
         db = seeded()
-        a.save_party(db, {"name": "Client Co", "tax_id": "123456789", "governate": "Cairo", "region": "Nasr",
+        a.save_party(db, {"name": "Client Co", "tax_id": "123456789", "governate": "Metro", "region": "Nasr",
                           "street": "X", "building": "1"})
-        for k, v in {"company_tax_id": "987654321", "eta_activity_code": "4330", "eta_governate": "Giza",
-                     "eta_region": "Dokki", "eta_street": "Y", "eta_building": "2",
+        for k, v in {"company_tax_id": "987654321", "eta_activity_code": "4330", "eta_governate": "Metro",
+                     "eta_region": "Central District", "eta_street": "Y", "eta_building": "2",
                      "eta_default_item_code": "EG-987654321-1"}.items():
             db.set_setting(k, v)
         x = a.save_extract(db, {"bu_code": "PRJ-1", "number": "INV-E", "customer": "Client Co", "date": "2026-03-01",
@@ -4513,7 +4513,7 @@ class UniversalTemplates(unittest.TestCase):
         db = Database(":memory:")
         db.set_setting("company_name", "Acme Interiors")
         db.set_setting("company_tagline", "Fit-out")
-        db.set_setting("company_address", "1 Nile St")
+        db.set_setting("company_address", "1 Main St")
         branding.set_asset(db, "logo", {"mime": "image/png", "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg=="})
         return db
 
@@ -4540,7 +4540,7 @@ class UniversalTemplates(unittest.TestCase):
         p.write_bytes(x)
         interchange.import_data(db, interchange.read_xlsx(p))
         self.assertEqual((db.setting("company_name"), db.setting("company_tagline"), db.setting("company_address")),
-                         ("Acme Interiors", "Fit-out", "1 Nile St"))
+                         ("Acme Interiors", "Fit-out", "1 Main St"))
 
     def test_own_identity_when_chosen(self):
         from erp import branding, workbook
@@ -4756,7 +4756,7 @@ class Healthcare(unittest.TestCase):
                                               "provider_pct": 40, "consumables": [{"item": "GLV", "qty": 2}]})
         self.home = care.save_service(self.db, {"name": "Nursing shift", "category": "nursing", "price": 900, "covered": False, "provider_pct": 70})
         self.ins = care.save_patient(self.db, {"name": "Insured Ina", "payer": "insurer", "insurer": "Demo TPA", "coverage_pct": 80})
-        self.cash = care.save_patient(self.db, {"name": "Cash Cal", "zone": "Maadi", "address": "1 Nile St"})
+        self.cash = care.save_patient(self.db, {"name": "Cash Cal", "zone": "South District", "address": "1 Main St"})
 
     def bal(self, code, party=None):
         """Debit balance of an account (of one party on it)."""
@@ -4809,7 +4809,7 @@ class Healthcare(unittest.TestCase):
         vid = c.save_visit(self.db, {"date": "2026-02-03", "patient_id": self.cash, "provider": "Nurse B", "place": "home", "travel_fee": 150,
                                      "bu_id": self.bu, "lines": [{"service_id": self.home, "qty": 1}]}, "boss")
         v = c.visit(self.db, vid)
-        self.assertEqual((v["patient_amt"], v["zone"], v["address"]), (1050, "Maadi", "1 Nile St"))
+        self.assertEqual((v["patient_amt"], v["zone"], v["address"]), (1050, "South District", "1 Main St"))
         c.set_status(self.db, vid, "done", {"check_in": "20:00", "time": "08:00"})
         self.assertEqual(c.visit(self.db, vid)["hours"], 12)          # an overnight shift
         c.bill_visit(self.db, vid, {"paid": 50}, "boss")

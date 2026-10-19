@@ -63,28 +63,28 @@ def sheets(industry=None):
     S = {}
     S["Settings"] = [{"key": "default:company_name", "value": "Nile Demo Co."},
                      {"key": "default:company_tagline", "value": "Interiors · Contracting · Equipment rental · Real estate"},
-                     {"key": "default:company_address", "value": "12 Demo Street, New Cairo"},
+                     {"key": "default:company_address", "value": "12 Demo Street, East District"},
                      {"key": "default:company_phone", "value": "+20 100 000 0000"},
                      {"key": "default:company_legal_name", "value": "Nile Demo Co. (fictitious)"},
                      {"key": "default:company_tax_id", "value": "999888777"}]
     S["Business Units"] = [
-        {"code": "PRJ-D01", "name": "Villa 7 — Mr. Karim Fahmy", "type": "Villa", "location": "New Cairo", "area": 420,
+        {"code": "PRJ-D01", "name": "Villa 7 — Mr. Karim Fahmy", "type": "Villa", "location": "East District", "area": 420,
          "start_date": d(0, 3), "status": "In Progress", "basis": "Cost-Plus %", "fee_pct": 0.25, "overhead_pct": 0.35,
          "customer": "Karim Fahmy"},
-        {"code": "PRJ-D02", "name": "Apartment 14 — Ms. Laila Samir", "type": "Apartment", "location": "Sheikh Zayed", "area": 180,
+        {"code": "PRJ-D02", "name": "Apartment 14 — Ms. Laila Samir", "type": "Apartment", "location": "West District", "area": 180,
          "start_date": d(1, 1), "status": "In Progress", "basis": "Fixed Price", "contract_value": 950000, "overhead_pct": 0.3,
          "customer": "Laila Samir"},
-        {"code": "PRJ-D03", "name": "Office fit-out — Delta Tech", "type": "Office", "location": "Smart Village", "area": 600,
+        {"code": "PRJ-D03", "name": "Office fit-out — Delta Tech", "type": "Office", "location": "Business Park", "area": 600,
          "start_date": d(2, 10), "status": "In Progress", "basis": "Flexible / Settled", "overhead_pct": 0.2,
          "customer": "Delta Tech Solutions"},
-        {"code": "SALES-01", "name": "Nile Residence — units for sale", "type": "Real estate", "location": "6th of October",
+        {"code": "SALES-01", "name": "Harbour Residence — units for sale", "type": "Real estate", "location": "North District",
          "start_date": d(0, 1), "status": "In Progress", "basis": "Fixed Price", "overhead_pct": 0.15}]
     S["Parties"] = [
         {"name": "Karim Fahmy", "type": "customer", "category": "customer", "receiver_type": "P", "national_id": "28501011234567",
-         "phone": "01000000101", "governate": "Cairo", "region": "New Cairo"},
+         "phone": "01000000101", "governate": "Metro", "region": "East District"},
         {"name": "Laila Samir", "type": "customer", "category": "customer", "receiver_type": "P", "phone": "01000000102"},
         {"name": "Delta Tech Solutions", "type": "customer", "category": "customer", "receiver_type": "B", "tax_id": "100200300",
-         "governate": "Giza", "region": "Smart Village", "street": "Building B2", "building": "2", "default_vat": "VAT14",
+         "governate": "Metro", "region": "Business Park", "street": "Building B2", "building": "2", "default_vat": "VAT14",
          "default_wht": "WHT1-C", "email": "finance@deltatech.example"},
         {"name": "Atlas Builders", "type": "customer", "category": "customer", "receiver_type": "B", "tax_id": "200300400",
          "phone": "01000000104"},
@@ -96,7 +96,7 @@ def sheets(industry=None):
         {"name": "Osama Mahmoud", "type": "supplier", "category": "driver", "phone": "01000000205", "vehicle": "Jumbo — DEMO 123"},
         {"name": "Spark Electric", "type": "supplier", "category": "technician", "phone": "01000000206", "specialty": "Electrical"},
         {"name": "Steelform Scaffolding", "type": "supplier", "category": "supplier", "phone": "01000000207"},
-        {"name": "Cairo Power Co.", "type": "supplier", "category": "supplier"},
+        {"name": "City Power Co.", "type": "supplier", "category": "supplier"},
         {"name": "Mona Adel", "type": "customer", "category": "customer", "receiver_type": "P", "phone": "01000000301"},
         {"name": "Tamer Nabil", "type": "customer", "category": "customer", "receiver_type": "P", "phone": "01000000302"}]
     S["Partners"] = [{"name": "Hossam Adel", "default_share": 0.5, "active": "Yes", "joined": d(0, 1)},
@@ -108,7 +108,7 @@ def sheets(industry=None):
         {"date": d(0, 1), "partner": "Omar Fouad", "type": "Capital Contribution", "amount": 600000, "method": "Bank Transfer"},
         {"date": d(4, 28), "partner": "Sara Kamal", "type": "Owner Drawing", "amount": 30000, "method": "Bank Transfer",
          "memo": "Interim drawing"}]
-    S["Warehouses"] = [{"name": "Site Store — Villa 7", "location": "New Cairo"}]
+    S["Warehouses"] = [{"name": "Site Store — Villa 7", "location": "East District"}]
     S["Stock Items"] = [{"name": "Ceramic tiles 60x60", "unit": "m2", "sku": "CT-6060", "reorder_level": 50},
                         {"name": "Cement bag 50kg", "unit": "bag", "sku": "CEM-50", "reorder_level": 40},
                         {"name": "Wall paint 18L", "unit": "drum", "sku": "PNT-18", "reorder_level": 5},
@@ -154,7 +154,7 @@ def sheets(industry=None):
            ("Electrical", "7.1", "Electrical point", "point", 60, 585),
            ("Plumbing", "8.1", "Plumbing point", "point", 18, 845)]
     S["BOQ Lines"] = [{"title": "BOQ — Apartment 14", "bu_code": "PRJ-D02", "rev": "Rev 01", "date": d(1, 1), "client": "Laila Samir",
-                       "location": "Sheikh Zayed", "category": c, "item_no": n, "description": t, "unit": u, "qty": q, "price": p}
+                       "location": "West District", "category": c, "item_no": n, "description": t, "unit": u, "qty": q, "price": p}
                       for c, n, t, u, q, p in boq]
     S["Sales Invoices"] = [
         {"number": "INV-D001", "date": d(2, 28), "bu_code": "PRJ-D02", "boq_title": "BOQ — Apartment 14", "status": "Posted",
@@ -196,7 +196,7 @@ def sheets(industry=None):
          for m in range(0, 4)] +
         [{"date": d(m, 17), "account": "6020", "description": "Design software subscription", "vendor": "SoftDemo", "amount": 2200,
           "method": "Credit Card"} for m in range(0, 5)] +
-        [{"date": d(m, 12), "account": "6040", "description": f"Electricity {d(m, 1)[:7]}", "vendor": "Cairo Power Co.",
+        [{"date": d(m, 12), "account": "6040", "description": f"Electricity {d(m, 1)[:7]}", "vendor": "City Power Co.",
           "amount": 1800 + 150 * m} for m in range(0, 5)] +
         [{"date": d(1, 15), "account": "6030", "description": "Social media campaign", "vendor": "AdsDemo", "amount": 15000},
          {"date": d(3, 25), "account": "6060", "description": "Legal & audit retainer", "vendor": "Demo Accountants", "amount": 12000,
@@ -241,9 +241,9 @@ def sheets(industry=None):
         {"date": d(3, 28), "type": "Adjustment", "warehouse": "Main Store", "item": "Cement bag 50kg", "counted": 115, "qty": 1,
          "note": "Monthly count — 5 bags damaged"}]
     S["Journal Vouchers"] = [
-        {"voucher": "JV-D00", "date": d(0, 1), "kind": "Journal Voucher", "memo": "Nile Residence units completed — held for sale at cost",
+        {"voucher": "JV-D00", "date": d(0, 1), "kind": "Journal Voucher", "memo": "Harbour Residence units completed — held for sale at cost",
          "account": "1210", "debit": 9400000},
-        {"voucher": "JV-D00", "date": d(0, 1), "kind": "Journal Voucher", "party": "Demo Bank", "memo": "Development finance for Nile Residence",
+        {"voucher": "JV-D00", "date": d(0, 1), "kind": "Journal Voucher", "party": "Demo Bank", "memo": "Development finance for Harbour Residence",
          "account": "2400", "credit": 9400000},
         {"voucher": "JV-D0C", "date": d(0, 2), "kind": "Journal Voucher", "memo": "Cash withdrawn for site expenses", "account": "1010", "debit": 200000},
         {"voucher": "JV-D0C", "date": d(0, 2), "kind": "Journal Voucher", "memo": "Cash withdrawn for site expenses", "account": "1020", "credit": 200000},
@@ -361,7 +361,7 @@ def sheets(industry=None):
         {"name": "Office rent {month}", "doc_type": "expense", "start": eom(4), "every": 1, "unit": "month", "month_end": "Yes",
          "mode": "auto", "amount": 25000, "description": "Office rent {month}", "account": "6010", "party": "Demo Properties"},
         {"name": "Electricity", "doc_type": "expense", "start": d(5, 12), "unit": "month", "mode": "review", "amount": 2600,
-         "description": "Electricity {month}", "account": "6040", "party": "Cairo Power Co."},
+         "description": "Electricity {month}", "account": "6040", "party": "City Power Co."},
         {"name": "Monthly depreciation", "doc_type": "depreciation", "start": eom(5), "unit": "month", "month_end": "Yes", "mode": "auto"},
         {"name": "Accrued audit fee", "doc_type": "journal", "start": eom(4), "unit": "month", "every": 3, "month_end": "Yes", "mode": "auto",
          "amount": 4000, "description": "Audit fee accrual {month}", "account": "6060", "credit_account": "2030"}]
@@ -527,7 +527,7 @@ PROFILES = {
               "codes": {"Products": {"G-TILE", "G-SAN", "S-DES"}, "Service Plans": {"SP-D03"}, "Purchase Requests": {"PR-D002"},
                         "Warehouses": set(), "Journal Vouchers": {"JV-D0C", "JV-D01"},
                         "Fixed Assets": {"FA-D01", "FA-D03"}},
-              "rename": {"SALES-01": ("Showroom — Nasr City", "Branch")},
+              "rename": {"SALES-01": ("Showroom — Uptown", "Branch")},
               "budget": {"4025", "6010", "6020", "6040", "6030"}},
     "scaffolding": {"name": "Nile Scaffolding (demo)", "tagline": "Scaffolding · Hoists · Cradles — rental",
                     "bus": set(), "drop": _PROJECT_SHEETS + _SHOP_SHEETS + _STOCK_SHEETS + ["Employees", "Attendance"],
@@ -546,10 +546,10 @@ PROFILES = {
                 "rename": {"PRJ-D03": ("Client work — Delta Tech", "Client account")},
                 "budget": {"6010", "6020", "6040", "6030"}},
     "healthcare": {"name": "Nile Care Clinics (demo)", "tagline": "Outpatient clinics · Lab · Radiology · Physiotherapy",
-                   "bus": {"CL-MAADI", "CL-NASR"}, "drop": _CARE_DROP, "codes": {"Journal Vouchers": {"JV-D0C", "JV-D01"}},
+                   "bus": {"CL-SOUTH", "CL-UPTOWN"}, "drop": _CARE_DROP, "codes": {"Journal Vouchers": {"JV-D0C", "JV-D01"}},
                    "budget": {"6010", "6020", "6040", "6030"}},
     "homecare": {"name": "Nile Home Care (demo)", "tagline": "Doctors, nurses & physiotherapy at home · Elderly care",
-                 "bus": {"HC-CAIRO", "HC-GIZA"}, "drop": _CARE_DROP, "codes": {"Journal Vouchers": {"JV-D0C", "JV-D01"}},
+                 "bus": {"HC-EAST", "HC-WEST"}, "drop": _CARE_DROP, "codes": {"Journal Vouchers": {"JV-D0C", "JV-D01"}},
                  "budget": {"6010", "6020", "6040", "6030"}},
 }
 INDUSTRY_KEYS = list(PROFILES)
@@ -560,9 +560,9 @@ def _extra(S, key, d, eom):
     if key in ("healthcare", "homecare"):
         home = key == "homecare"
         S["Business Units"] = [{"code": c, "name": n, "type": "Branch", "location": loc, "start_date": d(0, 1), "status": "In Progress"}
-                               for c, n, loc in ((("HC-CAIRO", "Home care — Cairo", "Maadi office"), ("HC-GIZA", "Home care — Giza", "Dokki"))
-                                                 if home else (("CL-MAADI", "Clinic — Maadi", "Maadi"), ("CL-NASR", "Clinic — Nasr City", "Nasr City")))]
-        S["Warehouses"] = [{"name": "Main Store", "location": "Maadi"}]
+                               for c, n, loc in ((("HC-EAST", "Home care — East", "South District office"), ("HC-WEST", "Home care — West", "Central District"))
+                                                 if home else (("CL-SOUTH", "Clinic — South District", "South District"), ("CL-UPTOWN", "Clinic — Uptown", "Uptown")))]
+        S["Warehouses"] = [{"name": "Main Store", "location": "South District"}]
         S["Stock Items"] = [{"name": n, "unit": u, "sku": k, "reorder_level": r} for k, n, u, r in _CARE_ITEMS]
         S["Stock Moves"] = [{"date": d(m, 1), "type": "Receipt", "warehouse": "Main Store", "item": n, "unit": u, "qty": q, "rate": rt,
                              "vendor": "Pharma Supplies Co. (demo)", "paid": round(q * rt * (1 if m == 0 else 0.5), 2)}
@@ -637,11 +637,11 @@ def _extra(S, key, d, eom):
                 r.update(start_date=d(1, 15), quote_date=d(1, 5), duration_months=6, po_number="PO-DT-310",
                          signed_client="Eng. Samy (Delta Tech)", signed_us="Hossam Adel")
         S["Rental Contracts"] += (
-            [{"ref": "R3", "client": "Atlas Builders", "site": "Villas cluster C", "site_location": "Sheikh Zayed", "quote_date": d(0, 5),
+            [{"ref": "R3", "client": "Atlas Builders", "site": "Villas cluster C", "site_location": "West District", "quote_date": d(0, 5),
               "start_date": d(0, 12), "duration_months": 8, "min_days": 30, "line_kind": "item", "item": it, "qty": q, "rate": rt,
               "po_number": "PO-ATL-52", "signed_client": "Eng. Hany (Atlas)", "signed_us": "Hossam Adel"}
              for it, q, rt in (("SC-FRM2", 150, 60), ("SC-BRD36", 60, 25), ("SC-CLF", 250, 5), ("SC-CLS", 250, 5), ("SC-TUB6", 100, 30))] +
-            [{"ref": "R4", "client": "Delta Tech Solutions", "site": "Branch façade", "site_location": "Maadi", "quote_date": d(0, 15),
+            [{"ref": "R4", "client": "Delta Tech Solutions", "site": "Branch façade", "site_location": "South District", "quote_date": d(0, 15),
               "start_date": d(0, 20), "duration_months": 6, "line_kind": "item", "item": "CR-MOT", "qty": 1, "rate": 12000,
               "po_number": "PO-DT-288", "signed_client": "Eng. Samy (Delta Tech)", "signed_us": "Hossam Adel"}])
         for r in S["Operating Expenses"] + S["Recurring Entries"]:      # a yard, not a design office
@@ -754,13 +754,13 @@ _CARE_SERVICES = {
                  ("Elderly-care nurse — 24-hour shift", "ممرضة رعاية مسنين — 24 ساعة", "nursing", 1600, 0, 70, 1440, 1, [])]}
 _CARE_PEOPLE = {"healthcare": ["Dr. Ahmed Fathy (GP)", "Dr. Nadia Samir (Cardiology)", "Dr. Karim Lotfy (Radiology)", "PT Yasmin Adel", "Nurse Hoda Salem"],
                 "homecare": ["Dr. Ahmed Fathy", "Nurse Hoda Salem", "Nurse Mona Ibrahim", "PT Yasmin Adel", "Carer Samah Ali"]}
-_PATIENTS = [("Mahmoud Abdelaziz", "male", "Maadi", 0, "Diabetic — type 2"), ("Fatma Hassan", "female", "Nasr City", 1, ""),
-             ("Youssef Nabil", "male", "Heliopolis", -1, ""), ("Hala Mostafa", "female", "Dokki", 2, "Allergic to penicillin"),
-             ("Ibrahim El-Sayed", "male", "Mohandessin", 0, "Hypertension"), ("Salma Tarek", "female", "New Cairo", -1, ""),
-             ("Adel Ramzy", "male", "Sheikh Zayed", 1, "Post-surgery — hip replacement"), ("Nermeen Fouad", "female", "Maadi", -1, ""),
-             ("Hassan Mahmoud", "male", "Nasr City", 2, ""), ("Aya Gamal", "female", "Heliopolis", 0, ""),
-             ("Sherif Adly", "male", "Dokki", -1, "Bedridden — stroke"), ("Laila Kamel", "female", "New Cairo", 1, ""),
-             ("Mostafa Zaki", "male", "Mohandessin", -1, ""), ("Rania Saad", "female", "Sheikh Zayed", 0, "Asthma")]
+_PATIENTS = [("Mahmoud Abdelaziz", "male", "South District", 0, "Diabetic — type 2"), ("Fatma Hassan", "female", "Uptown", 1, ""),
+             ("Youssef Nabil", "male", "Airport District", -1, ""), ("Hala Mostafa", "female", "Central District", 2, "Allergic to penicillin"),
+             ("Ibrahim El-Sayed", "male", "Riverside", 0, "Hypertension"), ("Salma Tarek", "female", "East District", -1, ""),
+             ("Adel Ramzy", "male", "West District", 1, "Post-surgery — hip replacement"), ("Nermeen Fouad", "female", "South District", -1, ""),
+             ("Hassan Mahmoud", "male", "Uptown", 2, ""), ("Aya Gamal", "female", "Airport District", 0, ""),
+             ("Sherif Adly", "male", "Central District", -1, "Bedridden — stroke"), ("Laila Kamel", "female", "East District", 1, ""),
+             ("Mostafa Zaki", "male", "Riverside", -1, ""), ("Rania Saad", "female", "West District", 0, "Asthma")]
 
 
 def _care_demo(db, industry, user, a0, today):
@@ -784,7 +784,7 @@ def _care_demo(db, industry, user, a0, today):
     people = _CARE_PEOPLE[industry]
     # who gives which service
     giver = (lambda k: people[[0, 1, 0, 4, 2, 3, 4, 4][k]]) if not home else (lambda k: people[[0, 1, 2, 3, 1, 4, 4][k]])
-    fee = lambda zone: 0 if not home else (150 if zone in ("Maadi", "Dokki", "Mohandessin") else 250)   # noqa: E731
+    fee = lambda zone: 0 if not home else (150 if zone in ("South District", "Central District", "Riverside") else 250)   # noqa: E731
     # prepaid packages: physiotherapy course (and a month of nursing shifts at home)
     physio = sv[5] if not home else sv[3]
     pk = [care.sell_package(db, {"patient_id": pats[6], "service_id": physio, "sessions": 10 if not home else 12,
@@ -814,8 +814,8 @@ def _care_demo(db, industry, user, a0, today):
                     lines.append({"service_id": sv[3], "qty": 1})       # a CBC with the GP visit
                 vid = care.save_visit(db, {"date": day.isoformat(), "time": f"{rnd.choice([9, 10, 11, 12, 13, 17, 18, 19]):02d}:{rnd.choice(['00', '30'])}",
                                            "patient_id": pid, "provider": giver(k), "place": "home" if home else "clinic",
-                                           "bu_id": bus[0] if (not home and p["zone"] in ("Maadi", "Dokki", "Mohandessin", "Sheikh Zayed", "New Cairo"))
-                                           or (home and p["zone"] not in ("Dokki", "Mohandessin", "Sheikh Zayed")) else bus[-1],
+                                           "bu_id": bus[0] if (not home and p["zone"] in ("South District", "Central District", "Riverside", "West District", "East District"))
+                                           or (home and p["zone"] not in ("Central District", "Riverside", "West District")) else bus[-1],
                                            "travel_fee": fee(p["zone"]), "lines": lines}, user)
                 n += 1
                 if st != "booked":

@@ -309,6 +309,7 @@ def status(db, ln, today=None):
 def _row(db, ln, today=None):
     bu = db.one("SELECT code FROM business_units WHERE id=?", (ln["bu_id"],)) if ln["bu_id"] else None
     out = {k: v for k, v in ln.items() if k != "schedule"}
+    out["status"] = "closed" if ln.get("status") == "closed" else "active"
     out.update(principal=to_major(ln["principal"]), opening_balance=to_major(ln["opening_balance"]),
                fixed_interest=to_major(ln["fixed_interest"]), rate_pct=round(ln["rate"] * 100, 6),
                bu_code=bu["code"] if bu else "", **status(db, ln, today))
@@ -651,6 +652,7 @@ def import_rows(db, rows):
             continue
         bu = db.one("SELECT id FROM business_units WHERE code=?", (r.get("bu_code"),)) if r.get("bu_code") else None
         nums = {"principal", "opening_balance", "rate", "fixed_interest", "term_months", "frequency"}
+        r = {**r, "status": "closed" if str(r.get("status") or "").strip().lower() == "closed" else "active"}   # only two states
         vals = [r.get(c) if r.get(c) is not None else (0 if c in nums else "") for c in cols]
         db.conn.execute(f"INSERT OR REPLACE INTO loans({','.join(cols)},bu_id) VALUES ({','.join('?' * len(cols))},?)",
                         vals + [bu["id"] if bu else None])

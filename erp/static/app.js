@@ -1441,7 +1441,7 @@ function form(fields, cols = 2) {
     // an on/off button: only the button itself switches (red = off, green = on)
     else if (f.type === "switch") return `<div class="f sw-field ${f.span || ""}"><span>${esc(f.l)}</span><label class="tgl"><input type="checkbox" role="switch" ${attrs} ${f.v ? "checked" : ""}><span class="sw-ui" aria-hidden="true"><i></i><b class="sw-on">${esc(f.on || L2("On", "مفعّل"))}</b><b class="sw-off">${esc(f.off || L2("Off", "متوقف"))}</b></span></label></div>`;
     else ctl = `<input type="${f.type || "text"}" ${attrs} value="${esc(f.v ?? "")}" ${f.list ? `list="${f.list}"` : ""} ${f.type === "number" ? `step="${f.step || "any"}" inputmode="decimal" class="num"` : ""}>`;
-    return `<label class="f ${f.span || ""}"><span class="fl">${esc(f.l)}${f.req ? `<b class="req" title="${esc(L2("Required", "إلزامي"))}" aria-hidden="true">✱</b>` : ""}</span>${ctl}${f.help ? `<span class="muted" style="font-weight:400">${esc(f.help)}</span>` : ""}</label>`;
+    return `<label class="f ${f.span || ""}"><span class="fl" title="${esc(f.l)}">${esc(f.l)}${f.req ? `<b class="req" title="${esc(L2("Required", "إلزامي"))}" aria-hidden="true">✱</b>` : ""}</span>${ctl}${f.help ? `<span class="muted" style="font-weight:400">${esc(f.help)}</span>` : ""}</label>`;
   }).join("") + `</div>`;
 }
 // ---------------------------------------------------------- file drop zones: drag & drop, paste (Ctrl+V) or the Choose files button
@@ -2495,7 +2495,7 @@ function groupsDrawer(d) {
     ${(d.groups || []).map(g => `<tr><td><input class="in" data-gk="${esc(g.key)}" data-f="${S.lang === "ar" ? "name_ar" : "name"}" value="${esc(S.lang === "ar" ? g.name_ar || "" : g.name)}" ${S.lang === "ar" ? `dir="rtl" placeholder="${esc(g.name)}"` : ""}></td>
       <td class="num">${g.users}</td><td>${g.key === "general" ? "" : `<button type="button" class="btn sm danger" data-a="gdel" data-k="${esc(g.key)}" data-n="${esc(gname(g))}">${esc(t("delete"))}</button>`}</td></tr>`).join("")}</tbody></table></div>
     <h4 style="margin:14px 0 6px">${esc(L2("New group", "مجموعة جديدة"))}</h4>
-    <div class="row" style="gap:8px;flex-wrap:wrap"><input class="in" id="gnew" placeholder="${esc(L2("e.g. Site engineers", "مثال: مهندسو المواقع"))}" style="flex:1;min-width:180px">
+    <div class="row" style="gap:8px;flex-wrap:wrap"><input class="in" id="gnew" placeholder="${esc(L2("e.g. Team name", "مثال: اسم الفريق"))}" style="flex:1;min-width:180px">
       <select id="gcopy"><option value="">${esc(L2("Start empty", "ابدأ فارغة"))}</option>${(d.groups || []).map(g => `<option value="${esc(g.key)}">${esc(L2("Copy of ", "نسخة من "))}${esc(gname(g))}</option>`).join("")}</select></div>`,
     async () => {
       for (const g of d.groups || []) { const inp = $(`[data-gk="${g.key}"]`), v = inp.value.trim();
@@ -2578,7 +2578,7 @@ function buForm(b) {
   drawer((b.id ? t("edit") : t("new")) + " — " + t("m_bus"), form([
     { k: "code", l: t("bu_code"), v: b.code || `PRJ-${today().slice(0, 4)}-${String(S.boot.bus.length + 1).padStart(3, "0")}`, req: 1 }, { k: "name", l: t("bu_name"), v: b.name, req: 1 },
     { k: "type", l: t("bu_type"), v: b.type }, { k: "location", l: t("location"), v: b.location },
-    { k: "grp", l: L2("Project group", "مجموعة المشروعات"), v: b.grp || "", list: "bugroups", help: L2("Optional — e.g. “Villas”; filter the journal by the whole group.", "اختياري — مثل «الفيلات»؛ لفلترة القيود بالمجموعة كلها.") },
+    { k: "grp", l: L2("Project group", "مجموعة المشروعات"), v: b.grp || "", list: "bugroups", help: L2("Optional — e.g. a type of project; filter the journal by the whole group.", "اختياري — مثل نوع من المشروعات؛ لفلترة القيود بالمجموعة كلها.") },
     { k: "area", l: t("area"), type: "number", v: b.area }, { k: "start_date", l: t("start_date"), type: "date", v: b.start_date },
     { k: "status", l: t("status"), type: "select", opts: ["Tendering", "In Progress", "On Hold", "Completed", "Closed"], v: b.status },
     { k: "basis", l: t("basis"), type: "select", opts: S.boot.enums.billing_bases, v: b.basis,
@@ -2772,7 +2772,11 @@ PAGES.extract = async (view, parts) => {
     // paid before: what is typed, else the amount worked out from the books (shown as the placeholder)
     const prev = prevIn && prevIn.value !== "" ? +prevIn.value : (x.prev_auto ? x.prev : +(prevAuto && prevAuto.dataset.v) || 0);
     const earlier = x.receivable_to_date - x.receivable, ded = dedIn ? +dedIn.value || 0 : x.deductions;
-    const fee = x.fee_total || 0;      // fee % per section (set on the invoice screen), as last saved
+    // fee % per section (set on the invoice screen), worked out again from the lines as they are now
+    const fm = x.fees_map || {}, base = {};
+    lines.forEach(l => { const c = l.category || ""; base[c] = (base[c] || 0) + (+l.qty || 0) * (+l.price || 0) * (l.pct === "" ? 1 : +l.pct); });
+    const fee = Object.entries(base).reduce((a, [c, b]) => { const r = fm[c] ?? fm["*"]; return a + (r ? Math.round(b * r * 100) / 100 : 0); }, 0);
+    const fc = $("#xfee", view); if (fc) fc.textContent = money(fee);
     const due = earlier + tot + fee + x.vat - x.wht - prev - ded;
     $("#xtot", view).textContent = money(tot); $("#xtodate", view).textContent = money(earlier + tot + fee); $("#xdue", view).textContent = money(due); };
   const drawLines = () => { $("#xlines", view).innerHTML = `<table><thead><tr><th>#</th><th>${esc(L2("Description of works", "بيان الأعمال"))}</th><th>${t("unit")}</th><th class="num">%</th><th class="num">${esc(L2("Qty", "الكمية"))}</th><th class="num">${esc(L2("Rate", "الفئة"))}</th><th class="num">${esc(L2("Total", "الإجمالي"))}</th><th></th></tr></thead><tbody>
@@ -2817,7 +2821,7 @@ PAGES.extract = async (view, parts) => {
       <div class="card"><h2>${esc(L2("Works on this extract", "أعمال هذا المستخلص"))}</h2><div class="tbl" id="xlines"></div></div>
       ${x.earlier.length ? `<div class="card"><h2>${esc(L2("Earlier extracts on this site (printed above this one)", "مستخلصات سابقة على الموقع (تُطبع قبل هذا)"))}</h2>${x.earlier.map(e => `<div class="row"><a href="#/extract/${e.id}"><b>${esc(e.number)}</b></a> · #${e.seq_no || ""}<span class="spacer"></span>${money(e.total)}</div>`).join("")}</div>` : ""}</div>
     <div><div class="card xsum"><h2>${esc(L2("Totals", "الإجماليات"))}</h2>
-      ${rows(L2("This extract", "هذا المستخلص"), { id: "xtot" })}${x.fee_total ? rows(L2("Fees", "الأتعاب"), x.fee_total) : ""}${rows(L2("Total works to date", "إجمالي الأعمال حتى تاريخه"), { id: "xtodate" })}
+      ${rows(L2("This extract", "هذا المستخلص"), { id: "xtot" })}${Object.keys(x.fees_map || {}).length ? rows(L2("Fees", "الأتعاب"), { id: "xfee" }) : ""}${rows(L2("Total works to date", "إجمالي الأعمال حتى تاريخه"), { id: "xtodate" })}
       ${x.vat_to_date ? rows(L2("VAT", "ضريبة القيمة المضافة"), x.vat_to_date) : ""}${x.wht_to_date ? rows(L2("Withholding tax", "خصم من المنبع"), -x.wht_to_date) : ""}
       ${rows(L2("Less paid before", "خصم ما سبق صرفه"), x.prev)}${x.deductions ? rows(L2("Deductions", "خصومات"), x.deductions) : ""}
       ${rows(L2("AMOUNT DUE", "المستحق"), { id: "xdue" }, "big")}
@@ -3335,7 +3339,7 @@ function dealForm(dl, after) {
   dl = dl || { stage: "lead" };
   const stages = (S.cache.crmStages || []).map(c => [c.key, L2(c.en, c.ar)]);
   drawer(dl.id ? L2("Deal", "صفقة") + " — " + dl.title : L2("New deal", "صفقة جديدة"), form([
-    { k: "title", l: L2("Deal", "الصفقة"), v: dl.title || "", req: 1, ph: L2("e.g. Finishing works", "مثال: أعمال تشطيب") },
+    { k: "title", l: L2("Deal", "الصفقة"), v: dl.title || "", req: 1, ph: L2("e.g. Services", "مثال: خدمات") },
     { k: "party", l: L2("Customer", "العميل"), v: dl.party || "", req: 1, list: "crmparties" },
     { k: "stage", l: L2("Stage", "المرحلة"), type: "select", opts: stages, v: dl.stage },
     { k: "value", l: L2("Expected value", "القيمة المتوقعة"), type: "number", v: dl.value ?? "" },
@@ -3354,7 +3358,7 @@ function dealForm(dl, after) {
 function followupForm(f, after) {
   f = f || {};
   drawer(f.id ? L2("Follow-up", "متابعة") : L2("New follow-up", "متابعة جديدة"), form([
-    { k: "title", l: L2("What to do", "المطلوب"), v: f.title || "", req: 1, span: "spanall", ph: L2("e.g. Call about the revised BOQ", "مثال: الاتصال بخصوص المقايسة المعدلة") },
+    { k: "title", l: L2("What to do", "المطلوب"), v: f.title || "", req: 1, span: "spanall", ph: L2("e.g. Follow-up call", "مثال: مكالمة متابعة") },
     { k: "due", l: L2("When", "الموعد"), type: "date", v: f.due || today(), req: 1 },
     { k: "assigned_to", l: L2("Who", "المسؤول"), v: f.assigned_to || S.boot.user.username, list: "crmusers" },
     { k: "party", l: L2("Customer / contact", "العميل / جهة الاتصال"), v: f.party || "", list: "crmparties" },
@@ -3662,7 +3666,7 @@ PAGES["care-packages"] = async (view, parts, q) => {
       { k: "sessions", l: L2("Sessions / visits", "عدد الجلسات / الزيارات"), type: "number", v: 10, req: 1 }, { k: "price", l: L2("Package price", "سعر الباقة"), type: "number", req: 1 },
       { k: "paid", l: L2("Paid now", "المدفوع الآن"), type: "number", help: L2("Blank = paid in full.", "فارغ = مدفوع بالكامل.") }, { k: "method", l: t("method"), type: "select", v: "Cash", opts: methodOpts() },
       { k: "date", l: t("date"), type: "date", v: today() }, { k: "end_date", l: L2("Valid until", "صالحة حتى"), type: "date" },
-      { k: "name", l: L2("Package name", "اسم الباقة"), span: "spanall", ph: L2("e.g. 12 physiotherapy sessions at home", "مثال: 12 جلسة علاج طبيعي بالمنزل") }]),
+      { k: "name", l: L2("Package name", "اسم الباقة"), span: "spanall", ph: L2("e.g. 12 sessions", "مثال: 12 جلسة") }]),
     async x => { await api("POST", "/api/care/packages", x); toast(t("saved")); }); } catch (e) { fail(e); } };
   view.innerHTML = `<div class="banner info">${esc(L2("Money paid in advance for a course of sessions is a liability (2108 Prepaid Care Packages) until each session is delivered; then it moves to revenue.",
       "المبالغ المدفوعة مقدماً لمجموعة جلسات التزام على المنشأة (2108 باقات رعاية مدفوعة مقدماً) حتى تُقدَّم كل جلسة، ثم تتحول إلى إيراد."))}</div>
@@ -3984,9 +3988,11 @@ PAGES["my-day"] = async (view) => {
   const started = cur && !cur.end_at, ended = cur && cur.end_at;
   view.innerHTML = `<div class="card" style="max-width:640px">
     <h2>${esc(new Date().toLocaleDateString(S.lang === "ar" ? "ar-EG" : "en-GB", { weekday: "long", day: "numeric", month: "long" }))}</h2>
+    ${d.employee ? `<p class="muted">${esc(L2("Your days fill your Time & attendance as", "أيامك تُسجَّل في الحضور والانصراف باسم"))} <b>${esc(d.employee.code)} — ${esc(d.employee.name)}</b></p>`
+      : `<div class="banner info">${esc(L2("You are not linked to anyone on the employee list, so your days are kept here but do not appear in Time & attendance. To link: Employees → open the person → App user.", "لست مرتبطاً بموظف في قائمة الموظفين، فتُحفظ أيامك هنا ولا تظهر في الحضور والانصراف. للربط: الموظفون ← افتح الموظف ← مستخدم التطبيق."))}</div>`}
     ${!cur ? `<p class="muted">${esc(L2("Tap Start when you begin work. " + (d.location === "off" ? "" : d.location === "required" ? "Your location is recorded with it." : "Your location is recorded with it if you allow it."),
         "اضغط «ابدأ» عند بدء العمل. " + (d.location === "off" ? "" : d.location === "required" ? "يُسجّل موقعك معه." : "يُسجّل موقعك معه إذا سمحت بذلك.")))}</p>
-      <label class="f">${esc(L2("Note (optional) — e.g. first site visit", "ملاحظة (اختياري) — مثل أول زيارة"))}<input id="daynote"></label>
+      <label class="f">${esc(L2("Note (optional) — e.g. first visit", "ملاحظة (اختياري) — مثل أول زيارة"))}<input id="daynote"></label>
       <button class="btn pri" style="width:100%;padding:16px;font-size:1.1em;margin-top:10px" data-a="daystart">▶ ${esc(L2("Start my day", "ابدأ يومي"))}</button>` : ""}
     ${cur ? `<div class="kpis"><div class="kpi"><div class="l">${esc(L2("Started", "البداية"))}</div><div class="v">${hhmm(cur.start_at)}</div><div class="muted">${mapLink(cur.start_lat, cur.start_lng)}</div></div>
       <div class="kpi"><div class="l">${esc(L2("Ended", "النهاية"))}</div><div class="v">${hhmm(cur.end_at)}</div><div class="muted">${mapLink(cur.end_lat, cur.end_lng)}</div></div></div>` : ""}
@@ -3998,22 +4004,25 @@ PAGES.workdays = async (view, parts, q) => {
   if (!q.date_from) q = { date_from: today(), date_to: today(), ...q };
   const d = await api("GET", "/api/workdays?" + qs(q)), adm = S.boot.user.is_admin;
   S.H.dayloc = async el => { try { await api("PUT", "/api/settings", { workday_location: el.value }); S.boot.settings.workday_location = el.value; toast(t("saved")); } catch (e) { fail(e); } };
+  const canDel = can("payroll.workdays", "edit");
+  S.H.daydel = async el => { if (!await uiConfirm(L2("Delete this day? Its attendance row made from it goes too.", "حذف هذا اليوم؟ يُحذف معه سجل الحضور الناتج عنه."))) return;
+    try { await api("DELETE", "/api/workdays/" + el.dataset.id); toast(L2("Deleted", "تم الحذف")); route(); } catch (e) { fail(e); } };
   S.H.dayrep = el => { const r = d.rows.find(x => String(x.id) === el.dataset.id); drawer(`${r.username} — ${fd(r.date)}`, `<pre style="white-space:pre-wrap;font:inherit">${esc(r.report || "—")}</pre>${r.note ? `<p class="muted">${esc(r.note)}</p>` : ""}`, null, { readOnly: true }); };
   view.innerHTML = `<div class="toolbar"><a class="btn pri" href="#/my-day">▶ ${esc(L2("My day", "يومي"))}</a><span class="spacer"></span>
       ${adm ? `<label class="f" style="flex-direction:row;align-items:center;gap:8px">${esc(L2("Location", "الموقع"))}<select data-change="dayloc">${[["off", L2("Not recorded", "لا يُسجّل")], ["ask", L2("Recorded when allowed", "يُسجّل إذا سمح الشخص")], ["required", L2("Required", "إلزامي")]].map(([k, l]) => `<option value="${k}" ${d.location === k ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>` : ""}</div>` +
     filterBar(q, ["dates", "q"]) +
     (d.not_started.length ? `<div class="banner warn">${esc(L2("Not started today: ", "لم يبدأ اليوم: "))}<b>${d.not_started.map(esc).join(", ")}</b></div>` : "") +
-    `<div class="card">${d.rows.length ? `<div class="tbl stack"><table><thead><tr><th>${esc(L2("Person", "الشخص"))}</th><th>${t("date")}</th><th>${esc(L2("Started", "البداية"))}</th><th>${esc(L2("Ended", "النهاية"))}</th><th class="num">${esc(L2("Hours", "الساعات"))}</th><th>${esc(L2("Report", "التقرير"))}</th></tr></thead><tbody>
-      ${d.rows.filter(r => !q.q || r.username.includes(q.q)).map(r => `<tr class="click" data-a="dayrep" data-id="${r.id}"><td><b>${esc(r.username)}</b></td><td>${fd(r.date)}</td><td>${hhmm(r.start_at)} ${mapLink(r.start_lat, r.start_lng)}</td>
+    `<div class="card">${d.rows.length ? `<div class="tbl stack"><table><thead><tr><th>${esc(L2("Person", "الشخص"))}</th><th>${t("date")}</th><th>${esc(L2("Started", "البداية"))}</th><th>${esc(L2("Ended", "النهاية"))}</th><th class="num">${esc(L2("Hours", "الساعات"))}</th><th>${esc(L2("Report", "التقرير"))}</th>${canDel ? "<th></th>" : ""}</tr></thead><tbody>
+      ${d.rows.filter(r => !q.q || r.username.includes(q.q)).map(r => `<tr class="click" data-a="dayrep" data-id="${r.id}"><td><b>${esc(r.username)}</b><div class="lines">${r.employee ? esc(r.employee) : `<span class="chip warn" title="${esc(L2("Not linked to an employee (Employees → App user), so this day is not in Time & attendance", "غير مرتبط بموظف (الموظفون ← مستخدم التطبيق)، فلا يظهر هذا اليوم في الحضور والانصراف"))}">${esc(L2("not on the employee list", "ليس في قائمة الموظفين"))}</span>`}</div></td><td>${fd(r.date)}</td><td>${hhmm(r.start_at)} ${mapLink(r.start_lat, r.start_lng)}</td>
         <td>${r.end_at ? hhmm(r.end_at) + " " + mapLink(r.end_lat, r.end_lng) : `<span class="chip warn">${esc(L2("Working", "يعمل الآن"))}</span>`}</td><td class="num">${r.hours ?? ""}</td>
-        <td>${esc(String(r.report || "").split("\n")[0].slice(0, 90))}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${svg("clock")}<div>${esc(L2("No working days recorded for these dates.", "لا توجد أيام عمل مسجلة لهذه التواريخ."))}</div></div>`}</div>`;
+        <td>${esc(String(r.report || "").split("\n")[0].slice(0, 90))}</td>${canDel ? `<td><button class="btn sm danger" data-a="daydel" data-id="${r.id}">✕</button></td>` : ""}</tr>`).join("")}</tbody></table></div>` : `<div class="empty">${svg("clock")}<div>${esc(L2("No working days recorded for these dates.", "لا توجد أيام عمل مسجلة لهذه التواريخ."))}</div></div>`}</div>`;
 };
 // ---------------------------------------------------------- knowledge base (kb.py): the company's own how-tos, policies and answers
 function kbForm(a) {
   a = a || {};
   drawer(a.id ? a.title : L2("New article", "مقال جديد"), form([
     { k: "title", l: L2("Title", "العنوان"), v: a.title || "", req: 1, span: "spanall" },
-    { k: "category", l: L2("Category", "التصنيف"), v: a.category || "", list: "kbcats", ph: L2("e.g. Sales, HR, Site work", "مثال: المبيعات، الموارد البشرية") },
+    { k: "category", l: L2("Category", "التصنيف"), v: a.category || "", list: "kbcats", ph: L2("e.g. Sales, HR, Operations", "مثال: المبيعات، الموارد البشرية، التشغيل") },
     { k: "pinned", l: L2("Pin to the top", "تثبيت في الأعلى"), type: "switch", v: !!a.pinned },
     { k: "body", l: L2("Text — # heading, - list, **bold**, links", "النص — # عنوان، - قائمة، **عريض**، روابط"), type: "textarea", v: a.body || "", span: "spanall" }]) +
     datalist("kbcats", S.cache.kbcats || []) + `<style>.drawer textarea[name=body]{min-height:320px;font-family:ui-monospace,monospace;font-size:.9em}</style>`,
@@ -4673,12 +4682,12 @@ function contactForm(p = {}, after) {
   drawer(p.id ? `${p.name}` : L2("New contact", "جهة اتصال جديدة"), form([
     { k: "name", l: t("name"), v: p.name, req: 1 },
     { k: "category", l: L2("Category", "التصنيف"), v: p.category || (p.id ? "" : "supplier"), list: "ccats", ph: L2("supplier, subcontractor, driver…", "مورد، مقاول باطن، سائق…") },
-    { k: "contact_person", l: L2("Contact person", "الشخص المسؤول"), v: p.contact_person }, { k: "specialty", l: L2("Trade / specialty", "النشاط / التخصص"), v: p.specialty, ph: L2("e.g. steel, plumbing, aluminium", "مثال: حديد، سباكة، ألوميتال") },
+    { k: "contact_person", l: L2("Contact person", "الشخص المسؤول"), v: p.contact_person }, { k: "specialty", l: L2("Trade / specialty", "النشاط / التخصص"), v: p.specialty, ph: L2("e.g. services, materials, software", "مثال: خدمات، خامات، برمجيات") },
     { k: "phone", l: t("phone"), v: p.phone }, { k: "phone2", l: L2("Other phone", "هاتف آخر"), v: p.phone2 },
     { k: "whatsapp", l: "WhatsApp", v: p.whatsapp, ph: L2("blank = same as phone", "فارغ = نفس الهاتف") }, { k: "email", l: t("email"), v: p.email, type: "email" },
     { k: "vehicle", l: L2("Vehicle / plate (drivers)", "المركبة / رقم اللوحة (للسائقين)"), v: p.vehicle },
     { k: "type", l: L2("In the books as", "يُعامل محاسبياً كـ"), type: "select", opts: [["", L2("Auto (from category)", "تلقائي (حسب التصنيف)")], ["customer", t("customer")], ["supplier", t("supplier")], ["both", `${t("customer")} + ${t("supplier")}`], ["employee", t("worker")], ["other", "—"]], v: p.id ? p.type : "" },
-    { k: "bank_details", l: L2("Bank details (for transfers)", "بيانات البنك (للتحويل)"), type: "textarea", v: p.bank_details, span: "spanall", ph: L2("Bank, account name, account no. / IBAN, InstaPay…", "البنك، اسم الحساب، رقم الحساب / IBAN، إنستاباي…") },
+    { k: "bank_details", l: L2("Bank details (for transfers)", "بيانات البنك (للتحويل)"), type: "textarea", v: p.bank_details, span: "spanall", ph: L2("Bank, account name, account no. / IBAN, wallet…", "البنك، اسم الحساب، رقم الحساب / IBAN، محفظة…") },
     sec(L2("Address", "العنوان")),
     { k: "governate", l: t("governate"), v: p.governate }, { k: "region", l: t("region"), v: p.region },
     { k: "street", l: t("street"), v: p.street }, { k: "building", l: t("building"), v: p.building },
@@ -4863,7 +4872,7 @@ PAGES.settings = async (view, parts, q) => {
   if (tab === "company") {
     const ed = can("settings.company", "edit"), rg = st.regional || {};
     view.innerHTML = head + `<div id="cocard"><div class="card"><h2 class="row" style="gap:8px">${t("company")}<span class="spacer"></span>${ed ? `<button type="button" class="btn sm" data-a="qsetup">⚙ ${esc(L2("Quick setup", "الإعداد السريع"))}</button>` : ""}</h2>${form([
-      { k: "company_name", l: t("company_name"), v: st.company_name, ph: GEN_NAME() }, { k: "company_legal_name", l: t("legal_name"), v: st.company_legal_name, ph: L2("Legal Company Name", "الاسم القانوني للشركة") },
+      { k: "company_name", l: t("company_name"), v: st.company_name, ph: GEN_NAME() }, { k: "company_legal_name", l: t("legal_name"), v: st.company_legal_name, ph: L2("Legal Company Name", "الاسم القانوني للشركة"), help: L2("2nd line on documents", "السطر الثاني في المستندات") },
       { k: "company_tagline", l: t("tagline"), v: st.company_tagline, ph: GEN_TAG() }, { k: "company_tax_id", l: t("tax_id"), v: st.company_tax_id },
       { k: "company_cr_no", l: t("cr_no"), v: st.company_cr_no }, { k: "company_address", l: t("address"), v: st.company_address },
       { k: "company_city", l: t("city"), v: st.company_city }, { k: "company_phone", l: t("phone"), v: st.company_phone },
@@ -6081,7 +6090,7 @@ async function custodyForm(C) {
   const html = form([
     { k: "holder", l: L2("Employee holding it", "الموظف صاحب العهدة"), v: C ? C.holder : "", list: "cuholders", req: 1 },
     { k: "kind", l: L2("Type", "النوع"), type: "select", opts: CU_KIND(), v: C ? C.kind : "temporary", change: "cusync" },
-    { k: "purpose", l: L2("Purpose", "الغرض"), v: C ? C.purpose : "", ph: L2("e.g. site purchases", "مثال: مشتريات الموقع"), span: "spanall" },
+    { k: "purpose", l: L2("Purpose", "الغرض"), v: C ? C.purpose : "", ph: L2("e.g. day-to-day purchases", "مثال: مشتريات يومية"), span: "spanall" },
     ...(ed ? [] : [{ k: "booking", l: L2("The money", "المبلغ"), type: "select", change: "cusync", span: "spanall", opts: [["money", L2("Handed over now — from cash / bank", "يُصرف الآن — من الخزينة / البنك")],
       ["opening", L2("Already with the employee (in the books) — track it from here", "لدى الموظف بالفعل (مسجل بالدفاتر) — متابعته من الآن")], ["none", L2("Give it later", "يُصرف لاحقاً")]] },
       { k: "amount", l: t("amount"), type: "number" }, { k: "paid_from", l: L2("Paid from", "دُفع من"), type: "select", opts: moneyAccts(), v: defMoney("cash") }]),
@@ -7780,7 +7789,7 @@ PAGES.subscription = async (view, parts, q) => {
         <div class="muted">${L2(`${p.users} users`, `${p.users} مستخدمين`)}${p.companies > 1 ? ` · ${L2(`${p.companies} companies`, `${p.companies} شركات`)}` : ""}</div>
         <ul>${(p.features || []).map(f => `<li>${esc(f)}</li>`).join("")}</ul>
         ${fits(p) ? `<button class="btn pri" data-a="bpay" data-plan="${esc(p.code)}">${L2("Pay by card / wallet", "ادفع بالبطاقة / المحفظة")}</button>` : `<div class="muted" style="font-size:.85em">${L2(`You have ${b.users} people — add ${b.users - p.users - extra} extra user(s) for this plan.`, `لديك ${b.users} مستخدمين — أضف ${b.users - p.users - extra} مستخدم إضافي لهذه الباقة.`)}</div>`}</div>`).join("")}</div>
-      ${pub.payment_note ? `<div class="banner info" style="margin-top:12px;white-space:pre-wrap"><b>${L2("Prefer InstaPay or a bank transfer?", "تفضل إنستاباي أو التحويل البنكي؟")}</b>\n${esc(pub.payment_note)}</div>` : ""}
+      ${pub.payment_note ? `<div class="banner info" style="margin-top:12px;white-space:pre-wrap"><b>${L2("Prefer a bank transfer or a wallet?", "تفضل المحفظة أو التحويل البنكي؟")}</b>\n${esc(pub.payment_note)}</div>` : ""}
       <p class="muted" style="font-size:.85em">${L2("Each payment adds a month (or a year) after the current period — nothing renews or charges by itself. When a period ends without payment, the books become read-only (still viewable and exportable) until you pay again.", "كل دفعة تضيف شهراً (أو سنة) بعد الفترة الحالية — لا يوجد تجديد أو خصم تلقائي. عند انتهاء الفترة دون دفع تصبح الدفاتر للعرض فقط (مع إمكانية التصدير) حتى تدفع مرة أخرى.")}</p>
       ${b.status === "active" && !b.cancel_note ? `<button class="btn" data-a="bcancel">${L2("I will not renew", "لن أجدد")}</button>` : ""}</div>
     ${(b.payments || []).length ? `<div class="card"><h2>${L2("Payments", "المدفوعات")}</h2><div class="tbl stack"><table><thead><tr><th>${t("date")}</th><th>${L2("Plan", "الباقة")}</th><th>${L2("Period", "المدة")}</th><th class="num">${t("amount")}</th><th>${L2("Method", "الطريقة")}</th><th>${t("status")}</th><th>${L2("Reference", "المرجع")}</th></tr></thead><tbody>
@@ -7827,7 +7836,7 @@ function platformConfigForm(c) {
     <label class="f">${L2("A year costs (months)", "سعر السنة (بعدد الشهور)")}<input name="yearly_months" type="number" min="1" max="12" value="${c.yearly_months}"></label>
     <label class="f">${L2("Extra user per month", "المستخدم الإضافي شهرياً")}<input name="extra_user" type="number" step="any" value="${c.extra_user}"></label>
     <label class="f">${L2("Currency", "العملة")}<input name="currency" value="${esc(c.currency)}"></label></div>
-    <label class="f">${L2("Manual payment details shown to customers (InstaPay, bank account, wallet…)", "بيانات الدفع اليدوي للعملاء (إنستاباي، حساب بنكي، محفظة…)")}<textarea name="payment_note" rows="4">${esc(c.payment_note || "")}</textarea></label>
+    <label class="f">${L2("Manual payment details shown to customers (bank account, wallet…)", "بيانات الدفع اليدوي للعملاء (حساب بنكي، محفظة…)")}<textarea name="payment_note" rows="4">${esc(c.payment_note || "")}</textarea></label>
     <p class="muted" style="font-size:.85em">${L2("Card / wallet payments need the Paymob keys in Supabase → Edge Functions → Secrets (see docs/BILLING.md).", "الدفع بالبطاقة / المحفظة يحتاج مفاتيح Paymob في Supabase ← Edge Functions ← Secrets (راجع docs/BILLING.md).")}</p>`,
     async v => { await window.BeyondCloud.billingConfig({ ...v, trial_days: +v.trial_days, grace_days: +v.grace_days, yearly_months: +v.yearly_months, extra_user: +v.extra_user }); S.billingPublic = null; toast(t("saved")); }, { wide: true });
 }
@@ -7849,7 +7858,7 @@ function platformPayForm(x, c) {
     <label class="f">${L2("Period", "المدة")}<select name="months">${optHtml([[1, L2("1 month", "شهر")], [3, L2("3 months", "3 شهور")], [6, L2("6 months", "6 شهور")], [12, L2("1 year", "سنة")]], 1)}</select></label>
     <label class="f">${L2("Extra users", "مستخدمون إضافيون")}<input name="extra_users" type="number" min="0" value="${x.state.extra_users || 0}"></label>
     <label class="f">${L2("Amount received (blank = list price)", "المبلغ المستلم (فارغ = سعر القائمة)")}<input name="amount" type="number" step="any"></label>
-    <label class="f">${L2("Reference (InstaPay / transfer no.)", "المرجع (رقم إنستاباي / التحويل)")}<input name="reference"></label>
+    <label class="f">${L2("Reference (transfer no.)", "المرجع (رقم التحويل)")}<input name="reference"></label>
     <label class="f">${t("notes")}<input name="note"></label></div>
     <p class="muted" style="font-size:.85em">${L2("The paid period starts when the current trial / paid period ends (or today if it already has).", "تبدأ الفترة المدفوعة عند انتهاء التجربة / الفترة الحالية (أو اليوم إن كانت انتهت).")}</p>`,
     async v => { await window.BeyondCloud.billingRecord({ ...v, company: x.id }); toast(t("saved")); });
@@ -8532,7 +8541,9 @@ function employeeForm(E, st) {
     { html: `<h4 style="margin:6px 0 0">${L2("Employment & payment", "التعاقد والصرف")}</h4>`, span: "spanall" },
     { k: "hire_date", l: L2("Hired on", "تاريخ التعيين"), type: "date", v: e.hire_date }, { k: "end_date", l: L2("Left on", "تاريخ ترك العمل"), type: "date", v: e.end_date },
     { k: "method", l: L2("Paid by", "طريقة الصرف"), type: "select", opts: [["", "—"], ...methodOpts().map(m => [m, tl(m)])], v: e.method },
-    { k: "bank_account", l: L2("Bank / InstaPay / wallet", "الحساب / انستاباي / المحفظة"), v: e.bank_account }, { k: "phone", l: L2("Phone", "الهاتف"), v: e.phone },
+    { k: "bank_account", l: L2("Bank / wallet", "الحساب / المحفظة"), v: e.bank_account }, { k: "phone", l: L2("Phone", "الهاتف"), v: e.phone },
+    { k: "username", l: L2("App user", "مستخدم التطبيق"), v: e.username || "", ph: L2("sign-in name", "اسم الدخول"),
+      help: L2("Their Start / End my day fills their Time & attendance", "بداية ونهاية يومه تُسجَّل في الحضور والانصراف") },
     { k: "notes", l: t("notes"), type: "textarea", v: e.notes, span: "spanall" },
     { html: `<div id="empprev" class="muted"></div>`, span: "spanall" }]) +
     datalist("pjobs", settingList("payroll_jobs")) + datalist("pdeps", settingList("payroll_departments"));
@@ -8677,7 +8688,7 @@ function crewForm(C, items) {
   let rows = C ? C.lines.map(l => ({ ...l })) : (items || []).slice(0, 1).map(i => ({ item: i[0] || i.item, unit: i[1] || i.unit, count: "", dim1: "", dim2: "", dim3: "", rate: "" }));
   const presets = (items || []).map(i => Array.isArray(i) ? i : [i.item, i.unit]);
   const html = form([{ k: "date", l: t("date"), type: "date", v: C ? C.date : today(), req: 1 }, { k: "crew", l: L2("Crew / worker / subcontractor", "الطقم / العامل / مقاول الباطن"), v: C ? C.crew : "", req: 1, list: "crewp" },
-    { k: "title", l: L2("Work / building", "العمل / المبنى"), v: C ? C.title : "", ph: L2("e.g. Building 1 — installation", "مثال: عمارة 1 — تركيب") }, { k: "bu_id", l: t("bu"), type: "select", opts: buOpts("—"), v: C ? C.bu_id || "" : "" },
+    { k: "title", l: L2("Work / building", "العمل / المبنى"), v: C ? C.title : "", ph: L2("e.g. Location — stage", "مثال: الموقع — المرحلة") }, { k: "bu_id", l: t("bu"), type: "select", opts: buOpts("—"), v: C ? C.bu_id || "" : "" },
     { html: `<div id="crlines"></div>`, span: "spanall" }, { k: "notes", l: t("notes"), type: "textarea", v: C ? C.notes : "", span: "spanall" }]) + partyList("crewp");
   drawer(ed ? `${t("edit")} — ${C.crew}` : L2("Crew pay sheet", "ورقة حساب أجر طقم"), html, async v => {
     const body = { ...v, lines: rows }; if (ed) await api("PUT", "/api/crew/" + C.id, body); else await api("POST", "/api/crew", body); toast(t("saved"));
@@ -8845,10 +8856,10 @@ PAGES.profile = async view => {
       <div class="card"><h2>${esc(L2("About me", "عني"))}</h2>
         <form id="pform">${form([
           { k: "display_name", l: L2("Name shown to colleagues", "الاسم الظاهر للزملاء"), v: prof.display_name, ph: u.full_name || u.username },
-          { k: "job_title", l: L2("Job title", "المسمى الوظيفي"), v: prof.job_title, ph: L2("e.g. Site engineer", "مثال: مهندس موقع") },
+          { k: "job_title", l: L2("Job title", "المسمى الوظيفي"), v: prof.job_title, ph: L2("e.g. Job title", "مثال: المسمى الوظيفي") },
           { k: "department", l: L2("Department / team", "القسم / الفريق"), v: prof.department },
           { k: "phone", l: L2("Phone", "الهاتف"), v: prof.phone },
-          { k: "status", l: L2("Status", "الحالة"), v: prof.status, ph: L2("e.g. On site until 3 pm", "مثال: في الموقع حتى ٣ م") },
+          { k: "status", l: L2("Status", "الحالة"), v: prof.status, ph: L2("e.g. Out until 3 pm", "مثال: بالخارج حتى ٣ م") },
           { k: "bio", l: L2("About", "نبذة"), type: "textarea", v: prof.bio, span: "span2" }], 2)}
           <div class="row" style="margin-top:10px"><button class="btn pri" type="submit">${t("save")}</button></div></form></div>
       <div class="card"><h2>${esc(L2("Menu", "القائمة"))}</h2>
@@ -9003,7 +9014,7 @@ async function notifPage(view, head) {
         <div class="row nt-own"><label class="btn">${svg("upload")} ${esc(own ? L2("Replace my sound", "استبدال صوتي") : L2("Upload my own sound", "رفع صوت خاص"))}<input type="file" id="ntfile" accept="audio/*" hidden></label>
           ${own ? `<button class="btn danger" data-a="ntownx">${esc(L2("Remove my sound", "إزالة صوتي"))}</button>` : ""}
           <span class="muted">${esc(L2("MP3, WAV, OGG or M4A, a few seconds (up to about 250 KB).", "MP3 أو WAV أو OGG أو M4A، بضع ثوانٍ (حتى ٢٥٠ كيلوبايت تقريباً)."))}</span></div>
-        <div class="grid g2" style="margin-top:10px"><label class="f">${esc(L2("Volume", "مستوى الصوت"))} <span class="muted" id="ntvolv">${p.volume}%</span><input type="range" min="0" max="100" value="${p.volume}" data-input="ntvol"></label>
+        <div class="grid g2" style="margin-top:10px"><label class="f"><span class="fl">${esc(L2("Volume", "مستوى الصوت"))} <span class="muted" id="ntvolv">${p.volume}%</span></span><input type="range" min="0" max="100" value="${p.volume}" data-input="ntvol"></label>
           <label class="f">${esc(L2("Vibration pattern", "نمط الاهتزاز"))}<div class="row" style="gap:6px"><select data-change="ntvibe">${[["short", L2("Short", "قصير")], ["double", L2("Double", "مزدوج")], ["long", L2("Long", "طويل")], ["pulse", L2("Pulse", "نبضات")]].map(([v, l]) => `<option value="${v}" ${p.vibe === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>
             <button type="button" class="btn sm" data-a="ntvtest">📳</button></div></label></div>
         <p class="muted" style="font-size:.85em;margin-bottom:0">${esc(L2("Settings follow you to every device you sign in on; whether pop-ups are allowed is decided per device. Sounds play while BeyondERP is open (also in a background tab or the installed app).",
@@ -9514,7 +9525,7 @@ function roomDrawer(r) {
   const ppl = (C2.people || []).filter(p => p.active || (r && r.members.includes(p.id)));
   const mem = new Set(r ? r.members : [me().id]);
   drawer(r ? L2("Room settings", "إعدادات الغرفة") : L2("New room", "غرفة جديدة"), form([
-    { k: "name", l: L2("Name", "الاسم"), v: r ? r.name : "", req: 1, ph: L2("e.g. Partners, Accountants, Site team", "مثال: الشركاء، المحاسبون، فريق الموقع"), dis: r && r.kind === "general" },
+    { k: "name", l: L2("Name", "الاسم"), v: r ? r.name : "", req: 1, ph: L2("e.g. Partners, Accountants, Field team", "مثال: الشركاء، المحاسبون، الفريق الميداني"), dis: r && r.kind === "general" },
     { k: "icon", l: L2("Icon (an emoji)", "الأيقونة (رمز تعبيري)"), v: r ? r.icon : "", ph: "🏗️" },
     { k: "topic", l: L2("What it is for", "الغرض منها"), v: r ? r.topic : "", span: "span2" }]) +
     (r && r.kind === "general" ? `<div class="muted">${esc(L2("Everyone in the company is in General.", "كل من في الشركة موجود في الغرفة العامة."))}</div>` :
@@ -11488,6 +11499,14 @@ function enhanceList(inp) {
 function enhancePickers(root) {
   $$("select", root).forEach(enhanceSelect);
   $$("input[list]", root).forEach(enhanceList);
+  $$(".grid>label.f", root).forEach(wrapLabel);
+}
+// a field label written as bare text gets the same one-line caption as form() fields, so boxes in a row line up
+function wrapLabel(lab) {
+  const first = lab.firstChild;
+  if (!first || first.nodeType !== 3 || !first.textContent.trim() || lab.classList.contains("chk")) return;
+  const span = document.createElement("span"); span.className = "fl"; span.title = first.textContent.trim();
+  lab.insertBefore(span, first); span.appendChild(first);
 }
 // new screens, drawers and rows are enhanced as they appear
 let pickTimer = 0;

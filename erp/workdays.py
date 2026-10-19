@@ -27,13 +27,63 @@ def today_of(db, user):
     return db.one("SELECT * FROM workdays WHERE username=? AND date=? ORDER BY id DESC LIMIT 1", (user["username"], acc.today()))
 
 
+MYDAY = "My day"          # the note on attendance rows filled from a person's day (a manager's own entry is never changed)
+
+
+def employee_of(db, username):
+    """The employee linked to this app user (Employees → App user), if any."""
+    try:
+        return db.one("SELECT id, code, name, bu_id FROM employees WHERE username=? AND status='active'", (username,))
+    except Exception:       # noqa: BLE001 — books without payroll
+        return None
+
+
+def _hours(r):
+    if not r["end_at"]:
+        return 0
+    a, b = acc._dt.datetime.fromisoformat(r["start_at"][:19]), acc._dt.datetime.fromisoformat(r["end_at"][:19])
+    return round((b - a).total_seconds() / 3600, 2)
+
+
+def sync_attendance(db, username, date):
+    """Time & attendance follows the person's days: present, with the hours of the day's start / end."""
+    emp = employee_of(db, username)
+    if not emp:
+        return
+    days = db.q("SELECT * FROM workdays WHERE username=? AND date=?", (username, date))
+    row = db.one("SELECT id, notes FROM attendance WHERE date=? AND employee_id=?", (date, emp["id"]))
+    if row and not (row["notes"] or "").startswith(MYDAY):
+        return
+    if not days:
+        if row:
+            db.x("DELETE FROM attendance WHERE id=?", (row["id"],))
+        return
+    hours = round(sum(_hours(r) for r in days), 2)
+    if row:
+        db.x("UPDATE attendance SET hours=?, status='present' WHERE id=?", (hours, row["id"]))
+    else:
+        db.x("INSERT INTO attendance(date,employee_id,bu_id,status,hours,notes) VALUES (?,?,?,?,?,?)",
+             (date, emp["id"], emp["bu_id"], "present", hours, MYDAY))
+
+
+def delete(db, wid):
+    r = db.one("SELECT * FROM workdays WHERE id=?", (wid,))
+    if not r:
+        raise ValidationError("Day not found")
+    db.x("DELETE FROM workdays WHERE id=?", (r["id"],))
+    sync_attendance(db, r["username"], r["date"])
+    return r
+
+
 def start(db, user, d):
     if (cur := today_of(db, user)) and not cur["end_at"]:
         raise ValidationError("Your day is already started")
     need = db.setting("workday_location") or "ask"
     lat, lng, accu = _loc(d, need)
-    return db.x("INSERT INTO workdays(username, date, start_at, start_lat, start_lng, start_acc, note) VALUES (?,?,?,?,?,?,?)",
-                (user["username"], acc.today(), now_iso(), lat, lng, accu, text(d.get("note"), maxlen=500))).lastrowid
+    wid = db.x("INSERT INTO workdays(username, date, start_at, start_lat, start_lng, start_acc, note) VALUES (?,?,?,?,?,?,?)",
+               (user["username"], acc.today(), now_iso(), lat, lng, accu, text(d.get("note"), maxlen=500))).lastrowid
+    sync_attendance(db, user["username"], acc.today())
+    return wid
 
 
 def finish(db, user, d):
@@ -44,6 +94,7 @@ def finish(db, user, d):
     lat, lng, accu = _loc(d, need)
     db.x("UPDATE workdays SET end_at=?, end_lat=?, end_lng=?, end_acc=?, report=? WHERE id=?",
          (now_iso(), lat, lng, accu, text(d.get("report"), maxlen=4000), cur["id"]))
+    sync_attendance(db, user["username"], cur["date"])
     return cur["id"]
 
 
@@ -73,7 +124,8 @@ def activity(db, username, date=None):
 
 def mine(db, user):
     cur = today_of(db, user)
-    return {"today": cur, "location": db.setting("workday_location") or "ask", "draft": activity(db, user["username"])}
+    return {"today": cur, "location": db.setting("workday_location") or "ask", "draft": activity(db, user["username"]),
+            "employee": employee_of(db, user["username"])}
 
 
 def team(db, date_from=None, date_to=None, username=None):
@@ -82,11 +134,13 @@ def team(db, date_from=None, date_to=None, username=None):
         w.append("username=?")
         p.append(username)
     rows = db.q(f"SELECT * FROM workdays WHERE {' AND '.join(w)} ORDER BY date DESC, start_at", p)
+    linked = {}
     for r in rows:
-        r["hours"] = None
-        if r["end_at"]:
-            a, b = acc._dt.datetime.fromisoformat(r["start_at"][:19]), acc._dt.datetime.fromisoformat(r["end_at"][:19])
-            r["hours"] = round((b - a).total_seconds() / 3600, 2)
+        r["hours"] = _hours(r) if r["end_at"] else None
+        if r["username"] not in linked:
+            linked[r["username"]] = employee_of(db, r["username"])
+        e = linked[r["username"]]
+        r["employee"] = f"{e['code']} — {e['name']}" if e else ""
     started = {r["username"] for r in rows if r["date"] == acc.today()}
     # people who usually start their day here (any day in the last two weeks) but have not today
     usual = {r["username"] for r in db.q("SELECT DISTINCT username FROM workdays WHERE date>=?",

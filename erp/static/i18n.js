@@ -276,7 +276,7 @@ Object.assign(window.I18N, {
   download_doc: ["Download", "تنزيل"], documents: ["Documents", "المستندات"],
   p_branding: ["Documents & branding", "المستندات والهوية"], appearance: ["Appearance", "المظهر"], tab_company: ["Company", "الشركة"],
   tab_docs: ["Documents & branding", "المستندات والهوية"], tab_look: ["Appearance", "المظهر"], tab_theme: ["Theme", "السمات والألوان"], tab_notify: ["Notifications", "الإشعارات"], tab_perms: ["Device permissions", "أذونات الجهاز"], p_layout: ["Arrange menus & forms (right-click, drag and drop)", "ترتيب القوائم والنماذج (الزر الأيمن والسحب والإفلات)"], tab_menus: ["Menus", "القوائم"], tab_system: ["System & data", "النظام والبيانات"],
-  legal_name: ["Legal name (2nd line on documents)", "الاسم القانوني (السطر الثاني في المستندات)"], cr_no: ["Commercial register no.", "رقم السجل التجاري"],
+  legal_name: ["Legal name", "الاسم القانوني"], cr_no: ["Commercial register no.", "رقم السجل التجاري"],
   city: ["City", "المدينة"], website: ["Website", "الموقع الإلكتروني"], bank_details: ["Bank details (printed on offers)", "بيانات البنك (تُطبع في العروض)"],
   bank_name: ["Bank & branch", "البنك والفرع"], bank_account: ["Account number", "رقم الحساب"], bank_holder: ["Account holder", "صاحب الحساب"],
   swift: ["SWIFT", "SWIFT"], iban: ["IBAN", "IBAN"], offer_validity: ["Offer validity (days)", "صلاحية العرض (أيام)"], offer_prefix: ["Offer number prefix", "بادئة رقم العرض"],

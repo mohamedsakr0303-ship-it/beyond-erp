@@ -616,7 +616,7 @@ def _read_partner_loans(ws, data, notes):
                           "opening_date": start if abs(owed - lent) < 0.005 else _dt.date.today().isoformat(),
                           "rate": 0, "interest_type": "none", "fixed_interest": 0, "term_months": months,
                           "frequency": 1, "first_due": "", "schedule_type": "equal" if months else "none", "schedule": "[]",
-                          "status": "open", "closed_on": "", "notes": "Interest-free. The workbook's plan only advises; "
+                          "status": "active", "closed_on": "", "notes": "Interest-free. The workbook's plan only advises; "
                           "record repayments here (cash, or settled from his profit share by a decision).", "created_at": ""})
         break
     if loans:

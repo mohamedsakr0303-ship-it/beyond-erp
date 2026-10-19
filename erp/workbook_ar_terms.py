@@ -175,16 +175,15 @@ LITERALS_AR = {
 
 # example row (row 3) values on the data sheets
 EXAMPLE_AR = {
-    "Villa 12 — Mr. Aly": "فيلا 12 — أ. علي", "Villa": "فيلا", "New Cairo": "القاهرة الجديدة", "Palm Hills Developments": "بالم هيلز للتعمير",
-    "e.g. Palm Hills Developments": "مثال: بالم هيلز للتعمير", "October depreciation": "إهلاك أكتوبر", "Cleaning & Hospitality": "نظافة وضيافة",
-    "Rev 01": "مراجعة 01", "e.g. Interior works": "مثال: أعمال التشطيب الداخلي", "Advance payment": "دفعة مقدمة", "El-Masry Supplies": "المصري للتوريدات",
-    "Cement 50 kg": "أسمنت 50 كجم", "bag": "شكارة", "Office rent — Oct": "إيجار المكتب — أكتوبر", "Landlord": "المالك", "Customer name": "اسم العميل", "e.g. Customer name": "مثال: اسم العميل", "Governorate": "المحافظة", "Area": "المنطقة", "Street name": "اسم الشارع", "Project name": "اسم المشروع", "City": "المدينة", "Site store": "مخزن الموقع", "e.g. Site store": "مثال: مخزن الموقع", "Supplier name": "اسم المورد", "Employee name": "اسم الموظف", "Ahmed Ali": "أحمد علي",
-    "Site engineer": "مهندس موقع", "Partner name": "اسم الشريك", "e.g. Partner name": "مثال: اسم الشريك", "Giza": "الجيزة", "6th of October": "السادس من أكتوبر",
-    "26th of July Axis": "محور 26 يوليو", "VAT 14% (standard)": "ضريبة القيمة المضافة 14%", "Site pickup truck": "سيارة نقل للموقع",
-    "e.g. Site Store — Villa 12": "مثال: مخزن الموقع — فيلا 12", "e.g. Ceramic tiles 60×60": "مثال: سيراميك 60×60", "Ceramic tiles 60×60": "سيراميك 60×60",
-    "Apartment A-301": "شقة A-301", "Apartments": "شقق", "Area: 150 m²; Floor: 3; Bedrooms: 3": "المساحة: 150 م²؛ الدور: 3؛ الغرف: 3",
-    "Receipt": "استلام", "Main Store": "المخزن الرئيسي", "Cleopatra": "كليوباترا", "Plastering works": "أعمال البياض", "Wall plaster": "بياض حوائط",
-}
+    "Account name": "اسم الحساب", "Project type": "نوع المشروع", "Asset name": "اسم الأصل", "Warehouse name": "اسم المخزن",
+    "Item name": "اسم الصنف", "Product name": "اسم المنتج", "Category": "التصنيف", "SKU-0001": "SKU-0001",
+    "Spec 1: value; Spec 2: value": "مواصفة 1: قيمة؛ مواصفة 2: قيمة", "Item or service description": "وصف الصنف أو الخدمة",
+    "BOQ title": "عنوان المقايسة", "Item or service": "صنف أو خدمة", "Expense description": "وصف المصروف", "Job title": "المسمى الوظيفي",
+    "Monthly depreciation": "إهلاك شهري",
+    "Rev 01": "مراجعة 01", "Advance payment": "دفعة مقدمة",     "bag": "شكارة", "Customer name": "اسم العميل", "e.g. Customer name": "مثال: اسم العميل", "Governorate": "المحافظة", "Area": "المنطقة", "Street name": "اسم الشارع", "Project name": "اسم المشروع", "City": "المدينة", "Site store": "مخزن الموقع", "e.g. Site store": "مثال: مخزن الموقع", "Supplier name": "اسم المورد", "Employee name": "اسم الموظف", "Ahmed Ali": "أحمد علي",
+    "Site engineer": "مهندس موقع", "Partner name": "اسم الشريك", "e.g. Partner name": "مثال: اسم الشريك", "Metro": "المدينة", "North District": "الحي الشمالي",
+    "VAT 14% (standard)": "ضريبة القيمة المضافة 14%", "Site pickup truck": "سيارة نقل للموقع",
+        "Apartments": "شقق",     "Receipt": "استلام", "Main Store": "المخزن الرئيسي", }
 
 
 def helper(label):

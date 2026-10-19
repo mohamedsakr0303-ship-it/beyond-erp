@@ -320,8 +320,17 @@ def save_employee(db, d, eid=None):
             "daily_rate,hourly_rate,piece_rate,piece_unit,allowances,insured,insurable_wage,insurance_no,taxed,method,bank_account,phone,notes")
     if eid:
         db.x(f"UPDATE employees SET {', '.join(c + '=?' for c in cols.split(','))} WHERE id=?", vals + (get_employee(db, eid)["id"],))
-        return get_employee(db, eid)["id"]
-    return db.x(f"INSERT INTO employees({cols}) VALUES ({','.join('?' * len(cols.split(',')))})", vals).lastrowid
+        new = get_employee(db, eid)["id"]
+    else:
+        new = db.x(f"INSERT INTO employees({cols}) VALUES ({','.join('?' * len(cols.split(',')))})", vals).lastrowid
+    if "username" in d:         # the app user who is this employee: their "My day" fills their attendance
+        user = text(d.get("username"), maxlen=60)
+        if user and not db.one("SELECT 1 FROM users WHERE username=?", (user,)):
+            raise ValidationError(f"No app user named {user}")
+        if user and db.one("SELECT 1 FROM employees WHERE username=? AND id<>?", (user, new)):
+            raise ValidationError(f"{user} is already linked to another employee")
+        db.x("UPDATE employees SET username=? WHERE id=?", (user, new))
+    return new
 
 
 def delete_employee(db, eid):
@@ -631,7 +640,7 @@ def employee_sheet_rows(db):
     for e in list_employees(db):
         row = {k: e[k] for k in ("code", "name", "name_ar", "national_id", "job_title", "department", "emp_type", "cost_type", "account",
                                  "bu_code", "hire_date", "end_date", "basic", "daily_rate", "hourly_rate", "piece_rate", "piece_unit",
-                                 "insurable_wage", "insurance_no", "method", "bank_account", "phone", "notes")}
+                                 "insurable_wage", "insurance_no", "method", "bank_account", "phone", "notes", "username")}
         row.update({"al_" + c: e["allowances"].get(c, "") or "" for c in FIXED})
         row.update({"insured": "Yes" if e["insured"] else "No", "taxed": "Yes" if e["taxed"] else "No",
                     "status": e["status"]})

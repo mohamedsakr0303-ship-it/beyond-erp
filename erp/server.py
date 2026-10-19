@@ -1109,6 +1109,14 @@ def my_day_end(ctx):
     return ok({"id": workdays.finish(ctx.db, ctx.user, ctx.body)})
 
 
+@route("DELETE", "/api/workdays/<wid>", "payroll.workdays", "edit")
+def workdays_delete(ctx, wid):
+    from . import workdays
+    r = workdays.delete(ctx.db, wid)
+    ctx.log("workday.delete", f"{r['username']} {r['date']}")
+    return ok()
+
+
 @route("GET", "/api/workdays", "payroll.workdays")
 def workdays_team(ctx):
     """The team's working days: who started when and where, hours and daily reports."""

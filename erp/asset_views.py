@@ -58,7 +58,7 @@ def cash_accounts(db, date_to=None, limit=25):
 
 
 def transfer(db, d, user=""):
-    """Move money between two cash / bank accounts (e.g. cash → InstaPay)."""
+    """Move money between two cash / bank accounts (e.g. cash → bank)."""
     src, dst = acc.text(d.get("from")), acc.text(d.get("to"))
     ok = {r["code"] for r in db.q("SELECT code FROM accounts WHERE type='Asset' AND subtype='cash' AND active=1")}
     if src not in ok or dst not in ok:
