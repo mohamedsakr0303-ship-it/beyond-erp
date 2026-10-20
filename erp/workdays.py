@@ -198,28 +198,57 @@ def finish(db, user, d):
     return cur["id"]
 
 
-def activity(db, username, date=None):
-    """What a person did on a day, from the books — the draft of their daily report."""
+# the daily summary's wording, by language (summaries saved earlier in English are shown translated: see localise)
+SUMMARY = {"entries": ("Entries recorded: {}", "القيود المسجلة: {}"), "contacts": ("Customer contacts logged: {}", "اتصالات العملاء المسجلة: {}"),
+           "followups": ("Follow-ups done: {}", "المتابعات المنجزة: {}"), "visits": ("Visits done: {}", "الزيارات المنجزة: {}"),
+           "home": (" (home)", " (منزلية)")}
+CONTACT_KINDS = {"call": "مكالمة", "meeting": "اجتماع", "email": "بريد إلكتروني", "whatsapp": "واتساب", "visit": "زيارة", "note": "ملاحظة"}
+
+
+def _w(key, lang):
+    return SUMMARY[key][1 if lang == "ar" else 0]
+
+
+def activity(db, username, date=None, lang="en"):
+    """What a person did on a day, from the books — the draft of their daily report, in their language."""
     date = date or acc.today()
     like = date + "%"
     out = []
+    ar = lang == "ar"
     n = db.one("SELECT COUNT(*) n FROM journal_entries WHERE created_by=? AND created_at LIKE ?", (username, like))["n"]
     if n:
-        out.append(f"Entries recorded: {n}")
+        out.append(_w("entries", lang).format(n))
     acts = db.q("SELECT kind, subject, party FROM crm_activities WHERE created_by=? AND created_at LIKE ? AND auto=0 ORDER BY id", (username, like))
     if acts:
-        out.append(f"Customer contacts logged: {len(acts)}" + "".join(f"\n  - {a['kind']}: {a['subject']} ({a['party']})" for a in acts[:12]))
+        out.append(_w("contacts", lang).format(len(acts)) + "".join(
+            f"\n  - {CONTACT_KINDS.get(a['kind'], a['kind']) if ar else a['kind']}: {a['subject']} ({a['party']})" for a in acts[:12]))
     fu = db.q("SELECT title, party FROM crm_followups WHERE done_by=? AND done_at LIKE ?", (username, like))
     if fu:
-        out.append(f"Follow-ups done: {len(fu)}" + "".join(f"\n  - {f['title']}" for f in fu[:12]))
+        out.append(_w("followups", lang).format(len(fu)) + "".join(f"\n  - {f['title']}" for f in fu[:12]))
     try:
         vis = db.q("SELECT v.number, v.status, p.name, v.place FROM care_visits v JOIN care_patients p ON p.id=v.patient_id "
                    "WHERE v.date=? AND (v.provider=? OR v.created_by=?) AND v.status='done'", (date, username, username))
         if vis:
-            out.append(f"Visits done: {len(vis)}" + "".join(f"\n  - {v['number']} {v['name']}{' (home)' if v['place'] == 'home' else ''}" for v in vis[:12]))
+            out.append(_w("visits", lang).format(len(vis)) + "".join(
+                f"\n  - {v['number']} {v['name']}{_w('home', lang) if v['place'] == 'home' else ''}" for v in vis[:12]))
     except Exception:       # noqa: BLE001 — books without the healthcare tables
         pass
     return "\n".join(out)
+
+
+def localise(report, lang):
+    """A saved summary in the reader's language: the app's own lines are translated; what people wrote is kept."""
+    if not report:
+        return report
+    i, j = (0, 1) if lang == "ar" else (1, 0)
+    for key in ("entries", "contacts", "followups", "visits"):
+        src, dst = SUMMARY[key][i].split("{}")[0], SUMMARY[key][j].split("{}")[0]
+        report = "\n".join(dst + ln[len(src):] if ln.startswith(src) else ln for ln in report.split("\n"))
+    report = report.replace(SUMMARY["home"][i], SUMMARY["home"][j])
+    kinds = CONTACT_KINDS if lang == "ar" else {v: k for k, v in CONTACT_KINDS.items()}
+    for k, v in kinds.items():
+        report = report.replace(f"\n  - {k}: ", f"\n  - {v}: ")
+    return report
 
 
 def _late_early(pol, first, last, excused):
@@ -253,22 +282,24 @@ def mine_policy(db, username):
     return {"location": need, "netcheck": bool(pol.get("netcheck")) and need != "off" and pol.get("spoof") != "off" and username not in pol["anywhere"]}
 
 
-def mine(db, user):
+def mine(db, user, lang="en"):
     from . import hrrequests
     cur = today_of(db, user)
     sessions = db.q("SELECT * FROM workdays WHERE username=? AND date=? ORDER BY start_at", (user["username"], acc.today()))
     need, sites = _need(db, user["username"])
     emp = employee_of(db, user["username"])
+    for r in sessions:
+        r["report"] = localise(r["report"], lang)
     return {"today": cur, "sessions": sessions, "hours": round(sum(_now_hours(r) for r in sessions), 2),
             "open": bool(cur and not cur["end_at"]), "location": need, "sites": [x["name"] for x in sites],
-            "draft": activity(db, user["username"]), "employee": emp, "policy": {k: hrrequests.policy(db)[k] for k in ("start", "end", "grace")},
+            "draft": activity(db, user["username"], lang=lang), "employee": emp, "policy": {k: hrrequests.policy(db)[k] for k in ("start", "end", "grace")},
             "balance": hrrequests.balance(db, user["username"]), "requests": hrrequests.listing(db, username=user["username"])[:50],
             "advance": hrrequests.advance_balance(db, emp["name"]) if emp else 0,
             "netcheck": mine_policy(db, user["username"])["netcheck"],
             "late_alert": bool(online_not_checked_in(db, user["username"]))}
 
 
-def team(db, date_from=None, date_to=None, username=None):
+def team(db, date_from=None, date_to=None, username=None, lang="en"):
     w, p = ["date BETWEEN ? AND ?"], [date_from or acc.today(), date_to or acc.today()]
     if username:
         w.append("username=?")
@@ -279,6 +310,7 @@ def team(db, date_from=None, date_to=None, username=None):
     linked, days = {}, {}
     for r in rows:
         r["hours"] = _hours(r) if r["end_at"] else None
+        r["report"] = localise(r["report"], lang)
         if r["username"] not in linked:
             linked[r["username"]] = employee_of(db, r["username"])
         e = linked[r["username"]]

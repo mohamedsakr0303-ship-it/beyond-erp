@@ -5183,6 +5183,10 @@ class MyDay(unittest.TestCase):
         crm.add_activity(db, {"party": "Mona", "kind": "visit", "subject": "Wound dressing"}, "nurse")
         draft = workdays.mine(db, u)["draft"]
         self.assertIn("Wound dressing", draft)
+        ar = workdays.mine(db, u, "ar")["draft"]                        # the summary follows the reader's language
+        self.assertIn("اتصالات العملاء المسجلة: 1", ar)
+        self.assertIn("زيارة: Wound dressing", ar)
+        self.assertEqual(workdays.localise(draft, "ar"), ar)            # a saved English summary reads in Arabic too
         db.set_setting("workday_location", "required")
         with self.assertRaises(a.ValidationError):
             workdays.finish(db, u, {"report": "x"})                  # location required

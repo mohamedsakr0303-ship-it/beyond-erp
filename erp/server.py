@@ -1095,7 +1095,7 @@ def kb_delete(ctx, kid):
 def my_day(ctx):
     """The signed-in person's working day today (started? ended?) and a draft report of what they did."""
     from . import workdays
-    return ok(workdays.mine(ctx.db, ctx.user))
+    return ok(workdays.mine(ctx.db, ctx.user, ctx.lang))
 
 
 @route("POST", "/api/presence", "team.myday")
@@ -1209,7 +1209,7 @@ def hr_requests_pay(ctx, rid):
 def workdays_team(ctx):
     """The team's working days: who started when and where, hours and daily reports."""
     from . import workdays
-    return ok({**workdays.team(ctx.db, ctx.q.get("date_from"), ctx.q.get("date_to"), ctx.q.get("username")), "flags": workdays.FLAGS,
+    return ok({**workdays.team(ctx.db, ctx.q.get("date_from"), ctx.q.get("date_to"), ctx.q.get("username"), ctx.lang), "flags": workdays.FLAGS,
                "online": workdays.online_not_checked_in(ctx.db),
                "location": ctx.db.setting("workday_location") or "ask"})
 
