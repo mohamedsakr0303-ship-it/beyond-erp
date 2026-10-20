@@ -4,6 +4,19 @@ English stays the source; {} in a message is a value, {1}, {2}… place it in th
 generic message ("{} is required") have their own list."""
 
 MESSAGES = {
+    'Choose a project.': 'اختر مشروعاً.',
+    '{}: the mix is empty': '{1}: لم تُحدد مكونات الفئة',
+    'Shares for stage {} total {}%; they must total 100%.': 'مجموع حصص المرحلة {1} هو {2}%، ويجب أن يساوي 100%.',
+    'Allocation rule not found.': 'قاعدة التوزيع غير موجودة.',
+    'Choose how the rule spreads costs.': 'اختر طريقة توزيع القاعدة للتكاليف.',
+    'Choose the measure the rule follows.': 'اختر المقياس الذي تتبعه القاعدة.',
+    'A percentage cannot be negative.': 'لا يمكن أن تكون النسبة سالبة.',
+    'The split totals {}%; the total cannot exceed 100%.': 'مجموع التوزيع {1}%، ولا يجوز أن يتجاوز 100%.',
+    'Choose the project that takes the cost.': 'اختر المشروع الذي يتحمل التكلفة.',
+    'Account scope not understood: {}. Use codes, prefixes (60*) or ranges (6010-6040).': 'نطاق الحسابات غير مفهوم: {1}. استخدم أكواداً أو بادئات (60*) أو نطاقات (6010-6040).',
+    'A rule with the code {} already exists.': 'توجد قاعدة بالكود {1} بالفعل.',
+    '{} entries name this rule. Deactivate it instead, or change those entries first.': '{1} قيد يحدد هذه القاعدة. أوقفها بدلاً من ذلك، أو عدّل تلك القيود أولاً.',
+    'Unknown allocation rule: {}': 'قاعدة توزيع غير معروفة: {1}',
     'Repay the advance over 1 to 60 months.': 'سدد السلفة على مدة من 1 إلى 60 شهراً.',
     'Only users with the right to manage check-in locations can change locations.': 'لا يغيّر المواقع إلا المستخدمون المخوَّلون بإدارة مواقع تسجيل الحضور.',
     'Choose how to handle suspicious locations.': 'اختر طريقة التعامل مع المواقع المشكوك فيها.',

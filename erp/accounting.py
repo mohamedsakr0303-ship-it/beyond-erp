@@ -370,7 +370,8 @@ def record_project_cost(db, d, user="", strict=False):
     meta = {"qty": qty, "unit": text(d.get("unit")), "rate": rate, "quoted": to_major(quoted),
             "savings": to_major(savings), "deal_ref": text(d.get("deal_ref")),
             "deal_status": text(d.get("deal_status")), "method": text(d.get("method")),
-            "vat_code": vat_code, "wht_code": wht_code, "negotiation": mode if savings else ""}
+            "vat_code": vat_code, "wht_code": wht_code, "negotiation": mode if savings else "",
+            **({"stage": text(d["stage"], maxlen=80)} if text(d.get("stage")) else {})}
     return post_entry(db, date=d.get("date"), kind="Direct Cost",
                       memo=text(d.get("description"), "description", required=True), bu_id=bu, party=vendor,
                       ref=meta["deal_ref"], lines=lines, meta=meta, user=user)
@@ -393,7 +394,19 @@ def record_expense(db, d, user=""):
     return post_entry(db, date=d.get("date"), kind="Operating Expense",
                       memo=text(d.get("description"), "description", required=True),
                       bu_id=bu_id_or_none(db, d.get("bu_id") or d.get("bu_code")), party=vendor, lines=lines,
-                      meta={"method": text(d.get("method")), "vat_code": vat_code, "wht_code": wht_code}, user=user)
+                      meta={"method": text(d.get("method")), "vat_code": vat_code, "wht_code": wht_code, **alloc_meta(db, d)}, user=user)
+
+
+def alloc_meta(db, d):
+    """How a shared cost is allocated: a named rule, or kept as company cost (not allocated). Blank: by the rules."""
+    v = text(d.get("alloc_rule"))
+    if not v or d.get("bu_id") or d.get("bu_code"):
+        return {}
+    if v in ("company", "__company"):
+        return {"no_alloc": 1}
+    if not db.one("SELECT 1 FROM alloc_rules WHERE code=?", (v,)):
+        raise ValidationError(f"Unknown allocation rule: {v}")
+    return {"alloc_rule": v}
 
 
 def record_payroll(db, d, user=""):
@@ -602,7 +615,8 @@ def record_journal(db, d, user=""):
         meta = {**{k: text(d[k]) for k in ("deal_ref", "deal_status") if d.get(k)},
                 # a negotiated deal: what was quoted, the saving and how it is treated (keep / pass)
                 **{k: num(d[k], k) for k in ("quoted", "savings") if d.get(k) not in (None, "")},
-                **({"negotiation": d["negotiation"]} if d.get("negotiation") in ("keep", "pass") else {})}
+                **({"negotiation": d["negotiation"]} if d.get("negotiation") in ("keep", "pass") else {}),
+                **alloc_meta(db, d), **({"stage": text(d["stage"], maxlen=80)} if text(d.get("stage")) else {})}
         if items:
             meta["items"] = [{"item": x["description"], "unit": x["unit"], "qty": x["qty"], "rate": to_major(x["rate"]),
                               "warehouse": x["warehouse"]["name"] if x["warehouse"] else "", "account": x["account"]} for x in items]
@@ -1636,8 +1650,10 @@ def shared_overhead_total(db, date_from=None, date_to=None):
 
 
 def allocated_overhead(db, bu_id, date_from=None, date_to=None):
-    bu = db.one("SELECT overhead_pct FROM business_units WHERE id=?", (bu_id,))
-    return round(shared_overhead_total(db, date_from, date_to) * (bu["overhead_pct"] or 0 if bu else 0), 2)
+    """This project's share of the shared costs, by the allocation rules (allocation.py)."""
+    from . import allocation
+    x = allocation.allocate(db, date_from, date_to)["by_bu"].get(int(bu_id)) or {}
+    return to_major((x.get("billable") or 0) + (x.get("non_billable") or 0))
 
 
 DONE_STATUSES = ("completed", "complete", "closed", "done", "cancelled")
@@ -1707,7 +1723,8 @@ def bu_summaries(db, date_from=None, date_to=None, status=None, q=None):
           SUM(CASE WHEN a.subtype IN ('operating_revenue','sales_discount') AND a.code<>? THEN l.credit-l.debit ELSE 0 END) AS rev
         FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id JOIN accounts a ON a.code=l.account
         WHERE {w} AND e.bu_id IS NOT NULL GROUP BY e.bu_id""", [db.acct("vat_output"), db.acct("negotiation_income")] + p)}
-    pool = shared_overhead_total(db, date_from, date_to)
+    from . import allocation
+    alloc_by = allocation.allocate(db, date_from, date_to)["by_bu"]
     savings, kept = {}, {}
     for r in db.q(f"SELECT e.bu_id, e.meta FROM journal_entries e WHERE {w} AND kind IN ('Direct Cost','Supplier Discount')", p):
         m = json.loads(r["meta"] or "{}")
@@ -1727,9 +1744,10 @@ def bu_summaries(db, date_from=None, date_to=None, status=None, q=None):
         a = agg.get(b["id"], {})
         rev, cogs, ovh = (a.get(k) or 0 for k in ("revenue", "cogs", "direct_overhead"))
         collected = a.get("collected") or 0
-        alloc = to_minor(pool * (b["overhead_pct"] or 0))
-        if b["basis"] == "Cost-Plus %":
-            expected = int(round(cogs * (1 + (b["fee_pct"] or 0))))
+        ab = alloc_by.get(b["id"]) or {}
+        alloc_bill, alloc = ab.get("billable") or 0, (ab.get("billable") or 0) + (ab.get("non_billable") or 0)
+        if b["basis"] == "Cost-Plus %":       # the fee is charged on direct costs and on shared costs billable to clients
+            expected = int(round((cogs + alloc_bill) * (1 + (b["fee_pct"] or 0))))
         elif b["basis"] == "Fixed Price":
             expected = b["contract_value"] or 0
         else:
@@ -1744,6 +1762,7 @@ def bu_summaries(db, date_from=None, date_to=None, status=None, q=None):
         est = expected_cost(b, rev, actual, default_pct)
         out.append({**b, **est, "contract_value": to_major(b["contract_value"]), "revenue": to_major(rev),
                     "cogs": to_major(cogs), "direct_overhead": to_major(ovh), "allocated_overhead": to_major(alloc),
+                    "allocated_billable": to_major(alloc_bill), "allocated_non_billable": to_major(alloc - alloc_bill),
                     "gross_profit": to_major(rev - cogs), "net_profit": to_major(net),
                     "margin": round(net / rev, 4) if rev else 0, "receivable": to_major(a.get("receivable") or 0),
                     "advances": to_major(a.get("advances") or 0), "collected": to_major(collected),
@@ -1875,6 +1894,36 @@ def deals(db):
     return sorted(m.values(), key=lambda g: g["ref"])
 
 
+def ownership(db, date_from=None, date_to=None):
+    """share(partner_id, bu_id, fallback): a partner's share of a project's profit. Where stages of the project have
+    their own ownership, the project's profit is split over its stages by the direct cost booked to each stage (costs
+    without a stage count under the project as a whole), and each stage uses its own shares."""
+    shares = {(r["partner_id"], r["bu_id"]): r["share"] for r in db.q("SELECT * FROM partner_shares")}
+    staged = {}
+    for r in db.q("SELECT * FROM partner_stage_shares"):
+        staged.setdefault(r["bu_id"], {})[(r["partner_id"], r["stage"])] = r["share"]
+    weights = {}
+    if staged:
+        w, p = _where(date_from=date_from, date_to=date_to)
+        rows = db.q(f"""SELECT e.bu_id, COALESCE(json_extract(e.meta,'$.stage'),'') AS stage, SUM(l.debit-l.credit) n
+                        FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id JOIN accounts a ON a.code=l.account
+                        WHERE {w} AND a.type='COGS' AND e.bu_id IN ({','.join('?' * len(staged))}) GROUP BY 1, 2""", p + list(staged))
+        for r in rows:
+            weights.setdefault(r["bu_id"], {})[r["stage"] or ""] = max(0, r["n"] or 0)
+        for b, ws in weights.items():
+            tot = sum(ws.values())
+            weights[b] = {k: v / tot for k, v in ws.items()} if tot else {"": 1.0}
+
+    def share(pid, bu_id, fallback):
+        base = shares.get((pid, bu_id), fallback)
+        ws = weights.get(bu_id)
+        if not ws:
+            return base
+        st = staged.get(bu_id, {})
+        return sum(wt * st.get((pid, stage), base) for stage, wt in ws.items())
+    return share
+
+
 @memo
 def partner_report(db, date_from=None, date_to=None):
     partners = db.q("SELECT * FROM partners ORDER BY id")
@@ -1904,11 +1953,12 @@ def partner_report(db, date_from=None, date_to=None):
         f"""SELECT e.bu_id, SUM(l.debit-l.credit) n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
             WHERE {w} AND l.account IN ({','.join('?' * len(wip_codes)) or "''"}) GROUP BY e.bu_id""", p + list(wip_codes))}
     billed = {b["id"]: billed_profit(b["revenue"], wip_bu.get(b["id"], 0), b["net_profit"]) for b in bus}
+    own = ownership(db, date_from, date_to)
     rows = []
     for pt in partners:
         per, total, total_billed = {}, 0.0, 0.0
         for b in bus:
-            s = shares.get((pt["id"], b["id"]), ratio[pt["id"]])
+            s = own(pt["id"], b["id"], ratio[pt["id"]])
             per[b["code"]] = {"share": s, "profit": round(b["net_profit"] * s, 2), "billed": round(billed[b["id"]] * s, 2)}
             total += b["net_profit"] * s
             total_billed += billed[b["id"]] * s
@@ -1926,7 +1976,7 @@ def partner_report(db, date_from=None, date_to=None):
                      "profit_share": round(total, 2), "billed_share": round(total_billed, 2),
                      "held_in_wip": round(total - total_billed, 2), "distributable": round(distributable, 2), "drawn": drawn,
                      "balance": round(distributable - drawn, 2)})
-    checks = {b["code"]: round(sum(shares.get((pt["id"], b["id"]), ratio[pt["id"]]) for pt in partners), 4)
+    checks = {b["code"]: round(sum(own(pt["id"], b["id"], ratio[pt["id"]]) for pt in partners), 4)
               for b in bus}
     return {"partners": rows, "units": [{"id": b["id"], "code": b["code"], "net_profit": b["net_profit"], "billed_profit": billed[b["id"]],
                                          "wip": wip_bu.get(b["id"], 0)} for b in bus],
@@ -1998,6 +2048,43 @@ def audit(db):
         {"check": "Shared-overhead % across business units ≤ 100%", "a": round(shares * 100, 2), "b": 100,
          "ok": shares <= 1.0001},
     ]
+
+
+
+def review_flags(db, date_from=None, date_to=None):
+    """Reasonableness flags: not errors in the books, but figures someone should look at."""
+    out = []
+
+    def add(en, ar, detail, href):
+        out.append({"flag": en, "flag_ar": ar, "detail": detail, "href": href})
+
+    for b in bu_summaries(db, date_from, date_to):
+        if b["revenue"] and b["gross_profit"] < 0:
+            add(f"{b['code']}: costs are above revenue (gross margin {b['gross_profit']:,.2f})",
+                f"{b['code']}: التكاليف أعلى من الإيراد (مجمل الربح {b['gross_profit']:,.2f})", b["code"], "#/bus")
+        if b["expected_billing"] > 0 and b["revenue"] > b["expected_billing"] + 0.005:
+            add(f"{b['code']}: billed {b['revenue']:,.2f}, more than the expected {b['expected_billing']:,.2f}",
+                f"{b['code']}: الفوترة {b['revenue']:,.2f} أعلى من المتوقع {b['expected_billing']:,.2f}", b["code"], "#/bus")
+    try:
+        rep = partner_report(db, date_from, date_to)
+    except (LookupError, ValidationError):
+        rep = {"partners": []}
+    for p in rep["partners"]:
+        if p["balance"] < -0.005:
+            add(f"{p['name']} has drawn {-p['balance']:,.2f} more than the earned share",
+                f"{p['name']} سحب {-p['balance']:,.2f} أكثر من النصيب المستحق", p["name"], "#/partners")
+    from . import settlement
+    led = settlement.funding_ledger(db, date_to=date_to) if settlement.funding_partner(db) else None
+    peak = max([r["own_money"] for r in led["rows"]] + [led["own_money"]]) if led else 0
+    if led and led["limit"] and peak >= led["limit"] - 0.005:
+        add(f"{led['partner']}: funding peaked at {peak:,.2f} (today {led['own_money']:,.2f}), at or above the limit of {led['limit']:,.2f}",
+            f"{led['partner']}: التمويل بلغ ذروته {peak:,.2f} (اليوم {led['own_money']:,.2f})، عند الحد {led['limit']:,.2f} أو فوقه",
+            led["partner"], "#/partner-exit")
+    from . import ratecap
+    n = len(ratecap.candidates(db))
+    if n:
+        add(f"{n} rates seen in the books are not in the price list", f"{n} سعرًا في الدفاتر غير موجود في قائمة الأسعار", "", "#/prices")
+    return out
 
 
 # ================================================================== tax module

@@ -245,12 +245,12 @@ def compute(db, date_from=None, date_to=None):
     pol = policy(db)
     reserve_amt = reserve_for(clean_total, pol)
     reserve = round(reserve_amt / clean_total, 6) if clean_total > 0 else pol["reserve_pct"]    # effective rate
-    shares = {(r["partner_id"], r["bu_id"]): r["share"] for r in db.q("SELECT * FROM partner_shares")}
+    own = acc.ownership(db, date_from, date_to)
     bus = {b["code"]: b["id"] for b in db.q("SELECT id, code FROM business_units")}
     from . import equity
     partners = []
     for pt in db.q("SELECT * FROM partners WHERE active=1 OR active IS NULL ORDER BY id"):
-        share = sum(x["clean_profit"] * shares.get((pt["id"], bus.get(x["code"])), pt["default_share"] or 0) for x in projects)
+        share = sum(x["clean_profit"] * own(pt["id"], bus.get(x["code"]), pt["default_share"] or 0) for x in projects)
         share += company_left * (pt["default_share"] or 0)
         share = round(share * (1 - reserve) if share > 0 else share, 2)
         b = equity.balances(db, pt["name"], date_to)
@@ -275,7 +275,8 @@ def compute(db, date_from=None, date_to=None):
             "closing_total": closing_total, "reserve_pct": reserve, "cash_position": cp, "verdict": dist["verdict"][0],
             "verdict_ar": dist["verdict"][1], "dist": dist, "policy": pol, "held_total": held_total, "clean_total": clean_total,
             "reserve_amount": reserve_amt,
-            "audit_ok": all(c["ok"] for c in audit), "audit_fails": [c["check"] for c in audit if not c["ok"]]}
+            "audit_ok": all(c["ok"] for c in audit), "audit_fails": [c["check"] for c in audit if not c["ok"]],
+            "flags": acc.review_flags(db, date_from, date_to)}
 
 
 # ---------------------------------------------------------------- the report (screen / PDF / Excel / Word)
@@ -308,6 +309,8 @@ def table(db, date_from=None, date_to=None, lang="en"):
              R(T("Distribution recommendation", "توصية التوزيع"), d["verdict_ar"] if ar else d["verdict"]),
              R(T("Books integrity (Model Audit)", "سلامة الدفاتر"), T("ALL INTEGRITY CHECKS PASS", "كل الفحوصات سليمة") if d["audit_ok"]
                else T("REVIEW: ", "مراجعة: ") + ", ".join(d["audit_fails"])),
+             R(T("Figures to review", "أرقام تحتاج مراجعة"), "; ".join(f["flag_ar" if ar else "flag"] for f in d["flags"])
+               or T("None", "لا يوجد")),
              sec(T("Project results", "نتائج المشروعات")),
              H(T("Project", "المشروع"), T("Billing basis", "أساس الفوترة"), T("Revenue billed", "الإيراد المفوتر"), T("Work in progress", "تحت التنفيذ"),
                T("Total cost", "إجمالي التكلفة"), T("Net profit — billed", "الربح المفوتر"), T("Collected (cash)", "المحصّل"))]

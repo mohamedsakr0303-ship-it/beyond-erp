@@ -110,7 +110,7 @@ def read_legacy_workbook(path):
     journal_mode = gj is not None and any(h for _, h in _headers(gj, ["je #", "account", "debit", "credit"], scan=10))
     data = {k: [] for k in ("Business Units", "Price List", "Partners", "Partner Shares", "Receipt Vouchers",
                             "Direct Costs", "Operating Expenses", "Payroll", "Partner Transactions",
-                            "Journal Vouchers", "Settings")}
+                            "Journal Vouchers", "Settings", "Allocation Rules", "Forecast Mixes")}
     notes = []
     jv = [0]
 
@@ -174,6 +174,7 @@ def read_legacy_workbook(path):
             bu["overhead_pct"] = rule["split"].get(bu["code"], 0)
         notes.append(f"Shared overhead split taken from the Cost Allocation sheet's '{rule['name']}' rule: "
                      + ", ".join(f"{c} {v:.2%}" for c, v in rule["split"].items()) + ".")
+    _read_allocation_rules(sheet("cost allocation"), codes, data, notes)
     # the original workbook shared company overhead evenly across active projects — start from the same split
     active = [b for b in data["Business Units"] if b["status"] not in ("Completed", "Closed")]
     if active and not rule:
@@ -360,11 +361,14 @@ def read_legacy_workbook(path):
         _read_journal(wb, gj, data, notes, codes)
         _read_invoice_register(wb, data, notes)
     _read_boq_and_invoices(wb, data, notes, register=journal_mode)
+    _read_quick_estimator(sheet("quick estimator"), data, notes)
+    _read_forecast_mixes(sheet("price forecast"), data, notes)
     if journal_mode:
         _read_partner_loans(sheet("balances tracker"), data, notes)
         _read_negotiations(sheet("negotiation register"), data, notes)
         _read_design_offer(sheet("design offer"), data, notes)
     data.pop("_remap", None)
+    data.pop("_rules", None)
     data.pop("_funder", None)
     wb.close()
     data["_notes"] = notes
@@ -444,6 +448,107 @@ def _allocation_rule(ws, codes):
                 return {"name": name, "split": split}
             return None
     return None
+
+
+def _rule_code(name):
+    return (re.sub(r"[^A-Za-z0-9]+", "-", str(name)).strip("-").upper() or "RULE")[:40]
+
+
+def _read_allocation_rules(ws, codes, data, notes):
+    """Every rule on the Cost Allocation sheet becomes an allocation rule. The first one is the default (what untagged
+    shared costs follow); a rule at 0% everywhere keeps the cost as company overhead."""
+    if ws is None:
+        return
+    for hr, h in _headers(ws, ["allocation rule", "billable"], scan=10):
+        row_h = [_v(c.value) for c in ws[hr]]
+        cols = {i: str(v).strip() for i, v in enumerate(row_h) if str(v or "").strip() in codes}
+        bill = _col(h, "billable")
+        seen, skipped = set(), []
+        for row in ws.iter_rows(min_row=hr + 1, values_only=True):
+            name = _v(row[0]) if row else None
+            if not name or str(name).strip().upper().startswith("TOTAL"):
+                continue
+            split = {c: round(_f(row[i]), 10) for i, c in cols.items() if i < len(row) and _f(row[i])}
+            total = sum(split.values())
+            if total and not 0.999 <= total <= 1.0000001:
+                skipped.append(f"{name} ({total:.2%})")
+                continue
+            code = _rule_code(name)
+            while code in seen:
+                code = (code[:36] + "-" + str(len(seen)))[:40]
+            seen.add(code)
+            data["Allocation Rules"].append({
+                "code": code, "name": str(name).strip(), "method": "fixed" if split else "none",
+                "split": "; ".join(f"{c}: {v * 100:.6g}%" for c, v in split.items()),
+                "billable": "Yes" if str(_v(_get(row, bill)) or "").strip().lower().startswith("y") else "No",
+                "is_default": "Yes" if len(seen) == 1 else "No", "active": "Yes"})
+            data.setdefault("_rules", {})[str(name).strip()] = code
+        if seen:
+            notes.append(f"Cost Allocation: {len(seen)} rules imported (Business Units → Cost Allocation Rules). The first, "
+                         f"'{data['Allocation Rules'][0]['name']}', is the default for untagged shared costs, as in the workbook. "
+                         "Rules can now also spread costs evenly, by revenue, cost, hours, headcount or area, per account and per period.")
+        even = [r["name"] for r in data["Allocation Rules"] if r["method"] == "fixed" and len(set(r["split"].split("; "))) and
+                len({x.split(": ")[1] for x in r["split"].split("; ")}) == 1 and r["split"].count(":") == len(cols)]
+        if even:
+            notes.append(f"{', '.join(even)}: equal shares across every project, kept as fixed percentages so the figures match the "
+                         "workbook. Switch the method to 'Even' to include new projects automatically.")
+        if skipped:
+            notes.append("Cost Allocation rules not imported because they total neither 0% nor 100%: " + ", ".join(skipped) + ".")
+        return
+
+
+def _read_quick_estimator(ws, data, notes):
+    """The Quick Estimator becomes a draft BOQ: its lines with quantity, client rate and historical cost."""
+    if ws is None:
+        return
+    client = area = None
+    for r in range(1, 8):
+        label = str(_v(ws.cell(r, 1).value) or "").lower()
+        if label.startswith("client"):
+            client = _v(ws.cell(r, 2).value)
+        elif "area" in label:
+            area = _f(ws.cell(r, 2).value)
+    for hr, h in _headers(ws, ["category", "unit", "quantity"], scan=15):
+        title = f"Quick estimate — {client}" if client else "Quick estimate"
+        n = 0
+        for row in ws.iter_rows(min_row=hr + 1, values_only=True):
+            desc = _v(_get(row, _col(h, "subcategory", "specification")))
+            qty = _f(_get(row, _col(h, "quantity")))
+            if not desc or not qty:
+                if str(_v(_get(row, 0)) or "").lower().startswith("total"):
+                    break
+                continue
+            data.setdefault("BOQ Lines", []).append({
+                "title": title, "rev": "Estimate", "client": client or "", "category": _v(_get(row, _col(h, "category"))) or "",
+                "description": desc, "unit": _v(_get(row, _col(h, "unit"))) or "", "qty": qty,
+                "price": _f(_get(row, _col(h, "unit rate"))), "cost": _f(_get(row, _col(h, "unit cost")))})
+            n += 1
+        if n:
+            notes.append(f"Quick Estimator: {n} lines imported as the BOQ '{title}'" + (f" ({area:g} m²)" if area else "")
+                         + " — open it under Estimating → BOQs to keep pricing it or turn it into an invoice.")
+        return
+
+
+def _read_forecast_mixes(ws, data, notes):
+    """Price forecast: only what each cost category is made of (local / imported / labour / energy) is taken. The
+    quarterly driver rates are not copied — the app keeps them up to date from global and local data."""
+    if ws is None:
+        return
+    for hr, h in _headers(ws, ["cost category", "local", "labour"], scan=60):
+        n = 0
+        for row in ws.iter_rows(min_row=hr + 1, values_only=True):
+            cat = _v(_get(row, _col(h, "cost category")))
+            if not cat:
+                break
+            mix = {k: _f(_get(row, _col(h, *w))) for k, w in (("local", ("local",)), ("imported", ("imported",)),
+                                                                ("labour", ("labour", "labor")), ("energy", ("energy", "fuel")))}
+            if sum(mix.values()) > 0:
+                data["Forecast Mixes"].append({"category": str(cat).strip(), **mix})
+                n += 1
+        if n:
+            notes.append(f"Price forecast: {n} cost-category mixes imported (Reports → Forecast). The sheet's own quarterly "
+                         "driver rates were not copied; the forecast uses the latest published figures (Fetch latest).")
+        return
 
 
 def _read_policy(ws, data, notes):
@@ -686,6 +791,7 @@ def _read_journal(wb, ws, data, notes, codes):
     auto, mapped, funded = [], set(), set()
     items = [0]
     funder = data.get("_funder") or ""
+    unknown_rules, staged = set(), [0]
     bank_codes = {"1020", "1010"}
     n = 0
     for je in order:
@@ -700,6 +806,13 @@ def _read_journal(wb, ws, data, notes, codes):
         deal = next((_v(_get(r, _col(h, "deal ref"))) for r in rows if _v(_get(r, _col(h, "deal ref")))), "") or ""
         memo = str(_v(_get(first, _col(h, "description"))) or src or je)
         date = _date(_get(first, _col(h, "date")))
+        tag = next((str(_v(_get(r, _col(h, "alloc rule")))).strip() for r in rows if _v(_get(r, _col(h, "alloc rule")))), "")
+        rule_tag = "" if proj else (data.get("_rules") or {}).get(tag, "")
+        if tag and not proj and not rule_tag:
+            unknown_rules.add(tag)
+        stage = next((str(_v(_get(r, _col(h, "stage")))).strip() for r in rows
+                      if str(_v(_get(r, _col(h, "stage"))) or "").strip().lower() not in ("", "all")), "") if proj else ""
+        staged[0] += bool(stage)
         if "auto" in src.lower() and (src.lower().startswith("accrual") or funder):
             # the workbook's self-updating entries are not copied as fixed snapshots: the app keeps work in progress
             # up to date per project, and the funding partner's account carries his money live
@@ -718,7 +831,7 @@ def _read_journal(wb, ws, data, notes, codes):
             if new != code:
                 mapped.add(f"{code}→{new}")
             row = {"voucher": je, "date": date, "kind": kind, "bu_code": proj, "party": party, "ref": je, "memo": memo,
-                   "deal_ref": deal, "account": new, "debit": round(_f(_get(r, _col(h, "debit"))), 2) or "",
+                   "deal_ref": deal, "alloc_rule": rule_tag, "stage": stage, "account": new, "debit": round(_f(_get(r, _col(h, "debit"))), 2) or "",
                    "credit": round(_f(_get(r, _col(h, "credit"))), 2) or "", "line_party": line_party}
             # V1.6: a materials line with its quantity, unit and rate becomes a material line (materials used and their
             # prices), when quantity × rate is exactly the amount
@@ -733,6 +846,11 @@ def _read_journal(wb, ws, data, notes, codes):
                  "archive sheets (Project Costing, OpEx, Payroll, Income Tracker) were not imported, so nothing is counted twice.")
     if mapped:
         notes.append("Account codes that mean something else in the app were moved: " + ", ".join(sorted(mapped)) + ".")
+    if staged[0]:
+        notes.append(f"{staged[0]} entries carry a project stage (used for ownership by stage).")
+    if unknown_rules:
+        notes.append("Journal lines name allocation rules that are not on the Cost Allocation sheet: " + ", ".join(sorted(unknown_rules))
+                     + " — they follow the default rule.")
     if items[0]:
         notes.append(f"{items[0]} materials lines with quantity, unit and rate imported as material lines (Projects → Materials used "
                      "shows what was used and at what price).")

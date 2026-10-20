@@ -2118,10 +2118,13 @@ const BULKS = {
 
 // ======================================================= document forms
 function paidSplitHelp() { return S.lang === "ar" ? "يُسجَّل أي مبلغ غير مسدد مستحقاً للمورد." : "Any unpaid amount is recorded as payable to the supplier."; }
+const allocOpts = () => [["", L2("By the allocation rules", "حسب قواعد التوزيع")], ["company", L2("Company only (not allocated)", "على الشركة فقط (بدون توزيع)")],
+  ...(S.boot.alloc_rules || []).map(r => [r.code, r.name && r.name !== r.code ? `${r.code} — ${r.name}` : r.code])];
 const DOCS = {
   direct_cost: { title: "m_costs", fields: () => [
     { k: "date", l: t("date"), type: "date", v: today(), req: 1 }, { k: "bu_id", l: t("bu"), type: "select", opts: buOpts(), req: 1 },
     { k: "account", l: t("cost_account"), type: "select", opts: accts(["COGS"]), v: accByRole("materials") },
+    { k: "stage", l: L2("Stage (optional)", "المرحلة (اختياري)"), list: "stagelist" }, { html: datalist("stagelist", S.boot.stages || []) },
     { k: "description", l: t("description"), req: 1 }, { k: "vendor", l: t("supplier"), list: "parties" },
     { k: "deal_ref", l: t("deal_ref") }, { k: "deal_status", l: t("deal_status"), type: "select", opts: [["", "—"], "Open", "Settled"] },
     { k: "qty", l: t("qty"), type: "number", v: 1, input: "calc" }, { k: "unit", l: t("unit"), list: "units", v: "Task" },
@@ -2147,6 +2150,7 @@ const DOCS = {
     { k: "bu_id", l: t("bu"), type: "select", opts: buOpts("—") }, { k: "deal_ref", l: t("deal_ref") }, { k: "memo", l: t("memo"), span: "spanall" }] },
   expense: { title: "m_expenses", fields: () => [
     { k: "date", l: t("date"), type: "date", v: today(), req: 1 }, { k: "bu_id", l: t("bu"), type: "select", opts: buOpts(t("shared")), help: t("overhead_note") },
+    { k: "alloc_rule", l: L2("Allocation (shared costs)", "التوزيع (التكاليف المشتركة)"), type: "select", opts: allocOpts() },
     { k: "account", l: t("expense_account"), type: "select", opts: accts(["Expense"]), v: accByRole("other_overhead") },
     { k: "description", l: t("description"), req: 1 }, { k: "vendor", l: t("supplier"), list: "parties" },
     { k: "amount", l: t("amount"), type: "number", req: 1, input: "calc" }, { k: "paid", l: t("paid_now"), type: "number", ph: S.lang === "ar" ? "فارغ: مدفوع بالكامل" : "Blank: paid in full", help: paidSplitHelp(), input: "calc" },
@@ -2590,7 +2594,7 @@ const WIDGET_DRAW = {
   account_balance: x => wStat(x.value, x.sub, x.href, true),
   attention: x => x.rows.length ? `<div class="alist">${x.rows.map(r => `<a class="alert-row" href="${esc(r.href)}"><span class="dot ${r.level}">${svg(r.level === "bad" ? "alert" : r.level === "warn" ? "clock" : "bell")}</span><span>${esc(S.lang === "ar" ? r.ar : r.en)}</span></a>`).join("")}</div>`
     : `<div class="empty small">${svg("check")}<div>${esc(L2("Nothing pending.", "لا توجد أعمال معلقة."))}</div></div>`,
-  books_check: x => `<div class="audit">${x.checks.map(a => `<span class="chip ${a.ok ? "ok" : "bad"}" title="${esc(a.check)}">${a.ok ? "✓" : "✗"} ${esc(a.check)}</span>`).join("")}</div>`,
+  books_check: x => `<div class="audit">${x.checks.map(a => `<span class="chip ${a.ok ? "ok" : "bad"}" title="${esc(a.check)}">${a.ok ? "✓" : "✗"} ${esc(a.check)}</span>`).join("")}${(x.flags || []).map(f => `<a class="chip warn" href="${f.href}">⚠ ${esc(S.lang === "ar" ? f.flag_ar : f.flag)}</a>`).join("")}</div>`,
   sales_target: x => { const p = x.target ? x.done / x.target : 0, exp = x.target ? x.expected / x.target : 0;
     const per = { month: L2("this month", "هذا الشهر"), quarter: L2("this quarter", "هذا الربع"), year: L2("this year", "هذا العام") }[x.period] || "";
     return `<div class="tgt"><div class="tgt-nums"><b data-count="${x.done}" data-fmt="money">${money(x.done)}</b><span>/ ${x.target ? money(x.target) : esc(L2("No target set", "لم يُحدد مستهدف"))}</span>
@@ -2695,7 +2699,40 @@ PAGES.bus = async (view, parts, q) => {
   const d = await api("GET", "/api/bus?" + qs(q));
   const alloc = d.rows.reduce((s, b) => s + (b.overhead_pct || 0), 0);
   S.H.newbu = () => buForm();
-  S.H.alloc = () => {
+  S.H.alloc = busAllocDrawer(d);
+  view.innerHTML = `<div class="toolbar">${can("business_units.units", "add") ? `<button class="btn pri" data-a="newbu">+ ${t("new")}</button>` : ""}
+    ${can("business_units.allocation", "edit") ? `<button class="btn" data-a="alloc">${t("alloc_title")}</button>` : ""}<span class="spacer"></span>${can("business_units.profitability") ? exportMenu("bu_pnl", q) : ""}</div>` +
+    filterBar(q, ["dates", "q", ["select", "status", t("status"), ["Tendering", "In Progress", "On Hold", "Completed", "Closed"].map(s => [s, tl(s)])],
+      ["select", "basis", t("basis"), S.boot.enums.billing_bases.map(s => [s, tl(s)])]]) +
+    `<div class="banner ${alloc > 1.0001 ? "err" : "info"}">${t("shared_pool")}: <b>${money(d.shared_overhead)}</b> · ${t("alloc_total")}: <b>${pct(alloc)}</b> — ${t("overhead_note")}</div>` +
+    `<div class="card">${buTable(d.rows)}</div>`;
+  bulkify(bulkTable(view, 'tr[data-href^="#/bu/"]'), BULKS.bus());
+};
+const BANK_F = () => [["label", L2("Short name", "اسم مختصر"), "CIB — EGP"], ["bank", t("bank_name")], ["acct", t("bank_account")], ["holder", t("bank_holder")], ["swift", t("swift")], ["iban", t("iban")]];
+const bankName = b => b.label || b.bank || b.acct || "—";
+// what happens to a discount negotiated with a supplier (per business unit; each cost can override it)
+const NEGO_OPTS = () => [["keep", L2("Company income (client billed at full price)", "إيراد للشركة (يُحاسب العميل بالسعر الكامل)")],
+  ["pass", L2("Cost reduction (passed to the client)", "تخفيض للتكلفة (لصالح العميل)")]];
+const buNego = id => ((S.boot.bus.find(b => String(b.id) === String(id)) || {}).negotiation) || "keep";
+async function stageOwnership(bu) {
+  const bus = S.boot.bus || []; bu = bu || (bus[0] || {}).code; if (!bu) return toast(L2("Add a project first.", "أضف مشروعاً أولاً."), true);
+  const d = await api("GET", "/api/stage-shares?" + qs({ bu }));
+  const cell = (pid, st) => { const x = d.shares.find(r => r.partner_id === pid && r.stage === st); return x ? +(x.share * 100).toFixed(4) : ""; };
+  S.H.stbu = el => stageOwnership(el.value);
+  S.H.stadd = async () => { const n = ((await uiPrompt(L2("Stage name", "اسم المرحلة"), "")) || "").trim(); if (n && !d.stages.includes(n)) { d.stages.push(n); render(); } };
+  const render = () => { $("#sttbl").innerHTML = d.stages.length ? `<div class="tbl"><table><thead><tr><th>${esc(L2("Stage", "المرحلة"))}</th>${d.partners.map(p => `<th class="num">${esc(p.name)}</th>`).join("")}<th class="num">${t("total")}</th></tr></thead><tbody>
+      ${d.stages.map(st => `<tr data-st="${esc(st)}"><td><b>${esc(st)}</b></td>${d.partners.map(p => `<td><input type="number" step="any" min="0" class="num" style="width:90px" data-p="${p.id}" value="${cell(p.id, st)}" placeholder="${+((d.project[p.id] ?? p.default_share) * 100).toFixed(2)}"></td>`).join("")}<td class="num sttot"></td></tr>`).join("")}</tbody></table></div>`
+      : `<p class="muted">${esc(L2("This project has no stages. Add phases in Projects, tag costs with a stage, or add one here.", "لا توجد مراحل لهذا المشروع. أضف مراحل من المشروعات أو حدد مرحلة على التكاليف أو أضفها هنا."))}</p>`;
+    const tot = () => $$("#sttbl tr[data-st]").forEach(tr => { const v = $$("[data-p]", tr).map(i => i.value === "" ? null : +i.value); tr.querySelector(".sttot").textContent = v.every(x => x === null) ? L2("as project", "كالمشروع") : v.reduce((a, x) => a + (x || 0), 0).toFixed(2) + "%"; });
+    $$("#sttbl input").forEach(i => i.addEventListener("input", tot)); tot(); };
+  drawer(L2("Ownership by stage", "الملكية حسب المرحلة"), `<label class="f">${esc(L2("Project", "المشروع"))}<select data-change="stbu">${optHtml(bus.map(b => [b.code, `${b.code} — ${b.name}`]), bu)}</select></label>
+    <p class="muted">${esc(L2("Give a stage its own shares where partners own it differently. The project's profit is split over its stages by the direct cost booked to each; stages left blank follow the project's ownership (shown in grey).", "حدد حصصاً للمرحلة إذا اختلفت ملكيتها. يُوزع ربح المشروع على مراحله حسب التكلفة المباشرة المسجلة لكل مرحلة، والمراحل الفارغة تتبع ملكية المشروع (بالرمادي)."))}</p>
+    <div id="sttbl"></div><button type="button" class="btn sm" data-a="stadd">+ ${esc(L2("Stage", "مرحلة"))}</button>`,
+    async (v, f) => { const rows = []; $$("tr[data-st]", f).forEach(tr => $$("[data-p]", tr).forEach(i => { if (i.value !== "") rows.push({ partner_id: +i.dataset.p, stage: tr.dataset.st, share: (+i.value) / 100 }); }));
+      await api("PUT", "/api/stage-shares", { bu, rows }); toast(t("saved")); }, { wide: true, onOpen: render });
+}
+function busAllocDrawer(d) {
+  return () => {
     const rows = d.rows;
     const active = b => !["Completed", "Closed"].includes(b.status);
     drawer(t("alloc_title"), `<p class="muted">${t("alloc_note")}</p>
@@ -2714,20 +2751,7 @@ PAGES.bus = async (view, parts, q) => {
       S.H.alclear = () => { $$(".al", f).forEach(i => { i.value = 0; }); S.H.altot(); };
       S.H.altot(); } });
   };
-  view.innerHTML = `<div class="toolbar">${can("business_units.units", "add") ? `<button class="btn pri" data-a="newbu">+ ${t("new")}</button>` : ""}
-    ${can("business_units.allocation", "edit") ? `<button class="btn" data-a="alloc">${t("alloc_title")}</button>` : ""}<span class="spacer"></span>${can("business_units.profitability") ? exportMenu("bu_pnl", q) : ""}</div>` +
-    filterBar(q, ["dates", "q", ["select", "status", t("status"), ["Tendering", "In Progress", "On Hold", "Completed", "Closed"].map(s => [s, tl(s)])],
-      ["select", "basis", t("basis"), S.boot.enums.billing_bases.map(s => [s, tl(s)])]]) +
-    `<div class="banner ${alloc > 1.0001 ? "err" : "info"}">${t("shared_pool")}: <b>${money(d.shared_overhead)}</b> · ${t("alloc_total")}: <b>${pct(alloc)}</b> — ${t("overhead_note")}</div>` +
-    `<div class="card">${buTable(d.rows)}</div>`;
-  bulkify(bulkTable(view, 'tr[data-href^="#/bu/"]'), BULKS.bus());
-};
-const BANK_F = () => [["label", L2("Short name", "اسم مختصر"), "CIB — EGP"], ["bank", t("bank_name")], ["acct", t("bank_account")], ["holder", t("bank_holder")], ["swift", t("swift")], ["iban", t("iban")]];
-const bankName = b => b.label || b.bank || b.acct || "—";
-// what happens to a discount negotiated with a supplier (per business unit; each cost can override it)
-const NEGO_OPTS = () => [["keep", L2("Company income (client billed at full price)", "إيراد للشركة (يُحاسب العميل بالسعر الكامل)")],
-  ["pass", L2("Cost reduction (passed to the client)", "تخفيض للتكلفة (لصالح العميل)")]];
-const buNego = id => ((S.boot.bus.find(b => String(b.id) === String(id)) || {}).negotiation) || "keep";
+}
 function buForm(b) {
   b = b || { status: "In Progress", basis: "Cost-Plus %" };
   drawer((b.id ? t("edit") : t("new")) + " — " + t("m_bus"), form([
@@ -3371,8 +3395,27 @@ PAGES.prices = async (view, parts, q) => {
     async v => { v.markup = (+v.markup || 0) / 100; if (r.id) await api("PUT", "/api/rates/" + r.id, v); else await api("POST", "/api/rates", v); toast(t("saved")); },
     { extraButtons: r.id && can("estimating.prices", "edit") ? `<button type="button" class="btn danger" data-a="rdel">${t("delete")}</button>` : "" });
   S.H.rnew = () => edit({});
+  // prices and costs seen on invoices, BOQs and booked materials that the price list does not have yet
+  S.H.rcap = async (el, showIgnored) => {
+    const c = await api("GET", "/api/rate-capture?" + qs({ ignored: showIgnored ? 1 : "" })).catch(fail); if (!c) return;
+    const ed = can("estimating.prices", "add"), num = (x, k) => x[k] ? `${money(x[k].last)}<div class="lines">${x[k].count}× · ${fd(x[k].last_date)}${x[k].min !== x[k].max ? ` · ${money(x[k].min)}–${money(x[k].max)}` : ""}</div>` : "—";
+    drawer(t("m_ratecap"), `<p class="muted">${L2("Rates found in invoices, BOQs and booked materials that are not in the price list. Matched on description and unit. Nothing is added until you add it.",
+        "أسعار وُجدت في الفواتير والمقايسات والمواد المسجّلة وليست في قائمة الأسعار. المطابقة بالوصف والوحدة، ولا يُضاف شيء إلا بموافقتك.")}</p>
+      <label class="row" style="gap:6px"><input type="checkbox" id="rcig" ${showIgnored ? "checked" : ""}> ${L2("Show ignored", "عرض المتجاهَل")}</label>
+      ${c.rows.length ? `<div class="tbl"><table><thead><tr><th>${t("description")}</th><th>${t("unit")}</th><th class="num">${t("client_price")}</th><th class="num">${t("unit_cost")}</th><th>${L2("Last seen in", "آخر ظهور في")}</th><th></th></tr></thead><tbody>
+      ${c.rows.map((r, i) => `<tr><td style="max-width:360px">${esc(r.description)}${r.category ? `<div class="lines">${esc(r.category)}</div>` : ""}</td><td>${esc(r.unit)}</td><td class="num">${num(r, "price")}</td><td class="num">${num(r, "cost")}</td>
+        <td>${esc((r.price && r.price.last_date >= ((r.cost || {}).last_date || "") ? r.price : r.cost).source)}</td>
+        <td class="nowrap">${ed ? `<button class="btn sm pri" data-a="rcadd" data-i="${i}">${L2("Add", "إضافة")}</button> ` : ""}${can("estimating.prices", "edit") ? `<button class="btn sm" data-a="rcign" data-i="${i}">${r.ignored ? L2("Restore", "استرجاع") : L2("Ignore", "تجاهل")}</button>` : ""}</td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="empty">${L2("Every rate in the books is already in the price list.", "كل الأسعار المسجّلة موجودة في قائمة الأسعار.")}</div>`}`, null, { readOnly: true });
+    $("#rcig").onchange = e => S.H.rcap(null, e.target.checked);
+    S.H.rcign = async b => { const r = c.rows[+b.dataset.i]; try { await api("POST", "/api/rate-capture/ignore", { key: r.key, restore: r.ignored }); S.H.rcap(null, showIgnored); } catch (e) { fail(e); } };
+    S.H.rcadd = b => { const r = c.rows[+b.dataset.i], cost = r.cost ? r.cost.last : "", price = r.price ? r.price.last : "";
+      const src = [r.price, r.cost].filter(Boolean).map(x => `${x.source} ${x.last_date}`.trim()).join(" · ");
+      edit({ category: r.category, description: r.description, unit: r.unit, cost, price,
+        markup: cost && price ? price / cost - 1 : null, notes: L2("Captured from ", "مأخوذ من ") + src }); };
+  };
   S.H.redit = el => { const r = d.rows.find(x => String(x.id) === el.dataset.id); S.H.rdel = async () => { if (!await uiConfirm(t("confirm_delete"))) return; await api("DELETE", "/api/rates/" + r.id); closeDrawer(); route(); }; edit(r); };
-  view.innerHTML = `<div class="toolbar">${can("estimating.prices", "add") ? `<button class="btn pri" data-a="rnew">+ ${t("new")}</button>` : ""}</div>` +
+  view.innerHTML = `<div class="toolbar">${can("estimating.prices", "add") ? `<button class="btn pri" data-a="rnew">+ ${t("new")}</button>` : ""}<button class="btn" data-a="rcap">${t("m_ratecap")}</button></div>` +
     filterBar(q, ["q", ["select", "category", t("category"), d.categories.map(c => [c, c])]]) +
     `<div class="card">${d.rows.length ? `<div class="tbl"><table><thead><tr><th>${t("item_no")}</th><th>${t("category")}</th><th>${t("description")}</th><th>${t("unit")}</th><th class="num">${t("unit_cost")}</th><th class="num">${t("markup")}</th><th class="num">${t("client_price")}</th></tr></thead><tbody>
       ${d.rows.map(r => `<tr class="click" data-a="${can("estimating.prices", "edit") ? "redit" : ""}" data-id="${r.id}"><td>${esc(r.item_no)}</td><td>${esc(r.category)}</td><td style="max-width:520px">${esc(r.description)}</td><td>${esc(r.unit)}</td><td class="num">${money(r.cost)}</td><td class="num">${pct(r.markup)}</td><td class="num"><b>${money(r.price)}</b></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${t("nothing")}</div>`}
@@ -6183,7 +6226,9 @@ PAGES.partners = async (view, parts, q) => {
       ${act("loan", L2("Loan from a partner", "قرض من شريك"))}${act("interest", L2("Interest on a partner's loan", "فوائد قرض شريك"))}${act("repay", L2("Loan / interest repayment", "سداد قرض / فوائد"))}</div></div>` : "";
   const ownMenu = own ? `<div class="dd"><button class="btn">${L2("Ownership", "الملكية")} ▾</button><div class="dd-menu">
       ${act("transfer", L2("Share transfer", "تنازل عن حصة"))}<button data-a="eqreplace">${L2("Partner replacement (entire share)", "استبدال شريك (كامل الحصة)")}</button>
-      ${act("admit", L2("Admit a new partner", "دخول شريك جديد"))}${act("exit", L2("Partner retirement / buy-out", "تخارج شريك"))}${act("set", L2("Change shares directly", "تعديل النسب مباشرة"))}</div></div>` : "";
+      ${act("admit", L2("Admit a new partner", "دخول شريك جديد"))}${act("exit", L2("Partner retirement / buy-out", "تخارج شريك"))}${act("set", L2("Change shares directly", "تعديل النسب مباشرة"))}
+      ${can("partners.ownership", "edit") ? `<button data-a="stageown">${L2("Ownership by stage", "الملكية حسب المرحلة")}</button>` : ""}</div></div>` : "";
+  S.H.stageown = () => stageOwnership();
   const cp = d.cash_position, pol = d.policy || {}, dist = d.dist || {}, anyInt = d.partners.some(p => p.capital_interest), anyWip = d.partners.some(p => Math.abs(p.held_in_wip || 0) >= 0.01);
   const acctRow = p => { const a = p.accounts; return `<tr class="click ${p.active ? "" : "void"}" data-a="${ed ? "pedit" : ""}" data-id="${p.id}">
       <td><b>${esc(p.name)}</b>${p.active ? "" : ` <span class="chip">${L2("Former partner", "شريك سابق")}${p.left_on ? " · " + fd(p.left_on) : ""}</span>`}${p.joined ? `<div class="lines">${L2("since", "منذ")} ${fd(p.joined)}</div>` : ""}</td>
@@ -12790,4 +12835,65 @@ setInterval(checkUpdate, 10 * 60 * 1000);                         // then every 
 document.addEventListener("visibilitychange", () => { if (!document.hidden) checkUpdate(); });   // and when the app comes back to the screen
 window.addEventListener("online", () => checkUpdate());
 if (STATIC && window.BeyondCloud) window.BeyondCloud.onStatus(st => { if (st.state === "update") checkUpdate(); });   // another device already runs a newer version
+
+// ---------------------------------------------------------- cost allocation rules (allocation.py)
+const ALLOC_METHODS = () => [["fixed", L2("Fixed % per project", "نسبة ثابتة لكل مشروع")], ["even", L2("Even split among eligible projects", "بالتساوي بين المشروعات المؤهلة")],
+  ["driver", L2("In proportion to a measure", "بالتناسب مع مقياس")], ["single", L2("One project", "مشروع واحد")], ["none", L2("Company only (not allocated)", "على الشركة فقط (بدون توزيع)")]];
+const ALLOC_DRIVERS = () => [["revenue", L2("Revenue", "الإيراد")], ["direct_cost", L2("Direct cost", "التكلفة المباشرة")], ["labour_hours", L2("Labour hours", "ساعات العمل")],
+  ["headcount", L2("Headcount", "عدد العاملين")], ["area", L2("Area", "المساحة")], ["contract_value", L2("Contract value", "قيمة العقد")], ["expected_revenue", L2("Expected revenue", "الإيراد المتوقع")]];
+function allocRuleForm(r, rules) {
+  r = r || { method: "even", driver: "revenue", driver_period: "month", split: {}, include: [], exclude: [], statuses: [], priority: (rules.length + 1) * 10, active: true };
+  const bus = S.boot.bus || [], STAT = ["Tendering", "In Progress", "On Hold", "Completed", "Closed"];
+  const pick = (name, sel) => `<div class="row" style="gap:4px 12px;flex-wrap:wrap">${bus.map(b => `<label class="chk"><input type="checkbox" data-${name}="${esc(b.code)}" ${sel.includes(b.code) ? "checked" : ""}> ${esc(b.code)}</label>`).join("") || "—"}</div>`;
+  const show = () => { const m = $("#df [name=method]").value, vis = (sel, on) => $$(sel, $("#df")).forEach(e => { (e.closest(".f") || e).style.display = on ? "" : "none"; });
+    vis("[name=driver]", m === "driver"); vis("[name=driver_period]", m === "driver"); vis("#arsplit", m === "fixed"); vis("[name=target]", m === "single");
+    vis("#arelig", ["even", "driver"].includes(m)); };
+  S.H.armethod = show;
+  drawer(r.id ? `${L2("Allocation rule", "قاعدة توزيع")} ${r.code}` : L2("New allocation rule", "قاعدة توزيع جديدة"), form([
+    { k: "code", l: L2("Code", "الكود"), v: r.code, req: 1 }, { k: "name", l: t("name"), v: r.name },
+    { k: "method", l: L2("How costs are spread", "طريقة التوزيع"), type: "select", opts: ALLOC_METHODS(), v: r.method, change: "armethod" },
+    { k: "driver", l: L2("Measure", "المقياس"), type: "select", opts: ALLOC_DRIVERS(), v: r.driver || "revenue" },
+    { k: "driver_period", l: L2("Measured over", "فترة القياس"), type: "select", opts: [["month", L2("The month of the cost", "شهر التكلفة")], ["to_date", L2("Everything to date", "كل ما سبق حتى تاريخه")]], v: r.driver_period },
+    { k: "target", l: L2("Project", "المشروع"), type: "select", opts: [["", "—"], ...bus.map(b => [b.code, `${b.code} — ${b.name}`])], v: r.target || "" },
+    { html: `<div id="arsplit"><span class="fl">${esc(L2("Share per project (%) — the rest stays with the company", "النسبة لكل مشروع (%) — الباقي على الشركة"))}</span><div class="grid g3">${bus.map(b => `<label class="f">${esc(b.code)}<input type="number" step="any" min="0" class="num" data-sp="${esc(b.code)}" value="${r.split[b.code] ? +(r.split[b.code] * 100).toFixed(4) : ""}"></label>`).join("")}</div><small class="muted" id="arsum"></small></div>`, span: "spanall" },
+    { html: `<div id="arelig"><span class="fl">${esc(L2("Eligible projects", "المشروعات المؤهلة"))}</span><p class="muted" style="margin:0 0 6px">${esc(L2("Projects running in the month of each cost. Narrow them by status, group or list.", "المشروعات الجارية في شهر كل تكلفة. يمكن تضييقها بالحالة أو المجموعة أو القائمة."))}</p>
+      <span class="fl">${esc(t("status"))}</span><div class="row" style="gap:4px 12px;flex-wrap:wrap">${STAT.map(st => `<label class="chk"><input type="checkbox" data-st="${st}" ${r.statuses.includes(st) ? "checked" : ""}> ${esc(tl(st))}</label>`).join("")}</div>
+      <label class="f">${esc(L2("Project group", "مجموعة المشروعات"))}<input name="grp" value="${esc(r.grp || "")}" list="bugroups2"></label>
+      <span class="fl">${esc(L2("Only these projects", "هذه المشروعات فقط"))}</span>${pick("inc", r.include)}
+      <span class="fl">${esc(L2("Except these projects", "باستثناء هذه المشروعات"))}</span>${pick("exc", r.exclude)}</div>`, span: "spanall" },
+    { html: `<h4 class="fsec">${esc(L2("Which costs", "التكاليف المشمولة"))}</h4>`, span: "spanall" },
+    { k: "accounts", l: L2("Accounts (codes, prefixes or ranges)", "الحسابات (أكواد أو بادئات أو نطاقات)"), v: r.accounts || "", ph: L2("code, prefix*, from-to", "كود، بادئة*، من-إلى"),
+      help: L2("Entries that name this rule always use it. Leave blank to apply only to tagged entries, or to all others when this is the default rule.", "القيود التي تحدد هذه القاعدة تستخدمها دائماً. اتركه فارغاً لتطبيقها على القيود المحددة فقط، أو على باقي التكاليف إن كانت القاعدة الافتراضية.") },
+    { k: "is_default", l: L2("Default rule for all other shared costs", "القاعدة الافتراضية لباقي التكاليف المشتركة"), type: "switch", v: !!r.is_default },
+    { k: "priority", l: L2("Priority (lower first)", "الأولوية (الأقل أولاً)"), type: "number", v: r.priority },
+    { k: "date_from", l: L2("Effective from", "سارية من"), type: "date", v: r.date_from || "" }, { k: "date_to", l: L2("Effective to", "سارية حتى"), type: "date", v: r.date_to || "" },
+    { k: "billable", l: L2("Billable to clients (cost-plus projects charge their fee on it)", "قابلة للتحميل على العملاء (تُحسب عليها نسبة مشروعات التكلفة مضافاً إليها النسبة)"), type: "switch", v: !!r.billable, span: "spanall" },
+    { k: "active", l: L2("Active", "نشطة"), type: "switch", v: r.active !== false },
+    { k: "notes", l: t("notes"), type: "textarea", v: r.notes || "", span: "spanall" }]) + datalist("bugroups2", [...new Set(bus.map(x => x.grp).filter(Boolean))]),
+    async (v, f) => { const body = { ...v, split: Object.fromEntries($$("[data-sp]", f).filter(i => +i.value).map(i => [i.dataset.sp, (+i.value) / 100])),
+        include: $$("[data-inc]", f).filter(i => i.checked).map(i => i.dataset.inc), exclude: $$("[data-exc]", f).filter(i => i.checked).map(i => i.dataset.exc),
+        statuses: $$("[data-st]", f).filter(i => i.checked).map(i => i.dataset.st) };
+      if (r.id) await api("PUT", "/api/alloc-rules/" + r.id, body); else await api("POST", "/api/alloc-rules", body); toast(t("saved")); },
+    { wide: true, onOpen: f => { show(); const sum = () => { const s = $$("[data-sp]", f).reduce((a, i) => a + (+i.value || 0), 0); $("#arsum", f).textContent = `${t("total")}: ${s.toFixed(2)}%`; };
+      $$("[data-sp]", f).forEach(i => i.addEventListener("input", sum)); sum(); } });
+}
+PAGES["alloc-rules"] = async (view, parts, q) => {
+  const d = await api("GET", "/api/alloc-rules?" + qs(q)), ed = can("business_units.allocation", "edit");
+  S.H.arnew = () => allocRuleForm(null, d.rules);
+  S.H.aredit = el => ed && allocRuleForm(d.rules.find(r => String(r.id) === el.dataset.id), d.rules);
+  S.H.ardel = async el => { const r = d.rules.find(x => String(x.id) === el.dataset.id); confirmDelete(r.code, "/api/alloc-rules/" + r.id); };
+  const meth = r => (ALLOC_METHODS().find(m => m[0] === r.method) || [0, r.method])[1] + (r.method === "driver" ? ` · ${(ALLOC_DRIVERS().find(x => x[0] === r.driver) || [0, r.driver])[1]}` : "");
+  const prev = d.preview, byCode = Object.fromEntries(prev.rules.map(x => [x.code, x]));
+  view.innerHTML = `<div class="toolbar">${ed ? `<button class="btn pri" data-a="arnew">+ ${esc(L2("Rule", "قاعدة"))}</button><button class="btn" data-a="alloc">${esc(L2("Project overhead % (when no rule applies)", "نسبة المصروفات للمشروعات (عند عدم وجود قاعدة)"))}</button>` : ""}<span class="spacer"></span></div>` +
+    filterBar(q, ["dates"]) +
+    `<div class="kpis">${kpiBox(L2("Shared costs", "التكاليف المشتركة"), money(prev.pool))}${kpiBox(L2("Allocated to projects", "الموزع على المشروعات"), money(prev.pool - prev.company), "pos")}${kpiBox(L2("Kept as company overhead", "على الشركة"), money(prev.company))}</div>
+    <div class="card">${d.rules.length ? `<div class="tbl stack"><table><thead><tr><th>${esc(L2("Rule", "القاعدة"))}</th><th>${esc(L2("Method", "الطريقة"))}</th><th>${esc(L2("Costs", "التكاليف"))}</th><th>${esc(L2("Billable", "قابلة للتحميل"))}</th><th class="num">${esc(L2("Pooled", "المجمّع"))}</th><th>${esc(L2("Allocated", "الموزع"))}</th>${ed ? "<th></th>" : ""}</tr></thead><tbody>
+      ${d.rules.map(r => { const p = byCode[r.code] || { pooled: 0, split: {} }; return `<tr class="click" data-a="aredit" data-id="${r.id}" style="${r.active ? "" : "opacity:.55"}"><td><b>${esc(r.code)}</b> ${esc(r.name !== r.code ? r.name : "")}${r.is_default ? ` <span class="chip ok">${esc(L2("Default", "افتراضية"))}</span>` : ""}${r.active ? "" : ` <span class="chip">${esc(L2("Inactive", "غير نشطة"))}</span>`}</td>
+        <td>${esc(meth(r))}</td><td>${esc(r.accounts || (r.is_default ? L2("All other shared costs", "باقي التكاليف المشتركة") : L2("Entries that name it", "القيود التي تحددها")))}${r.date_from || r.date_to ? `<div class="lines">${esc([r.date_from, r.date_to].map(x => x || "…").join(" → "))}</div>` : ""}</td>
+        <td>${r.billable ? "✓" : ""}</td><td class="num">${money(p.pooled)}</td><td><small>${Object.entries(p.split).map(([c, v]) => `${esc(c)} ${money(v)}`).join(" · ") || "—"}</small></td>
+        ${ed ? `<td><button class="btn sm danger" data-a="ardel" data-id="${r.id}" aria-label="${esc(t("delete"))}">✕</button></td>` : ""}</tr>`; }).join("")}</tbody></table></div>`
+      : `<div class="empty">${svg("grid")}<div>${esc(L2("No rules. Shared costs follow each project's overhead %. Add rules to spread costs evenly, by a measure such as revenue or labour hours, or by account.", "لا توجد قواعد. تتبع التكاليف المشتركة نسبة كل مشروع. أضف قواعد لتوزيعها بالتساوي أو بمقياس مثل الإيراد أو ساعات العمل أو حسب الحساب."))}</div></div>`}
+      ${prev.rules.filter(x => !x.code).map(x => `<p class="muted">${esc(L2("By project overhead %", "حسب نسبة المصروفات للمشروعات"))}: ${money(x.pooled)} · ${Object.entries(x.split).map(([c, v]) => `${esc(c)} ${money(v)}`).join(" · ")}</p>`).join("")}</div>`;
+  if (ed) { const bd = await api("GET", "/api/bus?" + qs(q)); S.H.alloc = busAllocDrawer(bd); }
+};
 })();

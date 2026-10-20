@@ -7,7 +7,7 @@ window.I18N = {
   g_care: ["Healthcare", "الرعاية الصحية"], mod_care: ["Healthcare", "الرعاية الصحية"], m_care_visits: ["Appointments & Visits", "المواعيد والزيارات"],
   m_care_patients: ["Patients", "المرضى"], m_care_services: ["Medical Services & Prices", "الخدمات الطبية والأسعار"], m_care_packages: ["Care Packages", "باقات الرعاية"],
   m_care_claims: ["Insurance Claims", "مطالبات التأمين"], m_care_reports: ["Healthcare Reports", "تقارير الرعاية الصحية"],
-  m_deals: ["Deals Pipeline", "مسار الصفقات"], m_crm_contacts: ["Contacts & Timeline", "جهات الاتصال والسجل"], m_followups: ["Follow-ups", "المتابعات"], m_desk: ["Online Booking & Forms", "الحجز والنماذج الإلكترونية"], m_automations: ["Automations", "القواعد التلقائية"], m_bills: ["Subscriptions & Recurring Bills", "الاشتراكات والفواتير الدورية"], m_alerts: ["My Alerts", "تنبيهاتي"], m_kb: ["Knowledge Base", "قاعدة المعرفة"], m_api: ["API Keys & Integrations", "مفاتيح الربط البرمجي"], m_workdays: ["Check-in Log", "سجل الحضور والانصراف"], m_requests: ["Employee Requests", "طلبات الموظفين"],
+  m_deals: ["Deals Pipeline", "مسار الصفقات"], m_crm_contacts: ["Contacts & Timeline", "جهات الاتصال والسجل"], m_followups: ["Follow-ups", "المتابعات"], m_desk: ["Online Booking & Forms", "الحجز والنماذج الإلكترونية"], m_automations: ["Automations", "القواعد التلقائية"], m_bills: ["Subscriptions & Recurring Bills", "الاشتراكات والفواتير الدورية"], m_alerts: ["My Alerts", "تنبيهاتي"], m_kb: ["Knowledge Base", "قاعدة المعرفة"], m_api: ["API Keys & Integrations", "مفاتيح الربط البرمجي"], m_workdays: ["Check-in Log", "سجل الحضور والانصراف"], m_requests: ["Employee Requests", "طلبات الموظفين"], m_alloc: ["Cost Allocation Rules", "قواعد توزيع التكاليف"], m_ratecap: ["New Rates to Capture", "أسعار جديدة للتسجيل"],
   mod_crm: ["Customers & deals (CRM)", "العملاء والصفقات (CRM)"], g_bu: ["Business Units", "وحدات الأعمال"], g_sales: ["Sales & Receivables", "المبيعات والمدينون"],
   g_est: ["Estimating & Tendering", "التسعير والعطاءات"], g_buy: ["Procurement & Payables", "المشتريات والدائنون"],
   g_stock: ["Inventory", "المخزون"], g_hr: ["Human Resources & Payroll", "الموارد البشرية والرواتب"], g_equity: ["Owners' Equity", "حقوق الملكية"],
@@ -212,7 +212,7 @@ window.SUBTYPE_LABELS = {
 // sidebar: [group, [ [menuKey, route, module, icon], ... ]]
 window.MENU = [
   ["g_home", [["m_dashboard", "dashboard", "dashboard", "◧"], ["m_chat", "chat", "chat", "💬"], ["m_kb", "kb", "team.kb", "📖"], ["m_alerts", "alerts", "team.alerts", "🔔"], ["m_assistant", "assistant", "chat.ai", "✦"], ["m_calcs", "calculators", "dashboard", "🧮"]]],
-  ["g_bu", [["m_bus", "bus", "business_units.units", "▦"]]],
+  ["g_bu", [["m_bus", "bus", "business_units.units", "▦"], ["m_alloc", "alloc-rules", "business_units.allocation", "⇄"]]],
   ["g_care", [["m_care_visits", "care-visits", "care.visits", "✚"], ["m_care_patients", "care-patients", "care.patients", "☺"], ["m_care_services", "care-services", "care.services", "₤"],
              ["m_care_packages", "care-packages", "care.packages", "▦"], ["m_care_claims", "care-claims", "care.claims", "⇲"], ["m_care_reports", "care-reports", "care.reports", "◔"]]],
   ["g_crm", [["m_deals", "deals", "crm.deals", "◎"], ["m_crm_contacts", "crm-contacts", "crm.contacts", "☎"], ["m_followups", "followups", "crm.followups", "⏰"], ["m_desk", "desk", "crm.desk", "◍"]]],
@@ -240,7 +240,7 @@ window.MENU = [
 window.SUBPERM = {
   "care.visits": "m_care_visits", "care.patients": "m_care_patients", "care.services": "m_care_services", "care.packages": "m_care_packages", "care.claims": "m_care_claims", "care.reports": "m_care_reports",
   "payroll.employees": "m_employees", "payroll.runs": "m_payruns", "payroll.entries": "m_payroll", "payroll.crew": "m_crew", "payroll.settings": "m_payset",
-  "business_units.units": "m_bus", "business_units.allocation": "p_alloc", "business_units.profitability": "m_bup",
+  "business_units.units": "m_bus", "business_units.allocation": "m_alloc", "business_units.profitability": "m_bup",
   "sales.offers": "m_offers", "sales.receipts": "m_receipts", "sales.invoices": "m_invoices", "sales.extracts": "m_extracts", "sales.receivables": "m_receivables", "sales.parties": "m_parties", "shop.products": "m_products", "shop.orders": "m_sales_orders", "shop.installments": "m_installments", "shop.subscriptions": "m_subs",
   "estimating.boqs": "m_boqs", "estimating.prices": "m_prices",
   "purchasing.orders": "m_pos", "purchasing.costs": "m_costs", "purchasing.expenses": "m_expenses", "purchasing.payments": "m_payments", "purchasing.payables": "m_payables", "purchasing.contacts": "m_contacts", "purchasing.negotiations": "m_nego", "rentals.contracts": "m_rentals", "rentals.fleet": "m_rentfleet", "rentals.calculator": "m_rentcalc", "purchasing.custody": "m_custody", "accounting.loans": "m_loans", "accounting.bankrec": "m_bankrec", "accounting.recurring": "m_recurring", "accounting.budgets": "m_budgets",

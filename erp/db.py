@@ -164,6 +164,39 @@ CREATE TABLE IF NOT EXISTS partner_shares (
     PRIMARY KEY (partner_id, bu_id)
 );
 
+-- cost allocation rules (allocation.py): how shared costs are spread over projects
+CREATE TABLE IF NOT EXISTS alloc_rules (
+    id            INTEGER PRIMARY KEY,
+    code          TEXT NOT NULL UNIQUE,
+    name          TEXT NOT NULL DEFAULT '',
+    method        TEXT NOT NULL DEFAULT 'fixed',   -- fixed | even | driver | single | none
+    driver        TEXT NOT NULL DEFAULT '',        -- revenue | direct_cost | labour_hours | headcount | area | contract_value | expected_revenue
+    driver_period TEXT NOT NULL DEFAULT 'month',   -- month | to_date
+    split         TEXT NOT NULL DEFAULT '{}',      -- fixed: {project code: share}
+    target        TEXT NOT NULL DEFAULT '',        -- single: project code
+    include       TEXT NOT NULL DEFAULT '[]',      -- only these projects (codes)
+    exclude       TEXT NOT NULL DEFAULT '[]',
+    grp           TEXT NOT NULL DEFAULT '',        -- only this project group
+    statuses      TEXT NOT NULL DEFAULT '[]',      -- only projects in these statuses
+    accounts      TEXT NOT NULL DEFAULT '',        -- costs on these accounts: 6010, 602*, 6030-6060
+    billable      INTEGER NOT NULL DEFAULT 0,
+    priority      INTEGER NOT NULL DEFAULT 100,
+    is_default    INTEGER NOT NULL DEFAULT 0,
+    active        INTEGER NOT NULL DEFAULT 1,
+    date_from     TEXT NOT NULL DEFAULT '',
+    date_to       TEXT NOT NULL DEFAULT '',
+    notes         TEXT NOT NULL DEFAULT ''
+);
+
+-- ownership per project stage (a partner may hold a different share of one stage of a project)
+CREATE TABLE IF NOT EXISTS partner_stage_shares (
+    partner_id INTEGER NOT NULL REFERENCES partners(id) ON DELETE CASCADE,
+    bu_id      INTEGER NOT NULL REFERENCES business_units(id) ON DELETE CASCADE,
+    stage      TEXT NOT NULL,
+    share      REAL NOT NULL DEFAULT 0,
+    PRIMARY KEY (partner_id, bu_id, stage)
+);
+
 CREATE TABLE IF NOT EXISTS rates (
     id INTEGER PRIMARY KEY,
     category TEXT NOT NULL,

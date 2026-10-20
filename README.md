@@ -173,7 +173,16 @@ A backup is taken automatically once a day and before every "replace" import or 
 * Each account's *statement line* decides where it appears on the Income Statement, Balance Sheet and Cash Flow.
 * Corrections keep an audit trail: edits keep history, void leaves a trace, reverse posts the formal correcting entry.
 * The model audit checks: trial balance, A = L + E, cash-flow reconciliation, stock = inventory accounts,
-  every entry balances, overhead allocation ≤ 100 %.
+  every entry balances, overhead allocation ≤ 100 %. Review flags (not errors) point at figures to look at: projects
+  with costs above revenue or billed above the expected amount, partners who drew ahead of their earned share, a
+  funding partner at or over the funding limit, and rates in the books that are missing from the price list.
+* **Cost allocation rules** (Business Units → Cost Allocation Rules) spread shared costs: a fixed % per project, evenly
+  over eligible projects, in proportion to a measure (revenue, direct cost, labour hours, headcount, area, contract
+  value, expected revenue), to one project, or not at all. Each rule can be limited to accounts, dates, statuses,
+  groups or a list of projects, has a priority, and is billable or not. An entry can name its rule; untagged costs
+  follow the matching or default rule, and with no rules the per-project overhead % applies. Splits add up to the cent.
+* **Ownership by stage**: a project stage can be owned differently from the project; profit is split over stages by
+  the direct cost booked to each stage.
 
 ### E-invoicing setup (Egypt)
 

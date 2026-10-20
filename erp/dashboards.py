@@ -292,7 +292,7 @@ def w_attention(c, o):
 
 
 def w_books_check(c, o):
-    return {"checks": acc.audit(c.db)}
+    return {"checks": acc.audit(c.db), "flags": acc.review_flags(c.db) if c.can("reports") else []}
 
 
 def w_sales_target(c, o):
@@ -676,4 +676,7 @@ def alerts(db, can):
         bad = [a for a in acc.audit(db) if not a["ok"]]
         if bad:
             add("bad", f"Books check: {len(bad)} to review", f"فحص الدفاتر: {len(bad)} للمراجعة", "#/dashboard", len(bad))
+        flags = acc.review_flags(db)
+        if flags:
+            add("warn", f"Figures to review: {len(flags)}", f"أرقام تحتاج مراجعة: {len(flags)}", "#/dashboard", len(flags))
     return out

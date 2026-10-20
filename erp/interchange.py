@@ -158,6 +158,26 @@ SHEETS = [
      "title": "Ownership per business unit (overrides the default share)",
      "cols": [C("partner", "Partner", "الشريك", width=30, required=True), C("bu_code", "Business Unit", "وحدة الأعمال", kind="bu", required=True),
               C("share", "Share %", "النسبة", kind="pct", width=10)]},
+    {"name": "Partner Stage Shares", "ar": "حصص الشركاء بالمرحلة", "module": "partners",
+     "title": "Ownership per stage of a project, where a stage is owned differently. Each stage totals 100%",
+     "cols": [C("partner", "Partner", "الشريك", width=30, required=True), C("bu_code", "Business Unit", "وحدة الأعمال", kind="bu", required=True),
+              C("stage", "Stage", "المرحلة", width=20, required=True), C("share", "Share %", "النسبة", kind="pct", width=10)]},
+    {"name": "Allocation Rules", "ar": "قواعد توزيع التكاليف", "module": "business_units",
+     "title": "How shared costs are spread over projects. Method: fixed (Split), even, driver (Driver), single (Target) or none",
+     "cols": [C("code", "Rule Code", "كود القاعدة", width=14, required=True), C("name", "Name", "الاسم", width=26),
+              C("method", "Method", "الطريقة", width=9, required=True, choices=["fixed", "even", "driver", "single", "none"]),
+              C("driver", "Driver", "أساس التوزيع", width=14, choices=["", "revenue", "direct_cost", "labour_hours", "headcount", "area",
+                                                                        "contract_value", "expected_revenue"]),
+              C("driver_period", "Driver Period", "فترة الأساس", width=9, choices=["month", "to_date"]),
+              C("split", "Split (code: %)", "التوزيع (كود: %)", width=30, note="unit code: %; unit code: %"),
+              C("target", "Target Unit", "الوحدة المستهدفة", kind="bu"),
+              C("include", "Only These Units", "هذه الوحدات فقط", width=18), C("exclude", "Except These Units", "عدا هذه الوحدات", width=18),
+              C("grp", "Unit Group", "مجموعة الوحدات", width=14), C("statuses", "Unit Statuses", "حالات الوحدات", width=18),
+              C("accounts", "Accounts", "الحسابات", width=18, note="Codes, prefixes (60*) or ranges (6010-6040); blank = any shared cost"),
+              C("billable", "Billable", "تُحمّل على العميل", width=8, choices=["Yes", "No"]),
+              C("priority", "Priority", "الأولوية", kind="num", width=7), C("is_default", "Default", "افتراضية", width=8, choices=["Yes", "No"]),
+              C("active", "Active", "نشطة", width=7, choices=["Yes", "No"]), C("date_from", "From", "من", kind="date"),
+              C("date_to", "To", "إلى", kind="date"), C("notes", "Notes", "ملاحظات", width=24)]},
     {"name": "Fixed Assets", "ar": "الأصول الثابتة", "module": "assets",
      "title": "Fixed asset register (its purchase, depreciation and disposal are journal entries with reference FA:<code>)",
      "cols": [C("code", "Asset Code", "كود الأصل", width=10, required=True), C("name", "Asset", "الأصل", width=28, required=True),
@@ -251,6 +271,12 @@ SHEETS = [
               C("unit", "Unit", "الوحدة", width=8), C("qty", "Qty", "الكمية", kind="num", width=9),
               C("price", "Unit Price", "سعر الوحدة", kind="money"), C("cost", "Unit Cost", "تكلفة الوحدة", kind="money"),
               C("amount", "Amount", "الإجمالي", kind="calc", calc="=ROUND(N({qty})*N({price}),2)")]},
+    {"name": "Forecast Mixes", "ar": "مكونات التنبؤ بالأسعار", "module": "reports",
+     "title": "What each cost category is made of, for the price forecast. The rates themselves come from the latest global "
+              "and local data (Forecast → Fetch latest)",
+     "cols": [C("category", "Cost Category", "فئة التكلفة", width=30, required=True),
+              C("local", "Local Materials %", "مواد محلية", kind="pct", width=10), C("imported", "Imported Content %", "مكون مستورد", kind="pct", width=10),
+              C("labour", "Labour %", "عمالة", kind="pct", width=10), C("energy", "Energy & Fuel %", "طاقة ووقود", kind="pct", width=10)]},
     {"name": "Direct Costs", "ar": "التكاليف المباشرة", "module": "purchasing", "kind": "Direct Cost",
      "title": "Direct costs (cost of revenue) per business unit — materials, subcontractors, site work",
      "cols": [C("date", "Date", "التاريخ", kind="date", required=True), C("bu_code", "Business Unit", "وحدة الأعمال", kind="bu", required=True),
@@ -271,11 +297,12 @@ SHEETS = [
               C("wht_amt", "WHT Withheld", "الخصم والتحصيل", kind="calc", calc="=ROUND({total}*" + TAXRATE("{wht_code}") + ",2)"),
               C("unpaid", "Unpaid", "المتبقي", kind="calc", calc="={total}+{vat_amt}-{wht_amt}-N({paid})"),
               eff("account", "materials"), eff_money("paid_from"), eff("payable_account", "ap"),
-              ROLECOL("vat_acct", "vat_input"), ROLECOL("wht_acct", "wht_payable")],
+              ROLECOL("vat_acct", "vat_input"), ROLECOL("wht_acct", "wht_payable"),
+              C("stage", "Stage", "المرحلة", width=14, note="Optional: the project stage (phase) this cost belongs to")],
      "legs": [("total", "account__eff", "D"), ("vat_amt", "vat_acct", "D"), ("paid", "paid_from__eff", "C"),
               ("unpaid", "payable_account__eff", "C"), ("wht_amt", "wht_acct", "C")]},
     {"name": "Operating Expenses", "ar": "المصروفات التشغيلية", "module": "purchasing", "kind": "Operating Expense",
-     "title": "Operating expenses. Leave Business Unit blank for shared overhead (allocated by Overhead %). "
+     "title": "Operating expenses. Leave Business Unit blank for shared overhead (spread by the allocation rules). "
               "Paid Now blank = paid in full",
      "cols": [C("date", "Date", "التاريخ", kind="date", required=True), C("bu_code", "Business Unit", "وحدة الأعمال", kind="bu"),
               C("account", "Expense Account", "حساب المصروف", kind="acct", role="other_overhead"),
@@ -291,7 +318,9 @@ SHEETS = [
                 calc='=IF({paid}="",N({amount})+{vat_amt}-{wht_amt},N({paid}))'),
               C("unpaid", "Unpaid", "المتبقي", kind="calc", calc="=N({amount})+{vat_amt}-{wht_amt}-{paid_eff}"),
               eff("account", "other_overhead"), eff_money("paid_from"), eff("payable_account", "ap"),
-              ROLECOL("vat_acct", "vat_input"), ROLECOL("wht_acct", "wht_payable")],
+              ROLECOL("vat_acct", "vat_input"), ROLECOL("wht_acct", "wht_payable"),
+              C("alloc_rule", "Allocation Rule", "قاعدة التوزيع", width=14,
+                note="Shared costs only: a rule code, or company to keep it as company cost. Blank = by the rules")],
      "legs": [("amount", "account__eff", "D"), ("vat_amt", "vat_acct", "D"), ("paid_eff", "paid_from__eff", "C"),
               ("unpaid", "payable_account__eff", "C"), ("wht_amt", "wht_acct", "C")]},
     {"name": "Payroll", "ar": "الرواتب والأجور", "module": "payroll", "kind": "Payroll Accrual",
@@ -464,7 +493,10 @@ SHEETS = [
               C("item_unit", "Item Unit", "وحدة الصنف", width=8), C("item_qty", "Item Qty", "كمية الصنف", kind="num"),
               C("item_rate", "Item Unit Price", "سعر وحدة الصنف", kind="money"),
               C("item_to", "Item Goes To", "وجهة الصنف", width=16,
-                note="A warehouse name (received into stock) — or empty: used on the voucher's business unit")],
+                note="A warehouse name (received into stock) — or empty: used on the voucher's business unit"),
+              C("alloc_rule", "Allocation Rule", "قاعدة التوزيع", width=14,
+                note="Vouchers with no business unit: a rule code, or company to keep it as company cost. Blank = by the rules"),
+              C("stage", "Stage", "المرحلة", width=14)],
      "legs": [("debit", "account", "D"), ("credit", "account", "C")]},
 ]
 from . import setup_sheets as _setup  # noqa: E402
@@ -528,6 +560,12 @@ def export_data(db):
     for s in db.q("SELECT p.name, s.bu_id, s.share FROM partner_shares s JOIN partners p ON p.id=s.partner_id "
                   "ORDER BY p.id, s.bu_id"):
         out["Partner Shares"].append({"partner": s["name"], "bu_code": code(s["bu_id"]), "share": s["share"]})
+    for s in db.q("SELECT p.name, s.bu_id, s.stage, s.share FROM partner_stage_shares s JOIN partners p ON p.id=s.partner_id "
+                  "ORDER BY s.bu_id, s.stage, p.id"):
+        out["Partner Stage Shares"].append({"partner": s["name"], "bu_code": code(s["bu_id"]), "stage": s["stage"], "share": s["share"]})
+    from . import allocation, forecast
+    out["Allocation Rules"] = allocation.export_rows(db)
+    out["Forecast Mixes"] = [{"category": c, **m} for c, m in sorted(forecast.assumptions(db)["mixes"].items())]
     for a in db.q("SELECT * FROM fixed_assets ORDER BY code"):
         out["Fixed Assets"].append({k: a[k] for k in ("code", "name", "account", "accum_account", "expense_account", "acquired",
                                                       "life_months", "depr_start", "location", "serial", "notes")}
@@ -661,14 +699,19 @@ def export_data(db):
                                                 "party": e["party"], "ref": e["ref"], "memo": e["memo"], "account": ml["account"],
                                                 "debit": to_major(ml["amount"]), "credit": "", "line_party": "", "item": ml["description"],
                                                 "item_unit": ml["unit"], "item_qty": _num(ml["qty"]), "item_rate": to_major(ml["rate"]),
-                                                "item_to": ml["wh"] or ""})
+                                                "item_to": ml["wh"] or "", **_alloc_cols(e)})
             for ln in e["lines"][len(mls):]:
                 out["Journal Vouchers"].append({"voucher": vno, "date": e["date"], "kind": e["kind"],
                                                 "bu_code": e["bu_code"] or "", "party": e["party"], "ref": e["ref"],
                                                 "memo": e["memo"], "account": ln["account"],
                                                 "debit": ln["debit"] or "", "credit": ln["credit"] or "",
-                                                "line_party": ln.get("party", "")})
+                                                "line_party": ln.get("party", ""), **_alloc_cols(e)})
     return out
+
+
+def _alloc_cols(e):
+    m = e["meta"] or {}
+    return {"alloc_rule": "company" if m.get("no_alloc") else m.get("alloc_rule", ""), "stage": m.get("stage", "")}
 
 
 def _entry_to_row(e, accounts):
@@ -702,14 +745,15 @@ def _entry_to_row(e, accounts):
                                            "deal_ref": m.get("deal_ref", ""), "deal_status": m.get("deal_status", ""),
                                            "qty": m.get("qty"), "unit": m.get("unit", ""), "rate": m.get("rate"),
                                            "savings": m.get("savings") or "", "method": m.get("method", ""),
-                                           "negotiation": "pass" if m.get("savings") else ""}   # booked at the lower cost
+                                           "negotiation": "pass" if m.get("savings") else "",   # booked at the lower cost
+                                           "stage": m.get("stage", "")}
     if k == "Operating Expense" and len(dr) == 1 and typ(dr[0]["account"]) == "Expense":
         s = split(cr)
         if s is None:
             return None
         return "Operating Expenses", base | s | taxes | {"account": dr[0]["account"], "description": e["memo"],
                                                  "vendor": e["party"], "amount": dr[0]["debit"],
-                                                 "method": m.get("method", "")}
+                                                 "method": m.get("method", ""), "alloc_rule": _alloc_cols(e)["alloc_rule"]}
     if k == "Payroll Accrual" and len(dr) == 1:
         s = split(cr)
         if s is None or abs(dr[0]["debit"] - round(m.get("qty", 0) * m.get("rate", 0), 2)) > 0.005:
@@ -1628,7 +1672,7 @@ WIPE_ORDER = ("year_closes", "cost_subs", "entry_tags", "kb_pages", "workdays", 
               "pr_lines", "purchase_requests", "stock_count_lines", "stock_counts", "equipment_usage", "maintenance_logs", "maintenance_plans",
               "equipment", "attendance", "ereceipts", "project_tasks", "project_phases", "payroll_lines", "payroll_runs", "crew_sheets", "employees", "sub_recognitions", "sub_visits", "sub_invoices", "subscriptions", "service_plans", "attachments", "po_receipts", "po_lines", "purchase_orders", "budgets", "bank_lines", "bank_statements", "bank_rules", "recurring_runs", "recurring", "sale_cheques", "sale_installments", "sale_lines", "sales_orders", "product_media", "products", "rent_moves", "rental_invoices", "rental_charges", "rental_handovers", "rental_lines", "rentals", "rent_lots",
               "rent_kit_lines", "rent_kits", "rent_models", "rent_items", "loans", "custodies", "parties", "ownership_changes", "fixed_assets", "stock_moves", "stock_levels", "stock_items", "extract_lines", "extracts", "boq_lines", "boqs",
-              "journal_lines", "journal_entries", "partner_shares", "partners", "rates", "business_units")
+              "journal_lines", "journal_entries", "partner_stage_shares", "partner_shares", "partners", "rates", "alloc_rules", "business_units")
 
 
 # "New rows only": what identifies a record that is already in the books. Rows of these sheets are skipped when their
@@ -1831,6 +1875,10 @@ def import_data(db, data, mode="append", dry_run=False, user=""):
             run("Parties", lambda r: _imp_party(db, r))
             run("Partners", lambda r: _imp_partner(db, r))
             run("Partner Shares", lambda r: _imp_share(db, r))
+            run("Partner Stage Shares", lambda r: _imp_stage_share(db, r))
+            from . import allocation
+            run("Allocation Rules", lambda r: allocation.import_rows(db, [r]))
+            run("Forecast Mixes", lambda r: _imp_mix(db, r))
             run("Fixed Assets", lambda r: _imp_asset(db, r))
             run("Warehouses", lambda r: _imp_wh(db, r))
             run("Stock Items", lambda r: _imp_item(db, r))
@@ -2012,6 +2060,24 @@ def _imp_share(db, r):
         raise acc.ValidationError(f"Unknown partner {r.get('partner')}")
     db.conn.execute("INSERT OR REPLACE INTO partner_shares(partner_id,bu_id,share) VALUES (?,?,?)",
                     (p["id"], acc.bu_id_or_none(db, r.get("bu_code"), required=True), _pct(r.get("share"))))
+
+
+def _imp_mix(db, r):
+    from . import forecast
+    cat = acc.text(r.get("category"), "category", required=True, maxlen=120)
+    mix = {k: _pct(r.get(k)) for k in forecast.MIX_KEYS}
+    if not sum(mix.values()):
+        raise acc.ValidationError(f"{cat}: the mix is empty")
+    forecast.save(db, {"mixes": {**forecast.assumptions(db)["mixes"], cat: mix}})
+
+
+def _imp_stage_share(db, r):
+    p = db.one("SELECT id FROM partners WHERE name=?", (acc.text(r.get("partner")),))
+    if not p:
+        raise acc.ValidationError(f"Unknown partner {r.get('partner')}")
+    stage = acc.text(r.get("stage"), "stage", required=True, maxlen=80)
+    db.conn.execute("INSERT OR REPLACE INTO partner_stage_shares(partner_id,bu_id,stage,share) VALUES (?,?,?,?)",
+                    (p["id"], acc.bu_id_or_none(db, r.get("bu_code"), required=True), stage, _pct(r.get("share"))))
 
 
 def _imp_asset(db, r):
@@ -2201,7 +2267,8 @@ def _imp_journal(db, rows, errors, counts, user):
                                     "bu_code": first.get("bu_code"), "party": first.get("party"),
                                     "ref": first.get("ref") or ("" if re.fullmatch(r"JV-\d+", v) else v), "memo": first.get("memo"),
                                     "deal_ref": first.get("deal_ref"), "quoted": first.get("quoted"), "savings": first.get("savings"),
-                                    "negotiation": first.get("negotiation"),
+                                    "negotiation": first.get("negotiation"), "alloc_rule": first.get("alloc_rule"),
+                                    "stage": first.get("stage"),
                                     "items": [{"item": r.get("item"), "unit": r.get("item_unit"), "qty": r.get("item_qty"),
                                                "rate": r.get("item_rate"), "warehouse": r.get("item_to") or None,
                                                "account": r.get("account") if not r.get("item_to") else None}

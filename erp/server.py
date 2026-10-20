@@ -210,6 +210,8 @@ def bootstrap(ctx):
         "settings": settings_dict(db),
         "accounts": db.q("SELECT * FROM accounts ORDER BY code"),
         "bus": _my_bus(db, user),
+        "alloc_rules": db.q("SELECT code, name FROM alloc_rules WHERE active=1 ORDER BY priority, id"),
+        "stages": [r["name"] for r in db.q("SELECT DISTINCT name FROM project_phases ORDER BY name LIMIT 300")],
         "warehouses": db.q("SELECT * FROM warehouses ORDER BY id"),
         "partners": db.q("SELECT * FROM partners ORDER BY id"),
         "items": db.q("SELECT * FROM stock_items ORDER BY name"),
@@ -572,6 +574,43 @@ def edit_bu(ctx, bid):
     _bu_group(ctx, bid)
     _bu_estimate(ctx, bid)
     ctx.log("bu.edit", v[0])
+    return ok()
+
+
+@route("GET", "/api/alloc-rules", "business_units.allocation")
+def alloc_rules_list(ctx):
+    from . import allocation
+    return ok({"rules": allocation.rules(ctx.db), "preview": allocation.preview(ctx.db, ctx.q.get("date_from"), ctx.q.get("date_to")),
+               "methods": allocation.METHODS, "drivers": allocation.DRIVERS})
+
+
+@route("GET", "/api/alloc-rules/options")
+def alloc_rules_options(ctx):
+    """Rule names for entry forms (anyone recording a shared cost can pick one)."""
+    return ok([{"code": r["code"], "name": r["name"]} for r in ctx.db.q("SELECT code, name FROM alloc_rules WHERE active=1 ORDER BY priority, id")])
+
+
+@route("POST", "/api/alloc-rules", "business_units.allocation", "edit")
+def alloc_rules_add(ctx):
+    from . import allocation
+    rid = allocation.save(ctx.db, ctx.body)
+    ctx.log("allocation.rule", ctx.body.get("code"))
+    return ok({"id": rid})
+
+
+@route("PUT", "/api/alloc-rules/<rid>", "business_units.allocation", "edit")
+def alloc_rules_put(ctx, rid):
+    from . import allocation
+    allocation.save(ctx.db, ctx.body, rid)
+    ctx.log("allocation.rule", ctx.body.get("code"))
+    return ok()
+
+
+@route("DELETE", "/api/alloc-rules/<rid>", "business_units.allocation", "edit")
+def alloc_rules_del(ctx, rid):
+    from . import allocation
+    r = allocation.delete(ctx.db, rid)
+    ctx.log("allocation.rule.delete", r["code"])
     return ok()
 
 
@@ -1845,6 +1884,21 @@ def del_rate(ctx, rid):
     return ok()
 
 
+@route("GET", "/api/rate-capture", "estimating.prices")
+def rate_capture(ctx):
+    from . import ratecap
+    return ok({"rows": ratecap.candidates(ctx.db, ctx.q.get("ignored") == "1"),
+               "categories": [r["category"] for r in ctx.db.q("SELECT DISTINCT category FROM rates ORDER BY category")]})
+
+
+@route("POST", "/api/rate-capture/ignore", "estimating.prices", "edit")
+def rate_capture_ignore(ctx):
+    from . import ratecap
+    k = acc.text(ctx.body.get("key"), "key", required=True, maxlen=600)
+    ratecap.set_ignored(ctx.db, k, not ctx.body.get("restore"))
+    return ok()
+
+
 # ============================================================ BOQ & invoices
 @route("GET", "/api/boqs")
 def boqs(ctx):
@@ -2167,6 +2221,48 @@ def partners(ctx):
     rep["policy"], rep["dist"] = pk["policy"], {**pk["dist"], "clean": pk["clean_total"], "held": pk["held_total"],
                                                 "verdict": pk["verdict_ar"] if ctx.lang == "ar" else pk["verdict"]}
     return ok(rep)
+
+
+@route("GET", "/api/stage-shares", "partners.ownership")
+def stage_shares_get(ctx):
+    """A project's stages (its phases and the stages its costs are tagged with) and each partner's share of each."""
+    bu = acc.bu_id_or_none(ctx.db, ctx.q.get("bu"))
+    if not bu:
+        raise acc.ValidationError("Choose a project.")
+    stages = [r["name"] for r in ctx.db.q("SELECT name FROM project_phases WHERE bu_id=? ORDER BY seq, id", (bu,))]
+    for r in ctx.db.q("SELECT DISTINCT json_extract(meta,'$.stage') s FROM journal_entries WHERE bu_id=? AND json_extract(meta,'$.stage') IS NOT NULL", (bu,)):
+        if r["s"] and r["s"] not in stages:
+            stages.append(r["s"])
+    for r in ctx.db.q("SELECT DISTINCT stage FROM partner_stage_shares WHERE bu_id=?", (bu,)):
+        if r["stage"] not in stages:
+            stages.append(r["stage"])
+    return ok({"stages": stages, "shares": ctx.db.q("SELECT partner_id, stage, share FROM partner_stage_shares WHERE bu_id=?", (bu,)),
+               "partners": ctx.db.q("SELECT id, name, default_share FROM partners WHERE active=1 OR active IS NULL ORDER BY id"),
+               "project": {r["partner_id"]: r["share"] for r in ctx.db.q("SELECT partner_id, share FROM partner_shares WHERE bu_id=?", (bu,))}})
+
+
+@route("PUT", "/api/stage-shares", "partners.ownership", "edit")
+def stage_shares_put(ctx):
+    """rows: [{partner_id, stage, share}] for one project; a stage left blank for every partner follows the project."""
+    bu = acc.bu_id_or_none(ctx.db, ctx.body.get("bu"))
+    if not bu:
+        raise acc.ValidationError("Choose a project.")
+    rows = [r for r in ctx.body.get("rows") or [] if acc.text(r.get("stage")) and r.get("share") not in (None, "")]
+    totals = {}
+    for r in rows:
+        v = acc.num(r["share"], "share")
+        r["share"] = v / 100 if v > 1 else v
+        totals[acc.text(r["stage"])] = totals.get(acc.text(r["stage"]), 0) + r["share"]
+    bad = [k for k, v in totals.items() if abs(v - 1) > 0.0005]
+    if bad:
+        raise acc.ValidationError(f"Shares for stage {bad[0]} total {totals[bad[0]] * 100:.2f}%; they must total 100%.")
+    with ctx.db.tx():
+        ctx.db.conn.execute("DELETE FROM partner_stage_shares WHERE bu_id=?", (bu,))
+        for r in rows:
+            ctx.db.conn.execute("INSERT INTO partner_stage_shares(partner_id,bu_id,stage,share) VALUES (?,?,?,?)",
+                                (int(r["partner_id"]), bu, acc.text(r["stage"], maxlen=80), round(r["share"], 6)))
+    ctx.log("partners.stage_shares", str(bu))
+    return ok()
 
 
 @route("POST", "/api/partners", "partners.equity", "add")
@@ -5408,7 +5504,7 @@ ERASE_TRANSACTIONS = ("entry_tags", "workdays", "hr_requests", "presence", "desk
                       "stock_counts", "equipment_usage", "maintenance_logs", "attendance", "ereceipts", "sub_recognitions", "sub_visits", "sub_invoices", "subscriptions", "po_receipts", "po_lines", "purchase_orders", "bank_lines", "bank_statements", "recurring_runs", "sale_cheques", "sale_installments", "sale_lines", "sales_orders", "stock_moves", "stock_levels", "extract_lines", "extracts", "ownership_changes", "journal_lines",
                       "journal_entries", "offers", "loans", "custodies", "rent_moves", "rental_invoices", "rental_charges",
                       "rental_handovers", "rental_lines", "rentals", "rent_lots")
-ERASE_ALL = ERASE_TRANSACTIONS + ("kb_pages", "automation_log", "automations", "care_services", "care_patients", "parties", "stock_items", "boq_lines", "boqs", "partner_shares", "partners", "rates",
+ERASE_ALL = ERASE_TRANSACTIONS + ("kb_pages", "automation_log", "automations", "care_services", "care_patients", "parties", "stock_items", "boq_lines", "boqs", "partner_stage_shares", "partner_shares", "partners", "rates", "alloc_rules",
                                   "fixed_assets", "business_units", "offer_types", "tax_codes", "assets", "rent_kit_lines", "rent_kits",
                                   "rent_items", "rent_models", "product_media", "products", "bank_rules", "recurring", "budgets", "attachments", "service_plans",
                                   "variation_orders", "contract_lines", "contracts", "maintenance_plans", "equipment", "project_tasks", "project_phases")
