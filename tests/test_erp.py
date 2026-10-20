@@ -5244,6 +5244,43 @@ class MyDay(unittest.TestCase):
         self.assertTrue(eid)
 
 
+    def test_location_checks_and_online_alert(self):
+        """VPN and spoofing signals are flagged (or refused, by policy); an employee online for the alert time without
+        checking in is reported to them and to managers."""
+        from erp import hrrequests, workdays
+        db = Database(":memory:")
+        auth.create_user(db, {"username": "boss", "password": "secret123"}, first=True)
+        auth.create_user(db, {"username": "rep", "password": "secret123", "perms": {"team": "add"}})
+        rep = db.one("SELECT * FROM users WHERE username='rep'")
+        db.x("INSERT INTO employees(code, name, username, status) VALUES ('E2', 'Sales Representative', 'rep', 'active')")
+        vpn = {"lat": 30.0444, "lng": 31.2357, "accuracy": 15, "tz": "Africa/Cairo",
+               "net": {"lat": 52.37, "lng": 4.89, "tz": "Europe/Amsterdam", "org": "M247 Europe SRL"}}
+        workdays.start(db, rep, vpn)
+        flags = db.one("SELECT start_flags FROM workdays")["start_flags"].split(",")
+        self.assertTrue({"vpn", "datacenter", "network_far"} <= set(flags))
+        workdays.finish(db, rep, {"lat": 31.2001, "lng": 29.9187, "accuracy": 10})    # ~180 km away seconds later
+        self.assertIn("too_fast", db.one("SELECT end_flags FROM workdays")["end_flags"])
+        self.assertEqual(len(workdays.flagged_today(db)), 1)
+        hrrequests.save_policy(db, {"spoof": "block"})
+        with self.assertRaises(a.ValidationError):
+            workdays.start(db, rep, vpn)
+        workdays.start(db, rep, {"lat": 31.2002, "lng": 29.9188, "accuracy": 12, "tz": "Africa/Cairo",
+                                 "net": {"lat": 31.2, "lng": 29.92, "tz": "Africa/Cairo", "org": "Local Telecom"}})
+        hrrequests.save_policy(db, {"spoof": "off"})
+        # online for 35 minutes without checking in
+        auth.create_user(db, {"username": "new", "password": "secret123", "perms": {"team": "add"}})
+        db.x("INSERT INTO employees(code, name, username, status) VALUES ('E3', 'New Employee', 'new', 'active')")
+        workdays.seen(db, "new")
+        self.assertEqual(workdays.online_not_checked_in(db), [])                      # just arrived
+        past = (a._dt.datetime.fromisoformat(a.now_iso()[:19]) - a._dt.timedelta(minutes=35)).isoformat()
+        db.x("UPDATE presence SET first_seen=? WHERE username='new'", (past,))
+        idle = workdays.online_not_checked_in(db)
+        self.assertEqual([r["username"] for r in idle], ["new"])                      # rep has checked in
+        self.assertGreaterEqual(idle[0]["minutes"], 35)
+        hrrequests.save_policy(db, {"online_alert": 0})
+        self.assertEqual(workdays.online_not_checked_in(db), [])                      # alert switched off
+
+
 class KnowledgeBaseAndApiKeys(unittest.TestCase):
     def test_kb(self):
         from erp import kb

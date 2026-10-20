@@ -913,6 +913,7 @@ function renderShell() {
       <div class="ttl-box"><h1 id="ttl"></h1><div class="crumb" id="crumb"></div></div>
       <button class="search" data-a="palette" aria-label="${esc(t("search"))}">${svg("search")}<span>${esc(L2("Search screens and actions", "البحث في الشاشات والإجراءات"))}</span><kbd>Ctrl K</kbd></button>
       <span class="spacer"></span>
+      <button class="btn clockbtn" id="clockbtn" data-a="clocktoggle" hidden></button>
       <span id="syncdot" class="chip" style="display:none"></span>
       <div class="dd bell"><button class="btn icbtn" aria-label="${esc(L2("Alerts", "التنبيهات"))}">${svg("bell")}<b class="badge" id="bellc" hidden></b></button><div class="dd-menu" id="bellmenu"><div class="muted" style="padding:10px">${t("loading")}</div></div></div>
       <button class="icbtn tabbtn" data-a="newtab" title="${esc(L2("Open another screen in a new tab", "فتح شاشة أخرى في تبويب جديد"))}" aria-label="${esc(L2("New tab", "تبويب جديد"))}">⧉</button>
@@ -932,7 +933,7 @@ function renderShell() {
   const items = newMenuItems().filter(i => i.show && i.ok);
   const html = items.map(i => `<button data-a="quicknew" data-doc="${esc(i.key)}">${esc(i.label)}</button>`).join("") || `<div class="muted" style="padding:8px">${t("view_only")}</div>`;
   $("#newmenu").innerHTML = html; $("#newmenu2").innerHTML = html;
-  S.alertsAt = 0; loadAlerts();
+  S.alertsAt = 0; loadAlerts(); Clock.start();
 }
 function userMenu() {
   return `<button data-a="theme">${t("theme")}: ${esc(modeNow())}</button>
@@ -1079,6 +1080,7 @@ S.GLOBAL_H = {
     Drafts.discard(el.dataset.id); const bar = el.closest(".draft-bar > div, tr"); if (bar) bar.remove(); $$(".draft-bar").forEach(b => { if (!b.children.length) b.remove(); }); },
   menu: () => { const app = $(".app"); if (innerWidth <= 900) app.classList.toggle("menu"); else { app.classList.toggle("mini"); store.set("navMini", app.classList.contains("mini") ? "1" : ""); } },
   palette: () => openPalette(),
+  clocktoggle: el => Clock.toggle(el),
   bellopen: () => { const b = $(".bell"); if (b) { b.classList.add("open"); loadAlerts(true); } },
   grp: el => { const w = el.closest(".grp-wrap"), app = $(".app");
     if (innerWidth <= 900 && app.classList.contains("pm-rail") && !app.classList.contains("menu")) {   // the icon strip: open the menu at that section
@@ -4112,14 +4114,63 @@ setInterval(() => { if (document.visibilityState !== "visible" || Date.now() - a
 // ---------------------------------------------------------- my day (workdays.py): start / end the working day, with the place and a short report
 const mapLink = (lat, lng) => lat != null && lng != null ? `<a href="https://maps.google.com/?q=${lat},${lng}" target="_blank" rel="noopener">📍 ${esc(L2("Map", "الخريطة"))}</a>` : "";
 const hhmm = iso => iso ? String(iso).slice(11, 16) : "—";
-function whereAmI(need) {
-  return new Promise((res, rej) => {
+// the network a device is on (for the VPN / spoofing checks): public IP location, time zone and provider; cached 10 minutes
+let netCache = null;
+async function netInfo() {
+  if (netCache && Date.now() - netCache.at < 600000) return netCache.v;
+  const get = async (url, map) => { const c = new AbortController(), tm = setTimeout(() => c.abort(), 4000);
+    try { const r = await fetch(url, { signal: c.signal, credentials: "omit" }); return map(await r.json()); } finally { clearTimeout(tm); } };
+  let v = null;
+  try { v = await get("https://ipapi.co/json/", j => j.latitude != null ? { lat: j.latitude, lng: j.longitude, tz: j.timezone, org: j.org || "" } : null); } catch { v = null; }
+  if (!v) try { v = await get("https://ipwho.is/", j => j.success ? { lat: j.latitude, lng: j.longitude, tz: (j.timezone || {}).id, org: `${(j.connection || {}).org || ""} ${(j.connection || {}).isp || ""}` } : null); } catch { v = null; }
+  netCache = { at: Date.now(), v }; return v;
+}
+function whereAmI(need, netcheck) {
+  const tz = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return ""; } })();
+  const pos = new Promise((res, rej) => {
     if (need === "off" || !navigator.geolocation) return need === "required" ? rej(new Error(L2("This device cannot share its location.", "لا يمكن لهذا الجهاز مشاركة موقعه."))) : res({});
     navigator.geolocation.getCurrentPosition(p => res({ lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy }),
-      () => need === "required" ? rej(new Error(L2("Location access is required to start or end the day. See Settings → Device permissions.", "يلزم السماح بالوصول إلى الموقع لبدء اليوم أو إنهائه. راجع الإعدادات ← أذونات الجهاز."))) : res({}),
+      () => need === "required" ? rej(new Error(L2("Location access is required to check in or out. Allow location for this site in the browser settings.", "يلزم السماح بالوصول إلى الموقع لتسجيل الحضور أو الانصراف. اسمح بالموقع لهذا الموقع من إعدادات المتصفح."))) : res({}),
       { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 });
   });
+  return Promise.all([pos, netcheck && need !== "off" ? netInfo() : null]).then(([p, net]) => p.lat == null ? p : { ...p, tz, ...(net ? { net } : {}) });
 }
+// the check-in button in the top bar: one tap to check in or out; the timer counts only the time checked in
+const Clock = {
+  st: null, tick: null, poll: null, warned: "",
+  hm: ms => { const m = Math.max(0, Math.floor(ms / 60000)); return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}`; },
+  worked() { const s = this.st; if (!s) return 0; return s.closed_hours * 3600000 + (s.open ? Date.now() - this.since : 0); },
+  paint() { const b = $("#clockbtn"); if (!b || !this.st) return;
+    b.hidden = false; b.classList.toggle("on", this.st.open);
+    b.innerHTML = this.st.open ? `<i class="dot"></i><b>${this.hm(this.worked())}</b>`
+      : `${svg("clock")}<span class="lbl">${esc(L2("Check in", "حضور"))}</span>${this.st.closed_hours ? `<b>${this.hm(this.worked())}</b>` : ""}`;
+    b.setAttribute("aria-label", this.st.open ? L2("Check out", "تسجيل الانصراف") : L2("Check in", "تسجيل الحضور"));
+    b.title = this.st.open ? L2("Checked in. Hours today. Click to check out.", "تم تسجيل الحضور. ساعات اليوم. انقر لتسجيل الانصراف.") : L2("Click to check in.", "انقر لتسجيل الحضور."); },
+  async refresh() {
+    if (!S.boot || !S.boot.user || !can("team.myday", "add")) { const b = $("#clockbtn"); if (b) b.hidden = true; return; }
+    try { this.st = await api("POST", "/api/presence", {}); } catch { return; }
+    // the server's clock decides how long the open session has run
+    this.since = this.st.open ? Date.now() - (new Date(this.st.now.slice(0, 19)) - new Date(this.st.since.slice(0, 19))) : 0;
+    this.paint(); clearInterval(this.tick); if (this.st.open) this.tick = setInterval(() => this.paint(), 30000);
+    const day = today();
+    if (this.st.late && this.warned !== day && store.get("clockWarned", "") !== day) {
+      this.warned = day; store.set("clockWarned", day);
+      const body = L2(`You have been online for ${this.st.late} minutes without checking in.`, `أنت متصل منذ ${this.st.late} دقيقة دون تسجيل الحضور.`);
+      toast(body, true); try { alertPerson({ title: L2("Check in", "تسجيل الحضور"), body, force: true, tag: "berp-checkin" }); } catch { /* notifications off */ }
+    }
+  },
+  start() { clearInterval(this.poll); this.poll = setInterval(() => { if (document.visibilityState === "visible") this.refresh(); }, 120000); this.refresh(); },
+  async toggle(el) {
+    if (!this.st) return; el.disabled = true;
+    try {
+      const pol = this.st;
+      if (!pol.open) { const loc = await whereAmI(pol.location, pol.netcheck); await api("POST", "/api/my-day/start", loc); toast(L2("Checked in.", "تم تسجيل الحضور.")); }
+      else { if (!await uiConfirm(L2(`Check out now? Time checked in today: ${this.hm(this.worked())}.`, `هل تريد تسجيل الانصراف الآن؟ مدة الحضور اليوم: ${this.hm(this.worked())}.`))) return;
+        const loc = await whereAmI(pol.location, pol.netcheck); await api("POST", "/api/my-day/end", loc); toast(L2("Checked out.", "تم تسجيل الانصراف.")); }
+      await this.refresh(); if (/^#\/(my-day|workdays)/.test(location.hash)) route();
+    } catch (e) { fail(e); } finally { el.disabled = false; }
+  },
+};
 const REQ_ST = { pending: ["warn", "Pending", "قيد الاعتماد"], approved: ["ok", "Approved", "معتمد"], rejected: ["bad", "Rejected", "مرفوض"], cancelled: ["", "Cancelled", "ملغى"] };
 const reqChip = s => { const x = REQ_ST[s] || ["", s, s]; return `<span class="chip ${x[0]}">${esc(L2(x[1], x[2]))}</span>`; };
 const REQ_KINDS = () => [["annual", L2("Annual leave", "إجازة سنوية")], ["sick", L2("Sick leave", "إجازة مرضية")], ["unpaid", L2("Unpaid leave", "إجازة بدون أجر")], ["other", L2("Other leave", "إجازة أخرى")],
@@ -4168,10 +4219,10 @@ PAGES["my-day"] = async (view, parts, q) => {
     return;
   }
   const open = d.open;
-  S.H.daystart = async el => { el.disabled = true; try { const loc = await whereAmI(d.location); await api("POST", "/api/my-day/start", { ...loc, note: ($("#daynote") || {}).value || "" }); toast(L2("Checked in.", "تم تسجيل الحضور.")); route(); } catch (e) { el.disabled = false; fail(e); } };
+  S.H.daystart = async el => { el.disabled = true; try { const loc = await whereAmI(d.location, d.netcheck); await api("POST", "/api/my-day/start", { ...loc, note: ($("#daynote") || {}).value || "" }); toast(L2("Checked in.", "تم تسجيل الحضور.")); Clock.refresh(); route(); } catch (e) { el.disabled = false; fail(e); } };
   S.H.dayend = () => drawer(L2("Check out", "تسجيل الانصراف"), form([{ k: "report", l: L2("Work summary (optional)", "ملخص العمل (اختياري)"), type: "textarea", v: d.draft || "", span: "spanall" }], 1) +
     `<style>.drawer textarea[name=report]{min-height:200px}</style>`,
-    async v => { const loc = await whereAmI(d.location); await api("POST", "/api/my-day/end", { ...loc, report: v.report }); toast(L2("Checked out.", "تم تسجيل الانصراف.")); },
+    async v => { const loc = await whereAmI(d.location, d.netcheck); await api("POST", "/api/my-day/end", { ...loc, report: v.report }); toast(L2("Checked out.", "تم تسجيل الانصراف.")); Clock.refresh(); },
     { submitLabel: L2("Check out", "تسجيل الانصراف") });
   const hrs = h => { const m = Math.round(h * 60); return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}`; };
   const where = d.location === "off" ? "" : d.sites.length ? L2(`Check-in is allowed at: ${d.sites.join(", ")}.`, `يُسمح بتسجيل الحضور في: ${d.sites.join("، ")}.`)
@@ -4306,11 +4357,15 @@ async function attPolicy() {
   drawer(L2("Attendance policy", "سياسة الحضور"), form([
     { k: "location", l: L2("Location", "الموقع"), type: "select", opts: [["off", L2("Not recorded", "لا يُسجَّل")], ["ask", L2("Recorded where permitted", "يُسجَّل عند السماح")], ["required", L2("Required", "إلزامي")]], v: p.location },
     { k: "start", l: L2("Work starts", "بداية الدوام"), type: "time", v: p.start }, { k: "end", l: L2("Work ends", "نهاية الدوام"), type: "time", v: p.end },
-    { k: "grace", l: L2("Grace period (minutes)", "فترة السماح (دقائق)"), type: "number", v: p.grace }, { k: "leave_days", l: L2("Annual leave (days per year)", "الإجازة السنوية (يوم في السنة)"), type: "number", v: p.leave_days },
+    { k: "grace", l: L2("Grace period (minutes)", "فترة السماح (دقائق)"), type: "number", v: p.grace },
+    { k: "online_alert", l: L2("Alert when online without checking in (minutes; 0 = off)", "تنبيه عند الاتصال دون تسجيل الحضور (دقائق؛ 0 = إيقاف)"), type: "number", v: p.online_alert },
+    { k: "spoof", l: L2("Suspicious locations", "المواقع المشكوك فيها"), type: "select", opts: [["flag", L2("Accept and flag for review", "قبول مع التنبيه للمراجعة")], ["block", L2("Refuse check-in", "رفض التسجيل")], ["off", L2("Do not check", "بدون فحص")]], v: p.spoof },
+    { k: "netcheck", l: L2("Compare the device location with the network location (detects VPNs)", "مقارنة موقع الجهاز بموقع الشبكة (لكشف VPN)"), type: "switch", v: p.netcheck }, { k: "leave_days", l: L2("Annual leave (days per year)", "الإجازة السنوية (يوم في السنة)"), type: "number", v: p.leave_days },
     { html: `<span class="fl">${esc(L2("Weekly days off", "أيام الراحة الأسبوعية"))}</span><div class="row" style="gap:10px;flex-wrap:wrap">${DAYS.map((n, i) => `<label class="chk"><input type="checkbox" data-wk="${i}" ${p.weekend.includes(i) ? "checked" : ""}> ${esc(n)}</label>`).join("")}</div>`, span: "spanall" },
     { html: `<h4 class="fsec">${esc(L2("Work sites", "مواقع العمل"))}</h4><p class="muted" style="margin:0 0 8px">${esc(L2("When sites are listed, check-in and check-out are accepted only within a site's radius. Set each site on the map, paste coordinates or a Google Maps link, or use this device's location. Leave empty to allow any location.", "عند تحديد مواقع، لا يُقبل تسجيل الحضور والانصراف إلا داخل نطاق أحدها. حدد كل موقع على الخريطة، أو الصق الإحداثيات أو رابط خرائط Google، أو استخدم موقع هذا الجهاز. اتركها فارغة للسماح بأي موقع."))}</p><div id="asites">${p.sites.map(siteRow).join("")}</div><button type="button" class="btn sm" data-a="asiteadd">+ ${esc(L2("Site", "موقع"))}</button>`, span: "spanall" },
     { html: `<span class="fl">${esc(L2("May check in from any location", "يُسمح لهم بالتسجيل من أي موقع"))}</span><div class="row" style="gap:10px;flex-wrap:wrap">${people.map(u => `<label class="chk"><input type="checkbox" data-any="${esc(u.username)}" ${p.anywhere.includes(u.username) ? "checked" : ""}> ${esc(u.full_name || u.username)}</label>`).join("") || `<span class="muted">—</span>`}</div>`, span: "spanall" }]),
     async (v, f) => { await api("PUT", "/api/att-policy", { location: v.location, start: v.start, end: v.end, grace: v.grace, leave_days: v.leave_days,
+      online_alert: v.online_alert, spoof: v.spoof, netcheck: !!v.netcheck,
       weekend: $$("[data-wk]", f).filter(i => i.checked).map(i => +i.dataset.wk), anywhere: $$("[data-any]", f).filter(i => i.checked).map(i => i.dataset.any),
       sites: readSites(f) });
       S.boot.settings.workday_location = v.location; toast(t("saved")); }, { wide: true });
@@ -4323,16 +4378,19 @@ PAGES.workdays = async (view, parts, q) => {
   S.H.daydel = async el => { if (!await uiConfirm(L2("Delete this session? The related attendance record is updated.", "هل تريد حذف هذه الفترة؟ يُحدَّث سجل الحضور المرتبط بها."))) return;
     try { await api("DELETE", "/api/workdays/" + el.dataset.id); toast(L2("Deleted.", "تم الحذف.")); route(); } catch (e) { fail(e); } };
   S.H.dayrep = el => { const r = d.rows.find(x => String(x.id) === el.dataset.id); drawer(`${r.username} — ${fd(r.date)}`, `<pre style="white-space:pre-wrap;font:inherit">${esc(r.report || "—")}</pre>${r.note ? `<p class="muted">${esc(r.note)}</p>` : ""}`, null, { readOnly: true }); };
+  const flagChip = (f, when) => { if (!f) return ""; const why = f.split(",").map(k => (d.flags[k] || [k, k])[S.lang === "ar" ? 1 : 0]);
+    return `<span class="chip bad" title="${esc(why.join("\n"))}">⚠ ${esc(L2("Location check", "فحص الموقع"))}: ${esc(when)}</span> `; };
   const mins = m => m ? `${Math.floor(m / 60) ? Math.floor(m / 60) + L2("h ", "س ") : ""}${m % 60}${L2("m", "د")}` : "";
   view.innerHTML = `<div class="toolbar"><a class="btn pri" href="#/my-day">▶ ${esc(L2("Check in", "تسجيل الحضور"))}</a>${can("payroll.requests") ? `<a class="btn" href="#/requests?status=pending">${esc(L2("Requests", "الطلبات"))}</a>` : ""}<span class="spacer"></span>
       ${canDel ? `<button class="btn" data-a="attpol">⚙ ${esc(L2("Attendance policy", "سياسة الحضور"))}</button>` : ""}</div>` +
     filterBar(q, ["dates", "q"]) +
+    (d.online.length ? `<div class="banner bad">${esc(L2("Online without checking in: ", "متصلون دون تسجيل الحضور: "))}<b>${d.online.map(o => `${esc(o.name)} (${esc(L2(`since ${o.since}`, `منذ ${o.since}`))})`).join(", ")}</b></div>` : "") +
     (d.not_started.length ? `<div class="banner warn">${esc(L2("Not checked in today: ", "لم يسجلوا الحضور اليوم: "))}<b>${d.not_started.map(esc).join(", ")}</b></div>` : "") +
     `<div class="card">${d.rows.length ? `<div class="tbl stack"><table><thead><tr><th>${esc(L2("User", "المستخدم"))}</th><th>${t("date")}</th><th>${esc(L2("In", "الحضور"))}</th><th>${esc(L2("Out", "الانصراف"))}</th><th class="num">${esc(L2("Hours", "الساعات"))}</th><th>${esc(L2("Exceptions", "الاستثناءات"))}</th><th>${esc(L2("Summary", "الملخص"))}</th>${canDel ? "<th></th>" : ""}</tr></thead><tbody>
       ${d.rows.filter(r => !q.q || r.username.includes(q.q)).map(r => `<tr class="click" data-a="dayrep" data-id="${r.id}"><td><b>${esc(r.username)}</b><div class="lines">${r.employee ? esc(r.employee) : `<span class="chip warn" title="${esc(L2("Not linked to an employee (Employees → App user); not added to Time & Attendance.", "غير مرتبط بموظف (الموظفون ← مستخدم التطبيق)؛ لا يُضاف إلى الحضور والانصراف."))}">${esc(L2("Not an employee", "ليس موظفاً"))}</span>`}</div></td><td>${fd(r.date)}</td>
         <td>${hhmm(r.start_at)} ${r.start_site ? `<span class="muted">${esc(r.start_site)}</span>` : ""} ${mapLink(r.start_lat, r.start_lng)}</td>
         <td>${r.end_at ? `${hhmm(r.end_at)} ${r.end_site ? `<span class="muted">${esc(r.end_site)}</span>` : ""} ${mapLink(r.end_lat, r.end_lng)}` : `<span class="chip ok">${esc(L2("Checked in", "حاضر"))}</span>`}</td><td class="num">${r.hours ?? ""}</td>
-        <td>${r.late ? `<span class="chip warn">${esc(L2("Late", "تأخير"))} ${mins(r.late)}</span> ` : ""}${r.early ? `<span class="chip warn">${esc(L2("Left early", "انصراف مبكر"))} ${mins(r.early)}</span>` : ""}</td>
+        <td>${r.late ? `<span class="chip warn">${esc(L2("Late", "تأخير"))} ${mins(r.late)}</span> ` : ""}${r.early ? `<span class="chip warn">${esc(L2("Left early", "انصراف مبكر"))} ${mins(r.early)}</span> ` : ""}${flagChip(r.start_flags, L2("In", "الحضور"))}${flagChip(r.end_flags, L2("Out", "الانصراف"))}</td>
         <td>${esc(String(r.report || "").split("\n")[0].slice(0, 90))}</td>${canDel ? `<td><button class="btn sm danger" data-a="daydel" data-id="${r.id}" aria-label="${esc(t("delete"))}">✕</button></td>` : ""}</tr>`).join("")}</tbody></table></div>` : `<div class="empty">${svg("clock")}<div>${esc(L2("No check-ins for this period.", "لا توجد تسجيلات حضور في هذه الفترة."))}</div></div>`}</div>`;
 };
 // ---------------------------------------------------------- knowledge base (kb.py): the company's own how-tos, policies and answers

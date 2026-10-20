@@ -42,6 +42,68 @@ def _site(sites, lat, lng, accu):
     raise ValidationError(f"You are {best[0] / 1000:.1f} km from {best[1]}. Check in from a work site.")
 
 
+FLAGS = {   # code: (English, Arabic) — why a check-in or check-out location looks unreliable
+    "vpn": ("VPN or proxy suspected: the network's time zone differs from the device's", "يُشتبه في VPN أو بروكسي: المنطقة الزمنية للشبكة تختلف عن الجهاز"),
+    "datacenter": ("Connection from a hosting or VPN provider", "اتصال من مزود استضافة أو VPN"),
+    "network_far": ("Location is far from the network's location", "الموقع بعيد عن موقع الشبكة"),
+    "too_fast": ("Implausible movement since the previous location", "تنقل غير منطقي منذ الموقع السابق"),
+    "same_point": ("Exactly the same coordinates as an earlier day", "الإحداثيات مطابقة تماماً ليوم سابق"),
+    "no_accuracy": ("The device reported no accuracy", "لم يُبلغ الجهاز عن دقة الموقع"),
+    "imprecise": ("Low location accuracy", "دقة الموقع منخفضة"),
+}
+HOSTING = ("hosting", "host", "datacenter", "data center", "cloud", "vpn", "proxy", "server", "amazon", "aws", "google cloud", "microsoft",
+           "azure", "digitalocean", "ovh", "hetzner", "linode", "akamai", "vultr", "choopa", "m247", "leaseweb", "contabo", "datacamp",
+           "packethub", "cdn77", "nordvpn", "expressvpn", "surfshark", "private internet access", "mullvad", "protonvpn", "oracle")
+
+
+def _suspicion(db, username, lat, lng, accu, d):
+    """Signs that a reported position is not genuine. A browser cannot prove where a device is, so these are signals
+    for review (or refusal, when the company chooses): mock-location apps, VPNs and replayed coordinates."""
+    flags = []
+    if lat is None:
+        return flags
+    if not accu:
+        flags.append("no_accuracy")
+    elif accu > 500:
+        flags.append("imprecise")
+    net = d.get("net") if isinstance(d.get("net"), dict) else {}
+    tz = text(d.get("tz"))
+    if net:
+        if net.get("tz") and tz and net["tz"] != tz:
+            flags.append("vpn")
+        if any(h in str(net.get("org") or "").lower() for h in HOSTING):
+            flags.append("datacenter")
+        try:
+            if _metres(lat, lng, float(net["lat"]), float(net["lng"])) > 500000:
+                flags.append("network_far")
+        except (KeyError, TypeError, ValueError):
+            pass
+    prev = db.one("SELECT start_at, start_lat, start_lng, end_at, end_lat, end_lng FROM workdays WHERE username=? AND start_lat IS NOT NULL "
+                  "ORDER BY id DESC LIMIT 1", (username,))
+    if prev:
+        at, plat, plng = (prev["end_at"], prev["end_lat"], prev["end_lng"]) if prev["end_lat"] is not None else (prev["start_at"], prev["start_lat"], prev["start_lng"])
+        hours = (acc._dt.datetime.fromisoformat(now_iso()[:19]) - acc._dt.datetime.fromisoformat(at[:19])).total_seconds() / 3600
+        dist = _metres(lat, lng, plat, plng)
+        if dist > 5000 and hours < 12 and dist / 1000 / max(hours, 1 / 60) > 200:
+            flags.append("too_fast")
+    if accu and accu < 20 and db.one("SELECT 1 FROM workdays WHERE username=? AND date<? AND ((start_lat=? AND start_lng=?) OR (end_lat=? AND end_lng=?))",
+                                     (username, acc.today(), lat, lng, lat, lng)):
+        flags.append("same_point")
+    return flags
+
+
+def _guard(db, username, lat, lng, accu, d):
+    from .hrrequests import policy
+    pol = policy(db)
+    if pol.get("spoof", "flag") == "off" or username in pol["anywhere"]:
+        return ""
+    flags = _suspicion(db, username, lat, lng, accu, d)
+    hard = [f for f in flags if f != "imprecise"]
+    if hard and pol.get("spoof") == "block":
+        raise ValidationError("Your location could not be verified. Turn off any VPN or location-changing app and try again.")
+    return ",".join(flags)
+
+
 def _loc(d, need):
     lat, lng = d.get("lat"), d.get("lng")
     if lat in (None, "") or lng in (None, ""):
@@ -115,8 +177,9 @@ def start(db, user, d):
     need, sites = _need(db, user["username"])
     lat, lng, accu = _loc(d, need)
     site = _site(sites, lat, lng, accu) if lat is not None else ""
-    wid = db.x("INSERT INTO workdays(username, date, start_at, start_lat, start_lng, start_acc, note, start_site) VALUES (?,?,?,?,?,?,?,?)",
-               (user["username"], acc.today(), now_iso(), lat, lng, accu, text(d.get("note"), maxlen=500), site)).lastrowid
+    flags = _guard(db, user["username"], lat, lng, accu, d)
+    wid = db.x("INSERT INTO workdays(username, date, start_at, start_lat, start_lng, start_acc, note, start_site, start_flags) VALUES (?,?,?,?,?,?,?,?,?)",
+               (user["username"], acc.today(), now_iso(), lat, lng, accu, text(d.get("note"), maxlen=500), site, flags)).lastrowid
     sync_attendance(db, user["username"], acc.today())
     return wid
 
@@ -128,8 +191,9 @@ def finish(db, user, d):
     need, sites = _need(db, user["username"])
     lat, lng, accu = _loc(d, need)
     site = _site(sites, lat, lng, accu) if lat is not None else ""
-    db.x("UPDATE workdays SET end_at=?, end_lat=?, end_lng=?, end_acc=?, report=?, end_site=? WHERE id=?",
-         (now_iso(), lat, lng, accu, text(d.get("report"), maxlen=4000), site, cur["id"]))
+    flags = _guard(db, user["username"], lat, lng, accu, d)
+    db.x("UPDATE workdays SET end_at=?, end_lat=?, end_lng=?, end_acc=?, report=?, end_site=?, end_flags=? WHERE id=?",
+         (now_iso(), lat, lng, accu, text(d.get("report"), maxlen=4000), site, flags, cur["id"]))
     sync_attendance(db, user["username"], cur["date"])
     return cur["id"]
 
@@ -181,6 +245,14 @@ def _now_hours(r):
     return round(max(0, (b - a).total_seconds()) / 3600, 2)
 
 
+def mine_policy(db, username):
+    """What the person's device must send when checking in or out: location rule and whether to check the network."""
+    from .hrrequests import policy
+    need, _ = _need(db, username)
+    pol = policy(db)
+    return {"location": need, "netcheck": bool(pol.get("netcheck")) and need != "off" and pol.get("spoof") != "off" and username not in pol["anywhere"]}
+
+
 def mine(db, user):
     from . import hrrequests
     cur = today_of(db, user)
@@ -191,7 +263,9 @@ def mine(db, user):
             "open": bool(cur and not cur["end_at"]), "location": need, "sites": [x["name"] for x in sites],
             "draft": activity(db, user["username"]), "employee": emp, "policy": {k: hrrequests.policy(db)[k] for k in ("start", "end", "grace")},
             "balance": hrrequests.balance(db, user["username"]), "requests": hrrequests.listing(db, username=user["username"])[:50],
-            "advance": hrrequests.advance_balance(db, emp["name"]) if emp else 0}
+            "advance": hrrequests.advance_balance(db, emp["name"]) if emp else 0,
+            "netcheck": mine_policy(db, user["username"])["netcheck"],
+            "late_alert": bool(online_not_checked_in(db, user["username"]))}
 
 
 def team(db, date_from=None, date_to=None, username=None):
@@ -226,4 +300,49 @@ def team(db, date_from=None, date_to=None, username=None):
     return {"rows": rows, "not_started": absent}
 
 
-TABLES = ("workdays",)
+def seen(db, username):
+    """Record that a person is using the app now (first and last activity of the day; written at most every 5 minutes)."""
+    day, now = acc.today(), now_iso()
+    r = db.one("SELECT last_seen FROM presence WHERE username=? AND date=?", (username, day))
+    if not r:
+        db.x("INSERT OR IGNORE INTO presence(username, date, first_seen, last_seen) VALUES (?,?,?,?)", (username, day, now, now))
+    elif r["last_seen"][:16] < (acc._dt.datetime.fromisoformat(now[:19]) - acc._dt.timedelta(minutes=5)).isoformat()[:16]:
+        db.x("UPDATE presence SET last_seen=? WHERE username=? AND date=?", (now, username, day))
+
+
+def online_not_checked_in(db, username=None):
+    """Employees active in the app for the alert time (default 30 minutes) today who have not checked in, excluding
+    weekly days off, approved leave and people already checked in today. [{username, name, since, minutes}]"""
+    from .hrrequests import _wd, policy
+    pol = policy(db)
+    mins = int(pol.get("online_alert") or 0)
+    if not mins:
+        return []
+    day = acc.today()
+    if acc._dt.date.fromisoformat(day).weekday() in _wd(pol["weekend"]):
+        return []
+    now = acc._dt.datetime.fromisoformat(now_iso()[:19])
+    w, p = "", [day]
+    if username:
+        w, p = " AND p.username=?", [day, username]
+    rows = db.q("SELECT p.username, p.first_seen, p.last_seen, e.name, e.id AS employee_id FROM presence p "
+                "JOIN employees e ON e.username=p.username AND e.status='active' "
+                f"WHERE p.date=?{w} AND NOT EXISTS (SELECT 1 FROM workdays d WHERE d.username=p.username AND d.date=p.date)", p)
+    out = []
+    for r in rows:
+        first = acc._dt.datetime.fromisoformat(r["first_seen"][:19])
+        last = acc._dt.datetime.fromisoformat(r["last_seen"][:19])
+        if (now - first).total_seconds() < mins * 60 or (now - last).total_seconds() > 20 * 60:     # not long enough, or gone
+            continue
+        if db.one("SELECT 1 FROM hr_requests WHERE username=? AND status='approved' AND kind IN ('annual','sick','unpaid','other','offsite') "
+                  "AND date_from<=? AND COALESCE(NULLIF(date_to,''), date_from)>=?", (r["username"], day, day)):
+            continue
+        out.append({"username": r["username"], "name": r["name"], "since": r["first_seen"][11:16], "minutes": int((now - first).total_seconds() // 60)})
+    return out
+
+
+def flagged_today(db):
+    return db.q("SELECT id, username, start_flags, end_flags FROM workdays WHERE date=? AND (start_flags<>'' OR end_flags<>'')", (acc.today(),))
+
+
+TABLES = ("workdays", "presence")

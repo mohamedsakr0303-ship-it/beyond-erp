@@ -975,7 +975,17 @@ CREATE TABLE IF NOT EXISTS workdays (
     note       TEXT NOT NULL DEFAULT '',
     report     TEXT NOT NULL DEFAULT '',
     start_site TEXT NOT NULL DEFAULT '',
-    end_site   TEXT NOT NULL DEFAULT ''
+    end_site   TEXT NOT NULL DEFAULT '',
+    start_flags TEXT NOT NULL DEFAULT '',
+    end_flags  TEXT NOT NULL DEFAULT ''
+);
+-- who is using the app today (first and last activity), for the "online but not checked in" alert
+CREATE TABLE IF NOT EXISTS presence (
+    username   TEXT NOT NULL,
+    date       TEXT NOT NULL,
+    first_seen TEXT NOT NULL,
+    last_seen  TEXT NOT NULL,
+    PRIMARY KEY (username, date)
 );
 CREATE INDEX IF NOT EXISTS workdays_user_date ON workdays(username, date);
 -- Employee requests (hrrequests.py): leave, sick leave, permissions, overtime and salary advances, with approval
@@ -2049,7 +2059,8 @@ class Database:
         have = self._add_cols("accounts", [("name_ar", "TEXT DEFAULT ''")])
         self._add_cols("rental_lines", [("cost", "INTEGER NOT NULL DEFAULT 0")])
         self._add_cols("users", [("is_super", "INTEGER NOT NULL DEFAULT 0")])
-        self._add_cols("workdays", [("start_site", "TEXT NOT NULL DEFAULT ''"), ("end_site", "TEXT NOT NULL DEFAULT ''")])
+        self._add_cols("workdays", [("start_site", "TEXT NOT NULL DEFAULT ''"), ("end_site", "TEXT NOT NULL DEFAULT ''"),
+                                    ("start_flags", "TEXT NOT NULL DEFAULT ''"), ("end_flags", "TEXT NOT NULL DEFAULT ''")])
         self._add_cols("users", [("group_key", "TEXT NOT NULL DEFAULT ''")])
         self._add_cols("users", [("needs_approval", "INTEGER NOT NULL DEFAULT 0")])
         self._add_cols("user_groups", [("look", "TEXT DEFAULT ''")])

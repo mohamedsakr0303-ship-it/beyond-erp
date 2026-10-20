@@ -29,7 +29,8 @@ KINDS = {   # kind: (English, Arabic, needs a date range, needs times, needs hou
 }
 LEAVE_STATUS = {"annual": "leave", "other": "leave", "sick": "sick", "unpaid": "absent"}
 STATUSES = ("pending", "approved", "rejected", "cancelled")
-POLICY = {"start": "09:00", "end": "17:00", "grace": 10, "weekend": [], "leave_days": 21, "sites": [], "anywhere": []}
+POLICY = {"start": "09:00", "end": "17:00", "grace": 10, "weekend": [], "leave_days": 21, "sites": [], "anywhere": [],
+          "spoof": "flag", "netcheck": True, "online_alert": 30}
 
 
 def policy(db):
@@ -54,6 +55,14 @@ def save_policy(db, d):
         p["grace"] = max(0, int(num(d["grace"] or 0, "grace period")))
     if "leave_days" in d:
         p["leave_days"] = max(0, num(d["leave_days"] or 0, "annual leave days"))
+    if "spoof" in d:
+        if d["spoof"] not in ("off", "flag", "block"):
+            raise ValidationError("Choose how to handle suspicious locations.")
+        p["spoof"] = d["spoof"]
+    if "netcheck" in d:
+        p["netcheck"] = bool(d["netcheck"])
+    if "online_alert" in d:
+        p["online_alert"] = max(0, int(num(d["online_alert"] or 0, "alert after (minutes)")))
     if "weekend" in d:
         p["weekend"] = sorted({int(x) for x in d["weekend"] or [] if str(x).isdigit() and 0 <= int(x) <= 6})
     if "anywhere" in d:

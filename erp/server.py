@@ -1098,6 +1098,20 @@ def my_day(ctx):
     return ok(workdays.mine(ctx.db, ctx.user))
 
 
+@route("POST", "/api/presence", "team.myday")
+def presence(ctx):
+    """The top-bar check-in button: records that the person is active and returns their check-in state."""
+    from . import workdays
+    workdays.seen(ctx.db, ctx.user["username"])
+    cur = workdays.today_of(ctx.db, ctx.user)
+    sessions = ctx.db.q("SELECT * FROM workdays WHERE username=? AND date=?", (ctx.user["username"], acc.today()))
+    late = workdays.online_not_checked_in(ctx.db, ctx.user["username"])
+    return ok({"open": bool(cur and not cur["end_at"]), "since": cur["start_at"] if cur and not cur["end_at"] else None,
+               "closed_hours": round(sum(workdays._hours(r) for r in sessions if r["end_at"]), 4), "now": acc.now_iso(),
+               "late": late[0]["minutes"] if late else 0, "employee": bool(workdays.employee_of(ctx.db, ctx.user["username"])),
+               **{k: v for k, v in workdays.mine_policy(ctx.db, ctx.user["username"]).items()}})
+
+
 @route("POST", "/api/my-day/start", "team.myday", "add")
 def my_day_start(ctx):
     """Start my working day (with lat / lng when location is shared)."""
@@ -1187,7 +1201,8 @@ def hr_requests_pay(ctx, rid):
 def workdays_team(ctx):
     """The team's working days: who started when and where, hours and daily reports."""
     from . import workdays
-    return ok({**workdays.team(ctx.db, ctx.q.get("date_from"), ctx.q.get("date_to"), ctx.q.get("username")),
+    return ok({**workdays.team(ctx.db, ctx.q.get("date_from"), ctx.q.get("date_to"), ctx.q.get("username")), "flags": workdays.FLAGS,
+               "online": workdays.online_not_checked_in(ctx.db),
                "location": ctx.db.setting("workday_location") or "ask"})
 
 
@@ -3319,6 +3334,23 @@ def alerts(ctx):
         out.insert(0, {"level": "bad", "en": f"Your entries sent back for changes: {sent_back}",
                        "ar": f"قيود أُعيدت إليك للتعديل: {sent_back}", "href": "#/approvals?status=rejected", "count": sent_back,
                        "kind": "approvals_back"})
+    if ctx.can("team.myday", "add"):
+        from . import workdays
+        me_late = workdays.online_not_checked_in(ctx.db, ctx.user["username"])
+        if me_late:
+            out.insert(0, {"level": "bad", "en": f"You have been online for {me_late[0]['minutes']} minutes without checking in.",
+                           "ar": f"أنت متصل منذ {me_late[0]['minutes']} دقيقة دون تسجيل الحضور.", "href": "#/my-day", "count": 1, "kind": "checkin_self"})
+    if ctx.can("payroll.workdays"):
+        from . import workdays
+        idle = [r for r in workdays.online_not_checked_in(ctx.db) if r["username"] != ctx.user["username"]]
+        if idle:
+            names = ", ".join(r["name"] for r in idle[:5]) + (f" +{len(idle) - 5}" if len(idle) > 5 else "")
+            out.insert(0, {"level": "warn", "en": f"Online without checking in: {names}", "ar": f"متصلون دون تسجيل الحضور: {names}",
+                           "href": "#/workdays", "count": len(idle), "kind": "checkin_idle"})
+        flagged = workdays.flagged_today(ctx.db)
+        if flagged:
+            out.insert(0, {"level": "warn", "en": f"Check-ins with location warnings today: {len(flagged)}", "ar": f"تسجيلات حضور بها تحذيرات موقع اليوم: {len(flagged)}",
+                           "href": "#/workdays", "count": len(flagged), "kind": "checkin_flags"})
     if ctx.can("payroll.requests", "edit"):
         from . import hrrequests
         n = hrrequests.pending_count(ctx.db)
@@ -5327,7 +5359,7 @@ def offer_type_del(ctx, tid):
 
 
 # ============================================================ erase all data
-ERASE_TRANSACTIONS = ("entry_tags", "workdays", "hr_requests", "desk_rows", "desk_threads", "care_visit_lines", "care_visits", "care_claims", "care_packages", "crm_followups", "crm_activities", "crm_deals", "approvals", "sub_cert_lines", "sub_certificates", "pr_quote_lines", "pr_quotes", "pr_lines", "purchase_requests", "stock_count_lines",
+ERASE_TRANSACTIONS = ("entry_tags", "workdays", "hr_requests", "presence", "desk_rows", "desk_threads", "care_visit_lines", "care_visits", "care_claims", "care_packages", "crm_followups", "crm_activities", "crm_deals", "approvals", "sub_cert_lines", "sub_certificates", "pr_quote_lines", "pr_quotes", "pr_lines", "purchase_requests", "stock_count_lines",
                       "stock_counts", "equipment_usage", "maintenance_logs", "attendance", "ereceipts", "sub_recognitions", "sub_visits", "sub_invoices", "subscriptions", "po_receipts", "po_lines", "purchase_orders", "bank_lines", "bank_statements", "recurring_runs", "sale_cheques", "sale_installments", "sale_lines", "sales_orders", "stock_moves", "stock_levels", "extract_lines", "extracts", "ownership_changes", "journal_lines",
                       "journal_entries", "offers", "loans", "custodies", "rent_moves", "rental_invoices", "rental_charges",
                       "rental_handovers", "rental_lines", "rentals", "rent_lots")
