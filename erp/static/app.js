@@ -2743,6 +2743,16 @@ function buForm(b) {
     { k: "negotiation", l: L2("Negotiation discounts", "خصومات التفاوض"), type: "select", opts: NEGO_OPTS(), v: b.negotiation || "keep",
       help: L2("Default for this project's costs. Income: cost stays at the supplier's full price and the discount is recorded as negotiation income.", "الافتراضي لتكاليف هذا المشروع. إيراد: تبقى التكلفة بالسعر الكامل للمورد ويُسجَّل الخصم إيراداً للتفاوض.") },
     { k: "overhead_pct", l: t("overhead_pct"), type: "number", v: b.overhead_pct ? +(b.overhead_pct * 100).toFixed(4) : "", help: t("overhead_note") },
+    { html: `<h4 class="fsec">${esc(L2("Expected cost", "التكلفة المتوقعة"))}</h4>`, span: "spanall" },
+    { k: "expected_revenue", l: L2("Expected revenue (optional)", "الإيراد المتوقع (اختياري)"), type: "number", v: b.expected_revenue || "",
+      help: L2("Contract, BOQ or estimate. Revenue to date is used when higher.", "العقد أو المقايسة أو التقدير. يُستخدم الإيراد حتى تاريخه إذا كان أعلى.") },
+    { k: "cost_method", l: L2("Cost estimate", "تقدير التكلفة"), type: "select", v: b.cost_method || "pct",
+      opts: [["pct", L2("% of revenue", "% من الإيراد")], ["fixed", L2("Fixed amount", "مبلغ ثابت")]] },
+    { k: "expected_cost_pct", l: L2("Expected cost % (blank = company default)", "نسبة التكلفة المتوقعة (فارغ = الافتراضي)"), type: "number",
+      v: b.expected_cost_pct != null ? +(b.expected_cost_pct * 100).toFixed(4) : "",
+      ph: S.boot.settings.expected_cost_pct ? String(+(S.boot.settings.expected_cost_pct * 100).toFixed(2)) : "" },
+    { k: "expected_cost", l: L2("Expected total cost (fixed amount)", "إجمالي التكلفة المتوقعة (مبلغ ثابت)"), type: "number", v: b.expected_cost || "",
+      help: L2("The cost still to come is held back from distributable profit until the project is complete.", "تُحتجز التكلفة المتبقية من الربح القابل للتوزيع حتى اكتمال المشروع.") },
     { k: "wip_mode", l: L2("Work in progress (performed, not invoiced)", "أعمال تحت التنفيذ (منفذة وغير مفوترة)"), type: "select", v: b.wip_mode || "",
       opts: [["", L2("Manual", "يدوي")], ["cost_plus", L2("Cost-plus: direct costs × (1 + fee %)", "التكلفة مضافاً إليها النسبة: التكاليف المباشرة × (1 + النسبة)")], ["drafts", L2("Work performed on draft invoices (measured quantities at BOQ rates)", "الأعمال المنفذة في الفواتير المسودة (الكميات المقاسة بأسعار المقايسة)")]],
       help: L2("Updated automatically as costs and invoices change.", "يُحدَّث تلقائياً مع تغير التكاليف والفواتير.") },
@@ -2750,6 +2760,7 @@ function buForm(b) {
     { k: "notes", l: t("notes"), type: "textarea", v: b.notes, span: "spanall" }]) + datalist("custs", (S.boot.parties || []).map(p => p.name))
     + datalist("bugroups", [...new Set((S.boot.bus || []).map(x => x.grp).filter(Boolean))]),
   async v => { v.fee_pct = (+v.fee_pct || 0) / 100; v.overhead_pct = (+v.overhead_pct || 0) / 100;
+    v.expected_cost_pct = v.expected_cost_pct === "" || v.expected_cost_pct == null ? "" : (+v.expected_cost_pct || 0) / 100;
     if (b.id) await api("PUT", "/api/bus/" + b.id, v); else await api("POST", "/api/bus", v); await refreshBoot(); toast(t("saved")); });
 }
 PAGES.bu = async (view, parts, q) => {
@@ -4176,14 +4187,14 @@ const reqChip = s => { const x = REQ_ST[s] || ["", s, s]; return `<span class="c
 const REQ_KINDS = () => [["annual", L2("Annual leave", "إجازة سنوية")], ["sick", L2("Sick leave", "إجازة مرضية")], ["unpaid", L2("Unpaid leave", "إجازة بدون أجر")], ["other", L2("Other leave", "إجازة أخرى")],
   ["late", L2("Late arrival", "إذن تأخير")], ["early", L2("Early departure", "إذن انصراف مبكر")], ["offsite", L2("Off-site work", "عمل خارج الموقع")], ["overtime", L2("Overtime", "عمل إضافي")], ["advance", L2("Salary advance", "سلفة على الراتب")]];
 const reqKind = r => S.lang === "ar" ? r.kind_ar : r.kind_en;
-const reqWhen = r => r.kind === "advance" ? money(r.amount) : r.kind === "overtime" ? `${fd(r.date_from)} · ${numf(r.hours)} ${L2("h", "س")}`
+const reqWhen = r => r.kind === "advance" ? money(r.amount) + (r.months > 1 ? ` · ${L2(`over ${r.months} months`, `على ${r.months} أشهر`)}` : "") : r.kind === "overtime" ? `${fd(r.date_from)} · ${numf(r.hours)} ${L2("h", "س")}`
   : ["late", "early"].includes(r.kind) ? `${fd(r.date_from)} · ${esc([r.time_from, r.time_to].filter(Boolean).join("–"))}`
   : `${fd(r.date_from)}${r.date_to && r.date_to !== r.date_from ? " – " + fd(r.date_to) : ""}${r.days != null ? ` · ${dayCount(r.days)}` : ""}`;
 const dayCount = n => S.lang === "ar" ? (n === 1 ? "يوم واحد" : n === 2 ? "يومان" : n >= 3 && n <= 10 ? `${n} أيام` : `${n} يوماً`) : `${n} ${n === 1 ? "day" : "days"}`;
 function reqForm(kind) {
   const f = () => { const k = $("#df [name=kind]").value, rng = ["annual", "sick", "unpaid", "other", "offsite"].includes(k);
     const show = (n, on) => { const el = $(`#df [name=${n}]`); if (el) el.closest(".f").style.display = on ? "" : "none"; };
-    show("date_to", rng); show("time_from", ["late", "early"].includes(k)); show("time_to", ["late", "early"].includes(k)); show("hours", k === "overtime"); show("amount", k === "advance"); show("date_from", k !== "advance");
+    show("date_to", rng); show("time_from", ["late", "early"].includes(k)); show("time_to", ["late", "early"].includes(k)); show("hours", k === "overtime"); show("amount", k === "advance"); show("months", k === "advance"); show("date_from", k !== "advance");
     const tf = $("#df [name=time_from]"), tt = $("#df [name=time_to]");
     if (tf) tf.closest(".f").firstChild.textContent = k === "early" ? L2("Leaving at", "وقت الانصراف") : L2("From", "من");
     if (tt) tt.closest(".f").firstChild.textContent = k === "late" ? L2("Arriving at", "وقت الحضور") : L2("To", "إلى"); };
@@ -4193,6 +4204,7 @@ function reqForm(kind) {
     { k: "date_from", l: L2("Date", "التاريخ"), type: "date", v: today() }, { k: "date_to", l: L2("To", "إلى"), type: "date", v: today() },
     { k: "time_from", l: L2("From", "من"), type: "time" }, { k: "time_to", l: L2("To", "إلى"), type: "time" },
     { k: "hours", l: L2("Hours", "الساعات"), type: "number" }, { k: "amount", l: L2("Amount", "المبلغ"), type: "number" },
+    { k: "months", l: L2("Repay over (months)", "السداد على (أشهر)"), type: "number", v: 1 },
     { k: "reason", l: L2("Reason", "السبب"), type: "textarea", span: "spanall" }]),
     async v => { await api("POST", "/api/hr-requests", v); toast(L2("Request submitted.", "تم إرسال الطلب.")); },
     { submitLabel: L2("Submit", "إرسال"), onOpen: f });
@@ -6158,7 +6170,11 @@ PAGES.partners = async (view, parts, q) => {
     try { await api("DELETE", "/api/equity/history/" + el.dataset.id); await refreshBoot(); toast(t("saved")); route(); } catch (e) { fail(e); } };
   S.H.lrsave = async () => { try { await api("PUT", "/api/settings", { legal_reserve_pct: (+$("#lrpct").value || 0) / 100, legal_reserve_cap: (+$("#lrcap").value || 0) / 100 }); await refreshBoot(); toast(t("saved")); route(); } catch (e) { fail(e); } };
   S.H.apprview = el => { const a = d.appropriations.find(x => String(x.id) === el.dataset.id); if (a && a.statement) drawer(L2("Profit appropriation", "توزيع الأرباح"), appropriationHtml(a.statement), null, { readOnly: true }); };
-  S.H.rsave = async () => { try { await api("PUT", "/api/settings", { reserve_pct: (+$("#rpct").value || 0) / 100 }); await refreshBoot(); route(); } catch (e) { fail(e); } };
+  S.H.rsave = async () => { const n = id => $(id).value.trim(), body = { reserve_pct: (+$("#rpct").value || 0) / 100 };
+    if ($("#rearly")) Object.assign(body, { reserve_early_pct: n("#rearly") === "" ? "" : (+n("#rearly") || 0) / 100, reserve_early_until: +n("#runtil") || 0,
+      capital_goal: +n("#rgoal") || 0, buffer_months: n("#rbuf") === "" ? 3 : +n("#rbuf"), repay_funder_first: $("#rrepay").checked ? "1" : "0",
+      expected_cost_pct: n("#rexp") === "" ? "" : (+n("#rexp") || 0) / 100 });
+    try { await api("PUT", "/api/settings", body); await refreshBoot(); toast(t("saved")); route(); } catch (e) { fail(e); } };
   const act = (a, l) => `<button data-a="eqa" data-act="${a}">${esc(l)}</button>`;
   const txMenu = tx ? `<div class="dd"><button class="btn pri">+ ${L2("Partner transaction", "حركة شريك")} ▾</button><div class="dd-menu">
       ${act("contribute", L2("Capital contribution", "زيادة رأس المال"))}${act("withdraw", L2("Capital withdrawal", "تخفيض رأس المال"))}
@@ -6168,7 +6184,7 @@ PAGES.partners = async (view, parts, q) => {
   const ownMenu = own ? `<div class="dd"><button class="btn">${L2("Ownership", "الملكية")} ▾</button><div class="dd-menu">
       ${act("transfer", L2("Share transfer", "تنازل عن حصة"))}<button data-a="eqreplace">${L2("Partner replacement (entire share)", "استبدال شريك (كامل الحصة)")}</button>
       ${act("admit", L2("Admit a new partner", "دخول شريك جديد"))}${act("exit", L2("Partner retirement / buy-out", "تخارج شريك"))}${act("set", L2("Change shares directly", "تعديل النسب مباشرة"))}</div></div>` : "";
-  const cp = d.cash_position, anyInt = d.partners.some(p => p.capital_interest), anyWip = d.partners.some(p => Math.abs(p.held_in_wip || 0) >= 0.01);
+  const cp = d.cash_position, pol = d.policy || {}, dist = d.dist || {}, anyInt = d.partners.some(p => p.capital_interest), anyWip = d.partners.some(p => Math.abs(p.held_in_wip || 0) >= 0.01);
   const acctRow = p => { const a = p.accounts; return `<tr class="click ${p.active ? "" : "void"}" data-a="${ed ? "pedit" : ""}" data-id="${p.id}">
       <td><b>${esc(p.name)}</b>${p.active ? "" : ` <span class="chip">${L2("Former partner", "شريك سابق")}${p.left_on ? " · " + fd(p.left_on) : ""}</span>`}${p.joined ? `<div class="lines">${L2("since", "منذ")} ${fd(p.joined)}</div>` : ""}</td>
       <td class="num"><b>${pct(p.default_share)}</b></td><td class="num">${money(a.capital)}</td><td class="num">${money(a.current)}</td><td class="num">${money(a.drawings)}</td>
@@ -6181,14 +6197,28 @@ PAGES.partners = async (view, parts, q) => {
       ${d.partners.map(acctRow).join("")}
       <tr class="total"><td>${t("total")}</td><td class="num ${Math.abs(d.default_check - 1) < 0.001 ? "pos" : "neg"}">${pct(d.default_check)}</td><td class="num">${money(tot("capital"))}</td><td class="num">${money(tot("current"))}</td><td class="num">${money(tot("drawings"))}</td><td class="num">${money(tot("loan"))}</td><td class="num">${money(tot("interest"))}</td><td class="num">${money(tot("distributions_payable") + tot("due_to"))}</td></tr></tbody></table></div>
       <p class="muted" style="font-size:.85em;margin:8px 0 0">${L2("Capital is the amount invested by each partner and changes only through contributions, withdrawals, transfers, admissions and retirements. Loans are company liabilities. Drawings are on account of profit.", "رأس المال هو ما استثمره كل شريك، ولا يتغير إلا بالزيادة أو التخفيض أو التنازل أو الدخول أو التخارج. القروض التزامات على الشركة، والمسحوبات تحت حساب الأرباح.")}</p></div>
-    <div class="card"><h2>${t("reserve_pct")}</h2><div class="row"><input id="rpct" type="number" step="1" min="0" max="100" value="${+(d.reserve_pct * 100).toFixed(2)}" style="max-width:120px" ${ed ? "" : "disabled"}>
-      ${ed ? `<button class="btn" data-a="rsave">${t("save")}</button>` : ""}<span class="muted">${t("company_result")}: ${money(d.company_result)}</span></div>
+    <div class="card"><h2>${L2("Distribution policy", "سياسة التوزيع")}</h2>
+      <div class="row" style="gap:8px;flex-wrap:wrap;align-items:flex-end">
+        <label class="f" style="max-width:170px">${t("reserve_pct")}<input id="rpct" type="number" step="any" min="0" max="100" value="${+(d.reserve_pct * 100).toFixed(2)}" ${ed ? "" : "disabled"}></label>
+        <label class="f" style="max-width:170px">${L2("Early reserve rate %", "نسبة الاحتياطي المبدئية %")}<input id="rearly" type="number" step="any" min="0" max="100" value="${pol.reserve_early_pct != null ? +(pol.reserve_early_pct * 100).toFixed(2) : ""}" ${ed ? "" : "disabled"}></label>
+        <label class="f" style="max-width:190px">${L2("…until the reserve reaches", "…حتى يبلغ الاحتياطي")}<input id="runtil" type="number" step="any" min="0" value="${pol.reserve_early_until || ""}" ${ed ? "" : "disabled"}></label>
+        <label class="f" style="max-width:170px">${L2("Company capital goal", "هدف رأس مال الشركة")}<input id="rgoal" type="number" step="any" min="0" value="${pol.capital_goal || ""}" ${ed ? "" : "disabled"}></label>
+        <label class="f" style="max-width:190px">${L2("Cash buffer (months of overhead)", "احتياطي نقدي (أشهر مصروفات)")}<input id="rbuf" type="number" step="any" min="0" value="${pol.buffer_months}" ${ed ? "" : "disabled"}></label>
+        <label class="f" style="max-width:220px">${L2("Default expected project cost (% of revenue)", "التكلفة المتوقعة الافتراضية للمشروع (% من الإيراد)")}<input id="rexp" type="number" step="any" min="0" value="${S.boot.settings.expected_cost_pct ? +(S.boot.settings.expected_cost_pct * 100).toFixed(2) : ""}" ${ed ? "" : "disabled"}></label>
+        <label class="f chk"><input id="rrepay" type="checkbox" ${pol.repay_funder_first ? "checked" : ""} ${ed ? "" : "disabled"}>${L2("Repay the funding partner before distributing", "سداد الشريك الممول قبل التوزيع")}</label>
+        ${ed ? `<button class="btn" data-a="rsave">${t("save")}</button>` : ""}</div>
+      <div class="kpis" style="margin-top:10px">${kpiBox(L2("Clean net profit", "صافي الربح الصافي"), money(dist.clean), dist.clean < 0 ? "neg" : "pos", dist.held ? L2(`after ${money(dist.held)} held for remaining project costs`, `بعد احتجاز ${money(dist.held)} لتكاليف المشروعات المتبقية`) : "")}
+        ${kpiBox(L2("Company capital reserve", "احتياطي رأس مال الشركة"), money(dist.reserve), "", dist.capital_goal ? L2(`${pct(dist.progress)} of the ${money(dist.capital_goal)} goal`, `${pct(dist.progress)} من هدف ${money(dist.capital_goal)}`) : "")}
+        ${kpiBox(L2("Free own cash", "النقدية الذاتية الحرة"), money(dist.free), dist.free < 0 ? "neg" : "pos", L2(`after a ${money(dist.buffer)} buffer`, `بعد احتياطي ${money(dist.buffer)}`))}
+        ${kpiBox(L2("Maximum safe to distribute", "الحد الأقصى الآمن للتوزيع"), money(dist.max_safe), dist.max_safe > 0 ? "pos" : "")}</div>
+      <div class="banner ${dist.max_safe > 0 ? "ok" : "err"}" style="margin-top:6px">${esc(dist.verdict)}</div>
+      <p class="muted" style="margin:6px 0 0">${t("company_result")}: ${money(d.company_result)}</p>
       <h4 style="margin:14px 0 6px">${L2("Legal reserve (appropriated from profit)", "الاحتياطي القانوني (يُجنَّب من الربح)")}</h4>
       <div class="row" style="gap:8px;flex-wrap:wrap"><label class="f" style="max-width:180px">${L2("% of profit", "% من الربح")}<input id="lrpct" type="number" step="any" min="0" max="100" value="${+(d.legal_reserve_pct * 100).toFixed(2)}" ${ed ? "" : "disabled"}></label>
         <label class="f" style="max-width:200px">${L2("Cap (% of capital)", "الحد الأقصى (% من رأس المال)")}<input id="lrcap" type="number" step="any" min="0" max="100" value="${+(d.legal_reserve_cap * 100).toFixed(2)}" ${ed ? "" : "disabled"}></label>
         ${ed ? `<button class="btn" data-a="lrsave" style="align-self:flex-end">${t("save")}</button>` : ""}</div>
       <p class="muted" style="font-size:.85em;margin:6px 0 0">${L2("Statutory requirements vary by company type and country; confirm with your auditor. 0: none.", "تختلف المتطلبات النظامية حسب نوع الشركة والدولة؛ راجعها مع مراقب الحسابات. 0: لا يوجد.")}</p>
-      <div class="banner ${cp.gap > 0 ? "err" : "ok"}" style="margin-top:10px">${t("cash_floor")}: ${money(cp.floor)} · ${t("cash")}: ${money(cp.cash)}${cp.gap > 0 ? ` — ${L2("Nothing is distributable until this shortfall is covered", "لا يوجد ما يُوزَّع حتى تُغطى هذه الفجوة")} (${money(cp.gap)})` : " ✓"}</div></div>
+</div>
     <div class="card"><h2>${L2("Profit shares", "حصص الأرباح")}</h2><div class="tbl"><table><thead><tr><th>${t("partner")}</th>${d.units.map(u => `<th class="num">${esc(u.code)}</th>`).join("")}${anyInt ? `<th class="num">${L2("Interest on capital", "فائدة رأس المال")}</th>` : ""}<th class="num">${t("profit_share")}</th>${anyWip ? `<th class="num" title="${esc(L2("Profit on work performed but not invoiced: earned, but not distributable until invoiced", "ربح أعمال منفذة غير مفوترة: مكتسب لكنه غير قابل للتوزيع حتى الفوترة"))}">${L2("Held in work in progress", "محتجز في الأعمال تحت التنفيذ")}</th>` : ""}<th class="num">${t("distributable")}</th><th class="num">${t("drawn")}</th><th class="num">${t("balance")}</th></tr></thead><tbody>
       ${d.partners.filter(p => p.active || p.profit_share || p.drawn).map(p => `<tr class="click" data-a="${ed ? "pedit" : ""}" data-id="${p.id}"><td>${esc(p.name)}<div class="lines">${t("default")} ${pct(p.default_share)}</div></td>${d.units.map(u => `<td class="num">${pct(p.units[u.code].share)}<div class="lines">${money(p.units[u.code].profit)}</div></td>`).join("")}
         ${anyInt ? `<td class="num">${money(p.capital_interest)}</td>` : ""}<td class="num">${money(p.profit_share)}</td>${anyWip ? `<td class="num muted">${money(p.held_in_wip)}</td>` : ""}<td class="num">${money(p.distributable)}</td><td class="num">${money(p.drawn)}</td><td class="num ${p.balance < 0 ? "neg" : "pos"}"><b>${money(p.balance)}</b></td></tr>`).join("")}
@@ -8987,6 +9017,7 @@ PAGES.payrun = async (view, parts) => {
   Object.assign(S.H, {
     prset: (el) => { const r = rows[+el.dataset.i]; const k = el.dataset.k; if (k.startsWith("c_")) r.components[k.slice(2)] = el.value; else r[k] = el.value; },
     prsave: async () => { try { await save(); toast(t("saved")); route(); } catch (e) { fail(e); } },
+    pradv: async () => { try { await save(); const r = await api("POST", `/api/payroll/runs/${d.id}/recover-advances`, {}); toast(L2(`Advance recovery updated for ${r.lines} employee(s).`, `تم تحديث استرداد السلف لـ ${r.lines} موظف.`)); route(); } catch (e) { fail(e); } },
     prpost: async () => { try { if (draft) await save(); await api("POST", `/api/payroll/runs/${d.id}/post`, {}); toast(t("posted")); route(); } catch (e) { fail(e); } },
     prunpost: async () => { if (!await uiConfirm(L2("Reopen this month? Its entries are voided (retained in the audit trail) and the lines become editable.", "هل تريد إعادة فتح هذا الشهر؟ تُلغى قيوده (وتبقى في سجل المراجعة) وتصبح الأسطر قابلة للتعديل."))) return;
       try { await api("POST", `/api/payroll/runs/${d.id}/unpost`, {}); route(); } catch (e) { fail(e); } },
@@ -8997,7 +9028,7 @@ PAGES.payrun = async (view, parts) => {
   const T = d.totals, inp = (i, k, v, w = 70) => draft && add ? `<input class="num" type="number" step="any" data-skip="1" value="${esc(v || "")}" data-input="prset" data-i="${i}" data-k="${k}" style="width:${w}px">` : (+v ? esc(v) : "");
   const unitsL = l => ({ monthly: L2("Absent days", "أيام الغياب"), daily: L2("Days", "أيام"), hourly: L2("Hours", "ساعات"), piece: L2("Units", "وحدات") })[l.emp_type];
   view.innerHTML = `<div class="toolbar"><a class="btn" href="#/payruns">← ${t("m_payruns")}</a>
-      ${draft && add ? `<button class="btn" data-a="prsave">↻ ${L2("Save and recalculate", "حفظ وإعادة الحساب")}</button><button class="btn pri" data-a="prpost">✓ ${L2("Post", "ترحيل")}</button>` : ""}
+      ${draft && add ? `<button class="btn" data-a="pradv" title="${esc(L2("Set each employee's advance recovery from their outstanding salary advances", "تحديد استرداد السلف لكل موظف من سلفه القائمة"))}">${L2("Recover advances", "استرداد السلف")}</button><button class="btn" data-a="prsave">↻ ${L2("Save and recalculate", "حفظ وإعادة الحساب")}</button><button class="btn pri" data-a="prpost">✓ ${L2("Post", "ترحيل")}</button>` : ""}
       ${!draft && ed ? `<button class="btn" data-a="prunpost">${L2("Reopen", "إعادة فتح")}</button>` : ""}
       <button class="btn" data-a="prslips">⎙ ${L2("All payslips", "جميع القسائم")}</button><span class="spacer"></span>
       ${exportMenu("payroll_register", { run: d.id })}${draft && ed ? `<button class="btn danger" data-a="prdel">${t("delete")}</button>` : ""}</div>

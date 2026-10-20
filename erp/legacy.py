@@ -22,7 +22,8 @@ OPEX_ACCOUNTS = {"rent": "6010", "software": "6020", "service": "6020", "subscri
                  "travel": "6075", "office": "6080", "bank": "6065"}
 SUPPLIER_ADVANCES = "1310"
 # V1.3 workbook codes whose meaning differs in the app's chart of accounts: sheet code -> app role (or code)
-V13_ACCOUNTS = {"1150": "1180",            # accrued revenue receivable (unbilled) — 1150 is retention receivable here
+V13_ACCOUNTS = {"1030": "role:reserve_cash",    # V1.6 company reserve account (cash set aside) — 1030 is petty cash here
+                "1150": "1180",            # accrued revenue receivable (unbilled) — 1150 is retention receivable here
                 "1320": "role:custody",    # custody (عهدة) — 1320 is input VAT here
                 "3150": "role:capital",    # partner capital (funding partner)
                 "1400": "1410", "1450": "role:accum_depreciation", "2300": "role:income_tax_payable",
@@ -143,11 +144,27 @@ def read_legacy_workbook(path):
                     "status": "In Progress" if status in (None, "TBD") else status,
                     "basis": basis if basis in acc.BILLING_BASES else
                     "Fixed Price" if str(basis or "").lower().startswith("measured") else "Cost-Plus %",
-                    "fee_pct": _f(_get(row, _col(h, "fee %"))),
+                    # the fee is an input only on cost-plus projects; on the others the sheet shows the realised
+                    # markup (collected ÷ cost − 1, negative while costs exceed collections), which the app works out itself
+                    "fee_pct": _f(_get(row, _col(h, "fee %"))) if str(basis or "").lower().startswith("cost-plus") else "",
                     # measured (BOQ-rate) work: the executed quantities on its draft invoice are its work in progress
                     "wip_mode": "drafts" if str(basis or "").lower().startswith("measured") else
                     "cost_plus" if str(basis or "").lower().startswith("cost-plus") else "",
-                    "contract_value": contract if isinstance(contract, (int, float)) else ""})
+                    "contract_value": contract if isinstance(contract, (int, float)) else "",
+                    # V1.6: expected revenue and expected cost (a % of revenue — blank = the default — or a fixed amount)
+                    **({"expected_revenue": _f(_get(row, _col(h, "expected revenue")))} if _col(h, "expected revenue") is not None else {}),
+                    **({"cost_method": "fixed" if str(_v(_get(row, _col(h, "cost estimate method"))) or "").lower().startswith("fixed") else "pct",
+                        "expected_cost_pct": _f(_get(row, _col(h, "expected cost %"))) if isinstance(_get(row, _col(h, "expected cost %")), (int, float)) else "",
+                        "expected_cost": _f(_get(row, _col(h, "fixed amount")))} if _col(h, "cost estimate method") is not None else {})})
+            # the register's default expected cost % (above the table)
+            for rr in ws.iter_rows(min_row=1, max_row=hr, values_only=True):
+                for i, cell in enumerate(rr):
+                    if isinstance(cell, str) and cell.strip().lower().startswith("default expected cost"):
+                        num = next((x for x in rr[i + 1:] if isinstance(x, (int, float))), None)
+                        if num is not None:
+                            data["Settings"].append({"key": "expected_cost_pct", "value": num})
+                            notes.append(f"Default expected project cost: {num:.0%} of revenue (Master Project Register) — the cost still "
+                                         "to come on running projects is held back from distributable profit.")
             break
 
     # V1.3+: the Cost Allocation sheet's first rule is what untagged shared costs follow — use its split exactly
@@ -226,6 +243,7 @@ def read_legacy_workbook(path):
                 break
             if str(_v(ws.cell(r, 1).value) or "").lower().startswith("reserve %"):
                 data["Settings"].append({"key": "reserve_pct", "value": _f(ws.cell(r, 2).value)})
+        _read_policy(ws, data, notes)
 
     # ---- receipts (income tracker may contain several stacked tables)
     ws = sheet("income tracker") if not journal_mode else None
@@ -426,6 +444,28 @@ def _allocation_rule(ws, codes):
                 return {"name": name, "split": split}
             return None
     return None
+
+
+def _read_policy(ws, data, notes):
+    """V1.6 dividend policy (Partner Equity & Dividends): early reserve rate and its target, company capital goal, months
+    of overhead kept as a cash buffer, and whether the funding partner is repaid before any distribution."""
+    labels = {"reserve % — early rate": "reserve_early_pct", "early rate applies until": "reserve_early_until",
+              "company capital goal": "capital_goal", "months of overhead kept": "buffer_months", "repay him first": "repay_funder_first"}
+    found = {}
+    for row in ws.iter_rows(values_only=True):
+        for i, cell in enumerate(row):
+            if not isinstance(cell, str):
+                continue
+            key = next((k for lbl, k in labels.items() if cell.strip().lower().startswith(lbl)), None)
+            val = next((x for x in row[i + 1:] if x not in (None, "")), None)
+            if key and key not in found and val is not None:
+                found[key] = ("1" if str(val).strip().lower() in ("yes", "y", "true", "1") else "0") if key == "repay_funder_first" else _f(val)
+    for k, v in found.items():
+        data["Settings"].append({"key": k, "value": v})
+    if found:
+        notes.append("Distribution policy (Partner Equity & Dividends): " + ", ".join(
+            f"{k.replace('_', ' ')} {v:.0%}" if k == "reserve_early_pct" else f"{k.replace('_', ' ')} {v:,.0f}" if isinstance(v, float)
+            else f"{k.replace('_', ' ')} {'yes' if v == '1' else 'no'}" for k, v in found.items()) + ".")
 
 
 def _read_new_accounts(ws, data, notes):
@@ -644,6 +684,7 @@ def _read_journal(wb, ws, data, notes, codes):
             order.append(je)
         groups.setdefault(je, []).append(row)
     auto, mapped, funded = [], set(), set()
+    items = [0]
     funder = data.get("_funder") or ""
     bank_codes = {"1020", "1010"}
     n = 0
@@ -676,16 +717,25 @@ def _read_journal(wb, ws, data, notes, codes):
                 funded.add(je)
             if new != code:
                 mapped.add(f"{code}→{new}")
-            data["Journal Vouchers"].append({
-                "voucher": je, "date": date, "kind": kind, "bu_code": proj, "party": party, "ref": je, "memo": memo,
-                "deal_ref": deal, "account": new, "debit": round(_f(_get(r, _col(h, "debit"))), 2) or "",
-                "credit": round(_f(_get(r, _col(h, "credit"))), 2) or "",
-                "line_party": line_party})
+            row = {"voucher": je, "date": date, "kind": kind, "bu_code": proj, "party": party, "ref": je, "memo": memo,
+                   "deal_ref": deal, "account": new, "debit": round(_f(_get(r, _col(h, "debit"))), 2) or "",
+                   "credit": round(_f(_get(r, _col(h, "credit"))), 2) or "", "line_party": line_party}
+            # V1.6: a materials line with its quantity, unit and rate becomes a material line (materials used and their
+            # prices), when quantity × rate is exactly the amount
+            qty, rate = _f(_get(r, _col(h, "qty"))), _f(_get(r, _col(h, "rate")))
+            what = _v(_get(r, _col(h, "description")))
+            if new == "5010" and row["debit"] and qty and rate and what and abs(round(qty * rate, 2) - row["debit"]) < 0.005:
+                row.update(item=str(what)[:120], item_unit=_v(_get(r, _col(h, "unit"))) or "", item_qty=qty, item_rate=rate)
+                items[0] += 1
+            data["Journal Vouchers"].append(row)
         n += 1
     notes.append(f"General Journal: {n} entries imported line for line (the workbook's own source of truth); the hidden "
                  "archive sheets (Project Costing, OpEx, Payroll, Income Tracker) were not imported, so nothing is counted twice.")
     if mapped:
         notes.append("Account codes that mean something else in the app were moved: " + ", ".join(sorted(mapped)) + ".")
+    if items[0]:
+        notes.append(f"{items[0]} materials lines with quantity, unit and rate imported as material lines (Projects → Materials used "
+                     "shows what was used and at what price).")
     if funded:
         notes.append(f"Every payment and receipt ({len(funded)} entries) goes through {funder}'s funding account "
                      f"({FUNDING_ACCOUNT}) instead of the bank — his money in the company is their total, live.")

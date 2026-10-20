@@ -231,6 +231,39 @@ class Reports(unittest.TestCase):
         self.assertIn("<table", reports.to_html(tb, auto_print=True))
         self.assertEqual(reports.to_xlsx(tb)[:2], b"PK")
 
+    def test_expected_cost_held_profit_and_distribution_policy(self):
+        """Costs still to come on running projects hold back profit; the reserve is stepped (early rate up to a target,
+        then the base rate); distributable cash leaves a buffer of months of overhead, money held and the reserve."""
+        from erp import partner_pack as pp
+        self.assertEqual(pp.reserve_for(19965.02, {"reserve_pct": 0.25, "reserve_early_pct": 0.4, "reserve_early_until": 100000}), 7986.01)
+        self.assertEqual(pp.reserve_for(400000, {"reserve_pct": 0.25, "reserve_early_pct": 0.4, "reserve_early_until": 100000}),
+                         round(100000 + (400000 - 250000) * 0.25, 2))                 # early rate reached its target
+        self.assertEqual(pp.reserve_for(-50, {"reserve_pct": 0.25, "reserve_early_pct": None, "reserve_early_until": 0}), 0)
+        db = seeded()
+        bu = db.one("SELECT * FROM business_units WHERE status<>'Completed' ORDER BY id LIMIT 1")
+        base = pp.compute(db, "2026-01-01", "2026-12-31")
+        self.assertEqual(base["held_total"], 0)                                         # no expected cost: nothing held
+        b = next(x for x in a.bu_summaries(db) if x["id"] == bu["id"])
+        db.x("UPDATE business_units SET cost_method='fixed', expected_cost=? WHERE id=?", (a.to_minor(b["cost_to_date"] + 5000), bu["id"]))
+        b = next(x for x in a.bu_summaries(db) if x["id"] == bu["id"])
+        self.assertEqual((b["cost_still_to_come"], b["pct_complete"] < 1), (5000, True))
+        d = pp.compute(db, "2026-01-01", "2026-12-31")
+        p = next(x for x in d["projects"] if x["code"] == bu["code"])
+        self.assertEqual(p["held"], round(min(p["billed_profit"], 5000), 2) if p["billed_profit"] > 0 else 0)
+        self.assertAlmostEqual(d["clean_total"], d["billed_total"] - d["held_total"], places=2)
+        db.set_setting("buffer_months", "2")
+        db.set_setting("capital_goal", "500000")
+        q = pp.compute(db, "2026-01-01", "2026-12-31")["dist"]
+        self.assertAlmostEqual(q["free"], q["cash"] - q["owed"] - q["advances"] - q["held"] - q["buffer"] - q["reserve"], places=2)
+        self.assertAlmostEqual(q["buffer"], q["monthly_overhead"] * 2, places=1)
+        self.assertGreaterEqual(q["max_safe"], 0)
+        self.assertTrue(db.one("SELECT 1 FROM accounts WHERE role='reserve_cash'"))   # cash set aside as company capital
+        tb = reports.build(db, "partner_pack", {"date_from": "2026-01-01", "date_to": "2026-12-31", "lang": "en"})
+        labels = [r.get("label") or (r.get("cells") or [""])[0] for r in tb["rows"]]
+        self.assertTrue(any("Maximum safe to distribute" in str(x) for x in labels))
+        db.x("UPDATE business_units SET status='Completed' WHERE id=?", (bu["id"],))   # finished: nothing still to come
+        self.assertEqual(next(x for x in a.bu_summaries(db) if x["id"] == bu["id"])["cost_still_to_come"], 0)
+
     def test_comparative_columns(self):
         tb = reports.income_statement_table(seeded(), "2026-01-01", "2026-06-30", "month")
         self.assertEqual(len(tb["columns"]), 1 + 6)
@@ -2662,6 +2695,41 @@ class Payroll(unittest.TestCase):
         self.assertAlmostEqual(P.annual_tax(1500000, s), 0.25 * 1200000 + 0.275 * 300000)
         P.save_settings(db, {"high_income": []})            # the rule can be switched off
         self.assertAlmostEqual(P.annual_tax(650000, P.settings(db)), 0 + 1500 + 2250 + 26000 + 45000 + 62500)
+
+    def test_salary_advance_recovered_automatically(self):
+        """A salary advance paid from an approved request is recovered by the payroll runs in its monthly instalments,
+        never more than is outstanding or than the net pay; an amount entered by hand is kept."""
+        from erp import hrrequests
+        db, P = self._db()
+        auth.create_user(db, {"username": "boss", "password": "secret123"}, first=True)
+        auth.create_user(db, {"username": "eng", "password": "secret123", "perms": {"team": "add"}})
+        boss, eng = (db.one("SELECT * FROM users WHERE username=?", (u,)) for u in ("boss", "eng"))
+        e = P.save_employee(db, {"name": "Site Engineer", "basic": 9000, "username": "eng", "insured": "No", "taxed": "No"})
+        rid = hrrequests.submit(db, eng, {"kind": "advance", "amount": 3000, "months": 3})
+        hrrequests.decide(db, boss, rid, True)
+        hrrequests.pay_advance(db, boss, rid, {"method": "Cash", "date": "2026-08-20"})
+        r1 = P.create_run(db, {"period": "2026-09"})
+        line = lambda r: next(l for l in P.get_run(db, r)["lines"] if l["employee_id"] == e)   # noqa: E731
+        self.assertEqual(line(r1)["components"].get("advance"), 1000)              # one of three instalments
+        P.post_run(db, r1)
+        self.assertEqual(hrrequests.advance_balance(db, "Site Engineer"), 2000)
+        r2 = P.create_run(db, {"period": "2026-10"})
+        P.save_lines(db, r2, [{"employee_id": e, "components": {"advance": 0}}])   # skipped this month by hand
+        P.post_run(db, r2)
+        self.assertEqual(hrrequests.advance_balance(db, "Site Engineer"), 2000)
+        r3 = P.create_run(db, {"period": "2026-11"})
+        self.assertEqual(line(r3)["components"].get("advance"), 1000)
+        db.x("UPDATE employees SET basic=? WHERE id=?", (50000, e))                 # 500.00 a month
+        P.recover_advances(db, r3)
+        self.assertEqual(line(r3)["components"].get("advance"), 500)               # capped at the net pay
+        db.x("UPDATE employees SET basic=? WHERE id=?", (900000, e))
+        P.recover_advances(db, r3)
+        P.post_run(db, r3)
+        r4 = P.create_run(db, {"period": "2026-12"})
+        P.post_run(db, r4)
+        self.assertEqual(hrrequests.advance_balance(db, "Site Engineer"), 0)       # fully recovered, nothing more
+        r5 = P.create_run(db, {"period": "2027-01"})
+        self.assertNotIn("advance", line(r5)["components"])
 
     def test_payslip_and_posting(self):
         db, P = self._db()

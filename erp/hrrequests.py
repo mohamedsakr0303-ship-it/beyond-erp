@@ -176,13 +176,39 @@ def balance(db, username, year=None):
     return {"year": year, "entitlement": ent, "taken": used, "pending": pending, "remaining": round(ent - used, 2)}
 
 
-def advance_balance(db, employee_name):
+def advance_due(db, employee_id, employee_name, date=None):
+    """What the next payroll run recovers from this employee's salary advances: each paid advance's monthly instalment
+    (amount ÷ months), oldest first, until it is repaid; a balance booked outside requests is recovered in full.
+    Never more than the outstanding balance in the books."""
+    outstanding = advance_balance(db, employee_name, date)
+    if outstanding <= 0:
+        return 0.0
+    acct = _role(db)
+    paid = db.q("SELECT r.amount, r.months FROM hr_requests r JOIN journal_entries e ON e.id=r.entry_id AND e.status='posted' "
+                "WHERE r.employee_id=? AND r.kind='advance' AND e.date<=? ORDER BY e.date, r.id", (employee_id, date or acc.today()))
+    recovered = to_major(db.one("SELECT COALESCE(SUM(l.credit),0) c FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id "
+                                "WHERE e.status='posted' AND l.account=? AND l.party=? AND e.date<=?",
+                                (acct, employee_name, date or acc.today()))["c"])
+    due = left_total = 0.0
+    for r in paid:                                   # recoveries settle the oldest advances first
+        amt = to_major(r["amount"])
+        take = min(amt, recovered)
+        recovered -= take
+        left = round(amt - take, 2)
+        if left > 0:
+            due += min(left, round(amt / max(1, r["months"] or 1), 2))
+            left_total += left
+    due += max(0.0, outstanding - left_total)       # advances booked directly, without a request
+    return round(min(due, outstanding), 2)
+
+
+def advance_balance(db, employee_name, date=None):
     """Unrecovered salary advances for an employee, from the books."""
     acct = _role(db)
     if not acct:
         return 0.0
     r = db.one("SELECT COALESCE(SUM(l.debit-l.credit),0) b FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id "
-               "WHERE e.status='posted' AND l.account=? AND l.party=?", (acct, employee_name))
+               "WHERE e.status='posted' AND l.account=? AND l.party=? AND e.date<=?", (acct, employee_name, date or "9999-12-31"))
     return to_major(r["b"])
 
 
@@ -212,14 +238,17 @@ def submit(db, user, d):
     amount = to_minor(num(d.get("amount") or 0, "amount")) if amt else 0
     if amt and amount <= 0:
         raise ValidationError("Enter the amount.")
+    months = int(num(d.get("months") or 1, "months")) if amt else 1
+    if not 1 <= months <= 60:
+        raise ValidationError("Repay the advance over 1 to 60 months.")
     if rng:
         clash = db.one("SELECT id FROM hr_requests WHERE username=? AND status IN ('pending','approved') AND kind IN ('annual','sick','unpaid','other') "
                        "AND date_from<=? AND COALESCE(NULLIF(date_to,''), date_from)>=?", (user["username"], date_to, date_from)) if kind in LEAVE_STATUS else None
         if clash:
             raise ValidationError(f"These dates overlap leave request #{clash['id']}.")
-    rid = db.x("INSERT INTO hr_requests(username, employee_id, kind, date_from, date_to, time_from, time_to, hours, amount, reason, status, created_at) "
-               "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-               (user["username"], emp["id"] if emp else None, kind, date_from, date_to or "", time_from, time_to, hours, amount,
+    rid = db.x("INSERT INTO hr_requests(username, employee_id, kind, date_from, date_to, time_from, time_to, hours, amount, months, reason, status, created_at) "
+               "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+               (user["username"], emp["id"] if emp else None, kind, date_from, date_to or "", time_from, time_to, hours, amount, months,
                 text(d.get("reason"), maxlen=1000), "pending", now_iso())).lastrowid
     return rid
 

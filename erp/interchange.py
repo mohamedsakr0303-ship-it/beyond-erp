@@ -119,7 +119,11 @@ SHEETS = [
               C("overhead_pct", "Overhead Allocation %", "نسبة تحميل المصروفات المشتركة", kind="pct", width=10),
               C("negotiation", "Negotiation Earnings", "مكاسب التفاوض", width=12, choices=["", "keep", "pass"]),
               C("wip_mode", "Work in Progress From", "أعمال تحت التنفيذ من", width=14, choices=["", "cost_plus", "drafts"]),
-              C("customer", "Customer", "العميل", width=24), C("notes", "Notes", "ملاحظات", width=24)]},
+              C("customer", "Customer", "العميل", width=24), C("notes", "Notes", "ملاحظات", width=24),
+              C("expected_revenue", "Expected Revenue", "الإيراد المتوقع", kind="money"),
+              C("cost_method", "Cost Estimate", "تقدير التكلفة", width=10, choices=["", "pct", "fixed"]),
+              C("expected_cost_pct", "Expected Cost %", "نسبة التكلفة المتوقعة", kind="pct", width=9),
+              C("expected_cost", "Expected Total Cost (fixed)", "إجمالي التكلفة المتوقعة (ثابت)", kind="money")]},
     {"name": "Parties", "ar": "العملاء والموردون", "module": "sales",
      "title": "Customers & suppliers master — tax registration numbers and addresses are needed for e-invoices",
      "cols": [C("name", "Name", "الاسم", width=28, required=True),
@@ -511,8 +515,9 @@ def export_data(db):
     for b in bus.values():
         out["Business Units"].append({k: b[k] for k in ("code", "name", "type", "location", "area", "start_date",
                                                          "status", "basis", "fee_pct", "overhead_pct", "customer",
-                                                         "notes", "negotiation", "wip_mode")}
-                                     | {"contract_value": to_major(b["contract_value"])})
+                                                         "notes", "negotiation", "wip_mode", "cost_method", "expected_cost_pct")}
+                                     | {"contract_value": to_major(b["contract_value"]), "expected_revenue": to_major(b.get("expected_revenue") or 0),
+                                        "expected_cost": to_major(b.get("expected_cost") or 0)})
     for p in db.q("SELECT * FROM partners ORDER BY id"):
         out["Partners"].append({"name": p["name"], "default_share": p["default_share"],
                                 "active": "Yes" if p["active"] else "No", "joined": p["joined"] or "",
@@ -1971,6 +1976,18 @@ def _imp_bu(db, r):
         db.conn.execute("INSERT INTO business_units(name,type,location,area,start_date,status,basis,fee_pct,"
                         "contract_value,overhead_pct,notes,customer,negotiation,wip_mode,code) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         vals + (code,))
+    # expected cost (V1.6 workbooks and later exports): only when the file carries it
+    est = {}
+    if r.get("expected_revenue") not in (None, ""):
+        est["expected_revenue"] = to_minor(acc.num(r["expected_revenue"], "expected revenue"))
+    if r.get("cost_method") not in (None, ""):
+        est["cost_method"] = "fixed" if str(r["cost_method"]).strip().lower().startswith("fixed") else "pct"
+    if "expected_cost_pct" in r:
+        est["expected_cost_pct"] = None if r["expected_cost_pct"] in (None, "") else _pct(r["expected_cost_pct"])
+    if r.get("expected_cost") not in (None, ""):
+        est["expected_cost"] = to_minor(acc.num(r["expected_cost"], "expected cost"))
+    for k, v in est.items():
+        db.conn.execute(f"UPDATE business_units SET {k}=? WHERE code=?", (v, code))
 
 
 def _imp_partner(db, r):

@@ -238,6 +238,15 @@ def income_statement_table(db, date_from=None, date_to=None, compare="none", bu_
     rows.append(_row(L("income_tax", lang), [-x for x in v("income_tax")], "item", 1))
     rows.append(_row(L("net_profit", lang), v("net_profit"), "grand"))
     rows.append(_row(L("margin", lang) + " %", [r["margins"]["net"] for r in res], "note"))
+    if not bu_id and len(pers) == 1:
+        # management memo: money received that running projects still need for their remaining costs is not profit yet
+        from . import partner_pack
+        pk = partner_pack.compute(db, pers[0][1], pers[0][2])
+        if pk["held_total"]:
+            ar = lang == "ar"
+            rows.append(_row("منه: ربح أعمال تحت التنفيذ لم يُفوتر" if ar else "Of which: profit on work in progress, not yet billed", [pk["wip_profit"]], "item", 1))
+            rows.append(_row("منه: محتجز لتكاليف المشروعات المتبقية" if ar else "Of which: held for remaining project costs", [pk["held_total"]], "item", 1))
+            rows.append(_row("صافي الربح الصافي (أساس التوزيع)" if ar else "Clean net profit (distributable base)", [pk["clean_total"]], "total"))
     return {"title": L("income_statement", lang), "subtitle": _subtitle(db, lang, pers, bu_id),
             "columns": _cols(pers, lang), "rows": rows, "lang": lang}
 
@@ -382,6 +391,12 @@ def bu_table(db, date_from=None, date_to=None, status=None, lang="en"):
     rows.append({"cells": [L("total", lang), "", "", tot("revenue"), tot("cogs"), tot("direct_overhead"),
                            tot("allocated_overhead"), tot("net_profit"), "", tot("receivable"), tot("to_collect")],
                  "style": "grand", "indent": 0})
+    if any(b["expected_total_cost"] for b in data):      # projects with an expected cost: what is still to come
+        cols += [{"label": "التكلفة المتبقية" if lang == "ar" else "Cost still to come", "align": "right", "fmt": "money"},
+                 {"label": "الإنجاز (بالتكلفة)" if lang == "ar" else "% complete (by cost)", "align": "right", "fmt": "pct"}]
+        for r, b in zip(rows, data):
+            r["cells"] += [b["cost_still_to_come"], b["pct_complete"] if b["pct_complete"] is not None else ""]
+        rows[-1]["cells"] += [tot("cost_still_to_come"), ""]
     pers = [("", date_from or "…", acc.clean_date(date_to))]
     return {"title": L("bu_pnl", lang), "subtitle": _subtitle(db, lang, pers, None), "columns": cols, "rows": rows,
             "lang": lang}

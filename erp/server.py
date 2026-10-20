@@ -112,7 +112,8 @@ COMPANY_KEYS = ("company_name", "company_tagline", "company_address", "company_t
                 "company_city", "company_phone", "company_email", "company_website", "bank_name", "bank_account",
                 "bank_holder", "bank_swift", "bank_iban", "offer_validity_days", "offer_prefix", "offer_digits", "regional",
                 "banks", "bank_default", "country", "invoice_style", "doc_lang")
-PUBLIC_SETTINGS = COMPANY_KEYS + ("demo_loaded", "desk_site", "workday_location", "menu_labels", "reserve_pct", "legal_reserve_pct", "legal_reserve_cap", "funding_partner", "funding_limit", "report_from", "report_to", "lock_date", "hidden_modules",
+PUBLIC_SETTINGS = COMPANY_KEYS + ("demo_loaded", "desk_site", "workday_location", "menu_labels", "reserve_pct", "reserve_early_pct",
+                                  "reserve_early_until", "capital_goal", "buffer_months", "repay_funder_first", "expected_cost_pct", "legal_reserve_pct", "legal_reserve_cap", "funding_partner", "funding_limit", "report_from", "report_to", "lock_date", "hidden_modules",
                                   "appearance", "po_self_approve_limit", "menu_layout", "form_custom", "duplicate_check", "two_step_required")
 JSON_SETTINGS = {"menu_labels": {}, "units": [], "hidden_modules": [], "appearance": {}, "regional": {}, "banks": [],
                  "menu_layout": {}, "form_custom": {}}
@@ -344,8 +345,11 @@ def put_settings(ctx):
                     ctx.body["appearance"][k] = cur[k]
                 else:
                     ctx.body["appearance"].pop(k, None)
-    if keys & {"reserve_pct", "legal_reserve_pct", "legal_reserve_cap", "funding_partner", "funding_limit"} and not ctx.can("partners.equity", "edit"):
+    if keys & {"reserve_pct", "legal_reserve_pct", "legal_reserve_cap", "funding_partner", "funding_limit", "reserve_early_pct", "reserve_early_until",
+               "capital_goal", "buffer_months", "repay_funder_first"} and not ctx.can("partners.equity", "edit"):
         ctx.require("settings.company", "edit")
+    if "expected_cost_pct" in keys and not ctx.can("partners.equity", "edit"):
+        ctx.require("business_units.units", "edit")
     if keys & {"backup_keep", "lock_date", "po_self_approve_limit", "duplicate_check"}:
         ctx.require("settings.system", "edit")
     if "two_step_required" in keys:
@@ -411,8 +415,14 @@ def put_settings(ctx):
                 raise acc.ValidationError("Closed financial years depend on the current start date. Reopen them before changing it.")
         if k == "font_size":
             v = str(max(11, min(22, int(float(v or 15)))))
-        if k in ("reserve_pct", "legal_reserve_pct", "legal_reserve_cap"):
-            v = str(max(0.0, min(1.0, acc.num(v, "reserve %"))))
+        if k in ("reserve_pct", "legal_reserve_pct", "legal_reserve_cap", "reserve_early_pct"):
+            v = "" if k == "reserve_early_pct" and v in (None, "") else str(max(0.0, min(1.0, acc.num(v, "reserve %"))))
+        if k == "expected_cost_pct":
+            v = "" if v in (None, "") else str(max(0.0, min(5.0, acc.num(v, "expected cost %"))))
+        if k in ("reserve_early_until", "capital_goal", "buffer_months"):
+            v = str(max(0.0, acc.num(v or 0, k.replace("_", " "))))
+        if k == "repay_funder_first":
+            v = "1" if v in (True, 1, "1", "yes", "true") else "0"
         # JSON settings were size-checked above; cutting them short would leave broken JSON behind
         ctx.db.set_setting(k, v if k in JSON_SETTINGS else acc.text(v, maxlen=20000))
     ctx.log("settings", ", ".join(ctx.body.keys()))
@@ -497,6 +507,22 @@ def _bu_group(ctx, bid):
         ctx.db.x("UPDATE business_units SET grp=? WHERE id=?", (acc.text(ctx.body.get("grp"), maxlen=80), int(bid)))
 
 
+def _bu_estimate(ctx, bid):
+    """Expected revenue and expected cost (a % of revenue, blank = the company default, or a fixed amount)."""
+    b, sets = ctx.body, []
+    if "expected_revenue" in b:
+        sets.append(("expected_revenue", to_minor(acc.num(b.get("expected_revenue") or 0, "expected revenue"))))
+    if "cost_method" in b:
+        sets.append(("cost_method", "fixed" if b.get("cost_method") == "fixed" else "pct"))
+    if "expected_cost_pct" in b:
+        v = b.get("expected_cost_pct")
+        sets.append(("expected_cost_pct", None if v in (None, "") else max(0.0, min(5.0, acc.num(v, "expected cost %")))))
+    if "expected_cost" in b:
+        sets.append(("expected_cost", to_minor(acc.num(b.get("expected_cost") or 0, "expected cost"))))
+    for k, v in sets:
+        ctx.db.x(f"UPDATE business_units SET {k}=? WHERE id=?", (v, int(bid)))
+
+
 def _bu_negotiation(ctx, bid):
     """keep = negotiated discounts are company earnings (client billed on the full price); pass = lower cost."""
     if "negotiation" in ctx.body:
@@ -531,6 +557,7 @@ def add_bu(ctx):
                    v).lastrowid
     _bu_negotiation(ctx, bid)
     _bu_group(ctx, bid)
+    _bu_estimate(ctx, bid)
     ctx.log("bu.add", v[0])
     return ok({"id": bid})
 
@@ -543,6 +570,7 @@ def edit_bu(ctx, bid):
     ctx.db.x(f"UPDATE business_units SET {','.join(f + '=?' for f in BU_FIELDS)} WHERE id=?", v + (int(bid),))
     _bu_negotiation(ctx, bid)
     _bu_group(ctx, bid)
+    _bu_estimate(ctx, bid)
     ctx.log("bu.edit", v[0])
     return ok()
 
@@ -2134,6 +2162,10 @@ def partners(ctx):
     rep = acc.partner_report(ctx.db, ctx.q.get("date_from"), ctx.q.get("date_to"))
     rep["cash_position"] = acc.cash_position(ctx.db)
     rep["shares"] = ctx.db.q("SELECT * FROM partner_shares")
+    from . import partner_pack
+    pk = partner_pack.compute(ctx.db, None, ctx.q.get("date_to"))
+    rep["policy"], rep["dist"] = pk["policy"], {**pk["dist"], "clean": pk["clean_total"], "held": pk["held_total"],
+                                                "verdict": pk["verdict_ar"] if ctx.lang == "ar" else pk["verdict"]}
     return ok(rep)
 
 
@@ -4220,6 +4252,11 @@ def att_records(ctx):
     from . import labour
     q = ctx.q
     return ok(labour.records(ctx.db, q.get("date_from"), q.get("date_to"), q.get("bu_id"), q.get("employee_id")))
+
+
+@route("POST", "/api/payroll/runs/<rid>/recover-advances", "payroll.runs", "add")
+def payroll_recover_advances(ctx, rid):
+    return ok({"lines": payroll.recover_advances(ctx.db, rid)})
 
 
 @route("POST", "/api/payroll/runs/<rid>/from-attendance", "payroll.runs", "add")

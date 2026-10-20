@@ -391,7 +391,35 @@ def create_run(db, d):
     for e in db.q("SELECT * FROM employees WHERE status='active' ORDER BY code"):
         units = s["days_month"] if e["emp_type"] == "daily" else 0
         db.x("INSERT INTO payroll_lines(run_id,employee_id,units,method) VALUES (?,?,?,?)", (rid, e["id"], units, e["method"] or ""))
+    recover_advances(db, rid)
     return rid
+
+
+def recover_advances(db, rid, only_unset=False):
+    """Fill each line's advance recovery from the employee's outstanding salary advances (hrrequests.advance_due),
+    capped so that net pay does not go below zero. only_unset: leave lines where an amount was entered by hand."""
+    from .hrrequests import advance_due
+    r = _run(db, rid)
+    if r["status"] != "draft":
+        return 0
+    s, n = settings(db), 0
+    for ln in db.q("SELECT * FROM payroll_lines WHERE run_id=?", (r["id"],)):
+        inputs = json.loads(ln["inputs"] or "{}")
+        if only_unset and "advance" in inputs:
+            continue
+        emp = get_employee(db, ln["employee_id"])
+        due = advance_due(db, emp["id"], emp["name"], r["date"])
+        inp = _line_inputs(ln)
+        inp["components"].pop("advance", None)
+        room = max(0.0, compute(emp, inp, s)["net"])
+        amt = round(min(due, room), 2)
+        if amt:
+            inputs["advance"] = to_minor(amt)
+            n += 1
+        elif "advance" in inputs and not only_unset:
+            inputs.pop("advance")
+        db.x("UPDATE payroll_lines SET inputs=? WHERE id=?", (json.dumps(inputs), ln["id"]))
+    return n
 
 
 def _month_end(period):
@@ -408,7 +436,9 @@ def save_lines(db, rid, lines):
         eid = ln.get("employee_id") or (get_employee(db, ln["employee"])["id"] if ln.get("employee") else None)
         if not eid:
             continue
-        comps = {k: to_minor(num(v or 0, k)) for k, v in (ln.get("components") or {}).items() if num(v or 0, k)}
+        # zero amounts are dropped, except a recovery set to 0 by hand (it stops the automatic advance recovery)
+        comps = {k: to_minor(num(v or 0, k)) for k, v in (ln.get("components") or {}).items()
+                 if num(v or 0, k) or (k == "advance" and v not in (None, ""))}
         vals = (num(ln.get("units") or 0, "days / hours / units"), num(ln.get("absent_days") or 0, "absent days"),
                 num(ln.get("ot_day") or 0, "overtime"), num(ln.get("ot_night") or 0, "overtime"), num(ln.get("ot_rest") or 0, "overtime"),
                 json.dumps(comps), to_minor(num(ln.get("paid") or 0, "paid now")),
@@ -438,6 +468,7 @@ def post_run(db, rid, user=""):
     accrued = _role(db, "accrued_payroll")
     if not all((si, tx, mf, adv, accrued)):
         raise ValidationError("Payroll accounts are missing from the chart of accounts")
+    recover_advances(db, r["id"], only_unset=True)
     with db.tx():
         for ln in db.q("SELECT * FROM payroll_lines WHERE run_id=?", (r["id"],)):
             emp = get_employee(db, ln["employee_id"])

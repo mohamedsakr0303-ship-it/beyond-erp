@@ -60,6 +60,76 @@ def cash_basis(db, date_from=None, date_to=None):
     return res
 
 
+POLICY = {"reserve_pct": 0.4, "reserve_early_pct": None, "reserve_early_until": 0.0, "capital_goal": 0.0,
+          "buffer_months": 3.0, "repay_funder_first": True}
+
+
+def policy(db):
+    """The company's profit distribution policy (Settings → Partners): reserve rates, capital goal, cash buffer."""
+    def f(k, d):
+        v = db.setting(k)
+        try:
+            return float(v) if v not in (None, "") else d
+        except ValueError:
+            return d
+    return {"reserve_pct": f("reserve_pct", POLICY["reserve_pct"]), "reserve_early_pct": f("reserve_early_pct", None),
+            "reserve_early_until": f("reserve_early_until", 0.0), "capital_goal": f("capital_goal", 0.0),
+            "buffer_months": f("buffer_months", POLICY["buffer_months"]),
+            "repay_funder_first": (db.setting("repay_funder_first") or "1") not in ("0", "no", "false")}
+
+
+def reserve_for(clean, pol):
+    """Company capital reserve kept from clean profit: the early rate until the reserve reaches its target, then the
+    base rate on the rest."""
+    if clean <= 0:
+        return 0.0
+    base, early, until = pol["reserve_pct"] or 0, pol["reserve_early_pct"], pol["reserve_early_until"] or 0
+    if not early or not until:
+        return round(clean * base, 2)
+    if clean * early <= until:
+        return round(clean * early, 2)
+    return round(until + (clean - until / early) * base, 2)
+
+
+def distributable(db, pol, rows, bs, earned, held, reserve_amt, partners, date_to):
+    """How much can safely be paid to partners now: the company's own cash less what it owes, client advances, money
+    held for remaining project costs, a buffer of months of overhead and the capital reserve — and never more than the
+    clean profit still owed to partners. With "repay the funding partner first", nothing until his money is repaid."""
+    first = db.one(f"SELECT MIN(date) a, MAX(date) b FROM journal_entries e WHERE {acc.LIVE} AND date<=?", (date_to,))
+    days = (_dt.date.fromisoformat(first["b"]) - _dt.date.fromisoformat(first["a"])).days if first["a"] else 0
+    monthly = round(earned["opex"] / max(1.0, days / 30.4), 2) if earned.get("opex") else 0.0
+    buffer = round(monthly * (pol["buffer_months"] or 0), 2)
+    owed = round(bs["payable"] + bs["accrued"], 2)
+    funder = round(-sum(r["net"] for r in rows if r.get("role") == "funding_partner") / 100, 2)
+    # when the funding partner's account replaces the bank, a debit balance there is the company's own money with him
+    cash = round(bs["cash"] + max(0.0, -funder), 2)
+    free = round(cash - owed - bs["advances"] - held - buffer - reserve_amt, 2)
+    to_partners = round(sum(max(0.0, x["undistributed"]) for x in partners), 2)
+    ahead = round(sum(x["undistributed"] for x in partners), 2)
+    hold_funder = pol["repay_funder_first"] and funder > 0.005
+    safe = 0.0 if hold_funder else round(max(0.0, min(free, to_partners)), 2)
+    if free < 0:
+        v = (f"DO NOT DISTRIBUTE — own cash short by {-free:,.0f}", f"لا يُنصح بالتوزيع — النقدية الذاتية أقل بمقدار {-free:,.0f}")
+    elif hold_funder:
+        v = (f"DO NOT DISTRIBUTE — repay the funding partner first ({funder:,.0f} of his money is in the company)",
+             f"لا يُنصح بالتوزيع — يُسدد للشريك الممول أولاً ({funder:,.0f} من أمواله في الشركة)")
+    elif to_partners <= 0:
+        v = ((f"DO NOT DISTRIBUTE — partners are already ahead of their earned share by {-ahead:,.0f}",
+              f"لا يُنصح بالتوزيع — حصل الشركاء على أكثر من نصيبهم المستحق بمقدار {-ahead:,.0f}") if ahead < 0 else
+             ("DO NOT DISTRIBUTE — no clean profit left to distribute", "لا يُنصح بالتوزيع — لا يوجد ربح صافٍ متبقٍ للتوزيع"))
+    else:
+        lim = safe < to_partners
+        v = (f"OK to distribute up to {safe:,.0f}" + (" (limited by cash)" if lim else " (limited by clean profit)"),
+             f"يمكن التوزيع حتى {safe:,.0f}" + (" (محدود بالنقدية)" if lim else " (محدود بالربح الصافي)"))
+    set_aside = round(sum(r["net"] for r in rows if r.get("role") == "reserve_cash") / 100, 2)
+    goal = pol["capital_goal"] or 0
+    return {"cash": cash, "owed": owed, "advances": bs["advances"], "held": held, "monthly_overhead": monthly,
+            "buffer": buffer, "reserve": reserve_amt, "free": free, "owed_to_partners": to_partners, "funder_money": funder,
+            "max_safe": safe, "verdict": v, "capital_goal": goal, "progress": round(min(1, reserve_amt / goal), 4) if goal else None,
+            "set_aside": set_aside, "not_backed": round(max(0.0, reserve_amt - set_aside), 2),
+            "months_covered": round(reserve_amt / monthly, 2) if monthly else None}
+
+
 def billed_profit(revenue, wip, net):
     if not revenue:
         return net
@@ -86,15 +156,21 @@ def compute(db, date_from=None, date_to=None):
         wip = to_major(wip_bu.get(b["id"], 0))
         cost = round(b["cogs"] + b["direct_overhead"] + b["allocated_overhead"], 2)
         billed = billed_profit(b["revenue"], wip, b["net_profit"])
+        # money received that the project still needs for its remaining costs is not profit yet
+        held = round(min(billed, b["cost_still_to_come"]), 2) if billed > 0 else 0.0
         projects.append({"code": b["code"], "name": b["name"], "basis": b["basis"], "revenue": b["revenue"],
                          "billed_revenue": round(b["revenue"] - wip, 2), "wip": wip, "cost": cost,
-                         "net_profit": b["net_profit"], "billed_profit": billed,
+                         "net_profit": b["net_profit"], "billed_profit": billed, "held": held,
+                         "clean_profit": round(billed - held, 2), "still_to_come": b["cost_still_to_come"],
+                         "pct_complete": b["pct_complete"],
                          "wip_profit": round(b["net_profit"] - billed, 2), "collected": b["collected"],
                          "allocated": b["allocated_overhead"]})
     inc = acc.income_statement(db, date_from, date_to)
     unit_net = round(sum(x["net_profit"] for x in projects), 2)
     company_left = round(inc["net_profit"] - unit_net, 2)           # overhead not charged to any project
     billed_total = round(sum(x["billed_profit"] for x in projects) + company_left, 2)
+    held_total = round(sum(x["held"] for x in projects), 2)
+    clean_total = round(billed_total - held_total, 2)
     wip_profit = round(inc["net_profit"] - billed_total, 2)
 
     # ---- income statement, earned vs cash
@@ -166,13 +242,15 @@ def compute(db, date_from=None, date_to=None):
     cf["ties"] = abs(cf["closing"] - bs["cash"]) < 0.01
 
     # ---- partners: capital, share of billed profit (per project ownership, after the reserve), distributions
-    reserve = float(db.setting("reserve_pct", "0.4") or 0)
+    pol = policy(db)
+    reserve_amt = reserve_for(clean_total, pol)
+    reserve = round(reserve_amt / clean_total, 6) if clean_total > 0 else pol["reserve_pct"]    # effective rate
     shares = {(r["partner_id"], r["bu_id"]): r["share"] for r in db.q("SELECT * FROM partner_shares")}
     bus = {b["code"]: b["id"] for b in db.q("SELECT id, code FROM business_units")}
     from . import equity
     partners = []
     for pt in db.q("SELECT * FROM partners WHERE active=1 OR active IS NULL ORDER BY id"):
-        share = sum(x["billed_profit"] * shares.get((pt["id"], bus.get(x["code"])), pt["default_share"] or 0) for x in projects)
+        share = sum(x["clean_profit"] * shares.get((pt["id"], bus.get(x["code"])), pt["default_share"] or 0) for x in projects)
         share += company_left * (pt["default_share"] or 0)
         share = round(share * (1 - reserve) if share > 0 else share, 2)
         b = equity.balances(db, pt["name"], date_to)
@@ -181,7 +259,7 @@ def compute(db, date_from=None, date_to=None):
     for x in partners:
         x["closing"] = round(x["capital"] + x["share"] - x["distributions"], 2)
         x["undistributed"] = round(x["share"] - x["distributions"], 2)
-    kept = round(billed_total - sum(x["share"] for x in partners), 2)
+    kept = round(clean_total - sum(x["share"] for x in partners), 2)
     capital_unnamed = round(bs["capital"] - sum(x["capital"] for x in partners), 2)
     drawn_unnamed = round(bs["drawings"] - sum(x["distributions"] for x in partners), 2)
     closing_total = round(sum(x["closing"] for x in partners) + kept + capital_unnamed - drawn_unnamed, 2)
@@ -189,13 +267,14 @@ def compute(db, date_from=None, date_to=None):
     for x in partners:
         x["pct"] = round(x["closing"] / total_eq, 4) if total_eq else 0
     cp = acc.cash_position(db)
-    verdict = ("DO NOT DISTRIBUTE — cash is below the safety floor" if cp["gap"] > 0
-               else f"Distribution possible up to {cp['cash'] - cp['floor']:,.2f} above the cash floor")
+    dist = distributable(db, pol, rows, bs, earned, held_total, reserve_amt, partners, date_to)
     audit = acc.audit(db)
     return {"date_from": date_from, "date_to": date_to, "projects": projects, "company_left": company_left,
             "billed_total": billed_total, "wip_profit": wip_profit, "earned": earned, "cash": cash, "bs": bs, "cf": cf,
             "partners": partners, "kept": kept, "capital_unnamed": capital_unnamed, "drawn_unnamed": drawn_unnamed,
-            "closing_total": closing_total, "reserve_pct": reserve, "cash_position": cp, "verdict": verdict,
+            "closing_total": closing_total, "reserve_pct": reserve, "cash_position": cp, "verdict": dist["verdict"][0],
+            "verdict_ar": dist["verdict"][1], "dist": dist, "policy": pol, "held_total": held_total, "clean_total": clean_total,
+            "reserve_amount": reserve_amt,
             "audit_ok": all(c["ok"] for c in audit), "audit_fails": [c["check"] for c in audit if not c["ok"]]}
 
 
@@ -213,7 +292,9 @@ def table(db, date_from=None, date_to=None, lang="en"):
     note = lambda text: _row(text, pad([]), "note")  # noqa: E731
     e, c, bs, cf = d["earned"], d["cash"], d["bs"], d["cf"]
     rows = [sec(T("1. At a glance", "١. نظرة سريعة")),
-            R(T("Net profit — billed (what partners can distribute from)", "صافي الربح المفوتر (قابل للتوزيع)"), d["billed_total"], style="total"),
+            R(T("Clean net profit (what partners can distribute from)", "صافي الربح الصافي (أساس التوزيع)"), d["clean_total"], style="total"),
+            R(T("Net profit — billed", "صافي الربح المفوتر"), d["billed_total"]),
+            R(T("Held for remaining project costs (received, still needed by the projects)", "محتجز لتكاليف المشروعات المتبقية"), d["held_total"]),
             R(T("Work in progress — work done, not yet invoiced", "أعمال تحت التنفيذ — منفذة ولم تُفوتر"), bs["wip"]),
             R(T("Expected profit on that work (NOT distributable until invoiced)", "الربح المتوقع عليها (غير قابل للتوزيع قبل الفوترة)"), d["wip_profit"]),
             R(T("Net profit — cash actually received", "صافي الربح النقدي"), c["net"]),
@@ -224,9 +305,7 @@ def table(db, date_from=None, date_to=None, lang="en"):
     if bs["loans"] or bs["ncl"]:
         rows.append(R(T("Loans owed", "قروض مستحقة"), round(bs["loans"] + bs["ncl"], 2)))
     rows += [R(T("Partner capital — funding", "رأس مال / تمويل الشركاء"), bs["capital"]),
-             R(T("Distribution recommendation", "توصية التوزيع"), (d["verdict"] if not ar else
-               ("لا يُنصح بالتوزيع — النقدية أقل من الحد الآمن" if d["cash_position"]["gap"] > 0 else "يمكن التوزيع فوق الحد الآمن"))
-               + f"  ({T('cash', 'النقدية')} {d['cash_position']['cash']:,.2f} · {T('floor', 'الحد الآمن')} {d['cash_position']['floor']:,.2f})"),
+             R(T("Distribution recommendation", "توصية التوزيع"), d["verdict_ar"] if ar else d["verdict"]),
              R(T("Books integrity (Model Audit)", "سلامة الدفاتر"), T("ALL INTEGRITY CHECKS PASS", "كل الفحوصات سليمة") if d["audit_ok"]
                else T("REVIEW: ", "مراجعة: ") + ", ".join(d["audit_fails"])),
              sec(T("Project results", "نتائج المشروعات")),
@@ -243,6 +322,17 @@ def table(db, date_from=None, date_to=None, lang="en"):
                        "loss shows that loss at once. Collected = cash actually received.",
                        "المفوتر = ما صدرت به فاتورة. تحت التنفيذ = أعمال منفذة لم تُفوتر بعد، يُحجز ربحها حتى الفوترة؛ والخسارة تظهر فوراً.")))
     # 2. income statement
+    if any(x["held"] or x["still_to_come"] for x in d["projects"]):
+        rows += [sec(T("Costs still to come on running projects", "التكاليف المتبقية على المشروعات الجارية")),
+                 H(T("Project", "المشروع"), T("Total cost to date", "التكلفة حتى تاريخه"), T("Cost still to come", "التكلفة المتبقية"),
+                   T("% complete (by cost)", "نسبة الإنجاز (بالتكلفة)"), T("Net profit — billed", "الربح المفوتر"),
+                   T("Held for remaining costs", "المحتجز للتكاليف المتبقية"), T("Clean profit", "الربح الصافي"))]
+        for x in d["projects"]:
+            rows.append(R(f"{x['code']}  ·  {x['name']}", x["cost"], x["still_to_come"], x["pct_complete"] if x["pct_complete"] is not None else "",
+                          x["billed_profit"], x["held"], x["clean_profit"]))
+        rows.append(note(T("Money received that a project still needs for its remaining costs (expected cost less cost to date) is held "
+                           "back from profit until the project is complete.",
+                           "الأموال المحصلة التي يحتاجها المشروع لتكاليفه المتبقية (التكلفة المتوقعة ناقص التكلفة حتى تاريخه) تُحتجز من الربح حتى اكتمال المشروع.")))
     rows += [sec(T("2. Income statement — earned and cash side by side", "٢. قائمة الدخل — الاستحقاق والنقدي")),
              H("", T("Earned (accrual)", "الاستحقاق"), T("Cash basis", "النقدي")),
              R(T("Revenue earned from projects", "الإيرادات"), e["revenue"], c["revenue"]),
@@ -340,11 +430,12 @@ def table(db, date_from=None, date_to=None, lang="en"):
     if more:
         rows.append(note(T(f"{len(ps) - 5} more partners are included in the totals.", "شركاء آخرون مضمنون في الإجمالي.")))
     rows += [R(T("Kept in company (reserve)", "محتجز في الشركة (احتياطي)") + f" {d['reserve_pct']:.0%}", d["kept"]),
+             R(T("Held for remaining project costs (not profit yet)", "محتجز لتكاليف المشروعات المتبقية"), d["held_total"]),
              R(T("Profit on work in progress — not billed yet, held until invoiced", "ربح تحت التنفيذ"), d["wip_profit"])]
     if d["capital_unnamed"] or d["drawn_unnamed"]:
         rows.append(R(T("Capital / drawings not tagged to a named partner", "رأس مال / مسحوبات غير منسوبة لشريك"),
                       round(d["capital_unnamed"] - d["drawn_unnamed"], 2)))
-    eq_total = round(d["closing_total"] + d["wip_profit"] + bs["reserves"], 2)
+    eq_total = round(d["closing_total"] + d["held_total"] + d["wip_profit"] + bs["reserves"], 2)
     rows += [R(T("TOTAL EQUITY PER BALANCE SHEET", "إجمالي حقوق الملكية بالميزانية"), bs["te"], style="grand"),
              note((T("✓ Ties to the balance sheet", "✓ يطابق الميزانية") if abs(eq_total - bs["te"]) < 0.01
                    else T(f"✗ Difference {eq_total - bs['te']:,.2f} — check partner names on capital and drawings",
@@ -352,6 +443,33 @@ def table(db, date_from=None, date_to=None, lang="en"):
              note(T(f"Each partner's profit share follows their ownership % per project (Partners → ownership), after the company reserve "
                     f"of {d['reserve_pct']:.0%}. Capital put in is each partner's capital / current account in the books.",
                     "نصيب كل شريك حسب نسبته في كل مشروع بعد الاحتياطي."))]
+    q, pol = d["dist"], d["policy"]
+    rows += [sec(T("6. Distribution and company capital", "٦. التوزيع ورأس مال الشركة")),
+             R(T("Clean net profit", "صافي الربح الصافي"), d["clean_total"]),
+             R(T("Company capital reserve", "احتياطي رأس مال الشركة") + (f" ({pol['reserve_early_pct']:.0%} " + T("until", "حتى") +
+               f" {pol['reserve_early_until']:,.0f}, " + T("then", "ثم") + f" {pol['reserve_pct']:.0%})" if pol["reserve_early_pct"] and pol["reserve_early_until"]
+               else f" ({pol['reserve_pct']:.0%})"), -d["reserve_amount"]),
+             R(T("Distributable to partners", "قابل للتوزيع على الشركاء"), round(d["clean_total"] - d["reserve_amount"], 2), style="total"),
+             H(T("Distributable cash — the company's own money", "النقدية القابلة للتوزيع — أموال الشركة الذاتية")),
+             R(T("Company's own cash", "النقدية الذاتية للشركة"), q["cash"]),
+             R(T("Less: owed to suppliers and staff", "ناقص: المستحق للموردين والعاملين"), -q["owed"]),
+             R(T("Less: client advances for work not yet done", "ناقص: دفعات العملاء عن أعمال لم تُنفذ"), -q["advances"]),
+             R(T("Less: held for remaining project costs", "ناقص: المحتجز لتكاليف المشروعات المتبقية"), -q["held"]),
+             R(T(f"Less: operating buffer ({pol['buffer_months']:g} months of overhead at {q['monthly_overhead']:,.0f})",
+                 f"ناقص: احتياطي التشغيل ({pol['buffer_months']:g} شهر من المصروفات بواقع {q['monthly_overhead']:,.0f})"), -q["buffer"]),
+             R(T("Less: company capital reserve", "ناقص: احتياطي رأس مال الشركة"), -q["reserve"]),
+             R(T("Free own cash", "النقدية الذاتية الحرة"), q["free"], style="total"),
+             R(T("Clean profit still owed to partners", "الربح الصافي المستحق للشركاء"), q["owed_to_partners"]),
+             R(T("Maximum safe to distribute now", "الحد الأقصى الآمن للتوزيع الآن"), q["max_safe"], style="grand"),
+             R(T("Recommendation", "التوصية"), d["verdict_ar"] if ar else d["verdict"])]
+    if q["capital_goal"]:
+        rows += [H(T("Company capital — progress to the goal", "رأس مال الشركة — التقدم نحو الهدف")),
+                 R(T("Company capital (reserve earned from clean profit)", "رأس مال الشركة (الاحتياطي من الربح الصافي)"), d["reserve_amount"]),
+                 R(T("Goal", "الهدف"), q["capital_goal"]), R(T("Progress to goal", "نسبة التقدم"), q["progress"]),
+                 R(T("Cash set aside in the company reserve account", "النقدية المجنّبة في حساب احتياطي الشركة"), q["set_aside"]),
+                 R(T("Reserve not yet backed by cash", "احتياطي غير مغطى بالنقدية"), q["not_backed"])]
+        if q["months_covered"] is not None:
+            rows.append(R(T("Months of overhead the reserve covers", "عدد أشهر المصروفات التي يغطيها الاحتياطي"), q["months_covered"]))
     period = f"{d['date_from']} → {d['date_to']}" if d["date_from"] else T(f"As at {d['date_to']}", f"حتى {d['date_to']}")
     return {"title": T("Partner Pack", "تقرير الشركاء"), "subtitle": period + T("  ·  management accounts for the partners", "  ·  حسابات إدارية للشركاء"),
             "columns": [{"label": "", "align": "left"}] + [{"label": "", "align": "right", "fmt": "money"} for _ in range(n - 1)],

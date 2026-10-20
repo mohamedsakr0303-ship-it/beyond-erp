@@ -1640,6 +1640,37 @@ def allocated_overhead(db, bu_id, date_from=None, date_to=None):
     return round(shared_overhead_total(db, date_from, date_to) * (bu["overhead_pct"] or 0 if bu else 0), 2)
 
 
+DONE_STATUSES = ("completed", "complete", "closed", "done", "cancelled")
+
+
+def expected_cost_default(db):
+    """The company's expected cost as a share of revenue, for projects without their own estimate (blank = none)."""
+    v = db.setting("expected_cost_pct")
+    try:
+        return float(v) if v not in (None, "") else None
+    except ValueError:
+        return None
+
+
+def expected_cost(b, rev, actual, default_pct):
+    """A project's expected total cost (a fixed amount, or its expected revenue — or revenue to date, if more — times
+    its expected cost %), the cost still to come before it is finished, and how complete it is by cost. Money is in
+    minor units in, major units out."""
+    method = b.get("cost_method") or "pct"
+    pct = b.get("expected_cost_pct")
+    pct = default_pct if pct is None else pct
+    if method == "fixed":
+        total = b.get("expected_cost") or 0
+    else:
+        total = int(round(max(b.get("expected_revenue") or 0, rev) * pct)) if pct else 0
+    done = str(b.get("status") or "").strip().lower().startswith(DONE_STATUSES)
+    still = 0 if done or not total else max(0, total - actual)
+    return {"expected_revenue": to_major(b.get("expected_revenue") or 0), "cost_method": method,  # noqa: E501
+            "expected_cost_pct": b.get("expected_cost_pct"), "expected_cost": to_major(b.get("expected_cost") or 0),
+            "expected_total_cost": to_major(total), "cost_to_date": to_major(actual), "cost_still_to_come": to_major(still),
+            "pct_complete": round(min(1, actual / total), 4) if total else None}
+
+
 @memo
 def bu_summaries(db, date_from=None, date_to=None, status=None, q=None):
     w, p = _where(date_from=date_from, date_to=date_to)
@@ -1691,6 +1722,7 @@ def bu_summaries(db, date_from=None, date_to=None, status=None, q=None):
         bw.append("(code LIKE ? OR name LIKE ? OR location LIKE ?)")
         bp += [f"%{q}%"] * 3
     out = []
+    default_pct = expected_cost_default(db)
     for b in db.q("SELECT * FROM business_units" + (" WHERE " + " AND ".join(bw) if bw else "") + " ORDER BY code", bp):
         a = agg.get(b["id"], {})
         rev, cogs, ovh = (a.get(k) or 0 for k in ("revenue", "cogs", "direct_overhead"))
@@ -1709,7 +1741,8 @@ def bu_summaries(db, date_from=None, date_to=None, status=None, q=None):
         if b["basis"] == LIVE_FEE:
             expected = client_paid       # billed as paid: nothing waits to be collected
         net = rev - cogs - ovh - alloc
-        out.append({**b, "contract_value": to_major(b["contract_value"]), "revenue": to_major(rev),
+        est = expected_cost(b, rev, actual, default_pct)
+        out.append({**b, **est, "contract_value": to_major(b["contract_value"]), "revenue": to_major(rev),
                     "cogs": to_major(cogs), "direct_overhead": to_major(ovh), "allocated_overhead": to_major(alloc),
                     "gross_profit": to_major(rev - cogs), "net_profit": to_major(net),
                     "margin": round(net / rev, 4) if rev else 0, "receivable": to_major(a.get("receivable") or 0),
