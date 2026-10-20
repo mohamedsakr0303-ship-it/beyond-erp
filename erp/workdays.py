@@ -13,10 +13,10 @@ LOCATION = ("off", "ask", "required")
 
 def _need(db, username):
     """Location rule for this person: off / ask / required, and the sites they must be at (empty = anywhere)."""
-    from .hrrequests import policy
+    from .hrrequests import policy, sites_for
     pol = policy(db)
     need = db.setting("workday_location") or "ask"
-    sites = [] if username in pol["anywhere"] else pol["sites"]
+    sites = sites_for(pol, username)
     return ("required" if sites else need), sites
 
 

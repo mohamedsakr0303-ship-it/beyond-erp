@@ -4332,8 +4332,8 @@ async function attPolicy() {
   const p = await api("GET", "/api/att-policy");
   let people = []; try { people = await api("GET", "/api/people"); } catch { people = []; }
   const DAYS = [L2("Sun", "الأحد"), L2("Mon", "الاثنين"), L2("Tue", "الثلاثاء"), L2("Wed", "الأربعاء"), L2("Thu", "الخميس"), L2("Fri", "الجمعة"), L2("Sat", "السبت")];
-  const siteRow = (s = {}) => `<div class="asite" style="margin-bottom:10px"><div class="row" style="gap:6px;flex-wrap:wrap;align-items:center"><input data-s="name" value="${esc(s.name || "")}" placeholder="${esc(L2("Site name", "اسم الموقع"))}" style="flex:1;min-width:140px">
-    <input data-s="place" value="${s.lat != null ? fmtPlace([s.lat, s.lng]) : ""}" placeholder="${esc(L2("Coordinates or Google Maps link", "الإحداثيات أو رابط خرائط Google"))}" style="flex:2;min-width:200px" data-change="asiteplace">
+  const siteRow = (s = {}) => `<div class="asite" style="margin-bottom:10px"><div class="row" style="gap:6px;flex-wrap:wrap;align-items:center"><input data-s="name" value="${esc(s.name || "")}" placeholder="${esc(L2("Site name", "اسم الموقع"))}" style="flex:1;min-width:140px" data-change="asitenames">
+    <input data-s="place" value="${s.lat != null ? fmtPlace([s.lat, s.lng]) : ""}" placeholder="${esc(L2("Coordinates or Google Maps link", "الإحداثيات أو رابط خرائط Google"))}" style="flex:2;min-width:200px" dir="ltr" data-change="asiteplace">
     <label class="row" style="gap:4px;align-items:center"><input data-s="radius" type="number" min="10" value="${esc(s.radius ?? 150)}" style="width:80px" class="num" data-change="asiterad"><span class="muted">${esc(L2("m", "م"))}</span></label>
     <button type="button" class="btn sm" data-a="asitemap">${esc(L2("Map", "الخريطة"))}</button><button type="button" class="btn sm" data-a="asitehere" title="${esc(L2("Use this device's location", "استخدام موقع هذا الجهاز"))}">📍</button><button type="button" class="btn sm" data-a="asitedel" aria-label="${esc(t("delete"))}">✕</button></div>
     <div class="asite-map" style="margin-top:8px" hidden></div></div>`;
@@ -4354,21 +4354,43 @@ async function attPolicy() {
     if (!name) throw new Error(L2(`Site ${i + 1}: enter the site name.`, `الموقع ${i + 1}: أدخل اسم الموقع.`));
     if (!ll) throw new Error(L2(`${name}: set the location from the map, coordinates or a Google Maps link.`, `${name}: حدد الموقع من الخريطة أو الإحداثيات أو رابط خرائط Google.`));
     return { name, lat: ll[0], lng: ll[1], radius: $("[data-s=radius]", r).value }; }).filter(Boolean);
-  drawer(L2("Attendance policy", "سياسة الحضور"), form([
-    { k: "location", l: L2("Location", "الموقع"), type: "select", opts: [["off", L2("Not recorded", "لا يُسجَّل")], ["ask", L2("Recorded where permitted", "يُسجَّل عند السماح")], ["required", L2("Required", "إلزامي")]], v: p.location },
+  // who may check in where: all company sites, selected sites (one or several), or anywhere
+  const modeOf = u => p.anywhere.includes(u) ? "any" : (p.user_sites[u] || []).length ? "some" : "all";
+  const siteNames = () => $$("#asites [data-s=name]").map(i => i.value.trim()).filter(Boolean);
+  const pickRow = (u, mode, picked) => `<div class="upick" data-u="${esc(u.username)}" style="display:grid;grid-template-columns:minmax(120px,1fr) minmax(160px,220px) 2fr;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)">
+    <b>${esc(u.full_name || u.username)}</b><select data-change="upmode">${[["all", L2("All company sites", "كل مواقع الشركة")], ["some", L2("Selected sites only", "مواقع محددة فقط")], ["any", L2("Anywhere", "أي مكان")]].map(([k, l]) => `<option value="${k}" ${mode === k ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>
+    <div class="row upsites" style="gap:4px 12px;flex-wrap:wrap" ${mode === "some" ? "" : "hidden"}>${siteNames().map(n => `<label class="chk"><input type="checkbox" data-site="${esc(n)}" ${picked.includes(n) ? "checked" : ""}> ${esc(n)}</label>`).join("") || `<span class="muted">${esc(L2("Add a site first.", "أضف موقعاً أولاً."))}</span>`}</div></div>`;
+  const readPicks = () => Object.fromEntries($$(".upick").map(r => [r.dataset.u, { mode: $("select", r).value, sites: $$("[data-site]", r).filter(i => i.checked).map(i => i.dataset.site) }]));
+  const drawPeople = () => { const box = $("#upeople"); if (!box) return; const cur = box.childElementCount ? readPicks() : null;
+    box.innerHTML = people.map(u => { const c = cur && cur[u.username]; return pickRow(u, c ? c.mode : modeOf(u.username), c ? c.sites : (p.user_sites[u.username] || [])); }).join("") || `<span class="muted">—</span>`; };
+  S.H.upmode = el => { $(".upsites", el.closest(".upick")).hidden = el.value !== "some"; };
+  S.H.asitenames = () => drawPeople();
+  const addSite = S.H.asiteadd, delSite = S.H.asitedel;
+  S.H.asiteadd = () => { addSite(); drawPeople(); };
+  S.H.asitedel = el => { delSite(el); drawPeople(); };
+  const general = p.can_policy ? [
     { k: "start", l: L2("Work starts", "بداية الدوام"), type: "time", v: p.start }, { k: "end", l: L2("Work ends", "نهاية الدوام"), type: "time", v: p.end },
     { k: "grace", l: L2("Grace period (minutes)", "فترة السماح (دقائق)"), type: "number", v: p.grace },
     { k: "online_alert", l: L2("Alert when online without checking in (minutes; 0 = off)", "تنبيه عند الاتصال دون تسجيل الحضور (دقائق؛ 0 = إيقاف)"), type: "number", v: p.online_alert },
+    { k: "leave_days", l: L2("Annual leave (days per year)", "الإجازة السنوية (يوم في السنة)"), type: "number", v: p.leave_days },
+    { html: `<span class="fl">${esc(L2("Weekly days off", "أيام الراحة الأسبوعية"))}</span><div class="row" style="gap:10px;flex-wrap:wrap">${DAYS.map((n, i) => `<label class="chk"><input type="checkbox" data-wk="${i}" ${p.weekend.includes(i) ? "checked" : ""}> ${esc(n)}</label>`).join("")}</div>`, span: "spanall" }] : [];
+  const locs = p.can_locations ? [
+    { html: `<h4 class="fsec">${esc(L2("Check-in locations", "مواقع تسجيل الحضور"))}</h4>`, span: "spanall" },
+    { k: "location", l: L2("Record location", "تسجيل الموقع"), type: "select", opts: [["off", L2("No", "لا")], ["ask", L2("Where permitted", "عند السماح")], ["required", L2("Required", "إلزامي")]], v: p.location },
     { k: "spoof", l: L2("Suspicious locations", "المواقع المشكوك فيها"), type: "select", opts: [["flag", L2("Accept and flag for review", "قبول مع التنبيه للمراجعة")], ["block", L2("Refuse check-in", "رفض التسجيل")], ["off", L2("Do not check", "بدون فحص")]], v: p.spoof },
-    { k: "netcheck", l: L2("Compare the device location with the network location (detects VPNs)", "مقارنة موقع الجهاز بموقع الشبكة (لكشف VPN)"), type: "switch", v: p.netcheck }, { k: "leave_days", l: L2("Annual leave (days per year)", "الإجازة السنوية (يوم في السنة)"), type: "number", v: p.leave_days },
-    { html: `<span class="fl">${esc(L2("Weekly days off", "أيام الراحة الأسبوعية"))}</span><div class="row" style="gap:10px;flex-wrap:wrap">${DAYS.map((n, i) => `<label class="chk"><input type="checkbox" data-wk="${i}" ${p.weekend.includes(i) ? "checked" : ""}> ${esc(n)}</label>`).join("")}</div>`, span: "spanall" },
-    { html: `<h4 class="fsec">${esc(L2("Work sites", "مواقع العمل"))}</h4><p class="muted" style="margin:0 0 8px">${esc(L2("When sites are listed, check-in and check-out are accepted only within a site's radius. Set each site on the map, paste coordinates or a Google Maps link, or use this device's location. Leave empty to allow any location.", "عند تحديد مواقع، لا يُقبل تسجيل الحضور والانصراف إلا داخل نطاق أحدها. حدد كل موقع على الخريطة، أو الصق الإحداثيات أو رابط خرائط Google، أو استخدم موقع هذا الجهاز. اتركها فارغة للسماح بأي موقع."))}</p><div id="asites">${p.sites.map(siteRow).join("")}</div><button type="button" class="btn sm" data-a="asiteadd">+ ${esc(L2("Site", "موقع"))}</button>`, span: "spanall" },
-    { html: `<span class="fl">${esc(L2("May check in from any location", "يُسمح لهم بالتسجيل من أي موقع"))}</span><div class="row" style="gap:10px;flex-wrap:wrap">${people.map(u => `<label class="chk"><input type="checkbox" data-any="${esc(u.username)}" ${p.anywhere.includes(u.username) ? "checked" : ""}> ${esc(u.full_name || u.username)}</label>`).join("") || `<span class="muted">—</span>`}</div>`, span: "spanall" }]),
-    async (v, f) => { await api("PUT", "/api/att-policy", { location: v.location, start: v.start, end: v.end, grace: v.grace, leave_days: v.leave_days,
-      online_alert: v.online_alert, spoof: v.spoof, netcheck: !!v.netcheck,
-      weekend: $$("[data-wk]", f).filter(i => i.checked).map(i => +i.dataset.wk), anywhere: $$("[data-any]", f).filter(i => i.checked).map(i => i.dataset.any),
-      sites: readSites(f) });
-      S.boot.settings.workday_location = v.location; toast(t("saved")); }, { wide: true });
+    { k: "netcheck", l: L2("Compare the device location with the network location (detects VPNs)", "مقارنة موقع الجهاز بموقع الشبكة (لكشف VPN)"), type: "switch", v: p.netcheck, span: "spanall" },
+    { html: `<span class="fl">${esc(L2("Work sites", "مواقع العمل"))}</span><p class="muted" style="margin:0 0 8px">${esc(L2("Set each site on the map, paste coordinates or a Google Maps link, or use this device's location.", "حدد كل موقع على الخريطة، أو الصق الإحداثيات أو رابط خرائط Google، أو استخدم موقع هذا الجهاز."))}</p><div id="asites">${p.sites.map(siteRow).join("")}</div><button type="button" class="btn sm" data-a="asiteadd">+ ${esc(L2("Site", "موقع"))}</button>`, span: "spanall" },
+    { html: `<span class="fl">${esc(L2("Where each person may check in", "أين يسجل كل شخص حضوره"))}</span><p class="muted" style="margin:0 0 4px">${esc(L2("All company sites applies when sites are listed; with no sites, everyone may check in anywhere.", "ينطبق خيار كل مواقع الشركة عند وجود مواقع؛ وبدون مواقع يمكن للجميع التسجيل من أي مكان."))}</p><div id="upeople"></div>`, span: "spanall" }] : [];
+  drawer(L2("Attendance policy", "سياسة الحضور"), form([...general, ...locs]),
+    async (v, f) => { const body = {};
+      if (p.can_policy) Object.assign(body, { start: v.start, end: v.end, grace: v.grace, leave_days: v.leave_days, online_alert: v.online_alert, weekend: $$("[data-wk]", f).filter(i => i.checked).map(i => +i.dataset.wk) });
+      if (p.can_locations) { const picks = readPicks(), sites = readSites(f);
+        for (const [u, c] of Object.entries(picks)) if (c.mode === "some" && !c.sites.length) throw new Error(L2(`${(people.find(x => x.username === u) || {}).full_name || u}: choose at least one site.`, `${(people.find(x => x.username === u) || {}).full_name || u}: اختر موقعاً واحداً على الأقل.`));
+        Object.assign(body, { location: v.location, spoof: v.spoof, netcheck: !!v.netcheck, sites,
+          anywhere: Object.entries(picks).filter(([, c]) => c.mode === "any").map(([u]) => u),
+          user_sites: Object.fromEntries(Object.entries(picks).filter(([, c]) => c.mode === "some").map(([u, c]) => [u, c.sites])) }); }
+      await api("PUT", "/api/att-policy", body);
+      if (body.location) S.boot.settings.workday_location = body.location; toast(t("saved")); }, { wide: true, onOpen: drawPeople });
 }
 PAGES.workdays = async (view, parts, q) => {
   if (!q.date_from) q = { date_from: today(), date_to: today(), ...q };
@@ -4382,7 +4404,7 @@ PAGES.workdays = async (view, parts, q) => {
     return `<span class="chip bad" title="${esc(why.join("\n"))}">⚠ ${esc(L2("Location check", "فحص الموقع"))}: ${esc(when)}</span> `; };
   const mins = m => m ? `${Math.floor(m / 60) ? Math.floor(m / 60) + L2("h ", "س ") : ""}${m % 60}${L2("m", "د")}` : "";
   view.innerHTML = `<div class="toolbar"><a class="btn pri" href="#/my-day">▶ ${esc(L2("Check in", "تسجيل الحضور"))}</a>${can("payroll.requests") ? `<a class="btn" href="#/requests?status=pending">${esc(L2("Requests", "الطلبات"))}</a>` : ""}<span class="spacer"></span>
-      ${canDel ? `<button class="btn" data-a="attpol">⚙ ${esc(L2("Attendance policy", "سياسة الحضور"))}</button>` : ""}</div>` +
+      ${canDel || granted("checkin_locations") ? `<button class="btn" data-a="attpol">⚙ ${esc(L2("Attendance policy", "سياسة الحضور"))}</button>` : ""}</div>` +
     filterBar(q, ["dates", "q"]) +
     (d.online.length ? `<div class="banner bad">${esc(L2("Online without checking in: ", "متصلون دون تسجيل الحضور: "))}<b>${d.online.map(o => `${esc(o.name)} (${esc(L2(`since ${o.since}`, `منذ ${o.since}`))})`).join(", ")}</b></div>` : "") +
     (d.not_started.length ? `<div class="banner warn">${esc(L2("Not checked in today: ", "لم يسجلوا الحضور اليوم: "))}<b>${d.not_started.map(esc).join(", ")}</b></div>` : "") +
@@ -5583,7 +5605,8 @@ PAGES.users = async (view) => {
       ["super", L2("Super administrator: full access, including managing administrators and erasing or restoring the books", "مسؤول أعلى: صلاحيات كاملة، بما فيها إدارة المسؤولين ومسح الدفاتر أو استعادتها")]] }] : []),
     ...(S.boot.user.is_super && !u.is_super ? [{ html: `<div class="f spanall" id="ugrants"><b>${esc(L2("Special rights (granted to super administrators by default)", "صلاحيات خاصة (ممنوحة للمسؤول الأعلى افتراضياً)"))}</b>
       <div class="row" style="gap:14px;flex-wrap:wrap;margin-top:6px">${[["design_dashboards", L2("Design dashboards and groups", "تصميم لوحات التحكم والمجموعات")], ["required_fields", L2("Make fields required", "جعل الحقول إلزامية")],
-        ["arrange_forms", L2("Arrange menus and forms", "ترتيب القوائم والنماذج")], ["build_calculators", L2("Build calculators", "إنشاء الحاسبات")]].map(([k, l]) =>
+        ["arrange_forms", L2("Arrange menus and forms", "ترتيب القوائم والنماذج")], ["build_calculators", L2("Build calculators", "إنشاء الحاسبات")],
+        ["checkin_locations", L2("Manage check-in locations", "إدارة مواقع تسجيل الحضور")]].map(([k, l]) =>
         `<label class="f chk"><input type="checkbox" data-grant="${k}" data-skip="1" ${(u.grants || []).includes(k) ? "checked" : ""}>${esc(l)}</label>`).join("")}</div></div>`, span: "spanall" }] : []),
     ...((S.boot.user.is_super || !u.id) && S.boot.bus.length ? [{ html: `<div class="f spanall" id="ubus"><b>${esc(L2("Project access", "المشروعات المتاحة"))}</b>
       <label class="f chk" style="margin-top:4px"><input type="checkbox" data-skip="1" id="ubusall" data-change="ubusall" ${(u.perms && u.perms._bus || []).length ? "" : "checked"}>${esc(L2("All projects and company-wide figures", "جميع المشروعات وأرقام الشركة"))}</label>

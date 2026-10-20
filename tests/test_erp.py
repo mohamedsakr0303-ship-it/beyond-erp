@@ -5281,6 +5281,46 @@ class MyDay(unittest.TestCase):
         self.assertEqual(workdays.online_not_checked_in(db), [])                      # alert switched off
 
 
+    def test_locations_per_person_and_who_may_set_them(self):
+        """Each person checks in at all company sites, at selected sites only, or anywhere; only super administrators
+        and people given "Manage check-in locations" may change sites and assignments."""
+        from erp import hrrequests, workdays
+        from erp.server import handle
+        app = type("App", (), {"static": False})()
+        app.db = db = Database(":memory:")
+        auth.create_user(db, {"username": "boss", "password": "secret123"}, first=True)
+        auth.create_user(db, {"username": "hr", "password": "secret123", "perms": {"payroll": "edit", "team": "add"}})
+        auth.create_user(db, {"username": "ops", "password": "secret123", "perms": {"payroll": "view", "team": "add"}})
+        db.x("UPDATE users SET grants=? WHERE username='ops'", (json.dumps(["checkin_locations"]),))
+        sites = [{"name": "Office", "lat": 30.0444, "lng": 31.2357, "radius": 200}, {"name": "Warehouse", "lat": 30.1, "lng": 31.3, "radius": 300},
+                 {"name": "Branch", "lat": 31.2, "lng": 29.9, "radius": 200}]
+        tok = {u: auth.login(db, u, "secret123")[0] for u in ("boss", "hr", "ops")}
+
+        def call(who, method, url, body=None):
+            h = {"x-requested-with": "BeyondERP", "x-session": tok[who], "content-type": "application/json"}
+            return handle(app, method, url, h, json.dumps(body).encode() if body is not None else b"").status
+        self.assertEqual(call("hr", "PUT", "/api/att-policy", {"sites": sites}), 403)      # payroll editor, no location right
+        self.assertEqual(call("hr", "PUT", "/api/att-policy", {"grace": 15}), 200)         # working hours: fine
+        self.assertEqual(call("ops", "PUT", "/api/att-policy", {"grace": 5}), 403)         # location right only
+        self.assertEqual(call("ops", "PUT", "/api/att-policy", {"sites": sites, "anywhere": ["boss"],
+                                                                "user_sites": {"hr": ["Office"], "ops": ["Office", "Branch"], "boss": ["Office"]}}), 200)
+        pol = hrrequests.policy(db)
+        self.assertEqual(pol["user_sites"], {"hr": ["Office"], "ops": ["Office", "Branch"]})     # anywhere wins for boss
+        self.assertEqual([x["name"] for x in hrrequests.sites_for(pol, "hr")], ["Office"])
+        self.assertEqual([x["name"] for x in hrrequests.sites_for(pol, "ops")], ["Office", "Branch"])
+        self.assertEqual(hrrequests.sites_for(pol, "boss"), [])
+        self.assertEqual(len(hrrequests.sites_for(pol, "someone")), 3)                     # no assignment: all sites
+        hr = db.one("SELECT * FROM users WHERE username='hr'")
+        with self.assertRaises(a.ValidationError):
+            workdays.start(db, hr, {"lat": 31.2, "lng": 29.9, "accuracy": 10})             # Branch is not hr's site
+        workdays.start(db, hr, {"lat": 30.0445, "lng": 31.2358, "accuracy": 10})
+        self.assertEqual(db.one("SELECT start_site FROM workdays")["start_site"], "Office")
+        boss = db.one("SELECT * FROM users WHERE username='boss'")
+        workdays.start(db, boss, {})                                                       # anywhere, no position needed
+        hrrequests.save_policy(db, {"sites": sites[:1]})                                   # removing a site drops it from people
+        self.assertEqual(hrrequests.policy(db)["user_sites"], {"hr": ["Office"], "ops": ["Office"]})
+
+
 class KnowledgeBaseAndApiKeys(unittest.TestCase):
     def test_kb(self):
         from erp import kb

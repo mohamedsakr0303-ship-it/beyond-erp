@@ -41,7 +41,7 @@ SESSION_DAYS = 14
 LEVELS = ("none", "view", "add", "edit")
 # Special rights: every super administrator has them all; a super administrator gives them to other people one by one
 # (administrators included — holding every permission does not include these)
-GRANTS = ("design_dashboards", "required_fields", "arrange_forms", "build_calculators")
+GRANTS = ("design_dashboards", "required_fields", "arrange_forms", "build_calculators", "checkin_locations")
 
 
 # The platform owner (BeyondERP itself): the only one who may change the in-app BeyondERP name, logo and icon.

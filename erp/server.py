@@ -1137,12 +1137,20 @@ def workdays_delete(ctx, wid):
 @route("GET", "/api/att-policy", "payroll.workdays")
 def att_policy_get(ctx):
     from . import hrrequests
-    return ok({**hrrequests.policy(ctx.db), "location": ctx.db.setting("workday_location") or "ask"})
+    return ok({**hrrequests.policy(ctx.db), "location": ctx.db.setting("workday_location") or "ask",
+               "can_locations": auth.granted(ctx.user, "checkin_locations"), "can_policy": ctx.can("payroll.workdays", "edit")})
 
 
-@route("PUT", "/api/att-policy", "payroll.workdays", "edit")
+@route("PUT", "/api/att-policy", "payroll.workdays")
 def att_policy_put(ctx):
+    """Working hours and leave: edit rights on the check-in log. Sites, who may check in where and the location
+    checks: the "Manage check-in locations" special right (super administrators always)."""
     from . import hrrequests
+    loc = [k for k in hrrequests.LOCATION_KEYS if k in ctx.body]
+    if loc and not auth.granted(ctx.user, "checkin_locations"):
+        raise PermissionError("Only users with the right to manage check-in locations can change locations.")
+    if [k for k in ctx.body if k not in hrrequests.LOCATION_KEYS] and not ctx.can("payroll.workdays", "edit"):
+        raise PermissionError()
     if "location" in ctx.body:
         if ctx.body["location"] not in ("off", "ask", "required"):
             raise acc.ValidationError("Choose a location option.")

@@ -30,7 +30,7 @@ KINDS = {   # kind: (English, Arabic, needs a date range, needs times, needs hou
 LEAVE_STATUS = {"annual": "leave", "other": "leave", "sick": "sick", "unpaid": "absent"}
 STATUSES = ("pending", "approved", "rejected", "cancelled")
 POLICY = {"start": "09:00", "end": "17:00", "grace": 10, "weekend": [], "leave_days": 21, "sites": [], "anywhere": [],
-          "spoof": "flag", "netcheck": True, "online_alert": 30}
+          "user_sites": {}, "spoof": "flag", "netcheck": True, "online_alert": 30}
 
 
 def policy(db):
@@ -80,8 +80,25 @@ def save_policy(db, d):
                 raise ValidationError(f"Site {i}: the location or radius is out of range.")
             sites.append({"name": text(s["name"], maxlen=80), "lat": round(lat, 6), "lng": round(lng, 6), "radius": round(rad)})
         p["sites"] = sites
+    if "user_sites" in d:
+        p["user_sites"] = {text(u): [text(n) for n in names if text(n)] for u, names in (d["user_sites"] or {}).items()
+                           if text(u) and isinstance(names, list)}
+    names = {x["name"] for x in p["sites"]}
+    p["user_sites"] = {u: [n for n in v if n in names] for u, v in p["user_sites"].items() if u not in p["anywhere"]}
+    p["user_sites"] = {u: v for u, v in p["user_sites"].items() if v}
     db.set_setting("att_policy", json.dumps(p, ensure_ascii=False))
     return p
+
+
+LOCATION_KEYS = ("location", "sites", "anywhere", "user_sites", "spoof", "netcheck")
+
+
+def sites_for(pol, username):
+    """The sites this person may check in at: none required (anywhere), their own selection, or all company sites."""
+    if username in pol["anywhere"]:
+        return []
+    mine = set(pol.get("user_sites", {}).get(username) or [])
+    return [x for x in pol["sites"] if x["name"] in mine] if mine else pol["sites"]
 
 
 def _hhmm_ok(v):

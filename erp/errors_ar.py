@@ -4,6 +4,7 @@ English stays the source; {} in a message is a value, {1}, {2}… place it in th
 generic message ("{} is required") have their own list."""
 
 MESSAGES = {
+    'Only users with the right to manage check-in locations can change locations.': 'لا يغيّر المواقع إلا المستخدمون المخوَّلون بإدارة مواقع تسجيل الحضور.',
     'Choose how to handle suspicious locations.': 'اختر طريقة التعامل مع المواقع المشكوك فيها.',
     'Your location could not be verified. Turn off any VPN or location-changing app and try again.': 'تعذر التحقق من موقعك. أوقف أي VPN أو تطبيق لتغيير الموقع وأعد المحاولة.',
     'Enter times as HH:MM.': 'أدخل الأوقات بصيغة HH:MM.',
