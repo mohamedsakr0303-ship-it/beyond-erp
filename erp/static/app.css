@@ -1839,3 +1839,6 @@ input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 4px color
 .undo-toast .btn{background:transparent;color:inherit;border-color:currentColor}
 .tabs .hist-btns{margin-inline-start:auto;align-self:center}
 [dir=rtl] .hist-btns .btn{transform:scaleX(-1)}
+
+/* work-site map in the attendance policy: keep Leaflet panes under the drawer footer */
+.asite-map .leaflet-container { z-index: 0; font: inherit; }

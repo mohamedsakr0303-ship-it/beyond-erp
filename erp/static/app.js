@@ -4211,26 +4211,108 @@ PAGES.requests = async (view, parts, q) => {
       : `<div class="empty">${svg("clock")}<div>${esc(L2("No requests.", "لا توجد طلبات."))}</div></div>`}</div>`;
   S.H.reqk = el => setQ({ ...q, kind: el.value });
 };
+// work sites: a place from the map (search, click or drag), a pasted Google Maps link or coordinates, or this device's position
+let leafletLoading = null;
+function loadLeaflet() {   // Leaflet 1.9.4 (vendor/leaflet-1.9.4, BSD-2) — loaded only when a map is opened
+  if (window.L && L.map) return Promise.resolve();
+  return leafletLoading || (leafletLoading = new Promise((res, rej) => {
+    const css = document.createElement("link"); css.rel = "stylesheet"; css.href = "vendor/leaflet-1.9.4/leaflet.css"; document.head.appendChild(css);
+    const sc = document.createElement("script"); sc.src = "vendor/leaflet-1.9.4/leaflet.js";
+    sc.onload = () => { L.Icon.Default.imagePath = "vendor/leaflet-1.9.4/images/"; res(); };
+    sc.onerror = () => { leafletLoading = null; rej(new Error(L2("The map could not be loaded.", "تعذر تحميل الخريطة."))); };
+    document.head.appendChild(sc); }));
+}
+// "30.0444, 31.2357", a Google Maps / OpenStreetMap / Apple Maps address → [lat, lng]
+function parsePlace(s) {
+  s = String(s || "").trim(); if (!s) return null;
+  try { s = decodeURIComponent(s); } catch { /* keep as typed */ }
+  const pats = [/!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)/, /@(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)/, /[?&](?:q|ll|query|destination|center|daddr)=(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)/,
+    /[?&]mlat=(-?\d+(?:\.\d+)?)&mlon=(-?\d+(?:\.\d+)?)/, /#map=\d+\/(-?\d+(?:\.\d+)?)\/(-?\d+(?:\.\d+)?)/, /^(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)$/];
+  for (const re of pats) { const m = s.match(re); if (m) { const lat = +m[1], lng = +m[2]; if (Math.abs(lat) <= 90 && Math.abs(lng) <= 180) return [lat, lng]; } }
+  return null;
+}
+const isShortMapLink = s => /(maps\.app\.goo\.gl|goo\.gl\/maps)/i.test(s || "");
+function devicePosition() {
+  return new Promise((res, rej) => {
+    if (!navigator.geolocation) return rej(new Error(L2("This device cannot share its location.", "لا يمكن لهذا الجهاز مشاركة موقعه.")));
+    const ask = (high, retry) => navigator.geolocation.getCurrentPosition(p => res([p.coords.latitude, p.coords.longitude]),
+      e => e.code === 1 ? rej(new Error(L2("Location access is blocked for this site in the browser settings.", "الوصول إلى الموقع محظور لهذا الموقع في إعدادات المتصفح.")))
+        : retry ? ask(false, false) : rej(new Error(L2("The device could not determine its location. Search the map instead.", "تعذر على الجهاز تحديد موقعه. ابحث في الخريطة بدلاً من ذلك."))),
+      { enableHighAccuracy: high, timeout: high ? 10000 : 20000, maximumAge: 300000 });
+    ask(true, true);
+  });
+}
+const fmtPlace = ([a, b]) => `${(+a).toFixed(6)}, ${(+b).toFixed(6)}`;
+function siteMap(row) {
+  const box = $(".asite-map", row);
+  if (!box.hidden) { box.hidden = true; return; }
+  box.hidden = false;
+  box.innerHTML = `<div class="row" style="gap:6px;margin-bottom:6px"><input data-m="q" placeholder="${esc(L2("Search for a place or address", "ابحث عن مكان أو عنوان"))}" style="flex:1"><button type="button" class="btn sm" data-a="asitefind">${esc(L2("Search", "بحث"))}</button></div>
+    <div data-m="hits"></div><div data-m="map" style="height:320px;border-radius:10px;overflow:hidden"></div>
+    <p class="muted" style="margin:6px 0 0;font-size:.85em">${esc(L2("Click the map or drag the pin to set the site. The circle shows the check-in radius.", "انقر على الخريطة أو اسحب الدبوس لتحديد الموقع. تُظهر الدائرة نطاق تسجيل الحضور."))}</p>`;
+  $("[data-m=q]", box).addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); siteFind(row); } });
+  loadLeaflet().then(() => {
+    const at = parsePlace($("[data-s=place]", row).value), rad = () => +$("[data-s=radius]", row).value || 150;
+    const map = L.map($("[data-m=map]", box)).setView(at || [20, 0], at ? 16 : 2);
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(map);
+    let pin = null, ring = null;
+    const put = ll => { const [a, b] = Array.isArray(ll) ? ll : [ll.lat, ll.lng];
+      if (!pin) { pin = L.marker([a, b], { draggable: true }).addTo(map); pin.on("dragend", () => put(pin.getLatLng())); ring = L.circle([a, b], { radius: rad() }).addTo(map); }
+      pin.setLatLng([a, b]); ring.setLatLng([a, b]); ring.setRadius(rad()); $("[data-s=place]", row).value = fmtPlace([a, b]); };
+    if (at) put(at);
+    map.on("click", e => put(e.latlng));
+    row._mapPut = ll => { put(ll); map.setView(ll, Math.max(map.getZoom(), 16)); };
+    row._mapRadius = () => ring && ring.setRadius(rad());
+    setTimeout(() => map.invalidateSize(), 50);
+  }).catch(fail);
+}
+async function siteFind(row) {
+  const q = $("[data-m=q]", row).value.trim(), hits = $("[data-m=hits]", row); if (!q) return;
+  const direct = parsePlace(q); if (direct) { row._mapPut && row._mapPut(direct); return; }
+  hits.innerHTML = `<p class="muted">${esc(t("loading"))}</p>`;
+  try {
+    const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=6&accept-language=${S.lang === "ar" ? "ar" : "en"}&q=${encodeURIComponent(q)}`);
+    const list = await r.json();
+    hits.innerHTML = list.length ? list.map(h => `<button type="button" class="btn sm" style="display:block;width:100%;text-align:start;margin-bottom:4px;white-space:normal" data-a="asitehit" data-ll="${h.lat},${h.lon}">${esc(h.display_name)}</button>`).join("")
+      : `<p class="muted">${esc(L2("No places found.", "لم يُعثر على أماكن."))}</p>`;
+  } catch { hits.innerHTML = `<p class="muted">${esc(L2("Search is unavailable. Click the map to set the site.", "البحث غير متاح. انقر على الخريطة لتحديد الموقع."))}</p>`; }
+}
 async function attPolicy() {
   const p = await api("GET", "/api/att-policy");
   let people = []; try { people = await api("GET", "/api/people"); } catch { people = []; }
   const DAYS = [L2("Sun", "الأحد"), L2("Mon", "الاثنين"), L2("Tue", "الثلاثاء"), L2("Wed", "الأربعاء"), L2("Thu", "الخميس"), L2("Fri", "الجمعة"), L2("Sat", "السبت")];
-  const siteRow = (s = {}) => `<div class="row asite" style="gap:6px;margin-bottom:6px;flex-wrap:wrap"><input data-s="name" value="${esc(s.name || "")}" placeholder="${esc(L2("Site name", "اسم الموقع"))}" style="flex:2;min-width:140px">
-    <input data-s="lat" value="${esc(s.lat ?? "")}" placeholder="${esc(L2("Latitude", "خط العرض"))}" style="width:110px" class="num"><input data-s="lng" value="${esc(s.lng ?? "")}" placeholder="${esc(L2("Longitude", "خط الطول"))}" style="width:110px" class="num">
-    <input data-s="radius" type="number" value="${esc(s.radius ?? 150)}" style="width:80px" class="num" title="${esc(L2("Radius (m)", "النطاق (م)"))}"><button type="button" class="btn sm" data-a="asitehere" title="${esc(L2("Use my location", "استخدام موقعي"))}">📍</button><button type="button" class="btn sm" data-a="asitedel">✕</button></div>`;
+  const siteRow = (s = {}) => `<div class="asite" style="margin-bottom:10px"><div class="row" style="gap:6px;flex-wrap:wrap;align-items:center"><input data-s="name" value="${esc(s.name || "")}" placeholder="${esc(L2("Site name", "اسم الموقع"))}" style="flex:1;min-width:140px">
+    <input data-s="place" value="${s.lat != null ? fmtPlace([s.lat, s.lng]) : ""}" placeholder="${esc(L2("Coordinates or Google Maps link", "الإحداثيات أو رابط خرائط Google"))}" style="flex:2;min-width:200px" data-change="asiteplace">
+    <label class="row" style="gap:4px;align-items:center"><input data-s="radius" type="number" min="10" value="${esc(s.radius ?? 150)}" style="width:80px" class="num" data-change="asiterad"><span class="muted">${esc(L2("m", "م"))}</span></label>
+    <button type="button" class="btn sm" data-a="asitemap">${esc(L2("Map", "الخريطة"))}</button><button type="button" class="btn sm" data-a="asitehere" title="${esc(L2("Use this device's location", "استخدام موقع هذا الجهاز"))}">📍</button><button type="button" class="btn sm" data-a="asitedel" aria-label="${esc(t("delete"))}">✕</button></div>
+    <div class="asite-map" style="margin-top:8px" hidden></div></div>`;
   S.H.asiteadd = () => $("#asites").insertAdjacentHTML("beforeend", siteRow());
   S.H.asitedel = el => el.closest(".asite").remove();
-  S.H.asitehere = async el => { try { const l = await whereAmI("required"); const r = el.closest(".asite"); $("[data-s=lat]", r).value = l.lat.toFixed(6); $("[data-s=lng]", r).value = l.lng.toFixed(6); } catch (e) { fail(e); } };
+  S.H.asitemap = el => siteMap(el.closest(".asite"));
+  S.H.asitefind = el => siteFind(el.closest(".asite"));
+  S.H.asitehit = el => { const r = el.closest(".asite"); r._mapPut && r._mapPut(el.dataset.ll.split(",").map(Number)); $("[data-m=hits]", r).innerHTML = ""; };
+  S.H.asiterad = el => { const r = el.closest(".asite"); r._mapRadius && r._mapRadius(); };
+  S.H.asiteplace = el => { const r = el.closest(".asite"), v = el.value.trim(); if (!v) return;
+    if (isShortMapLink(v)) return fail(new Error(L2("Short Google Maps links cannot be read. In Google Maps, right-click the place and click the coordinates to copy them, then paste them here.", "لا يمكن قراءة روابط خرائط Google المختصرة. في خرائط Google، انقر بزر الفأرة الأيمن على المكان ثم انقر على الإحداثيات لنسخها، والصقها هنا.")));
+    const ll = parsePlace(v); if (!ll) return fail(new Error(L2("Location not recognised. Enter coordinates (e.g. 30.0444, 31.2357) or paste a Google Maps link.", "لم يُتعرف على الموقع. أدخل الإحداثيات (مثل 30.0444, 31.2357) أو الصق رابط خرائط Google.")));
+    el.value = fmtPlace(ll); r._mapPut && r._mapPut(ll); };
+  S.H.asitehere = async el => { const r = el.closest(".asite"); el.disabled = true;
+    try { const ll = await devicePosition(); $("[data-s=place]", r).value = fmtPlace(ll); r._mapPut && r._mapPut(ll); } catch (e) { fail(e); } finally { el.disabled = false; } };
+  const readSites = f => $$(".asite", f).map((r, i) => { const name = $("[data-s=name]", r).value.trim(), pv = $("[data-s=place]", r).value.trim(), ll = parsePlace(pv);
+    if (!name && !pv) return null;
+    if (!name) throw new Error(L2(`Site ${i + 1}: enter the site name.`, `الموقع ${i + 1}: أدخل اسم الموقع.`));
+    if (!ll) throw new Error(L2(`${name}: set the location from the map, coordinates or a Google Maps link.`, `${name}: حدد الموقع من الخريطة أو الإحداثيات أو رابط خرائط Google.`));
+    return { name, lat: ll[0], lng: ll[1], radius: $("[data-s=radius]", r).value }; }).filter(Boolean);
   drawer(L2("Attendance policy", "سياسة الحضور"), form([
     { k: "location", l: L2("Location", "الموقع"), type: "select", opts: [["off", L2("Not recorded", "لا يُسجَّل")], ["ask", L2("Recorded where permitted", "يُسجَّل عند السماح")], ["required", L2("Required", "إلزامي")]], v: p.location },
     { k: "start", l: L2("Work starts", "بداية الدوام"), type: "time", v: p.start }, { k: "end", l: L2("Work ends", "نهاية الدوام"), type: "time", v: p.end },
     { k: "grace", l: L2("Grace period (minutes)", "فترة السماح (دقائق)"), type: "number", v: p.grace }, { k: "leave_days", l: L2("Annual leave (days per year)", "الإجازة السنوية (يوم في السنة)"), type: "number", v: p.leave_days },
     { html: `<span class="fl">${esc(L2("Weekly days off", "أيام الراحة الأسبوعية"))}</span><div class="row" style="gap:10px;flex-wrap:wrap">${DAYS.map((n, i) => `<label class="chk"><input type="checkbox" data-wk="${i}" ${p.weekend.includes(i) ? "checked" : ""}> ${esc(n)}</label>`).join("")}</div>`, span: "spanall" },
-    { html: `<h4 class="fsec">${esc(L2("Work sites", "مواقع العمل"))}</h4><p class="muted" style="margin:0 0 8px">${esc(L2("When sites are listed, check-in and check-out are accepted only within a site's radius. Leave empty to allow any location.", "عند تحديد مواقع، لا يُقبل تسجيل الحضور والانصراف إلا داخل نطاق أحدها. اتركها فارغة للسماح بأي موقع."))}</p><div id="asites">${p.sites.map(siteRow).join("")}</div><button type="button" class="btn sm" data-a="asiteadd">+ ${esc(L2("Site", "موقع"))}</button>`, span: "spanall" },
+    { html: `<h4 class="fsec">${esc(L2("Work sites", "مواقع العمل"))}</h4><p class="muted" style="margin:0 0 8px">${esc(L2("When sites are listed, check-in and check-out are accepted only within a site's radius. Set each site on the map, paste coordinates or a Google Maps link, or use this device's location. Leave empty to allow any location.", "عند تحديد مواقع، لا يُقبل تسجيل الحضور والانصراف إلا داخل نطاق أحدها. حدد كل موقع على الخريطة، أو الصق الإحداثيات أو رابط خرائط Google، أو استخدم موقع هذا الجهاز. اتركها فارغة للسماح بأي موقع."))}</p><div id="asites">${p.sites.map(siteRow).join("")}</div><button type="button" class="btn sm" data-a="asiteadd">+ ${esc(L2("Site", "موقع"))}</button>`, span: "spanall" },
     { html: `<span class="fl">${esc(L2("May check in from any location", "يُسمح لهم بالتسجيل من أي موقع"))}</span><div class="row" style="gap:10px;flex-wrap:wrap">${people.map(u => `<label class="chk"><input type="checkbox" data-any="${esc(u.username)}" ${p.anywhere.includes(u.username) ? "checked" : ""}> ${esc(u.full_name || u.username)}</label>`).join("") || `<span class="muted">—</span>`}</div>`, span: "spanall" }]),
     async (v, f) => { await api("PUT", "/api/att-policy", { location: v.location, start: v.start, end: v.end, grace: v.grace, leave_days: v.leave_days,
       weekend: $$("[data-wk]", f).filter(i => i.checked).map(i => +i.dataset.wk), anywhere: $$("[data-any]", f).filter(i => i.checked).map(i => i.dataset.any),
-      sites: $$(".asite", f).map(r => Object.fromEntries($$("[data-s]", r).map(i => [i.dataset.s, i.value.trim()]))).filter(s => s.name) });
+      sites: readSites(f) });
       S.boot.settings.workday_location = v.location; toast(t("saved")); }, { wide: true });
 }
 PAGES.workdays = async (view, parts, q) => {
