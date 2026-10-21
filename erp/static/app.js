@@ -2173,6 +2173,7 @@ const DOCS = {
     { k: "date", l: t("date"), type: "date", v: today(), req: 1 }, { k: "against", l: t("pay_against"), type: "select", opts: accts(["Liability"]), v: (pre && pre.against) || accByRole("ap") },
     { k: "party", l: t("payee"), list: "parties", req: 1, v: pre && pre.party }, { k: "amount", l: t("amount"), type: "number", req: 1, v: pre && pre.amount },
     { k: "method", l: t("method"), type: "select", opts: methodOpts() }, { k: "bu_id", l: t("bu"), type: "select", opts: buOpts("—") },
+    { k: "deal_ref", l: t("deal_ref"), v: pre && pre.deal_ref, help: L2("The deal this payment settles", "الاتفاق الذي يسدده هذا السند") },
     { k: "ref", l: t("ref") }, { k: "memo", l: t("memo") }, { k: "allow_overpay", l: t("allow_over"), type: "checkbox", span: "spanall" }] },
   receipt: { title: "m_receipts", fields: () => [
     { k: "date", l: t("date"), type: "date", v: today(), req: 1 }, { k: "bu_id", l: t("bu"), type: "select", opts: buOpts(), req: 1 },
@@ -2594,7 +2595,7 @@ const WIDGET_DRAW = {
   account_balance: x => wStat(x.value, x.sub, x.href, true),
   attention: x => x.rows.length ? `<div class="alist">${x.rows.map(r => `<a class="alert-row" href="${esc(r.href)}"><span class="dot ${r.level}">${svg(r.level === "bad" ? "alert" : r.level === "warn" ? "clock" : "bell")}</span><span>${esc(S.lang === "ar" ? r.ar : r.en)}</span></a>`).join("")}</div>`
     : `<div class="empty small">${svg("check")}<div>${esc(L2("Nothing pending.", "لا توجد أعمال معلقة."))}</div></div>`,
-  books_check: x => `<div class="audit">${x.checks.map(a => `<span class="chip ${a.ok ? "ok" : "bad"}" title="${esc(a.check)}">${a.ok ? "✓" : "✗"} ${esc(a.check)}</span>`).join("")}${(x.flags || []).map(f => `<a class="chip warn" href="${f.href}">⚠ ${esc(S.lang === "ar" ? f.flag_ar : f.flag)}</a>`).join("")}</div>`,
+  books_check: x => `<div class="audit">${x.checks.map(a => `<a class="chip ${a.ok ? "ok" : "bad"}" href="#/model-audit" title="${esc(a.check)}">${a.ok ? "✓" : "✗"} ${esc(S.lang === "ar" && a.check_ar || a.check)}</a>`).join("")}${(x.flags || []).map(f => `<a class="chip warn" href="${esc(f.href)}">⚠ ${esc(S.lang === "ar" ? f.flag_ar : f.flag)}</a>`).join("")}</div>`,
   sales_target: x => { const p = x.target ? x.done / x.target : 0, exp = x.target ? x.expected / x.target : 0;
     const per = { month: L2("this month", "هذا الشهر"), quarter: L2("this quarter", "هذا الربع"), year: L2("this year", "هذا العام") }[x.period] || "";
     return `<div class="tgt"><div class="tgt-nums"><b data-count="${x.done}" data-fmt="money">${money(x.done)}</b><span>/ ${x.target ? money(x.target) : esc(L2("No target set", "لم يُحدد مستهدف"))}</span>
@@ -2846,9 +2847,28 @@ PAGES.payables = async (view, parts, q) => {
       ${d.rows.map(r => `<tr class="click" data-href="#/ledger?${qs({ party: r.party, account: r.account })}"><td>${esc(r.party || "—")}</td><td>${esc(r.account)}</td><td class="num">${money(r.owed)}</td><td class="num">${money(r.paid)}</td><td class="num ${r.balance < 0 ? "neg" : ""}"><b>${money(r.balance)}</b></td><td>${fd(r.last_date)}</td>
       <td style="white-space:nowrap">${can("purchasing.payments", "edit") && r.balance > 0 ? `<button class="btn sm" data-a="pay" data-p="${esc(r.party)}" data-b="${r.balance}" data-acc="${r.account}">${t("m_payments")}</button>
         ${(S.boot.accounts.find(x => String(x.code) === String(r.account)) || {}).subtype === "payable" ? `<button class="btn sm" data-a="disc" data-p="${esc(r.party)}" data-b="${r.balance}" data-acc="${r.account}" title="${ar ? "قبل المورد مبلغاً أقل: إقفال الباقي كخصم" : "The supplier accepted a lower amount: close the balance as a discount"}">${ar ? "تسوية بخصم" : "Settle with discount"}</button>` : ""}` : ""}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${t("nothing")}</div>`}</div>
-    ${d.deals.length ? `<div class="card"><h2>${t("deal_ref")}</h2><div class="tbl"><table><thead><tr><th>${t("deal_ref")}</th><th>${t("supplier")}</th><th class="num">${t("amount")}</th><th class="num">${t("savings")}</th><th class="num">${t("net_cost")}</th><th>${t("status")}</th></tr></thead><tbody>
-      ${d.deals.map(g => `<tr><td>${esc(g.ref)}</td><td>${esc(g.vendor)}</td><td class="num">${money(g.quoted)}</td><td class="num">${money(g.savings)}</td><td class="num">${money(g.cost)}</td><td>${esc(tl(g.status))}${g.status === "Settled" && owedBy[g.vendor] > 0 ? ` <span class="chip warn" title="${ar ? "مُعلَّم كمسوّى، لكن ما زال للمورد رصيد مستحق. سدده أو استخدم «تسوية بخصم»." : "Marked as settled, but a balance is still due to this supplier. Pay it or use Settle with discount."}">${ar ? "مستحق" : "Outstanding"} ${money(owedBy[g.vendor])}</span>` : ""}</td></tr>`).join("")}</tbody></table></div></div>` : ""}`;
+    ${dealsCard(d.deals)}`;
+  S.H.dealpay = el => { const g = d.deals.deals.find(x => x.ref === el.dataset.ref);
+    openDoc("payment", { party: g.vendor, amount: g.owed, deal_ref: g.ref, bu_id: (S.boot.bus || []).find(b => b.code === g.bu_code)?.id || "" }); };
+  S.H.dealall = () => { showSettled = !showSettled; $("#dealcard").outerHTML = dealsCard(d.deals); };
 };
+// What is owed per deal: one supplier can have several deals, each booked and paid on its own
+let showSettled = false;
+function dealsCard(dd) {
+  if (!dd || !dd.deals.length) return "";
+  const ar = S.lang === "ar", open = dd.deals.filter(g => showSettled || g.owed > 0.005);
+  const st = { not_paid: L2("Not paid yet", "لم يُدفع بعد"), stages: L2("Paying in stages", "يُسدد على دفعات"), settled: L2("Settled", "مسدد") };
+  const sum = k => open.reduce((s, g) => s + g[k], 0), pay = can("purchasing.payments", "add");
+  return `<div class="card" id="dealcard"><div class="row"><h2 style="margin:0">${L2("What you owe, by deal", "المستحق عليك حسب الاتفاق")}</h2><span class="spacer"></span>
+    <label class="chk"><input type="checkbox" data-change="dealall" ${showSettled ? "checked" : ""}> ${L2("Show settled deals", "عرض الاتفاقات المسددة")}</label></div>
+    <p class="muted">${L2("Each deal is tracked on its own, even with the same supplier. Name the deal on a payment to settle that deal.", "يُتابع كل اتفاق على حدة حتى مع نفس المورد. اذكر مرجع الاتفاق في سند الصرف لتسوية ذلك الاتفاق.")}</p>
+    <div class="tbl stack"><table><thead><tr><th>${t("deal_ref")}</th><th>${t("supplier")}</th><th>${t("bu")}</th><th class="num">${L2("Booked to date", "المسجل حتى تاريخه")}</th><th class="num">${L2("Paid to date", "المدفوع حتى تاريخه")}</th><th class="num">${L2("Still owed", "المتبقي")}</th><th>${t("status")}</th><th></th></tr></thead><tbody>
+    ${open.map(g => `<tr><td><a href="#/journal?${qs({ q: g.ref })}">${esc(g.ref)}</a></td><td>${esc(g.vendor)}</td><td>${esc(g.bu_code)}</td><td class="num">${money(g.booked)}</td><td class="num">${money(g.paid)}</td>
+      <td class="num"><b>${money(g.owed)}</b></td><td><span class="chip ${g.state === "settled" ? "ok" : g.state === "stages" ? "warn" : ""}">${st[g.state]}</span>${g.status === "Settled" && g.owed > 0.005 ? ` <span class="chip warn">${L2("Marked settled", "مُعلَّم كمسوّى")}</span>` : ""}</td>
+      <td>${pay && g.owed > 0.005 ? `<button class="btn sm" data-a="dealpay" data-ref="${esc(g.ref)}">${t("m_payments")}</button>` : ""}</td></tr>`).join("")}
+    ${Math.abs(dd.untagged) > 0.005 ? `<tr><td colspan="5" class="muted">${L2("Owed with no deal ref", "مستحق بدون مرجع اتفاق")}</td><td class="num"><b>${money(dd.untagged)}</b></td><td colspan="2"></td></tr>` : ""}
+    <tr class="tot"><td colspan="3">${t("total")}</td><td class="num">${money(sum("booked"))}</td><td class="num">${money(sum("paid"))}</td><td class="num">${money(dd.total_owed)}</td><td colspan="2"></td></tr></tbody></table></div></div>`;
+}
 PAGES.receivables = async (view, parts, q) => {
   await reportPage(view, "receivables", q, ["dates"]);
   $(".toolbar", view).insertAdjacentHTML("afterbegin", `<a class="btn" href="#/aging?side=receivable">⏳ ${t("m_aging")}</a><a class="btn" href="#/statement">☰ ${t("m_statement")}</a>`);
@@ -3414,6 +3434,7 @@ PAGES.prices = async (view, parts, q) => {
       edit({ category: r.category, description: r.description, unit: r.unit, cost, price,
         markup: cost && price ? price / cost - 1 : null, notes: L2("Captured from ", "مأخوذ من ") + src }); };
   };
+  if (q.ratecap) setTimeout(() => S.H.rcap(), 0);       // opened from a review flag: show the rates straight away
   S.H.redit = el => { const r = d.rows.find(x => String(x.id) === el.dataset.id); S.H.rdel = async () => { if (!await uiConfirm(t("confirm_delete"))) return; await api("DELETE", "/api/rates/" + r.id); closeDrawer(); route(); }; edit(r); };
   view.innerHTML = `<div class="toolbar">${can("estimating.prices", "add") ? `<button class="btn pri" data-a="rnew">+ ${t("new")}</button>` : ""}<button class="btn" data-a="rcap">${t("m_ratecap")}</button></div>` +
     filterBar(q, ["q", ["select", "category", t("category"), d.categories.map(c => [c, c])]]) +
@@ -12639,6 +12660,16 @@ PAGES["year-end"] = async (view, parts, q) => {
   $$("tr[data-href]", view).forEach(tr => tr.addEventListener("click", () => { location.hash = tr.dataset.href; }));
 };
 // Cash forecast: cash & bank today plus what the books date to come in and go out, week by week (erp/cashplan.py)
+// Model audit: integrity checks (must pass) and review flags (figures to look at), each opening its record
+PAGES["model-audit"] = async (view, parts, q) => {
+  const d = await api("GET", "/api/model-audit?" + qs(q)), ar = S.lang === "ar", bad = d.checks.filter(c => !c.ok).length;
+  view.innerHTML = filterBar(q, ["dates"]) + `<div class="kpis">${kpiBox(L2("Integrity checks", "فحوصات السلامة"), `${d.checks.length - bad} / ${d.checks.length}`, bad ? "bad" : "ok")}${kpiBox(L2("Figures to review", "أرقام تحتاج مراجعة"), String(d.flags.length), d.flags.length ? "warn" : "ok")}</div>
+    <div class="card"><h2>${L2("Figures to review", "أرقام تحتاج مراجعة")}</h2><p class="muted">${L2("Not errors in the books, but figures worth a look. Open each one to see the record behind it.", "ليست أخطاء في الدفاتر، لكنها أرقام تستحق المراجعة. افتح كل بند لعرض السجل المرتبط به.")}</p>
+      ${d.flags.length ? `<div class="tbl"><table><tbody>${d.flags.map(f => `<tr class="click" data-href="${esc(f.href)}"><td>⚠ ${esc(ar ? f.flag_ar : f.flag)}</td><td class="num"><a class="btn sm" href="${esc(f.href)}">${L2("Open", "فتح")} ›</a></td></tr>`).join("")}</tbody></table></div>`
+        : `<div class="empty">${L2("Nothing to review.", "لا يوجد ما يحتاج مراجعة.")}</div>`}</div>
+    <div class="card"><h2>${L2("Integrity checks", "فحوصات السلامة")}</h2><div class="tbl"><table><thead><tr><th>${L2("Check", "الفحص")}</th><th class="num">A</th><th class="num">B</th><th>${t("status")}</th></tr></thead><tbody>
+      ${d.checks.map(c => `<tr><td>${esc(ar && c.check_ar || c.check)}</td><td class="num">${esc(String(c.a))}</td><td class="num">${esc(String(c.b))}</td><td><span class="chip ${c.ok ? "ok" : "bad"}">${c.ok ? "✓ OK" : "✗ " + L2("Review", "مراجعة")}</span></td></tr>`).join("")}</tbody></table></div></div>`;
+};
 PAGES["cash-forecast"] = async (view, parts, q) => {
   const days = +(q.days || store.get("cfDays", 90)), over = (q.overdue ?? store.get("cfOver", "1")) !== "0";
   const d = await api("GET", "/api/cash-forecast?" + qs({ days, overdue: over ? 1 : 0 }));
@@ -12697,7 +12728,9 @@ PAGES.forecast = async (view) => {
         <div class="tbl"><table><thead><tr><th>${esc(L2("Category", "الفئة"))}</th>${FC_MIX().map(([, l]) => `<th class="num">${esc(l)} %</th>`).join("")}<th>${esc(L2("Quick fill", "تعبئة سريعة"))}</th>${head}</tr></thead><tbody>
         ${d.categories.map(c => `<tr><td><b>${esc(FC_PRESET()[c.name] || c.name)}</b>${c.set ? "" : ` <span class="chip">${esc(L2("Inflation only", "التضخم فقط"))}</span>`}</td>
           ${FC_MIX().map(([k]) => `<td class="num"><input class="num fc-in" type="number" step="1" min="0" ${ed ? "" : "disabled"} data-input="fcmix" data-c="${esc(c.name)}" data-k="${k}" value="${Math.round((c.mix[k] || 0) * 100)}"></td>`).join("")}
-          <td><select ${ed ? "" : "disabled"} data-change="fcpre" data-c="${esc(c.name)}" class="no-pick"><option value="">—</option>${Object.keys(d.presets).map(k => `<option value="${k}">${esc(FC_PRESET()[k] || k)}</option>`).join("")}</select></td>
+          <td>${(() => { const m = st.mixes[c.name] || c.mix, on = c.set || st.mixes[c.name]; // the preset this mix matches, else "custom"
+            const hit = on ? Object.keys(d.presets).find(k => FC_MIX().every(([mk]) => Math.abs((d.presets[k][mk] || 0) - (m[mk] || 0)) < 0.005)) : "";
+            return `<select ${ed ? "" : "disabled"} data-change="fcpre" data-c="${esc(c.name)}" class="no-pick"><option value="" ${hit || !on ? "selected" : ""} ${on && !hit ? "hidden" : ""}>—</option>${on && !hit ? `<option value="" selected disabled>${esc(L2("Custom", "مخصص"))}</option>` : ""}${Object.keys(d.presets).map(k => `<option value="${k}" ${k === hit ? "selected" : ""}>${esc(FC_PRESET()[k] || k)}</option>`).join("")}</select>`; })()}</td>
           ${c.rates.map(r => `<td class="num">${pct(r)}%</td>`).join("")}</tr>`).join("") || `<tr><td colspan="9" class="muted">${esc(L2("Categories are taken from your price list and items.", "تُؤخذ الفئات من قائمة الأسعار والأصناف."))}</td></tr>`}</tbody></table></div></div>
       <div class="tabs fc-tabs">${d.sections.map(s => `<a role="button" tabindex="0" style="cursor:pointer" data-a="fctab" data-k="${s.key}" class="${s.key === sec.key ? "on" : ""}">${esc(FC_SECTIONS()[s.key])} <span class="chip">${s.rows.length}</span></a>`).join("")}</div>
       <div class="card">${sec.rows.length ? `<div class="tbl"><table class="fc-t"><thead><tr><th>${esc(L2("Line", "البند"))}</th><th class="num">${esc(sec.key === "sales" || sec.key === "expenses" ? L2("Quarterly average", "متوسط الربع") : L2("Current", "الحالي"))}</th>${head}${sec.rows.some(r => r.cat) ? `<th>${esc(L2("Category", "الفئة"))}</th>` : ""}</tr></thead><tbody>
@@ -12720,7 +12753,8 @@ PAGES.forecast = async (view) => {
     fctab: el => { tab = el.dataset.k; store.set("fcTab", tab); draw(); },
     fcdrv: el => { const x = d.drivers.find(y => y.key === el.dataset.k); const r = (st.drivers[x.key] = st.drivers[x.key] || x.rates.slice()); r[+el.dataset.i] = (+el.value || 0) / 100; changed(); },
     fcsrc: el => { d.drivers.find(y => y.key === el.dataset.k).source = el.value; changed(); },
-    fcmix: el => { const c = d.categories.find(y => y.name === el.dataset.c); const m = (st.mixes[c.name] = st.mixes[c.name] || { ...c.mix }); m[el.dataset.k] = (+el.value || 0) / 100; changed(); },
+    fcmix: el => { const c = d.categories.find(y => y.name === el.dataset.c); const m = (st.mixes[c.name] = st.mixes[c.name] || { ...c.mix }); m[el.dataset.k] = (+el.value || 0) / 100; changed();
+      const sel = $(`select[data-change=fcpre][data-c="${CSS.escape(c.name)}"]`, view); if (sel) { sel.querySelector('option[value=""]').hidden = false; sel.value = ""; sel.options[0].textContent = L2("Custom", "مخصص"); } },
     fcpre: el => { if (!el.value) return; st.mixes[el.dataset.c] = { ...d.presets[el.value] }; changed(); S.H.fcsave(); },
     fcov: el => { const o = (st.overrides[el.dataset.k] = st.overrides[el.dataset.k] || {}); o[el.dataset.i] = el.value === "" ? null : +el.value; el.classList.add("fc-ed"); changed(); },
     fcassign: el => { st.assign[el.dataset.k] = el.value.trim(); changed(); },

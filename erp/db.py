@@ -1966,7 +1966,7 @@ SUBMODULES = {
     "assets": ["overview", "cash", "register", "depreciation"],
     "accounting": ["journal", "ledger", "coa", "loans", "bankrec", "recurring", "budgets", "approvals", "yearend"],
     "partners": ["equity", "transactions", "ownership"],
-    "reports": ["partner_pack", "income_statement", "balance_sheet", "cash_flow", "trial_balance", "budget", "aging", "statement", "forecast", "cashplan"],
+    "reports": ["partner_pack", "income_statement", "balance_sheet", "cash_flow", "trial_balance", "budget", "aging", "statement", "forecast", "cashplan", "audit"],
     "tax": ["codes", "report", "einvoice", "ereceipt"],
     "import_export": ["export", "import"],
     "settings": ["company", "branding", "menus", "layout", "system", "dashboards", "workspace", "automations", "api"],

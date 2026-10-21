@@ -444,7 +444,8 @@ def record_payment(db, d, user=""):
                       bu_id=bu_id_or_none(db, d.get("bu_id") or d.get("bu_code")), party=party, ref=text(d.get("ref")),
                       lines=[{"account": account, "debit": amount},
                              {"account": money_account(db, d.get("method"), d.get("paid_from")), "credit": amount}],
-                      meta={"method": text(d.get("method"))}, user=user)
+                      meta={"method": text(d.get("method")), **({"deal_ref": text(d["deal_ref"])} if text(d.get("deal_ref")) else {})},
+                      user=user)
 
 
 NEGOTIATION_MODES = ("keep", "pass")
@@ -1875,23 +1876,53 @@ def doc_form(db, e):
     return None
 
 
-def deals(db):
+def deals(db, date_to=None):
+    """What is owed per deal (Deal Ref): one supplier can have several deals, each booked and paid on its own. Every
+    live entry naming the deal counts — costs, partial payments in the same entry, later payment vouchers, discounts.
+    Booked = paid + still owed; paid = money out of cash / bank / the funding account; still owed = the deal's balance
+    on payable accounts (taxes excluded). Payables not tagged with any deal show as one "no deal ref" line."""
+    money = {r["code"] for r in db.q("SELECT code FROM accounts WHERE subtype='cash' OR role='funding_partner'")}
+    owe = {r["code"] for r in db.q("SELECT code FROM accounts WHERE type='Liability' AND COALESCE(role,'') NOT IN "
+                                   "('vat_output','vat_input','wht_payable','wht_receivable','funding_partner') "
+                                   "AND subtype IN ('payable','accrued')")}
+    cond, p = (f"{LIVE} AND e.date<=?", [date_to]) if date_to else (LIVE, [])
     m = {}
-    for r in db.q(f"SELECT e.party, e.meta FROM journal_entries e WHERE {LIVE} AND kind IN ('Direct Cost','Supplier Discount')"):
+    rows = db.q(f"""SELECT e.id, e.date, e.party, e.meta, e.kind, b.code AS bu_code, l.account, l.debit, l.credit,
+                           COALESCE(NULLIF(l.party,''), e.party) AS line_party
+                    FROM journal_entries e JOIN journal_lines l ON l.entry_id=e.id LEFT JOIN business_units b ON b.id=e.bu_id
+                    WHERE {cond} AND json_extract(e.meta,'$.deal_ref')<>'' ORDER BY e.date, e.id""", p)
+    seen = set()
+    for r in rows:
         meta = json.loads(r["meta"] or "{}")
-        ref = meta.get("deal_ref")
-        if not ref:
-            continue
-        g = m.setdefault(ref, {"ref": ref, "vendor": r["party"], "quoted": 0, "savings": 0, "entries": 0, "status": ""})
-        g["entries"] += 1
-        g["vendor"] = g["vendor"] or r["party"]
-        g["quoted"] += to_minor(meta.get("quoted", 0))
-        g["savings"] += to_minor(meta.get("savings", 0))
-        g["status"] = meta.get("deal_status") or g["status"]
+        ref = text(meta.get("deal_ref"))
+        g = m.setdefault(ref, {"ref": ref, "vendor": "", "bu_code": "", "quoted": 0, "savings": 0, "entries": 0, "status": "",
+                               "paid": 0, "owed": 0, "first": r["date"], "last": r["date"]})
+        if r["id"] not in seen:
+            seen.add(r["id"])
+            g["entries"] += 1
+            g["quoted"] += to_minor(meta.get("quoted", 0)) if r["kind"] in ("Direct Cost", "Supplier Discount") else 0
+            g["savings"] += to_minor(meta.get("savings", 0)) if r["kind"] in ("Direct Cost", "Supplier Discount") else 0
+            g["status"] = meta.get("deal_status") or g["status"]
+            g["last"] = r["date"]
+        if r["account"] in money:
+            g["paid"] += r["credit"] - r["debit"]
+        elif r["account"] in owe:
+            g["owed"] += r["credit"] - r["debit"]
+            g["vendor"] = g["vendor"] or r["line_party"] or ""
+        g["vendor"] = g["vendor"] or r["party"] or ""
+        g["bu_code"] = g["bu_code"] or r["bu_code"] or ""
+    out = []
     for g in m.values():
-        g["cost"] = to_major(g["quoted"] - g["savings"])
-        g["quoted"], g["savings"] = to_major(g["quoted"]), to_major(g["savings"])
-    return sorted(m.values(), key=lambda g: g["ref"])
+        booked = g["paid"] + g["owed"]
+        g["state"] = ("settled" if g["owed"] <= 0 and booked > 0 else "not_paid" if g["paid"] <= 0 else "stages")
+        g.update(cost=to_major(g["quoted"] - g["savings"]), quoted=to_major(g["quoted"]), savings=to_major(g["savings"]),
+                 booked=to_major(booked), paid=to_major(g["paid"]), owed=to_major(g["owed"]))
+        out.append(g)
+    tagged = sum(to_minor(g["owed"]) for g in out)
+    total = db.one(f"""SELECT COALESCE(SUM(l.credit-l.debit),0) n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
+                       WHERE {cond} AND l.account IN ({','.join('?' * len(owe)) or "''"})""", p + sorted(owe))["n"]
+    return {"deals": sorted(out, key=lambda g: g["ref"]), "untagged": to_major(total - tagged),
+            "total_owed": to_major(total)}
 
 
 def ownership(db, date_from=None, date_to=None):
@@ -2037,22 +2068,23 @@ def audit(db):
     shares = db.one("SELECT COALESCE(SUM(overhead_pct),0) AS s FROM business_units")["s"]
     cf = cash_flow(db)
     return [
-        {"check": "Trial balance: debits = credits", "a": tb["totals"]["debit"], "b": tb["totals"]["credit"],
+        {"check": "Trial balance: debits = credits", "check_ar": "ميزان المراجعة: المدين = الدائن", "a": tb["totals"]["debit"], "b": tb["totals"]["credit"],
          "ok": tb["balanced"]},
-        {"check": "Balance sheet: assets = liabilities + equity", "a": bs["total_assets"],
+        {"check": "Balance sheet: assets = liabilities + equity", "check_ar": "الميزانية: الأصول = الالتزامات + حقوق الملكية", "a": bs["total_assets"],
          "b": bs["total_liabilities_equity"], "ok": bs["balanced"]},
-        {"check": "Cash flow reconciles to change in cash", "a": cf["change_in_cash"],
+        {"check": "Cash flow reconciles to change in cash", "check_ar": "التدفقات النقدية تطابق التغير في النقدية", "a": cf["change_in_cash"],
          "b": round(cf["ending_cash"] - cf["beginning_cash"], 2), "ok": cf["reconciles"]},
-        {"check": "Stock register = inventory accounts", "a": stock_val, "b": inv, "ok": abs(stock_val - inv) < 0.05},
-        {"check": "Every journal entry balances", "a": len(bad), "b": 0, "ok": not bad},
-        {"check": "Shared-overhead % across business units ≤ 100%", "a": round(shares * 100, 2), "b": 100,
+        {"check": "Stock register = inventory accounts", "check_ar": "سجل المخزون = حسابات المخزون", "a": stock_val, "b": inv, "ok": abs(stock_val - inv) < 0.05},
+        {"check": "Every journal entry balances", "check_ar": "كل قيد متوازن", "a": len(bad), "b": 0, "ok": not bad},
+        {"check": "Shared-overhead % across business units ≤ 100%", "check_ar": "نسب المصروفات المشتركة على الوحدات ≤ 100%", "a": round(shares * 100, 2), "b": 100,
          "ok": shares <= 1.0001},
     ]
 
 
 
 def review_flags(db, date_from=None, date_to=None):
-    """Reasonableness flags: not errors in the books, but figures someone should look at."""
+    """Reasonableness flags: not errors in the books, but figures someone should look at. Each links to its record."""
+    from urllib.parse import quote
     out = []
 
     def add(en, ar, detail, href):
@@ -2061,10 +2093,10 @@ def review_flags(db, date_from=None, date_to=None):
     for b in bu_summaries(db, date_from, date_to):
         if b["revenue"] and b["gross_profit"] < 0:
             add(f"{b['code']}: costs are above revenue (gross margin {b['gross_profit']:,.2f})",
-                f"{b['code']}: التكاليف أعلى من الإيراد (مجمل الربح {b['gross_profit']:,.2f})", b["code"], "#/bus")
+                f"{b['code']}: التكاليف أعلى من الإيراد (مجمل الربح {b['gross_profit']:,.2f})", b["code"], f"#/bu/{b['id']}")
         if b["expected_billing"] > 0 and b["revenue"] > b["expected_billing"] + 0.005:
             add(f"{b['code']}: billed {b['revenue']:,.2f}, more than the expected {b['expected_billing']:,.2f}",
-                f"{b['code']}: الفوترة {b['revenue']:,.2f} أعلى من المتوقع {b['expected_billing']:,.2f}", b["code"], "#/bus")
+                f"{b['code']}: الفوترة {b['revenue']:,.2f} أعلى من المتوقع {b['expected_billing']:,.2f}", b["code"], f"#/bu/{b['id']}")
     try:
         rep = partner_report(db, date_from, date_to)
     except (LookupError, ValidationError):
@@ -2072,7 +2104,7 @@ def review_flags(db, date_from=None, date_to=None):
     for p in rep["partners"]:
         if p["balance"] < -0.005:
             add(f"{p['name']} has drawn {-p['balance']:,.2f} more than the earned share",
-                f"{p['name']} سحب {-p['balance']:,.2f} أكثر من النصيب المستحق", p["name"], "#/partners")
+                f"{p['name']} سحب {-p['balance']:,.2f} أكثر من النصيب المستحق", p["name"], "#/statement?party=" + quote(p["name"]))
     from . import settlement
     led = settlement.funding_ledger(db, date_to=date_to) if settlement.funding_partner(db) else None
     peak = max([r["own_money"] for r in led["rows"]] + [led["own_money"]]) if led else 0
@@ -2083,7 +2115,7 @@ def review_flags(db, date_from=None, date_to=None):
     from . import ratecap
     n = len(ratecap.candidates(db))
     if n:
-        add(f"{n} rates seen in the books are not in the price list", f"{n} سعرًا في الدفاتر غير موجود في قائمة الأسعار", "", "#/prices")
+        add(f"{n} rates seen in the books are not in the price list", f"{n} سعرًا في الدفاتر غير موجود في قائمة الأسعار", "", "#/prices?ratecap=1")
     return out
 
 

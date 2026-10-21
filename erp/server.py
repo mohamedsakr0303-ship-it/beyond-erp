@@ -1832,7 +1832,7 @@ def parties(ctx):
     return ok({"rows": acc.party_balances(ctx.db, subtypes=subtypes, date_to=ctx.q.get("date_to")),
                "names": [r["party"] for r in ctx.db.q("SELECT DISTINCT party FROM journal_entries WHERE party<>'' "
                                                       "ORDER BY party LIMIT 2000")],
-               "deals": acc.deals(ctx.db)})
+               "deals": acc.deals(ctx.db, ctx.q.get("date_to") or None)})
 
 
 # ================================================================ price list
@@ -1882,6 +1882,11 @@ def edit_rate(ctx, rid):
 def del_rate(ctx, rid):
     ctx.db.x("DELETE FROM rates WHERE id=?", (int(rid),))
     return ok()
+
+
+@route("GET", "/api/model-audit", "reports.audit")
+def model_audit(ctx):
+    return ok({"checks": acc.audit(ctx.db), "flags": acc.review_flags(ctx.db, ctx.q.get("date_from"), ctx.q.get("date_to"))})
 
 
 @route("GET", "/api/rate-capture", "estimating.prices")

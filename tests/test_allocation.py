@@ -166,6 +166,32 @@ class RateCaptureAndFlags(unittest.TestCase):
         self.assertIn("P-1: costs are above revenue", flags)
         self.assertIn("A has drawn", flags)
         self.assertIn("1 rates seen in the books", flags)
+        links = {f["flag"].split(":")[0].split(" has")[0]: f["href"] for f in a.review_flags(db)}
+        p1 = db.one("SELECT id FROM business_units WHERE code='P-1'")["id"]
+        self.assertEqual(links["P-1"], f"#/bu/{p1}")
+        self.assertEqual(links["A"], "#/statement?party=A")
+        self.assertTrue(any(h == "#/prices?ratecap=1" for h in links.values()))
+
+
+class DealPayables(unittest.TestCase):
+    def test_two_deals_same_supplier_paid_in_stages(self):
+        db = books()
+        a.record_project_cost(db, {"bu_code": "P-1", "vendor": "Sup", "description": "Works A", "qty": 1, "rate": 1000,
+                                   "paid": 300, "deal_ref": "SUP-001", "date": "2026-02-01"})
+        a.record_project_cost(db, {"bu_code": "P-2", "vendor": "Sup", "description": "Works B", "qty": 1, "rate": 500,
+                                   "paid": 0, "deal_ref": "SUP-002", "date": "2026-02-02"})
+        a.record_payment(db, {"party": "Sup", "amount": 200, "deal_ref": "SUP-001", "date": "2026-02-10"})
+        a.record_payment(db, {"party": "Sup", "amount": 100, "date": "2026-02-11"})          # no deal named
+        d = a.deals(db)
+        g = {x["ref"]: x for x in d["deals"]}
+        self.assertEqual((g["SUP-001"]["booked"], g["SUP-001"]["paid"], g["SUP-001"]["owed"], g["SUP-001"]["state"]),
+                         (1000, 500, 500, "stages"))
+        self.assertEqual((g["SUP-002"]["owed"], g["SUP-002"]["state"], g["SUP-002"]["bu_code"]), (500, "not_paid", "P-2"))
+        self.assertEqual((d["total_owed"], d["untagged"]), (900, -100))
+        data = interchange.read_json(interchange.to_json(db).encode())
+        dst = Database(":memory:")
+        interchange.import_data(dst, data, mode="replace", user="t")
+        self.assertEqual(a.deals(dst)["deals"], d["deals"])
 
 
 class ImportExport(unittest.TestCase):

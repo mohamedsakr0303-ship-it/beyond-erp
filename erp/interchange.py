@@ -419,7 +419,8 @@ SHEETS = [
               C("amount", "Amount", "المبلغ", kind="money", required=True), C("method", "Payment Method", "طريقة الدفع", choices=METHODS),
               C("paid_from", "Paid From", "دفع من حساب", kind="acct", role="bank"), C("bu_code", "Business Unit", "وحدة الأعمال", kind="bu"),
               C("ref", "Voucher No.", "رقم السند", width=10), C("memo", "Description", "البيان", width=26),
-              eff("against", "ap"), eff_money("paid_from")],
+              eff("against", "ap"), eff_money("paid_from"),
+              C("deal_ref", "Deal Ref.", "مرجع الاتفاق", width=12, note="The deal this payment settles (one supplier can have several deals)")],
      "legs": [("amount", "against__eff", "D"), ("amount", "paid_from__eff", "C")]},
     {"name": "Partner Transactions", "ar": "حركات الشركاء", "module": "partners",
      "title": "Capital contributions and owner drawings / dividends",
@@ -496,7 +497,7 @@ SHEETS = [
                 note="A warehouse name (received into stock) — or empty: used on the voucher's business unit"),
               C("alloc_rule", "Allocation Rule", "قاعدة التوزيع", width=14,
                 note="Vouchers with no business unit: a rule code, or company to keep it as company cost. Blank = by the rules"),
-              C("stage", "Stage", "المرحلة", width=14)],
+              C("stage", "Stage", "المرحلة", width=14), C("deal_ref", "Deal Ref.", "مرجع الاتفاق", width=12)],
      "legs": [("debit", "account", "D"), ("credit", "account", "C")]},
 ]
 from . import setup_sheets as _setup  # noqa: E402
@@ -711,7 +712,8 @@ def export_data(db):
 
 def _alloc_cols(e):
     m = e["meta"] or {}
-    return {"alloc_rule": "company" if m.get("no_alloc") else m.get("alloc_rule", ""), "stage": m.get("stage", "")}
+    return {"alloc_rule": "company" if m.get("no_alloc") else m.get("alloc_rule", ""), "stage": m.get("stage", ""),
+            "deal_ref": m.get("deal_ref", "")}
 
 
 def _entry_to_row(e, accounts):
@@ -771,7 +773,7 @@ def _entry_to_row(e, accounts):
             (accounts.get(dr[0]["account"]) or {}).get("type") == "Liability":   # e.g. an advance to a supplier stays a journal
         return "Payment Vouchers", base | {"party": e["party"], "against": dr[0]["account"], "amount": dr[0]["debit"],
                                            "method": m.get("method", ""), "paid_from": cr[0]["account"],
-                                           "ref": e["ref"], "memo": e["memo"]}
+                                           "ref": e["ref"], "memo": e["memo"], "deal_ref": m.get("deal_ref", "")}
     if k in ("Capital Contribution", "Owner Drawing") and len(dr) == 1 and len(cr) == 1 and \
             sub((dr[0] if k == "Capital Contribution" else cr[0])["account"]) == "cash":
         cash, eq = (dr[0], cr[0]) if k == "Capital Contribution" else (cr[0], dr[0])

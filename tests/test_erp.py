@@ -2113,7 +2113,7 @@ class SupplierDiscount(unittest.TestCase):
         a.record_supplier_discount(db, {"party": "Hani", "date": "2026-03-02"})
         self.assertEqual(a.party_balance(db, ap, "Hani"), 0)
         self.assertEqual(round(a.income_statement(db)["net_profit"] - cost_before, 2), 1000)
-        g = [x for x in a.deals(db) if x["ref"] == "HANI-1"][0]
+        g = [x for x in a.deals(db)["deals"] if x["ref"] == "HANI-1"][0]
         self.assertEqual((g["quoted"], g["savings"], g["cost"], g["status"]), (16000, 2000, 14000, "Settled"))
 
 
