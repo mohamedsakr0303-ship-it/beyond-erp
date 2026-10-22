@@ -945,14 +945,37 @@ function userMenu() {
 async function loadAlerts(force) {
   if (!force && S.alertsAt && Date.now() - S.alertsAt < 60000) return;
   S.alertsAt = Date.now();
-  let d; try { d = await api("GET", "/api/alerts"); } catch { d = { rows: [] }; }
-  const n = d.rows.length, ar = S.lang === "ar";
-  approvalNotices(d);
-  ["#bellc", "#bellc2"].forEach(id => { const b = $(id); if (b) { b.hidden = !n; b.textContent = n > 9 ? "9+" : n; } });
-  const m = $("#bellmenu"); if (!m) return;
-  m.innerHTML = `<div class="dd-head">${esc(L2("Requires attention", "يتطلب المتابعة"))}</div>` + (n ? d.rows.map(r => `<a class="alert-row" href="${esc(r.href)}" ${r.kind === "feed" ? `data-feed="${r.id}"` : ""}><span class="dot ${r.level}">${svg(r.level === "bad" ? "alert" : r.level === "warn" ? "clock" : "bell")}</span><span>${esc(ar ? r.ar : r.en)}</span></a>`).join("")
-    : `<div class="empty" style="padding:18px">${svg("check")}<div>${esc(L2("Nothing requires attention", "لا شيء يتطلب المتابعة"))}</div></div>`);
+  let d; try { d = await api("GET", "/api/alerts" + (S.bellIgnored ? "?ignored=1" : "")); } catch { d = { rows: [] }; }
+  S.bell = d; approvalNotices(d);
+  bellBadge(d.unseen || 0);
+  renderBell();
+  if ($(".bell.open")) bellSeen();                   // the bell is open: what it shows is seen now
 }
+// unread mark: only what this person has not seen in the bell yet (seen and ignored are kept per person)
+function bellBadge(n) { ["#bellc", "#bellc2"].forEach(id => { const b = $(id); if (b) { b.hidden = !n; b.textContent = n > 9 ? "9+" : n; } }); }
+function bellSeen() {
+  const d = S.bell; if (!d || !d.unseen) return;
+  d.unseen = 0; d.rows.forEach(r => { r.new = false; }); bellBadge(0);
+  api("POST", "/api/alerts/seen", { sigs: d.rows.filter(r => !r.ignored).map(r => r.sig) }).catch(() => {});
+}
+const BELL_GROUPS = () => [["entries", L2("Entries & approvals", "القيود والاعتمادات")], ["due", L2("Due & overdue", "المستحق والمتأخر")],
+  ["team", L2("Team & customers", "الفريق والعملاء")], ["review", L2("Figures to review", "أرقام تحتاج مراجعة")], ["mine", L2("My alerts", "تنبيهاتي")]];
+function renderBell() {
+  const m = $("#bellmenu"), d = S.bell; if (!m || !d) return;
+  const ar = S.lang === "ar", rows = d.rows || [];
+  const row = r => `<div class="alert-row-wrap ${r.ignored ? "ign" : ""}"><a class="alert-row" href="${esc(r.href)}" ${r.kind === "feed" ? `data-feed="${r.id}"` : ""}><span class="dot ${r.level}">${svg(r.level === "bad" ? "alert" : r.level === "warn" ? "clock" : "bell")}</span><span>${esc(ar ? r.ar : r.en)}</span>${r.new ? `<b class="new-dot" title="${esc(L2("New", "جديد"))}"></b>` : ""}</a>
+    <button type="button" class="btn sm ghost bell-ign" data-a="bellign" data-key="${esc(r.key)}" data-sig="${esc(r.sig)}" ${r.ignored ? 'data-restore="1"' : ""} title="${esc(r.ignored ? L2("Show again", "إظهار مرة أخرى") : L2("Ignore: remove from your bell until something changes", "تجاهل: إزالة من تنبيهاتك حتى يتغير شيء"))}">${r.ignored ? L2("Restore", "استرجاع") : L2("Ignore", "تجاهل")}</button></div>`;
+  const body = BELL_GROUPS().map(([g, label]) => { const list = rows.filter(r => r.group === g); return list.length ? `<div class="bell-sec">${esc(label)} <span class="chip">${list.filter(r => !r.ignored).length}</span></div>${list.map(row).join("")}` : ""; }).join("");
+  m.innerHTML = `<div class="dd-head">${esc(L2("Requires attention", "يتطلب المتابعة"))}</div>` + (body ||
+    `<div class="empty" style="padding:18px">${svg("check")}<div>${esc(L2("Nothing requires attention", "لا شيء يتطلب المتابعة"))}</div></div>`) +
+    (d.ignored || S.bellIgnored ? `<div class="bell-foot"><button type="button" class="btn sm ghost" data-a="bellshowign">${S.bellIgnored ? L2("Hide ignored", "إخفاء المتجاهَل") : L2(`Show ignored (${d.ignored})`, `عرض المتجاهَل (${d.ignored})`)}</button></div>` : "");
+}
+const BELL_H = {          // global: the bell sits in the top bar on every screen
+  bellign: async el => { try { await api("POST", "/api/alerts/ignore", { key: el.dataset.key, sig: el.dataset.sig, restore: !!el.dataset.restore }); await loadAlerts(true); } catch (e) { fail(e); } },
+  bellshowign: async () => { S.bellIgnored = !S.bellIgnored; await loadAlerts(true); },
+};
+// opening the bell clears its unread mark (the alerts stay inside until dealt with or ignored)
+document.addEventListener("click", e => { if (e.target.closest(".bell > button")) setTimeout(() => { if ($(".bell.open")) bellSeen(); }, 0); });
 // an alert in the bell is read once it is opened
 document.addEventListener("click", e => { const a = e.target.closest("[data-feed]"); if (a) api("POST", "/api/my-alerts/read", { ids: [+a.dataset.feed] }).then(() => loadAlerts(true)).catch(() => {}); });
 // a draft newly waiting for this person's approval (or one of theirs sent back): a task in the bell plus a desktop /
@@ -1036,6 +1059,9 @@ async function applyAppIcon() {
     const man = document.querySelector("link[rel=manifest]");
     // the built-in icons have real manifest files on the site, so Android installs a proper app with that icon
     // (a manifest made in the page cannot be packaged: Android would show Chrome's badge on the home-screen icon)
+    // the default icon keeps the page's own manifest (both files are identical): swapping the link on every load made
+    // Chrome think the installed app had changed and show "App update available" in the title bar
+    if (man && k === "beyond") return;
     if (man && APP_ICONS.some(x => x[0] === k)) { man.href = `manifest-${k}.webmanifest`; return; }
     if (man) { const base = new URL("./", location.href).href;
       const m = { name: appName(), short_name: appName(), start_url: base, scope: base, display: "standalone", background_color: "#05061a", theme_color: "#05061a",
@@ -1081,7 +1107,7 @@ S.GLOBAL_H = {
   menu: () => { const app = $(".app"); if (innerWidth <= 900) app.classList.toggle("menu"); else { app.classList.toggle("mini"); store.set("navMini", app.classList.contains("mini") ? "1" : ""); } },
   palette: () => openPalette(),
   clocktoggle: el => Clock.toggle(el),
-  bellopen: () => { const b = $(".bell"); if (b) { b.classList.add("open"); loadAlerts(true); } },
+  bellopen: () => { const b = $(".bell"); if (b) { b.classList.add("open"); loadAlerts(true).then(bellSeen); } },
   grp: el => { const w = el.closest(".grp-wrap"), app = $(".app");
     if (innerWidth <= 900 && app.classList.contains("pm-rail") && !app.classList.contains("menu")) {   // the icon strip: open the menu at that section
       app.classList.add("menu"); w.classList.add("open"); setTimeout(() => w.scrollIntoView({ block: "nearest", behavior: "smooth" }), 230); return; }
@@ -1903,6 +1929,7 @@ function capRows(rows, key) {
   return { rows: rows.slice(0, LIST_CAP), foot: `<div class="rt-more"><span class="muted">${esc(L2(`Showing ${numf(LIST_CAP)} of ${numf(rows.length)}. Search or filter to narrow the list.`, `عرض ${numf(LIST_CAP)} من ${numf(rows.length)}. ابحث أو استخدم الفلاتر لتضييق القائمة.`))}</span>
     <button class="btn sm" data-a="capall" data-k="${esc(key)}">${esc(L2("Show all", "عرض الكل"))}</button></div>` };
 }
+Object.assign(S.GLOBAL_H, BELL_H);
 S.GLOBAL_H.capall = el => { S.showAll[el.dataset.k] = location.hash; route(); };
 const RT_PAGE = 1500, RT_TABLES = {};
 let RT_SEQ = 0;

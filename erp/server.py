@@ -3465,7 +3465,7 @@ def app_update_install(ctx):
 def alerts(ctx):
     """What needs attention now, for the bell in the top bar — only what this user may see."""
     from . import approvals, dashboards
-    out = dashboards.alerts(ctx.db, ctx.can)
+    out = dashboards.alerts(ctx.db, ctx.can, detail=True)
     waiting = approvals.waiting_for(ctx.db, ctx.user, ctx.can)
     if waiting:
         out.insert(0, {"level": "warn", "en": f"Entries waiting for your approval: {len(waiting)}",
@@ -3529,8 +3529,78 @@ def alerts(ctx):
     for f in reversed(feed):
         out.insert(0, {"level": "warn", "en": f"{f['title']}: {f['body']}", "ar": f"{f['title']}: {f['body']}", "href": f["href"] or "#/alerts",
                        "kind": "feed", "id": f["id"]})
-    return ok({"rows": out, "count": len(out), "approvals": [w["id"] for w in waiting], "followups": [f["id"] for f in follow],
+    prefs = _bell_prefs(ctx)
+    seen, ignored = set(prefs.get("bell_seen") or []), prefs.get("bell_ignored") or {}
+    rows, hidden = [], 0
+    for r in out:
+        r["group"] = _bell_group(r)
+        r["key"] = r.get("kind") + ":" + str(r["id"]) if r.get("kind") == "feed" else \
+            f"{r.get('kind') or ''}|{r['href']}|{re.sub(r'[0-9.,]+', '#', r['en'])[:120]}"
+        r["sig"] = f"{r['key']}|{r.get('count', 1)}"
+        r["ignored"] = ignored.get(r["key"]) == r["sig"]       # a changed count (something new) brings it back
+        r["new"] = not r["ignored"] and r["sig"] not in seen
+        hidden += r["ignored"]
+        if not r["ignored"] or ctx.q.get("ignored") == "1":
+            rows.append(r)
+    return ok({"rows": rows, "count": sum(1 for r in rows if not r["ignored"]), "unseen": sum(1 for r in rows if r["new"]),
+               "ignored": hidden, "approvals": [w["id"] for w in waiting], "followups": [f["id"] for f in follow],
                "feed": [f["id"] for f in feed]})
+
+
+_BELL_GROUPS = {"approvals": "entries", "approvals_back": "entries", "review": "review", "feed": "mine", "checkin_self": "team",
+                "checkin_idle": "team", "checkin_flags": "team", "hr_requests": "team", "followups": "team", "desk": "team",
+                "desk_err": "team", "bills": "due"}
+
+
+def _bell_group(r):
+    """The bell's sections: entries & approvals, due & overdue, team & customers, figures to review, my alerts."""
+    if r.get("kind") in _BELL_GROUPS:
+        return _BELL_GROUPS[r["kind"]]
+    h = r.get("href") or ""
+    if h.startswith(("#/model-audit", "#/dashboard")):
+        return "review"
+    if h.startswith(("#/recurring", "#/assets", "#/ereceipts", "#/approvals", "#/journal", "#/stock-counts", "#/sub-certs",
+                     "#/purchase-requests", "#/variations")):
+        return "entries"
+    return "due"
+
+
+def _bell_prefs(ctx, update=None):
+    """The bell's memory for this person: alerts already seen (no unread mark) and alerts ignored."""
+    uid = ctx.user["id"]
+    row = ctx.db.one("SELECT prefs FROM user_profiles WHERE user_id=?", (uid,))
+    try:
+        prefs = json.loads(row["prefs"] or "{}") if row else {}
+    except ValueError:
+        prefs = {}
+    if update:
+        prefs.update(update)
+        if row:
+            ctx.db.x("UPDATE user_profiles SET prefs=? WHERE user_id=?", (json.dumps(prefs, ensure_ascii=False), uid))
+        else:
+            ctx.db.x("INSERT INTO user_profiles(user_id, prefs) VALUES (?,?)", (uid, json.dumps(prefs, ensure_ascii=False)))
+    return prefs
+
+
+@route("POST", "/api/alerts/seen")
+def alerts_seen(ctx):
+    """The bell was opened: what it showed is no longer counted as new."""
+    sigs = [str(s)[:300] for s in (ctx.body.get("sigs") or [])][:200]
+    _bell_prefs(ctx, {"bell_seen": sigs})
+    return ok()
+
+
+@route("POST", "/api/alerts/ignore")
+def alerts_ignore(ctx):
+    """Hide an alert from the bell (until its count changes), or bring it back."""
+    key, sig = acc.text(ctx.body.get("key"), "key", required=True, maxlen=300), acc.text(ctx.body.get("sig"), maxlen=320)
+    ign = dict(_bell_prefs(ctx).get("bell_ignored") or {})
+    if ctx.body.get("restore"):
+        ign.pop(key, None)
+    else:
+        ign[key] = sig
+    _bell_prefs(ctx, {"bell_ignored": dict(list(ign.items())[-300:])})
+    return ok()
 
 
 @route("GET", "/api/assets-overview", "assets.overview")

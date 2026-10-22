@@ -593,7 +593,9 @@ def view(db, user, q, can, group=None):
 
 
 # ------------------------------------------------------------------ alerts (the bell and the "Needs attention" widget)
-def alerts(db, can):
+def alerts(db, can, detail=False):
+    """What needs attention. detail=True (the bell) lists each books check and review flag on its own line, so each
+    can be opened or ignored; otherwise they are summed into one line each (dashboard widget, push summaries)."""
     from . import assets, recurring, rentals, sales
     out = []
 
@@ -674,9 +676,17 @@ def alerts(db, can):
                 r["not_sent"])
     if can("reports.audit"):
         bad = [a for a in acc.audit(db) if not a["ok"]]
-        if bad:
-            add("bad", f"Books check: {len(bad)} to review", f"فحص الدفاتر: {len(bad)} للمراجعة", "#/model-audit", len(bad))
         flags = acc.review_flags(db)
-        if flags:
-            add("warn", f"Figures to review: {len(flags)}", f"أرقام تحتاج مراجعة: {len(flags)}", "#/model-audit", len(flags))
+        if detail:
+            for a in bad:
+                add("bad", f"Books check failed: {a['check']}", f"فحص الدفاتر لم يتطابق: {a.get('check_ar') or a['check']}", "#/model-audit")
+                out[-1]["kind"] = "review"
+            for f in flags:
+                add("warn", f["flag"], f["flag_ar"], f["href"])
+                out[-1]["kind"] = "review"
+        else:
+            if bad:
+                add("bad", f"Books check: {len(bad)} to review", f"فحص الدفاتر: {len(bad)} للمراجعة", "#/model-audit", len(bad))
+            if flags:
+                add("warn", f"Figures to review: {len(flags)}", f"أرقام تحتاج مراجعة: {len(flags)}", "#/model-audit", len(flags))
     return out

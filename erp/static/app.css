@@ -1852,3 +1852,14 @@ input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 4px color
 @keyframes clockpulse { 0% { box-shadow: 0 0 0 0 rgba(34, 197, 94, .55); } 70% { box-shadow: 0 0 0 7px rgba(34, 197, 94, 0); } 100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); } }
 @media (prefers-reduced-motion: reduce) { .clockbtn .dot { animation: none; } }
 @media (max-width: 760px) { .clockbtn .lbl { display: none; } .clockbtn { padding: 6px 10px; } }
+/* the bell: sections, a dot on what is new to this person, Ignore per alert */
+#bellmenu{max-height:min(70vh,560px);overflow:auto;min-width:min(420px,92vw)}
+.bell-sec{display:flex;align-items:center;gap:6px;padding:10px 12px 4px;font-size:.72em;font-weight:800;text-transform:uppercase;letter-spacing:.6px;color:var(--muted)}
+.alert-row-wrap{display:flex;align-items:center;gap:4px}
+.alert-row-wrap .alert-row{flex:1;min-width:0}
+.alert-row-wrap.ign{opacity:.55}
+.dd-menu .bell-ign{width:auto!important;flex:none;padding:4px 8px!important;font-size:.75em;color:var(--muted)}
+.dd-menu .bell-ign:hover{color:var(--ink)}
+.alert-row .new-dot{width:8px;height:8px;border-radius:50%;background:var(--acc,#e0b030);flex:none;margin-inline-start:auto}
+.bell-foot{padding:6px 10px;border-top:1px solid var(--line,rgba(255,255,255,.08));text-align:center}
+.dd-menu .bell-foot button{width:auto;display:inline-block}
