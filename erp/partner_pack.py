@@ -103,12 +103,31 @@ def distributable(db, pol, rows, bs, earned, held, reserve_amt, partners, date_t
     funder = round(-sum(r["net"] for r in rows if r.get("role") == "funding_partner") / 100, 2)
     # when the funding partner's account replaces the bank, a debit balance there is the company's own money with him
     cash = round(bs["cash"] + max(0.0, -funder), 2)
-    free = round(cash - owed - bs["advances"] - held - buffer - reserve_amt, 2)
+    fac = None
+    if (db.setting("funding_mode") or "capital") == "facility":
+        from . import settlement
+        fac = settlement.facility(db, date_to)
+    if fac and fac["limit"]:
+        # his account is the company's bank: what can be paid out is the room left in his facility (limit − fronted)
+        # plus the company's own cash, after everything already committed
+        room = round(fac["room"] + bs["cash"], 2)
+        free = round(room - owed - bs["advances"] - held - buffer - reserve_amt, 2)
+    else:
+        room = None
+        free = round(cash - owed - bs["advances"] - held - buffer - reserve_amt, 2)
     to_partners = round(sum(max(0.0, x["undistributed"]) for x in partners), 2)
     ahead = round(sum(x["undistributed"] for x in partners), 2)
-    hold_funder = pol["repay_funder_first"] and funder > 0.005
+    # facility mode: the room left in his facility already counts his money, so there is no separate hold for him
+    hold_funder = pol["repay_funder_first"] and funder > 0.005 and room is None
     safe = 0.0 if hold_funder else round(max(0.0, min(free, to_partners)), 2)
-    if free < 0:
+    if room is not None and to_partners <= 0:          # facility mode, as the workbook: what is owed to partners first
+        v = ((f"DO NOT DISTRIBUTE — partners are already ahead of their earned share by {-ahead:,.0f}",
+              f"لا يُنصح بالتوزيع — حصل الشركاء على أكثر من نصيبهم المستحق بمقدار {-ahead:,.0f}") if ahead < 0 else
+             ("DO NOT DISTRIBUTE — no clean profit left to distribute", "لا يُنصح بالتوزيع — لا يوجد ربح صافٍ متبقٍ للتوزيع"))
+    elif free < 0 and room is not None:
+        v = (f"DO NOT DISTRIBUTE — the funding facility is short by {-free:,.0f} after what is committed",
+             f"لا يُنصح بالتوزيع — حد التمويل أقل بمقدار {-free:,.0f} بعد الالتزامات")
+    elif free < 0:
         v = (f"DO NOT DISTRIBUTE — own cash short by {-free:,.0f}", f"لا يُنصح بالتوزيع — النقدية الذاتية أقل بمقدار {-free:,.0f}")
     elif hold_funder:
         v = (f"DO NOT DISTRIBUTE — repay the funding partner first ({funder:,.0f} of his money is in the company)",
@@ -119,13 +138,14 @@ def distributable(db, pol, rows, bs, earned, held, reserve_amt, partners, date_t
              ("DO NOT DISTRIBUTE — no clean profit left to distribute", "لا يُنصح بالتوزيع — لا يوجد ربح صافٍ متبقٍ للتوزيع"))
     else:
         lim = safe < to_partners
-        v = (f"OK to distribute up to {safe:,.0f}" + (" (limited by cash)" if lim else " (limited by clean profit)"),
-             f"يمكن التوزيع حتى {safe:,.0f}" + (" (محدود بالنقدية)" if lim else " (محدود بالربح الصافي)"))
+        by = ("the funding facility", "حد التمويل") if room is not None else ("cash", "النقدية")
+        v = (f"OK to distribute up to {safe:,.0f}" + (f" (limited by {by[0]})" if lim else " (limited by clean profit)"),
+             f"يمكن التوزيع حتى {safe:,.0f}" + (f" (محدود ب{by[1]})" if lim else " (محدود بالربح الصافي)"))
     set_aside = round(sum(r["net"] for r in rows if r.get("role") == "reserve_cash") / 100, 2)
     goal = pol["capital_goal"] or 0
     return {"cash": cash, "owed": owed, "advances": bs["advances"], "held": held, "monthly_overhead": monthly,
             "buffer": buffer, "reserve": reserve_amt, "free": free, "owed_to_partners": to_partners, "funder_money": funder,
-            "max_safe": safe, "verdict": v, "capital_goal": goal, "progress": round(min(1, reserve_amt / goal), 4) if goal else None,
+            "max_safe": safe, "verdict": v, "facility_room": room, "facility": fac, "capital_goal": goal, "progress": round(min(1, reserve_amt / goal), 4) if goal else None,
             "set_aside": set_aside, "not_backed": round(max(0.0, reserve_amt - set_aside), 2),
             "months_covered": round(reserve_amt / monthly, 2) if monthly else None}
 
@@ -276,7 +296,7 @@ def compute(db, date_from=None, date_to=None):
             "verdict_ar": dist["verdict"][1], "dist": dist, "policy": pol, "held_total": held_total, "clean_total": clean_total,
             "reserve_amount": reserve_amt,
             "audit_ok": all(c["ok"] for c in audit), "audit_fails": [c["check"] for c in audit if not c["ok"]],
-            "flags": acc.review_flags(db, date_from, date_to)}
+            "flags": acc.review_flags(db, date_from, date_to, partners=partners)}
 
 
 # ---------------------------------------------------------------- the report (screen / PDF / Excel / Word)

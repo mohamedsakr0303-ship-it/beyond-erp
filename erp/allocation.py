@@ -280,7 +280,7 @@ def allocate(db, date_from=None, date_to=None):
     lines = db.q(f"""SELECT l.account, e.date, (l.debit-l.credit) AS amt, json_extract(e.meta,'$.alloc_rule') AS rule,
                             COALESCE(json_extract(e.meta,'$.no_alloc'),0) AS no_alloc
                      FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id JOIN accounts a ON a.code=l.account
-                     WHERE {w} AND a.subtype IN ({','.join('?' * len(OPEX))})""", p + list(OPEX))
+                     WHERE {w} AND (a.subtype IN ({','.join('?' * len(OPEX))}) OR a.type='COGS')""", p + list(OPEX))
     rule_list = rules(db)
     by_code = {r["code"]: r for r in rule_list}
     ctx = _Ctx(db)

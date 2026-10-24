@@ -113,7 +113,8 @@ COMPANY_KEYS = ("company_name", "company_tagline", "company_address", "company_t
                 "bank_holder", "bank_swift", "bank_iban", "offer_validity_days", "offer_prefix", "offer_digits", "regional",
                 "banks", "bank_default", "country", "invoice_style", "doc_lang")
 PUBLIC_SETTINGS = COMPANY_KEYS + ("demo_loaded", "desk_site", "workday_location", "menu_labels", "reserve_pct", "reserve_early_pct",
-                                  "reserve_early_until", "capital_goal", "buffer_months", "repay_funder_first", "expected_cost_pct", "legal_reserve_pct", "legal_reserve_cap", "funding_partner", "funding_limit", "report_from", "report_to", "lock_date", "hidden_modules",
+                                  "reserve_early_until", "capital_goal", "buffer_months", "repay_funder_first", "expected_cost_pct", "legal_reserve_pct", "legal_reserve_cap", "funding_partner", "funding_limit",
+                                  "funding_extra", "funding_extra_shrinks", "funding_warn", "funding_critical", "funding_mode", "costplus_overhead", "report_from", "report_to", "lock_date", "hidden_modules",
                                   "appearance", "po_self_approve_limit", "menu_layout", "form_custom", "duplicate_check", "two_step_required")
 JSON_SETTINGS = {"menu_labels": {}, "units": [], "hidden_modules": [], "appearance": {}, "regional": {}, "banks": [],
                  "menu_layout": {}, "form_custom": {}}
@@ -348,9 +349,17 @@ def put_settings(ctx):
                 else:
                     ctx.body["appearance"].pop(k, None)
     if keys & {"reserve_pct", "legal_reserve_pct", "legal_reserve_cap", "funding_partner", "funding_limit", "reserve_early_pct", "reserve_early_until",
-               "capital_goal", "buffer_months", "repay_funder_first"} and not ctx.can("partners.equity", "edit"):
+               "capital_goal", "buffer_months", "repay_funder_first", "funding_extra", "funding_extra_shrinks", "funding_warn",
+               "funding_critical", "funding_mode"} and not ctx.can("partners.equity", "edit"):
         ctx.require("settings.company", "edit")
-    if "expected_cost_pct" in keys and not ctx.can("partners.equity", "edit"):
+    if "funding_mode" in keys:          # moves the funding account between equity and liabilities
+        from . import settlement
+        settlement.apply_funding_mode(ctx.db, acc.text(ctx.body["funding_mode"]) or "capital")
+    for k in ("funding_warn", "funding_critical"):
+        if k in keys and ctx.body[k] not in ("", None):
+            x = acc.num(ctx.body[k], k)
+            ctx.body[k] = str(x / 100 if x > 1 else x)
+    if keys & {"expected_cost_pct", "costplus_overhead"} and not ctx.can("partners.equity", "edit"):
         ctx.require("business_units.units", "edit")
     if keys & {"backup_keep", "lock_date", "po_self_approve_limit", "duplicate_check"}:
         ctx.require("settings.system", "edit")

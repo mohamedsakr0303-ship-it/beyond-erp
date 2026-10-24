@@ -108,6 +108,91 @@ def funding_ledger(db, name=None, date_to=None):
             "limit": limit, "limit_used": round(max(own, 0) / to_minor(limit), 4) if limit else None}
 
 
+FUNDING_MODES = ("capital", "facility")
+
+
+def apply_funding_mode(db, mode=None):
+    """capital: what he fronts is his capital in the company (equity). facility: it is a credit line he gives the
+    company, owed back to him first (a current liability, like the workbook's account 2400)."""
+    mode = mode or (db.setting("funding_mode") or "capital")
+    if mode not in FUNDING_MODES:
+        raise acc.ValidationError("The funding partner's money is either capital or a facility.")
+    typ, sub = ("Liability", "short_term_debt") if mode == "facility" else ("Equity", "capital")
+    db.x("UPDATE accounts SET type=?, subtype=? WHERE role='funding_partner'", (typ, sub))
+    return mode
+
+
+def _partner_loans_out(db, date_to):
+    """What partners still owe on loans the company made them (registered under Loans, lent)."""
+    from . import loans
+    names = {r["name"] for r in db.q("SELECT name FROM partners")}
+    return to_major(sum(max(0, loans.principal_balance(db, ln, date_to)) for ln in
+                        db.q("SELECT * FROM loans WHERE direction='lent' AND status='active'") if ln["party"] in names))
+
+
+def facility(db, date_to=None, led=None):
+    """The funding partner's facility: a base line he always covers plus an optional temporary line (agreed for loans to
+    partners; it can shrink as they repay), what he has fronted today and once the suppliers still owed are paid from
+    his account, the peak so far, and a status against the warning levels."""
+    name = funding_partner(db)
+    if not name:
+        return None
+    date_to = acc.clean_date(date_to) if date_to else acc.today()
+    led = led or funding_ledger(db, name, date_to)
+    num = lambda k, d=0.0: float(db.setting(k) or d)  # noqa: E731
+    base, extra = num("funding_limit"), num("funding_extra")
+    shrinks = (db.setting("funding_extra_shrinks") or "yes").lower() not in ("no", "0", "false")
+    loans_out = _partner_loans_out(db, date_to) if extra else 0.0
+    extra_now = 0.0 if not extra or loans_out <= 0.005 else (min(extra, loans_out) if shrinks else extra)
+    limit = round(base + extra_now, 2)
+    fronted = led["own_money"]
+    owed = acc.deals(db, date_to)["total_owed"]
+    own_cash = to_major(sum(r["net"] for r in acc.account_totals(db, date_to=date_to) if r["subtype"] == "cash"))
+    after = round(max(0.0, fronted + owed - max(0.0, own_cash + led["in_his_account"])), 2)
+    peak = max([r["own_money"] for r in led["rows"]] + [fronted, 0.0])
+    warn, crit = num("funding_warn", 0.75), num("funding_critical", 0.9)
+    used = round(after / limit, 4) if limit else None
+    if not limit:
+        state, en, ar = "none", "No limit set", "لم يُحدد حد"
+    elif used >= 1:
+        state, en, ar = "over", f"OVER LIMIT by {after - limit:,.0f}", f"تجاوز الحد بمقدار {after - limit:,.0f}"
+    elif used >= crit:
+        state, en, ar = "near", f"NEAR LIMIT — {limit - after:,.0f} left", f"قريب من الحد — متبقٍ {limit - after:,.0f}"
+    elif used >= warn:
+        state, en, ar = "approaching", f"APPROACHING LIMIT — {limit - after:,.0f} left", f"يقترب من الحد — متبقٍ {limit - after:,.0f}"
+    else:
+        state, en, ar = "ok", f"Within limit — {limit - after:,.0f} left", f"ضمن الحد — متبقٍ {limit - after:,.0f}"
+    return {"partner": name, "base": base, "extra": extra, "extra_shrinks": shrinks, "partner_loans": loans_out,
+            "extra_now": extra_now, "limit": limit, "fronted": fronted, "room": round(limit - fronted, 2), "owed": owed,
+            "after_suppliers": after, "room_after": round(limit - after, 2), "used": used, "peak": round(peak, 2),
+            "warn": warn, "critical": crit, "state": state, "status": en, "status_ar": ar,
+            "weeks": _weeks(led["rows"], base, date_to)}
+
+
+def _weeks(rows, base, date_to):
+    """Weekly statement of his account (weeks start on Monday): paid out, came in, and where it stood at week end."""
+    import datetime as _d
+    if not rows:
+        return []
+    start = _d.date.fromisoformat(rows[0]["date"])
+    start -= _d.timedelta(days=start.weekday())
+    end = _d.date.fromisoformat(date_to)
+    out, i, run = [], 0, 0
+    while start <= end:
+        nxt = start + _d.timedelta(days=7)
+        w_out = w_in = 0
+        while i < len(rows) and rows[i]["date"] < nxt.isoformat():
+            w_out += to_minor(rows[i]["out"])
+            w_in += to_minor(rows[i]["in"])
+            run += to_minor(rows[i]["out"]) - to_minor(rows[i]["in"])
+            i += 1
+        out.append({"week": start.isoformat(), "out": to_major(w_out), "in": to_major(w_in), "net": to_major(w_in - w_out),
+                    "fronted": to_major(max(run, 0)), "company_money": to_major(max(-run, 0)),
+                    "share_of_base": round(max(run, 0) / to_minor(base), 4) if base else None})
+        start = nxt
+    return out
+
+
 def _bal(db, name, date_to, subtypes):
     """Credit-positive balance on accounts of these subtypes in a party's name."""
     marks = ",".join("?" * len(subtypes))
@@ -159,7 +244,8 @@ def exit_view(db, date_to=None):
         r = db.one(f"""SELECT COALESCE(SUM(CASE WHEN a.type='Asset' THEN l.debit-l.credit ELSE 0 END),0) AS owes,
                               COALESCE(SUM(CASE WHEN a.type='Liability' THEN l.credit-l.debit ELSE 0 END),0) AS owed
                        FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id JOIN accounts a ON a.code=l.account
-                       WHERE {LIVE} AND e.date<=? AND {PARTY_IS} AND a.subtype<>'cash'""", (date_to, name))
+                       WHERE {LIVE} AND e.date<=? AND {PARTY_IS} AND a.subtype<>'cash'
+                             AND COALESCE(a.role,'')<>'funding_partner'""", (date_to, name))   # his facility: counted once, below
         owes, owed = to_major(r["owes"]), to_major(r["owed"])
         unbooked = led["unbooked"] if led and name == fund else 0
         # his billed profit splits into what he may take (less what he already took) and the reserve the company
@@ -173,4 +259,5 @@ def exit_view(db, date_to=None):
                     "undrawn_profit": undrawn, "reserve_share": reserve_share, "owes_company": owes, "company_owes": owed,
                     "owed_now": now, "wip_profit": p["held_in_wip"], "funding": name == fund})
     # memo only: profit expected on work done but not invoiced yet — not owed to anyone until it is billed
-    return {"date_to": date_to, "partners": out, "funding_partner": fund, "funding": led, "reserve_pct": reserve}
+    return {"date_to": date_to, "partners": out, "funding_partner": fund, "funding": led, "reserve_pct": reserve,
+            "facility": facility(db, date_to, led) if led else None, "funding_mode": db.setting("funding_mode") or "capital"}

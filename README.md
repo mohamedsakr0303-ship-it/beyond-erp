@@ -181,6 +181,11 @@ A backup is taken automatically once a day and before every "replace" import or 
   value, expected revenue), to one project, or not at all. Each rule can be limited to accounts, dates, statuses,
   groups or a list of projects, has a priority, and is billable or not. An entry can name its rule; untagged costs
   follow the matching or default rule, and with no rules the per-project overhead % applies. Splits add up to the cent.
+* **Funding partner as the company's bank**: what the funding partner fronts is either capital (equity) or a facility owed
+  back to the partner first (a liability). The facility has a base line, an optional temporary line for loans to partners
+  that can shrink as they repay, warning levels, the amount fronted today and once suppliers are paid, the peak, and a
+  weekly statement. Distributions are tested against the room left in the facility.
+* **Cash in & out by project**: raw cash per project, what is still owed to suppliers for it, and where it stands.
 * **Ownership by stage**: a project stage can be owned differently from the project; profit is split over stages by
   the direct cost booked to each stage.
 

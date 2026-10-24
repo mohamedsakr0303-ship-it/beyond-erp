@@ -6166,19 +6166,38 @@ function ownershipForm() {
 
 // What each partner would take out — or owe — if he left today, and the funding partner's own account (the company's
 // bank is his personal account: client money comes in, every cost goes out; what he put in of his own is out − in).
+// The funding partner's facility: limit today (base + temporary line in force), fronted today and once suppliers are
+// paid, room, peak, status against the warning levels, and a weekly statement of his account
+function facilityBlock(x) {
+  const ar = S.lang === "ar", cls = { over: "bad", near: "bad", approaching: "warn", ok: "ok", none: "" }[x.state] || "";
+  const bar = x.used != null ? `<div class="bar" style="height:8px;border-radius:6px;background:var(--line,#333);overflow:hidden;margin:6px 0"><i style="display:block;height:100%;width:${Math.min(100, Math.round(x.used * 100))}%;background:var(--${cls === "bad" ? "neg" : cls === "warn" ? "warn" : "pos"},#4a8)"></i></div>` : "";
+  const k = (l, v, sub) => `<div class="kpi"><div class="l">${esc(l)}</div><div class="v">${typeof v === "number" ? money(v) : v}</div>${sub ? `<div class="muted" style="font-size:.78em">${sub}</div>` : ""}</div>`;
+  return `<h3 style="margin:16px 0 6px">${L2("Funding facility", "تسهيل التمويل")} <span class="chip ${cls}">${esc(ar ? x.status_ar : x.status)}</span></h3>
+    <div class="kpis">${k(L2("Limit today", "الحد اليوم"), x.limit, `${money(x.base)} ${L2("base", "أساسي")}${x.extra ? ` + ${money(x.extra_now)} ${L2("temporary line (partner loans", "حد مؤقت (قروض الشركاء")} ${money(x.partner_loans)})` : ""}`)}
+      ${k(L2("Fronted today (owed to the partner)", "الممول اليوم (مستحق للشريك)"), x.fronted, `${money(x.room)} ${L2("room left", "متبقٍ")}`)}
+      ${k(L2("Once suppliers & staff are paid", "بعد سداد الموردين والعاملين"), x.after_suppliers, `${money(x.owed)} ${L2("still owed", "مستحق")} · ${x.used != null ? pct(x.used) + " " + L2("of the limit", "من الحد") : ""}${bar}`)}
+      ${k(L2("Peak fronted so far", "أعلى تمويل حتى الآن"), x.peak)}</div>
+    <details style="margin-top:8px"><summary>${L2("Weekly statement of the partner's account", "كشف أسبوعي لحساب الشريك")}</summary>
+      <div class="tbl" style="margin-top:6px"><table><thead><tr><th>${L2("Week starting", "بداية الأسبوع")}</th><th class="num">${L2("Paid out", "المنصرف")}</th><th class="num">${L2("Came in", "الوارد")}</th><th class="num">${L2("Net for the week", "صافي الأسبوع")}</th><th class="num">${L2("Fronted at week end", "الممول بنهاية الأسبوع")}</th><th class="num">${L2("Company money in the account", "أموال الشركة بالحساب")}</th><th class="num">${L2("Share of base line", "نسبة من الحد الأساسي")}</th></tr></thead><tbody>
+      ${x.weeks.map(w => `<tr><td>${fd(w.week)}</td><td class="num">${money(w.out)}</td><td class="num">${money(w.in)}</td><td class="num ${w.net < 0 ? "neg" : ""}">${money(w.net)}</td><td class="num"><b>${money(w.fronted)}</b></td><td class="num">${money(w.company_money)}</td><td class="num">${w.share_of_base != null ? pct(w.share_of_base) : "—"}</td></tr>`).join("")}</tbody></table></div></details>`;
+}
 PAGES["partner-exit"] = async (view, parts, q) => {
   const d = await api("GET", "/api/equity/exit?" + qs({ date_to: q.date_to || "" }));
   const ed = can("partners.equity", "edit"), f = d.funding, ar = S.lang === "ar";
   const sign = v => `<span class="${v < 0 ? "neg" : v > 0 ? "pos" : ""}">${money(v)}</span>`;
   const rp = Math.round((d.reserve_pct || 0) * 100);
-  const cols = [[L2("Paid-in capital", "رأس المال المدفوع"), "capital"], [L2("Funding not yet capitalised", "تمويل غير مرسمل"), "funding_unbooked"],
+  const cols = [[L2("Paid-in capital", "رأس المال المدفوع"), "capital"], [d.funding_mode === "facility" ? L2("Money fronted (facility, repaid first)", "مبالغ ممولة (تسهيل يُرد أولاً)") : L2("Funding not yet capitalised", "تمويل غير مرسمل"), "funding_unbooked"],
     [L2("Current account", "الحساب الجاري"), "current"],
     [L2("Share of undistributed invoiced profit", "الحصة في الأرباح المفوترة غير الموزعة"), "undrawn_profit", 0, p => `${money(p.distributable)} − ${money(p.drawings)} ${L2("Drawings", "المسحوبات")}`],
     [L2(`Share of retained reserve (${rp}%)`, `الحصة في الاحتياطي المحتجز (${rp}%)`), "reserve_share"],
     [L2("Due from partner", "مستحق على الشريك"), "owes_company", -1],
     [L2("Due to partner (loans, interest)", "مستحق للشريك (قروض، فوائد)"), "company_owes"]];
   const used = cols.filter(([, k]) => d.partners.some(p => Math.abs(p[k] || 0) >= 0.01) || ["capital", "undrawn_profit", "reserve_share"].includes(k));
-  S.H.pxfund = async () => { const v = $("#pxfp").value, lim = $("#pxlim").value; try { await api("PUT", "/api/settings", { funding_partner: v, funding_limit: lim ? String(+lim) : "" }); toast(t("saved")); route(); } catch (e) { fail(e); } };
+  const fac = d.facility, facMode = d.funding_mode === "facility";
+  S.H.pxfund = async () => { const v = $("#pxfp").value, lim = $("#pxlim").value, num = id => { const x = ($(id) || {}).value; return x ? String(+x) : ""; };
+    try { await api("PUT", "/api/settings", { funding_partner: v, funding_limit: lim ? String(+lim) : "", funding_mode: $("#pxmode").value,
+      funding_extra: num("#pxextra"), funding_extra_shrinks: ($("#pxshrink") || {}).checked ? "yes" : "no", funding_warn: num("#pxwarn"), funding_critical: num("#pxcrit") });
+      toast(t("saved")); route(); } catch (e) { fail(e); } };
   S.H.pxbook = async () => { if (!await uiConfirm(L2(`Record the partner's capital at the amount actually contributed (${money(f.own_money)})? A capital entry is posted for the difference.`, `هل تريد تسجيل رأس مال الشريك بقيمة ما ساهم به فعلاً (${money(f.own_money)})؟ يُرحَّل قيد رأس مال بالفرق.`))) return;
     try { await api("POST", "/api/equity/funding/book", {}); toast(t("posted")); route(); } catch (e) { fail(e); } };
   S.H.pxrows = () => { const el = $("#pxmov"); el.hidden = !el.hidden; };
@@ -6195,20 +6214,28 @@ PAGES["partner-exit"] = async (view, parts, q) => {
     <div class="card"><h2>${L2("Funding Partner: Current Account Movements", "الشريك الممول: حركة الحساب الجاري")}</h2>
       <div class="row" style="gap:8px;flex-wrap:wrap;align-items:flex-end"><label class="f" style="min-width:260px">${L2("Funding partner (company funds pass through the partner's account)", "الشريك الممول (تمر أموال الشركة بحساب الشريك)")}
         <select id="pxfp" ${ed ? "" : "disabled"}><option value="">— ${L2("None", "لا يوجد")} —</option>${d.partners.map(p => `<option ${p.partner === d.funding_partner ? "selected" : ""}>${esc(p.partner)}</option>`).join("")}</select></label>
-        <label class="f" style="max-width:200px">${L2("Agreed funding limit (blank: none)", "حد التمويل المتفق عليه (فارغ: بدون حد)")}<input id="pxlim" type="number" step="any" value="${esc(f && f.limit ? f.limit : "")}" ${ed ? "" : "disabled"}></label>
+        <label class="f" style="min-width:230px">${L2("What the partner's money is", "طبيعة أموال الشريك")}
+          <select id="pxmode" ${ed ? "" : "disabled"}><option value="capital" ${facMode ? "" : "selected"}>${L2("Capital in the company (equity)", "رأس مال في الشركة (حقوق ملكية)")}</option>
+            <option value="facility" ${facMode ? "selected" : ""}>${L2("A funding facility, repaid to the partner first (liability)", "تسهيل تمويلي يُرد للشريك أولاً (التزام)")}</option></select></label>
+        <label class="f" style="max-width:200px">${facMode ? L2("Base line the partner always covers", "الحد الأساسي الذي يغطيه الشريك دائماً") : L2("Agreed funding limit (blank: none)", "حد التمويل المتفق عليه (فارغ: بدون حد)")}<input id="pxlim" type="number" step="any" value="${esc(fac ? fac.base || "" : (f && f.limit ? f.limit : ""))}" ${ed ? "" : "disabled"}></label>
+        ${facMode ? `<label class="f" style="max-width:220px">${L2("Temporary extra line for partner loans", "حد إضافي مؤقت لقروض الشركاء")}<input id="pxextra" type="number" step="any" value="${esc(fac && fac.extra ? fac.extra : "")}" ${ed ? "" : "disabled"}></label>
+          <label class="chk"><input id="pxshrink" type="checkbox" ${!fac || fac.extra_shrinks ? "checked" : ""} ${ed ? "" : "disabled"}> ${L2("Shrinks as the loans are repaid", "يقل كلما سُددت القروض")}</label>
+          <label class="f" style="max-width:120px">${L2("Warn at %", "تنبيه عند %")}<input id="pxwarn" type="number" step="any" value="${fac ? Math.round(fac.warn * 100) : 75}" ${ed ? "" : "disabled"}></label>
+          <label class="f" style="max-width:120px">${L2("Critical at %", "حرج عند %")}<input id="pxcrit" type="number" step="any" value="${fac ? Math.round(fac.critical * 100) : 90}" ${ed ? "" : "disabled"}></label>` : ""}
         ${ed ? `<button class="btn" data-a="pxfund">${t("save")}</button>` : ""}</div>
       ${f ? `<div class="tbl" style="margin-top:12px"><table><thead><tr><th>${L2("Source / use of funds", "مصدر الأموال / استخدامها")}</th><th class="num">${L2("Inflows", "الوارد")}</th><th class="num">${L2("Outflows", "المنصرف")}</th><th class="num">${L2("Net (inflows − outflows)", "الصافي (الوارد − المنصرف)")}</th></tr></thead><tbody>
         ${f.groups.map(g => `<tr><td>${esc(g.label)}</td><td class="num">${money(g.in)}</td><td class="num">${money(g.out)}</td><td class="num">${sign(g.net)}</td></tr>`).join("")}
         <tr class="total"><td>${t("total")}</td><td class="num">${money(f.money_in)}</td><td class="num">${money(f.money_out)}</td><td class="num">${sign(f.money_in - f.money_out)}</td></tr></tbody></table></div>
         <div class="kpis" style="margin-top:10px"><div class="kpi"><div class="l">${L2("Partner funding in the company", "تمويل الشريك في الشركة")}</div><div class="v">${money(f.own_money)}</div>
             <div class="muted" style="font-size:.78em">${L2("Funded loans", "قروض مموّلة")} ${money(f.lent_out)} · ${L2("Spent on the company", "المنفق على الشركة")} ${money(f.spent_on_company)}</div></div>
-          ${f.limit ? `<div class="kpi"><div class="l">${L2("Agreed funding limit", "حد التمويل المتفق عليه")}</div><div class="v">${money(f.limit)}</div><div class="muted" style="font-size:.78em">${pct(f.limit_used)} ${L2("Used", "المستخدم")} · ${money(f.limit - f.own_money)} ${L2("Available", "المتاح")}</div></div>` : ""}
+          ${f.limit && !facMode ? `<div class="kpi"><div class="l">${L2("Agreed funding limit", "حد التمويل المتفق عليه")}</div><div class="v">${money(f.limit)}</div><div class="muted" style="font-size:.78em">${pct(f.limit_used)} ${L2("Used", "المستخدم")} · ${money(f.limit - f.own_money)} ${L2("Available", "المتاح")}</div></div>` : ""}
           <div class="kpi"><div class="l">${L2("Company funds held by the partner", "أموال الشركة لدى الشريك")}</div><div class="v">${money(f.in_his_account)}</div></div>
-          <div class="kpi"><div class="l">${L2("Capital per the books", "رأس المال بالدفاتر")}</div><div class="v">${money(f.booked_capital)}</div></div></div>
+          ${facMode ? "" : `<div class="kpi"><div class="l">${L2("Capital per the books", "رأس المال بالدفاتر")}</div><div class="v">${money(f.booked_capital)}</div></div>`}</div>
+        ${facMode && fac ? facilityBlock(fac) : ""}
         ${(() => { const fp = d.partners.find(p => p.funding); if (!fp) return "";
           const row = (l, v, cls = "", sub = false) => `<tr class="${cls}"><td ${sub ? 'style="padding-inline-start:28px" class="muted"' : ""}>${esc(l)}</td><td class="num">${cls === "memo" ? `<i>${money(v)}</i>` : money(v)}</td></tr>`;
           return `<h3 style="margin:16px 0 6px">${L2("Amounts due to", "المستحق لـ")} ${esc(fp.partner)}</h3><div class="tbl" style="max-width:640px"><table><tbody>
-            ${row(L2("Partner funding (repayable)", "تمويل الشريك (واجب الرد)"), fp.capital + fp.funding_unbooked)}
+            ${row(d.funding_mode === "facility" ? L2("A. As the lender: money fronted (repaid first)", "أ. بصفته مموّلاً: المبالغ الممولة (تُرد أولاً)") : L2("Partner funding (repayable)", "تمويل الشريك (واجب الرد)"), fp.capital + fp.funding_unbooked)}
             ${row(L2("of which: funded loans", "منها: قروض مموّلة"), f.lent_out, "", true)}${row(L2("of which: spent on the company", "منها: المنفق على الشركة"), f.spent_on_company, "", true)}
             ${fp.current ? row(L2("Current account", "الحساب الجاري"), fp.current) : ""}
             ${row(L2("Share of undistributed invoiced profit", "الحصة في الأرباح المفوترة غير الموزعة"), fp.undrawn_profit)}
@@ -6217,9 +6244,9 @@ PAGES["partner-exit"] = async (view, parts, q) => {
             ${fp.company_owes ? row(L2("Loans and other amounts due to the partner", "القروض والمبالغ الأخرى المستحقة للشريك"), fp.company_owes) : ""}
             <tr class="total"><td>${L2("Equity interest", "صافي حقوق الشريك")}</td><td class="num"><b>${money(fp.owed_now)}</b></td></tr>
             ${row(L2("Memo: share of expected profit on uninvoiced work (excluded)", "مذكرة: الحصة في الربح المتوقع على أعمال غير مفوترة (مستبعدة)"), fp.wip_profit, "memo")}
-          </tbody></table></div><p class="muted" style="font-size:.82em;margin-top:4px">${L2("Capital and profit are kept separate, as in partnership accounting: funding is capital; the profit share is added only once invoiced.", "يُفصل رأس المال عن الأرباح كما في محاسبة شركات الأشخاص: التمويل رأس مال، وتُضاف حصة الربح بعد الفوترة فقط.")}</p>`; })()}
-        ${Math.abs(f.unbooked) >= 0.01 ? `<div class="banner warn" style="margin-top:10px">${L2(`Capital per the books differs from actual funding by ${money(f.unbooked)}.`, `يختلف رأس المال بالدفاتر عن التمويل الفعلي بمبلغ ${money(f.unbooked)}.`)} ${ed ? `<button class="btn sm" data-a="pxbook">${L2("Capitalise funding to date", "رسملة التمويل حتى تاريخه")}</button>` : ""}</div>`
-          : `<div class="banner ok" style="margin-top:10px">✓ ${L2("Reconciled: funding equals capital per the books.", "مطابق: التمويل يساوي رأس المال بالدفاتر.")}</div>`}
+          </tbody></table></div><p class="muted" style="font-size:.82em;margin-top:4px">${d.funding_mode === "facility" ? L2("The money the partner fronts is a facility owed back to the partner first; the profit share is the share of all profit to date, less what the partner has drawn.", "المبالغ التي يمولها الشريك تسهيل يُرد له أولاً؛ وحصة الربح هي الحصة في كل الأرباح حتى تاريخه بعد خصم ما سحبه الشريك.") : L2("Capital and profit are kept separate, as in partnership accounting: funding is capital; the profit share is added only once invoiced.", "يُفصل رأس المال عن الأرباح كما في محاسبة شركات الأشخاص: التمويل رأس مال، وتُضاف حصة الربح بعد الفوترة فقط.")}</p>`; })()}
+        ${!facMode && Math.abs(f.unbooked) >= 0.01 ? `<div class="banner warn" style="margin-top:10px">${L2(`Capital per the books differs from actual funding by ${money(f.unbooked)}.`, `يختلف رأس المال بالدفاتر عن التمويل الفعلي بمبلغ ${money(f.unbooked)}.`)} ${ed ? `<button class="btn sm" data-a="pxbook">${L2("Capitalise funding to date", "رسملة التمويل حتى تاريخه")}</button>` : ""}</div>`
+          : facMode ? "" : `<div class="banner ok" style="margin-top:10px">✓ ${L2("Reconciled: funding equals capital per the books.", "مطابق: التمويل يساوي رأس المال بالدفاتر.")}</div>`}
         <p class="muted" style="font-size:.85em">${L2("All client receipts enter the partner's account and all costs, partner advances and distributions are paid from it; each payment below is attributed to the partner. Unpaid supplier bills appear once paid.", "تدخل جميع مقبوضات العملاء حساب الشريك وتُصرف منه جميع التكاليف وسلف الشركاء والتوزيعات، وتُنسب كل دفعة أدناه إليه. تظهر فواتير الموردين عند سدادها.")}</p>
         <button class="btn sm" data-a="pxrows">${L2("Show all movements", "عرض جميع الحركات")} (${f.rows.length})</button>
         <div id="pxmov" hidden><div class="tbl" style="margin-top:8px"><table><thead><tr><th>${t("date")}</th><th>${L2("Entry", "القيد")}</th><th>${L2("Category", "البند")}</th><th class="num">${L2("Inflow", "وارد")}</th><th class="num">${L2("Outflow", "منصرف")}</th><th class="num">${L2("Funding balance", "رصيد التمويل")}</th></tr></thead><tbody>

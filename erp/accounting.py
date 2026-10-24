@@ -1472,6 +1472,12 @@ def balance_sheet(db, date_to=None, bu_id=None):
     nc_assets = sect(BS_NONCURRENT_ASSETS, 1)
     cur_liab = sect(BS_CURRENT_LIABILITIES, -1)
     nc_liab = sect(BS_NONCURRENT_LIABILITIES, -1)
+    # funding facility: what he has fronted is owed to him; a debit balance is the company's own money in his account
+    fund = {r["code"] for r in rows if r.get("role") == "funding_partner" and r["type"] == "Liability"}
+    for x in [x for x in cur_liab if x["code"] in fund and x["amount"] < 0]:
+        cur_liab.remove(x)
+        cur_assets.insert(0, {**x, "name": "Company money held in the funding partner's account", "subtype": "cash",
+                              "amount": -x["amount"]})
     equity = sect(BS_EQUITY, -1)
     # closed financial years (yearend.py): their profit is retained earnings; only the profit since is current earnings
     closed_to = db.one("SELECT MAX(year_end) e FROM year_closes" + (" WHERE year_end<=?" if date_to else ""),
@@ -1741,6 +1747,8 @@ def bu_summaries(db, date_from=None, date_to=None, status=None, q=None):
         bp += [f"%{q}%"] * 3
     out = []
     default_pct = expected_cost_default(db)
+    # optional: a project's own overhead (expense lines tagged to it) also earns the cost-plus fee
+    plus_ovh = (db.setting("costplus_overhead") or "no").lower() in ("yes", "1", "true")
     for b in db.q("SELECT * FROM business_units" + (" WHERE " + " AND ".join(bw) if bw else "") + " ORDER BY code", bp):
         a = agg.get(b["id"], {})
         rev, cogs, ovh = (a.get(k) or 0 for k in ("revenue", "cogs", "direct_overhead"))
@@ -1748,7 +1756,7 @@ def bu_summaries(db, date_from=None, date_to=None, status=None, q=None):
         ab = alloc_by.get(b["id"]) or {}
         alloc_bill, alloc = ab.get("billable") or 0, (ab.get("billable") or 0) + (ab.get("non_billable") or 0)
         if b["basis"] == "Cost-Plus %":       # the fee is charged on direct costs and on shared costs billable to clients
-            expected = int(round((cogs + alloc_bill) * (1 + (b["fee_pct"] or 0))))
+            expected = int(round((cogs + alloc_bill + (ovh if plus_ovh else 0)) * (1 + (b["fee_pct"] or 0))))
         elif b["basis"] == "Fixed Price":
             expected = b["contract_value"] or 0
         else:
@@ -2082,8 +2090,9 @@ def audit(db):
 
 
 
-def review_flags(db, date_from=None, date_to=None):
-    """Reasonableness flags: not errors in the books, but figures someone should look at. Each links to its record."""
+def review_flags(db, date_from=None, date_to=None, partners=None):
+    """Reasonableness flags: not errors in the books, but figures someone should look at. Each links to its record.
+    partners: the Partner Pack's partner rows when the caller already has them (their share of CLEAN profit)."""
     from urllib.parse import quote
     out = []
 
@@ -2097,21 +2106,23 @@ def review_flags(db, date_from=None, date_to=None):
         if b["expected_billing"] > 0 and b["revenue"] > b["expected_billing"] + 0.005:
             add(f"{b['code']}: billed {b['revenue']:,.2f}, more than the expected {b['expected_billing']:,.2f}",
                 f"{b['code']}: الفوترة {b['revenue']:,.2f} أعلى من المتوقع {b['expected_billing']:,.2f}", b["code"], f"#/bu/{b['id']}")
-    try:
-        rep = partner_report(db, date_from, date_to)
-    except (LookupError, ValidationError):
-        rep = {"partners": []}
-    for p in rep["partners"]:
-        if p["balance"] < -0.005:
-            add(f"{p['name']} has drawn {-p['balance']:,.2f} more than the earned share",
-                f"{p['name']} سحب {-p['balance']:,.2f} أكثر من النصيب المستحق", p["name"], "#/statement?party=" + quote(p["name"]))
+    if partners is None:          # drawn ahead = drawn more than the share of CLEAN profit (after costs still to come)
+        from . import partner_pack
+        try:
+            partners = partner_pack.compute(db, date_from, date_to)["partners"]
+        except (LookupError, ValidationError):
+            partners = []
+    for p in partners:
+        if p["undistributed"] < -0.005:
+            add(f"{p['name']} has drawn {-p['undistributed']:,.2f} more than the earned share",
+                f"{p['name']} سحب {-p['undistributed']:,.2f} أكثر من النصيب المستحق", p["name"], "#/statement?party=" + quote(p["name"]))
     from . import settlement
-    led = settlement.funding_ledger(db, date_to=date_to) if settlement.funding_partner(db) else None
-    peak = max([r["own_money"] for r in led["rows"]] + [led["own_money"]]) if led else 0
-    if led and led["limit"] and peak >= led["limit"] - 0.005:
-        add(f"{led['partner']}: funding peaked at {peak:,.2f} (today {led['own_money']:,.2f}), at or above the limit of {led['limit']:,.2f}",
-            f"{led['partner']}: التمويل بلغ ذروته {peak:,.2f} (اليوم {led['own_money']:,.2f})، عند الحد {led['limit']:,.2f} أو فوقه",
-            led["partner"], "#/partner-exit")
+    f = settlement.facility(db, date_to)
+    if f and f["state"] in ("approaching", "near", "over"):
+        add(f"{f['partner']}: funding facility {f['status']} — fronted today {f['fronted']:,.0f}, once suppliers are paid "
+            f"{f['after_suppliers']:,.0f}, peak {f['peak']:,.0f}, limit {f['limit']:,.0f}",
+            f"{f['partner']}: حد التمويل {f['status_ar']} — الممول اليوم {f['fronted']:,.0f}، بعد سداد الموردين "
+            f"{f['after_suppliers']:,.0f}، الذروة {f['peak']:,.0f}، الحد {f['limit']:,.0f}", f["partner"], "#/partner-exit")
     from . import ratecap
     n = len(ratecap.candidates(db))
     if n:

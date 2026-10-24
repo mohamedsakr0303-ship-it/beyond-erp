@@ -21,6 +21,7 @@ T = {
     "trial_balance": ("Trial Balance", "ميزان المراجعة"),
     "general_ledger": ("General Ledger", "دفتر الأستاذ العام"),
     "bu_pnl": ("Profitability by Business Unit", "ربحية وحدات الأعمال"),
+    "project_cash": ("Cash In & Out by Project", "النقدية الواردة والمنصرفة حسب المشروع"),
     "payables": ("Accounts Payable by Party", "أرصدة الدائنين"),
     "receivables": ("Accounts Receivable by Business Unit", "أرصدة المدينين"),
     "stock": ("Inventory Valuation", "تقييم المخزون"),
@@ -399,6 +400,65 @@ def bu_table(db, date_from=None, date_to=None, status=None, lang="en"):
         rows[-1]["cells"] += [tot("cost_still_to_come"), ""]
     pers = [("", date_from or "…", acc.clean_date(date_to))]
     return {"title": L("bu_pnl", lang), "subtitle": _subtitle(db, lang, pers, None), "columns": cols, "rows": rows,
+            "lang": lang}
+
+
+def project_cash(db, date_from=None, date_to=None):
+    """Raw cash per project: what came into any cash / bank (or the funding partner's) account for it and what went out,
+    what is still owed to suppliers and staff for it, and where it stands once they are paid. Money with no project
+    (overhead, loans to partners, distributions) is one company line."""
+    money = {r["code"] for r in db.q("SELECT code FROM accounts WHERE subtype='cash' OR role='funding_partner'")}
+    owe = {r["code"] for r in db.q("SELECT code FROM accounts WHERE type='Liability' AND subtype IN ('payable','accrued') "
+                                   "AND COALESCE(role,'') NOT IN ('funding_partner')")}
+    w, p = acc._where(date_from=date_from, date_to=date_to)
+    agg = {}
+    for r in db.q(f"""SELECT e.bu_id, l.account, SUM(l.debit) dr, SUM(l.credit) cr FROM journal_lines l
+                      JOIN journal_entries e ON e.id=l.entry_id WHERE {w} GROUP BY e.bu_id, l.account""", p):
+        g = agg.setdefault(r["bu_id"], {"in": 0, "out": 0, "owed": 0})
+        if r["account"] in money:
+            g["in"] += r["dr"]
+            g["out"] += r["cr"]
+        elif r["account"] in owe:
+            g["owed"] += r["cr"] - r["dr"]
+    rows = []
+    for b in db.q("SELECT id, code, name FROM business_units ORDER BY code"):
+        g = agg.get(b["id"])
+        if g and (g["in"] or g["out"] or g["owed"]):
+            rows.append({"id": b["id"], "code": b["code"], "name": b["name"], **g})
+    if agg.get(None):
+        rows.append({"id": None, "code": "", "name": "", **agg[None]})
+    for r in rows:
+        r["net"] = r["in"] - r["out"]
+        r["after"] = r["net"] - r["owed"]
+        r["spent"] = round(r["out"] / r["in"], 4) if r["in"] else None
+        for k in ("in", "out", "owed", "net", "after"):
+            r[k] = acc.to_major(r[k])
+    return rows
+
+
+def project_cash_table(db, date_from=None, date_to=None, lang="en"):
+    ar = lang == "ar"
+    data = project_cash(db, date_from, date_to)
+    heads = [("Code", "الكود", "left"), ("Project", "المشروع", "left"), ("Cash in", "النقدية الواردة", "right"),
+             ("Cash out", "النقدية المنصرفة", "right"), ("Net cash", "صافي النقدية", "right"), ("Cash out vs in", "المنصرف من الوارد", "right"),
+             ("Still to pay suppliers", "المتبقي للموردين", "right"), ("After paying suppliers", "بعد سداد الموردين", "right"),
+             ("Where it stands", "الموقف", "left")]
+    cols = [{"label": h[1] if ar else h[0], "align": h[2], "fmt": "money" if h[2] == "right" else None} for h in heads]
+    cols[5]["fmt"] = "pct"
+
+    def stands(r):
+        if r["after"] < -0.005:
+            return (f"يحتاج {-r['after']:,.0f} (من أموال الشريك)" if ar else f"Short by {-r['after']:,.0f} (partner money)")
+        return (f"متقدم بمقدار {r['after']:,.0f}" if ar else f"Ahead by {r['after']:,.0f}")
+    rows = [{"cells": [r["code"] or ("الشركة (بدون مشروع)" if ar else "Company (no project)"),
+                       r["name"] or ("مصروفات عامة وقروض شركاء وتوزيعات" if ar else "overhead, partner loans, distributions"),
+                       r["in"], r["out"], r["net"], r["spent"] if r["spent"] is not None else "", r["owed"], r["after"], stands(r)],
+             "style": "item", "indent": 0} for r in data]
+    tot = {k: round(sum(r[k] for r in data), 2) for k in ("in", "out", "net", "owed", "after")}
+    rows.append({"cells": [L("total", lang), "", tot["in"], tot["out"], tot["net"], "", tot["owed"], tot["after"], stands(tot)],
+                 "style": "grand", "indent": 0})
+    pers = [("", date_from or "…", acc.clean_date(date_to))]
+    return {"title": L("project_cash", lang), "subtitle": _subtitle(db, lang, pers, None), "columns": cols, "rows": rows,
             "lang": lang}
 
 
@@ -982,6 +1042,8 @@ def build(db, name, p):
         return bu_table(db, p.get("date_from"), p.get("date_to"), p.get("status"), lang)
     if name == "payables":
         return payables_table(db, p.get("date_to"), lang)
+    if name == "project_cash":
+        return project_cash_table(db, p.get("date_from"), p.get("date_to"), lang)
     if name == "stock":
         return stock_table(db, p.get("warehouse_id"), p.get("q"), lang)
     if name == "tax":
@@ -1033,7 +1095,7 @@ def build(db, name, p):
 
 REPORT_PERMS = {"payroll_register": "payroll.runs", "partner_pack": ("reports.partner_pack", "partners.equity"), "income_statement": "reports.income_statement", "balance_sheet": "reports.balance_sheet",
                 "cash_flow": "reports.cash_flow", "trial_balance": "reports.trial_balance",
-                "general_ledger": "accounting.ledger", "bu_pnl": "business_units.profitability",
+                "general_ledger": "accounting.ledger", "bu_pnl": "business_units.profitability", "project_cash": "business_units.profitability",
                 "payables": "purchasing.payables", "stock": "stock.balances", "receivables": "sales.receivables",
                 "tax": "tax.report", "fixed_assets": "assets.register",
                 "negotiations": "purchasing.negotiations", "materials_used": ("projects.overview", "stock.moves", "purchasing.costs"), "loans": "accounting.loans", "loan_schedule": "accounting.loans",

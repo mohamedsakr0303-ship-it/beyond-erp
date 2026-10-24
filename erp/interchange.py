@@ -1975,6 +1975,9 @@ def _imp_setting(db, r):
         if (db.setting(key) or "").strip():
             return
     db.conn.execute("INSERT OR REPLACE INTO settings(key,value) VALUES (?,?)", (key, acc.text(r.get("value"), maxlen=20000)))
+    if key == "funding_mode":          # the funding account follows: equity (capital) or a liability (facility)
+        from . import settlement
+        settlement.apply_funding_mode(db, acc.text(r.get("value")) or "capital")
 
 
 def _imp_account(db, r):

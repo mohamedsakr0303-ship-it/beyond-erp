@@ -146,7 +146,7 @@ def read_legacy_workbook(path):
                     "Fixed Price" if str(basis or "").lower().startswith("measured") else "Cost-Plus %",
                     # the fee is an input only on cost-plus projects; on the others the sheet shows the realised
                     # markup (collected ÷ cost − 1, negative while costs exceed collections), which the app works out itself
-                    "fee_pct": _f(_get(row, _col(h, "fee %"))) if str(basis or "").lower().startswith("cost-plus") else "",
+                    "fee_pct": _f(_get(row, _col(h, "cost-plus fee", "fee %"))) if str(basis or "").lower().startswith("cost-plus") else "",
                     # measured (BOQ-rate) work: the executed quantities on its draft invoice are its work in progress
                     "wip_mode": "drafts" if str(basis or "").lower().startswith("measured") else
                     "cost_plus" if str(basis or "").lower().startswith("cost-plus") else "",
@@ -367,6 +367,13 @@ def read_legacy_workbook(path):
         _read_partner_loans(sheet("balances tracker"), data, notes)
         _read_negotiations(sheet("negotiation register"), data, notes)
         _read_design_offer(sheet("design offer"), data, notes)
+    if data.get("_facility"):
+        data["Settings"].append({"key": "funding_mode", "value": "facility"})
+        notes.append(f"Funding facility (V1.9+): what the funding partner fronts is owed to him (the workbook's account "
+                     f"{data['_facility']}), so the app's funding account is a liability (facility mode), not his capital. "
+                     "Equity → If a partner leaves shows the facility: limit, fronted today and once suppliers are paid, peak, "
+                     "weekly statement.")
+    data.pop("_facility", None)
     data.pop("_remap", None)
     data.pop("_rules", None)
     data.pop("_funder", None)
@@ -443,9 +450,10 @@ def _allocation_rule(ws, codes):
             name = _v(row[0]) if row else None
             if not name:
                 continue
-            split = {code: round(_f(row[i]), 10) for i, code in cols.items() if i < len(row)}
-            if split and 0.999 <= sum(split.values()) <= 1.0000001:
-                return {"name": name, "split": split}
+            split = {code: _f(row[i]) for i, code in cols.items() if i < len(row)}
+            total = sum(split.values())
+            if split and total > 0 and min(split.values()) >= 0:          # percentages or (V2.0) weights
+                return {"name": name, "split": {c: round(v / total, 10) for c, v in split.items()}}
             return None
     return None
 
@@ -455,45 +463,74 @@ def _rule_code(name):
 
 
 def _read_allocation_rules(ws, codes, data, notes):
-    """Every rule on the Cost Allocation sheet becomes an allocation rule. The first one is the default (what untagged
-    shared costs follow); a rule at 0% everywhere keeps the cost as company overhead."""
+    """Every rule on the Cost Allocation sheet becomes an allocation rule. V2.0 gives each project a weight (the pool is
+    split by weight ÷ total weight; total 0 keeps it as company overhead) and names the default rule below the table;
+    older sheets use percentages that total 100% or 0% and the first rule is the default."""
     if ws is None:
         return
     for hr, h in _headers(ws, ["allocation rule", "billable"], scan=10):
         row_h = [_v(c.value) for c in ws[hr]]
         cols = {i: str(v).strip() for i, v in enumerate(row_h) if str(v or "").strip() in codes}
         bill = _col(h, "billable")
-        seen, skipped = set(), []
+        weights = _col(h, "total weight") is not None
+        rules, skipped = [], []
         for row in ws.iter_rows(min_row=hr + 1, values_only=True):
             name = _v(row[0]) if row else None
-            if not name or str(name).strip().upper().startswith("TOTAL"):
+            if not name:
+                if rules and not any(_v(x) for x in row[1:3]):
+                    break                                     # the end of the rules table (a results table may follow)
                 continue
-            split = {c: round(_f(row[i]), 10) for i, c in cols.items() if i < len(row) and _f(row[i])}
+            if str(name).strip().upper().startswith("TOTAL"):
+                break
+            split = {c: _f(row[i]) for i, c in cols.items() if i < len(row) and _f(row[i])}
             total = sum(split.values())
-            if total and not 0.999 <= total <= 1.0000001:
+            if any(v < 0 for v in split.values()):
+                skipped.append(f"{name} (negative weight)")
+                continue
+            if total and not weights and not 0.999 <= total <= 1.0000001:
                 skipped.append(f"{name} ({total:.2%})")
                 continue
+            split = {c: round(v / total, 10) for c, v in split.items()} if total else {}
+            rules.append((str(name).strip(), split, str(_v(_get(row, bill)) or "").strip().lower().startswith("y")))
+        # V2.0: the default rule is named below the table; unknown rule names on journal lines fall back to it
+        default, plus_ovh = rules[0][0] if rules else "", None
+        for row in ws.iter_rows(min_row=hr + 1, max_row=min(ws.max_row, hr + 60), values_only=True):
+            label = str(_v(row[0]) or "").lower() if row else ""
+            val = next((_v(x) for x in row[1:] if _v(x) not in (None, "")), None) if row else None
+            if label.startswith("default rule") and val:
+                default = str(val).strip()
+            elif "cost-plus base" in label and val is not None:
+                plus_ovh = str(val).strip().lower().startswith("y")
+        seen = {}
+        for name, split, billable in rules:
             code = _rule_code(name)
-            while code in seen:
+            while code in seen.values():
                 code = (code[:36] + "-" + str(len(seen)))[:40]
-            seen.add(code)
+            seen[name] = code
             data["Allocation Rules"].append({
-                "code": code, "name": str(name).strip(), "method": "fixed" if split else "none",
-                "split": "; ".join(f"{c}: {v * 100:.6g}%" for c, v in split.items()),
-                "billable": "Yes" if str(_v(_get(row, bill)) or "").strip().lower().startswith("y") else "No",
-                "is_default": "Yes" if len(seen) == 1 else "No", "active": "Yes"})
-            data.setdefault("_rules", {})[str(name).strip()] = code
-        if seen:
-            notes.append(f"Cost Allocation: {len(seen)} rules imported (Business Units → Cost Allocation Rules). The first, "
-                         f"'{data['Allocation Rules'][0]['name']}', is the default for untagged shared costs, as in the workbook. "
-                         "Rules can now also spread costs evenly, by revenue, cost, hours, headcount or area, per account and per period.")
-        even = [r["name"] for r in data["Allocation Rules"] if r["method"] == "fixed" and len(set(r["split"].split("; "))) and
-                len({x.split(": ")[1] for x in r["split"].split("; ")}) == 1 and r["split"].count(":") == len(cols)]
+                "code": code, "name": name, "method": "fixed" if split else "none",
+                "split": "; ".join(f"{c}: {v * 100:.8g}%" for c, v in split.items()),
+                "billable": "Yes" if billable else "No", "is_default": "Yes" if name == default else "No", "active": "Yes"})
+        if rules and default not in seen:
+            data["Allocation Rules"][0]["is_default"] = "Yes"
+            default = rules[0][0]
+        data["_rules"] = dict(seen)
+        if plus_ovh is not None:
+            data["Settings"].append({"key": "costplus_overhead", "value": "yes" if plus_ovh else "no"})
+        if rules:
+            notes.append(f"Cost Allocation: {len(rules)} rules imported (Business Units → Cost Allocation Rules); '{default}' is the "
+                         "default for shared costs with no rule or an unknown rule name, as in the workbook"
+                         + (" — project weights converted to shares of each pool" if weights else "") + ". "
+                         "Rules can also spread costs evenly, by revenue, cost, hours, headcount or area, per account and per period.")
+        if plus_ovh is not None:
+            notes.append("Project overhead (expense lines tagged to a project) " + ("counts" if plus_ovh else "does not count")
+                         + " in the Cost-Plus fee base, as set on the Cost Allocation sheet.")
+        even = [n for n, sp, _b in rules if len(sp) == len(cols) and len(set(round(v, 8) for v in sp.values())) == 1]
         if even:
             notes.append(f"{', '.join(even)}: equal shares across every project, kept as fixed percentages so the figures match the "
                          "workbook. Switch the method to 'Even' to include new projects automatically.")
         if skipped:
-            notes.append("Cost Allocation rules not imported because they total neither 0% nor 100%: " + ", ".join(skipped) + ".")
+            notes.append("Cost Allocation rules not imported: " + ", ".join(skipped) + ".")
         return
 
 
@@ -590,6 +627,12 @@ def _read_new_accounts(ws, data, notes):
             code, name, typ = (_v(_get(row, _col(h, k))) for k in ("code", "account name", "type"))
             code = str(code or "").strip()
             if not code.isdigit() or not name or typ not in _COA_SUBTYPE:
+                continue
+            if data.get("_funder") and typ == "Liability" and "funding" in str(name).lower():
+                # V1.9+: what the funding partner fronts is a facility owed to him (a liability), not capital — it is
+                # the app's funding partner account, switched to facility mode
+                remap[code] = FUNDING_ACCOUNT
+                data["_facility"] = code
                 continue
             if code in app and code not in V13_ACCOUNTS and _clashes(name, typ, *app[code]):
                 # the same number means something else in the app (e.g. 1330 partner loans vs withholding tax
@@ -731,8 +774,20 @@ def _read_partner_loans(ws, data, notes):
             data.setdefault("Settings", []).append({"key": "funding_partner", "value": m.group(1).strip()})
             notes.append(f"Funding partner: {m.group(1).strip()} — the company's money runs through his account "
                          "(Equity → If a partner leaves shows his money in and out).")
+        cells = [ws.cell(r, c).value for c in range(1, min(ws.max_column, 16) + 1)]
+        label = " ".join(str(v) for v in cells if isinstance(v, str)).lower()
+        nums = [v for v in cells if isinstance(v, (int, float)) and not isinstance(v, bool)]
+        for words, key in (("base line he always covers", "funding_limit"), ("temporary extra line", "funding_extra")):
+            if words in label and nums and not any(x.get("key") == key for x in data.get("Settings", [])):
+                data.setdefault("Settings", []).append({"key": key, "value": str(nums[-1])})
+        if "extra line shrink" in label:
+            yes = next((str(v).strip().lower() for v in cells if str(v or "").strip().lower() in ("yes", "no")), "")
+            if yes:
+                data.setdefault("Settings", []).append({"key": "funding_extra_shrinks", "value": yes})
+        if "warn me at" in label and len(nums) >= 2:
+            data.setdefault("Settings", []).extend([{"key": "funding_warn", "value": str(nums[-2])},
+                                                    {"key": "funding_critical", "value": str(nums[-1])}])
         if not any(x.get("key") == "funding_limit" for x in data.get("Settings", [])):
-            cells = [ws.cell(r, c).value for c in range(1, min(ws.max_column, 16) + 1)]
             if any("agreed funding limit" in str(v or "").lower() for v in cells):
                 nums = [v for v in cells if isinstance(v, (int, float)) and not isinstance(v, bool)]
                 if nums:
@@ -809,7 +864,7 @@ def _read_journal(wb, ws, data, notes, codes):
         tag = next((str(_v(_get(r, _col(h, "alloc rule")))).strip() for r in rows if _v(_get(r, _col(h, "alloc rule")))), "")
         rule_tag = "" if proj else (data.get("_rules") or {}).get(tag, "")
         if tag and not proj and not rule_tag:
-            unknown_rules.add(tag)
+            unknown_rules.add(tag)          # follows the default rule, as in the workbook
         stage = next((str(_v(_get(r, _col(h, "stage")))).strip() for r in rows
                       if str(_v(_get(r, _col(h, "stage"))) or "").strip().lower() not in ("", "all")), "") if proj else ""
         staged[0] += bool(stage)
@@ -824,7 +879,7 @@ def _read_journal(wb, ws, data, notes, codes):
             code = str(_v(_get(r, _col(h, "account"))))
             new = _account_v13(code, roles, data.get("_remap"))
             line_party = (_v(_get(r, _col(h, "vendor", "party"))) or "") if (_v(_get(r, _col(h, "vendor", "party"))) or "") != party else ""
-            if funder and code in bank_codes:
+            if funder and (code in bank_codes or (data.get("_remap") or {}).get(code) == FUNDING_ACCOUNT):
                 # the workbook's bank is the funding partner's own account: every payment out of it is his money
                 new, line_party = FUNDING_ACCOUNT, funder
                 funded.add(je)
@@ -842,8 +897,10 @@ def _read_journal(wb, ws, data, notes, codes):
                 items[0] += 1
             data["Journal Vouchers"].append(row)
         n += 1
-    notes.append(f"General Journal: {n} entries imported line for line (the workbook's own source of truth); the hidden "
-                 "archive sheets (Project Costing, OpEx, Payroll, Income Tracker) were not imported, so nothing is counted twice.")
+    archived = [t for t in ("Project Costing", "Operating Expenses", "Payroll", "Income Tracker")
+                 if any(t.lower() in w.title.lower() for w in wb.worksheets)]
+    notes.append(f"General Journal: {n} entries imported line for line (the workbook's own source of truth)" +
+                 (f"; the archive sheets ({', '.join(archived)}) were not imported, so nothing is counted twice." if archived else "."))
     if mapped:
         notes.append("Account codes that mean something else in the app were moved: " + ", ".join(sorted(mapped)) + ".")
     if staged[0]:
