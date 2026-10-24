@@ -5,6 +5,8 @@ generic message ("{} is required") have their own list."""
 
 MESSAGES = {
     'Choose a project.': 'اختر مشروعاً.',
+    'Choose at least one rate': 'اختر سعراً واحداً على الأقل',
+    'Give a category for the rates that have none': 'حدد فئة للأسعار التي ليس لها فئة',
     '{}: the mix is empty': '{1}: لم تُحدد مكونات الفئة',
     'Shares for stage {} total {}%; they must total 100%.': 'مجموع حصص المرحلة {1} هو {2}%، ويجب أن يساوي 100%.',
     'Allocation rule not found.': 'قاعدة التوزيع غير موجودة.',

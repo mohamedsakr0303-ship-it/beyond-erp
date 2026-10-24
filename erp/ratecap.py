@@ -86,3 +86,24 @@ def candidates(db, include_ignored=False):
         rows.append(c)
     rows.sort(key=lambda c: (c["last_date"], c["seen"]), reverse=True)
     return rows
+
+
+def add_many(db, keys, category=""):
+    """Add several captured rates to the price list at once. Each keeps the cost and / or client price it was seen at;
+    a price that was never seen stays blank (0) rather than being made up. Rows with no category take the one given."""
+    want = set(keys)
+    rows = [c for c in candidates(db, include_ignored=True) if c["key"] in want]
+    missing = [c["description"] for c in rows if not (c["category"] or category)]
+    if missing:
+        raise ValueError("category")
+    n = 0
+    for c in rows:
+        cost = c["cost"]["last"] if c["cost"] else 0
+        price = c["price"]["last"] if c["price"] else 0
+        markup = round(price / cost - 1, 6) if cost and price else 0
+        src = " · ".join(f"{x['source']} {x['last_date']}".strip() for x in (c["price"], c["cost"]) if x)
+        db.x("INSERT INTO rates(category,item_no,sub,description,unit,cost,markup,price,notes) VALUES (?,?,?,?,?,?,?,?,?)",
+             (c["category"] or category, "", "", c["description"], c["unit"], to_minor(cost), markup, to_minor(price),
+              ("Captured from " + src)[:500]))
+        n += 1
+    return n

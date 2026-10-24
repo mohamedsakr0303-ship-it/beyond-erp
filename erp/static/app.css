@@ -1863,3 +1863,4 @@ input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 4px color
 .alert-row .new-dot{width:8px;height:8px;border-radius:50%;background:var(--acc,#e0b030);flex:none;margin-inline-start:auto}
 .bell-foot{padding:6px 10px;border-top:1px solid var(--line,rgba(255,255,255,.08));text-align:center}
 .dd-menu .bell-foot button{width:auto;display:inline-block}
+.bell-sec .bell-ign{text-transform:none;letter-spacing:0;font-weight:600;font-size:1.25em}

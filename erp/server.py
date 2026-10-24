@@ -1908,9 +1908,27 @@ def rate_capture(ctx):
 @route("POST", "/api/rate-capture/ignore", "estimating.prices", "edit")
 def rate_capture_ignore(ctx):
     from . import ratecap
-    k = acc.text(ctx.body.get("key"), "key", required=True, maxlen=600)
-    ratecap.set_ignored(ctx.db, k, not ctx.body.get("restore"))
-    return ok()
+    keys = [acc.text(k, maxlen=600) for k in (ctx.body.get("keys") or [ctx.body.get("key")]) if acc.text(k)]
+    if not keys:
+        raise acc.ValidationError("Choose at least one rate")
+    for k in keys[:2000]:
+        ratecap.set_ignored(ctx.db, k, not ctx.body.get("restore"))
+    return ok({"done": len(keys)})
+
+
+@route("POST", "/api/rate-capture/add", "estimating.prices", "add")
+def rate_capture_add(ctx):
+    """Add several captured rates to the price list at once."""
+    from . import ratecap
+    keys = [acc.text(k, maxlen=600) for k in (ctx.body.get("keys") or []) if acc.text(k)]
+    if not keys:
+        raise acc.ValidationError("Choose at least one rate")
+    try:
+        n = ratecap.add_many(ctx.db, keys[:2000], acc.text(ctx.body.get("category"), maxlen=120))
+    except ValueError:
+        raise acc.ValidationError("Give a category for the rates that have none") from None
+    ctx.log("rates.capture", n)
+    return ok({"done": n})
 
 
 # ============================================================ BOQ & invoices
@@ -3544,7 +3562,7 @@ def alerts(ctx):
     for r in out:
         r["group"] = _bell_group(r)
         r["key"] = r.get("kind") + ":" + str(r["id"]) if r.get("kind") == "feed" else \
-            f"{r.get('kind') or ''}|{r['href']}|{re.sub(r'[0-9.,]+', '#', r['en'])[:120]}"
+            f"{r.get('kind') or ''}|{r['href']}|{re.sub(r'[0-9.,]+', '#', r['en'])[:120].strip()}"
         r["sig"] = f"{r['key']}|{r.get('count', 1)}"
         r["ignored"] = ignored.get(r["key"]) == r["sig"]       # a changed count (something new) brings it back
         r["new"] = not r["ignored"] and r["sig"] not in seen
@@ -3601,13 +3619,19 @@ def alerts_seen(ctx):
 
 @route("POST", "/api/alerts/ignore")
 def alerts_ignore(ctx):
-    """Hide an alert from the bell (until its count changes), or bring it back."""
-    key, sig = acc.text(ctx.body.get("key"), "key", required=True, maxlen=300), acc.text(ctx.body.get("sig"), maxlen=320)
+    """Hide alerts from this person's bell (until their count changes), or bring them back. One {key, sig} or
+    {items: [{key, sig}, …]} for several at once."""
+    items = ctx.body.get("items") if isinstance(ctx.body.get("items"), list) else [ctx.body]
+    items = [(acc.text(i.get("key"), maxlen=300), acc.text(i.get("sig"), maxlen=320)) for i in items[:300] if isinstance(i, dict)]
+    items = [(k, g) for k, g in items if k]
+    if not items:
+        raise acc.ValidationError("key is required")
     ign = dict(_bell_prefs(ctx).get("bell_ignored") or {})
-    if ctx.body.get("restore"):
-        ign.pop(key, None)
-    else:
-        ign[key] = sig
+    for key, sig in items:
+        if ctx.body.get("restore"):
+            ign.pop(key, None)
+        else:
+            ign[key] = sig
     _bell_prefs(ctx, {"bell_ignored": dict(list(ign.items())[-300:])})
     return ok()
 

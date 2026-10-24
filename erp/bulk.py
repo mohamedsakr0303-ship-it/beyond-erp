@@ -178,6 +178,13 @@ TARGETS = {
     "invoices": {"post": _go("POST", "/api/extracts/{id}/post", {}), "delete": _go("DELETE", "/api/extracts/{id}")},
     "ereceipts": {"issue": _go("POST", "/api/ereceipts/{id}/issue"), "delete": _go("DELETE", "/api/ereceipts/{id}")},
     "stock_counts": {"cancel": _go("POST", "/api/stock-counts/{id}/cancel"), "delete": _go("DELETE", "/api/stock-counts/{id}")},
+    # drafts held for approval: each is approved or returned through its own route (same approver rules, one by one)
+    "hr_requests": {"approve": _go("POST", "/api/hr-requests/{id}/decide", {"approve": True}),
+                    "reject": _go("POST", "/api/hr-requests/{id}/decide", lambda d: {"approve": False, "note": text(d.get("reason"))})},
+    "followups": {"done": _go("PUT", "/api/crm/followups/{id}", {"done": True}),
+                  "delete": _go("DELETE", "/api/crm/followups/{id}")},
+    "approvals": {"approve": _go("POST", "/api/approvals/{id}/approve", {}),
+                  "reject": _go("POST", "/api/approvals/{id}/reject", lambda d: {"note": text(d.get("reason"))})},
 }
 
 
@@ -197,6 +204,8 @@ def run(ctx, d):
         raise ValidationError(f"Select at most {MAX_IDS} records at a time")
     if action == "void" and not text(d.get("reason")):
         raise ValidationError("Give a reason for voiding")
+    if target == "approvals" and action == "reject" and not text(d.get("reason")):
+        raise ValidationError("Say why it is sent back, so it can be fixed")
     if action == "edit" and not any(v not in (None, "") for v in (d.get("changes") or {}).values()):
         raise ValidationError("Choose at least one change")
     done, failed = [], []

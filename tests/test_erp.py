@@ -5779,3 +5779,82 @@ class ImprovementsPack(unittest.TestCase):
         self.assertEqual(st, 400)
         self.assertIn("were changed after", r["error"])
         self.assertTrue(db.one("SELECT 1 FROM journal_entries WHERE id=?", (eid,)))
+
+
+class BatchDecisions(unittest.TestCase):
+    """Decide many at once: requests, approvals, follow-ups, captured rates and bell alerts — each checked as if
+    done by hand, and the bell stays per person."""
+    setUp, call = BillsAndAlerts.setUp, BillsAndAlerts.call
+
+    def _user(self, name, **kw):
+        auth.create_user(self.db, {"username": name, "password": "secret123", **kw})
+        self.tok[name] = auth.login(self.db, name, "secret123")[0]
+
+    def test_requests_followups_and_approvals(self):
+        ids = [self.call("eng", "POST", "/api/hr-requests", {"kind": "overtime", "hours": h, "date_from": "2030-01-0" + str(h)})[1]["id"]
+               for h in (1, 2, 3)]
+        bulk = lambda who, **d: self.call(who, "POST", "/api/bulk", d)  # noqa: E731
+        self.assertEqual(bulk("eng", target="hr_requests", action="approve", ids=ids)[1]["done"], 0)   # not his to decide
+        st, r = bulk("boss", target="hr_requests", action="approve", ids=ids[:2])
+        self.assertEqual((st, r["done"], r["failed"]), (200, 2, []))
+        st, r = bulk("boss", target="hr_requests", action="reject", ids=ids[2:], reason="Not needed")
+        self.assertEqual(r["done"], 1)
+        got = {x["id"]: (x["status"], x.get("decision_note") or x.get("note") or "") for x in self.db.q("SELECT * FROM hr_requests")}
+        self.assertEqual([got[i][0] for i in ids], ["approved", "approved", "rejected"])
+        f = [self.call("boss", "POST", "/api/crm/followups", {"title": f"Call {i}", "due": "2030-01-05"})[1]["id"] for i in range(3)]
+        self.assertEqual(bulk("boss", target="followups", action="done", ids=f[:2])[1]["done"], 2)
+        self.assertEqual(bulk("boss", target="followups", action="delete", ids=f[2:])[1]["done"], 1)
+        self.assertEqual(self.db.one("SELECT COUNT(*) n FROM crm_followups WHERE id IN (?,?) AND done=1", tuple(f[:2]))["n"], 2)
+        self.assertIsNone(self.db.one("SELECT id FROM crm_followups WHERE id=?", (f[2],)))
+        # approvals: sending back needs a reason; approving posts each entry
+        self._user("maker", perms={"accounting": "add"}, needs_approval=True, group_key="finance")
+        jv = {"date": "2026-03-01", "memo": "Office rent", "party": "Landlord",
+              "lines": [{"account": "5010", "debit": 700}, {"account": "1010", "credit": 700}]}
+        aids = [self.call("maker", "POST", "/api/journal", dict(jv, memo=f"Rent {i}"))[1]["approval"] for i in range(3)]
+        self.assertEqual(bulk("boss", target="approvals", action="reject", ids=aids[2:])[0], 400)
+        self.assertEqual(bulk("boss", target="approvals", action="reject", ids=aids[2:], reason="Wrong month")[1]["done"], 1)
+        self.assertEqual(bulk("boss", target="approvals", action="approve", ids=aids[:2])[1]["done"], 2)
+        st = {r["id"]: r["status"] for r in self.db.q("SELECT id, status FROM approvals")}
+        self.assertEqual([st[i] for i in aids], ["approved", "approved", "rejected"])
+
+    def test_rate_capture_add_and_ignore_many(self):
+        from erp import ratecap
+        x = a.save_extract(self.db, {"bu_code": "PRJ-D01", "number": "INV-RC", "date": "2026-03-01",
+                                     "lines": [{"description": "Item one", "unit": "pcs", "qty": 1, "price": 120, "category": "General"},
+                                               {"description": "Item two", "unit": "pcs", "qty": 1, "price": 50}]})
+        a.post_extract(self.db, x)
+        a.record_project_cost(self.db, {"bu_code": "PRJ-D01", "vendor": "Sup", "description": "Item one", "qty": 1, "unit": "pcs",
+                                        "rate": 100, "date": "2026-03-02"})
+        a.record_project_cost(self.db, {"bu_code": "PRJ-D01", "vendor": "Sup", "description": "Item three", "qty": 1, "unit": "pcs",
+                                        "rate": 30, "date": "2026-03-02"})
+        k = {c["description"]: c["key"] for c in ratecap.candidates(self.db) if c["description"].startswith("Item ")}
+        self.assertEqual(len(k), 3)
+        self.assertEqual(self.call("boss", "POST", "/api/rate-capture/add", {"keys": []})[0], 400)
+        self.assertEqual(self.call("boss", "POST", "/api/rate-capture/add", {"keys": [k["Item one"], k["Item two"]]})[0], 400)  # no category
+        self.assertEqual(self.call("eng", "POST", "/api/rate-capture/add", {"keys": [k["Item one"]], "category": "X"})[0], 403)
+        st, r = self.call("boss", "POST", "/api/rate-capture/add", {"keys": [k["Item one"], k["Item two"]], "category": "Other"})
+        self.assertEqual(st, 200, r)
+        got = {r["description"]: r for r in self.db.q("SELECT * FROM rates WHERE description LIKE 'Item %'")}
+        self.assertEqual((got["Item one"]["category"], got["Item one"]["cost"], got["Item one"]["price"], got["Item one"]["markup"]),
+                         ("General", 10000, 12000, 0.2))
+        self.assertEqual((got["Item two"]["category"], got["Item two"]["cost"], got["Item two"]["markup"]), ("Other", 0, 0))  # no cost made up
+        self.assertEqual(self.call("boss", "POST", "/api/rate-capture/ignore", {"keys": [k["Item three"]]})[0], 200)
+        self.assertNotIn(k["Item three"], {c["key"] for c in ratecap.candidates(self.db)})
+        self.assertEqual(self.call("boss", "POST", "/api/rate-capture/ignore", {"keys": [k["Item three"]], "restore": True})[0], 200)
+        self.assertIn(k["Item three"], {c["key"] for c in ratecap.candidates(self.db)})
+
+    def test_bell_ignore_all_is_per_person(self):
+        self._user("boss2", perms={"accounting": "edit", "projects": "edit", "estimating": "edit"})
+        rows = self.call("boss", "GET", "/api/alerts")[1]["rows"]
+        self.assertTrue(rows)
+        items = [{"key": r["key"], "sig": r["sig"]} for r in rows]
+        self.assertEqual(self.call("boss", "POST", "/api/alerts/ignore", {"items": []})[0], 400)
+        self.assertEqual(self.call("boss", "POST", "/api/alerts/ignore", {"items": items})[0], 200)
+        after = self.call("boss", "GET", "/api/alerts")[1]["rows"]
+        self.assertTrue(all(r["ignored"] for r in after if r["key"] in {i["key"] for i in items}))
+        self.assertEqual(self.call("boss", "GET", "/api/alerts")[1]["count"], 0)
+        self.assertTrue(all(r["key"] == r["key"].strip() for r in rows))    # keys survive the trim on the way back
+        other = self.call("boss2", "GET", "/api/alerts")[1]["rows"]
+        self.assertTrue(other and not any(r["ignored"] for r in other))     # someone else still sees theirs
+        self.call("boss", "POST", "/api/alerts/ignore", {"items": items, "restore": True})
+        self.assertFalse(any(r["ignored"] for r in self.call("boss", "GET", "/api/alerts")[1]["rows"]))

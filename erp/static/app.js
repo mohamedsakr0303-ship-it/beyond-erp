@@ -965,13 +965,20 @@ function renderBell() {
   const ar = S.lang === "ar", rows = d.rows || [];
   const row = r => `<div class="alert-row-wrap ${r.ignored ? "ign" : ""}"><a class="alert-row" href="${esc(r.href)}" ${r.kind === "feed" ? `data-feed="${r.id}"` : ""}><span class="dot ${r.level}">${svg(r.level === "bad" ? "alert" : r.level === "warn" ? "clock" : "bell")}</span><span>${esc(ar ? r.ar : r.en)}</span>${r.new ? `<b class="new-dot" title="${esc(L2("New", "جديد"))}"></b>` : ""}</a>
     <button type="button" class="btn sm ghost bell-ign" data-a="bellign" data-key="${esc(r.key)}" data-sig="${esc(r.sig)}" ${r.ignored ? 'data-restore="1"' : ""} title="${esc(r.ignored ? L2("Show again", "إظهار مرة أخرى") : L2("Ignore: remove from your bell until something changes", "تجاهل: إزالة من تنبيهاتك حتى يتغير شيء"))}">${r.ignored ? L2("Restore", "استرجاع") : L2("Ignore", "تجاهل")}</button></div>`;
-  const body = BELL_GROUPS().map(([g, label]) => { const list = rows.filter(r => r.group === g); return list.length ? `<div class="bell-sec">${esc(label)} <span class="chip">${list.filter(r => !r.ignored).length}</span></div>${list.map(row).join("")}` : ""; }).join("");
+  const body = BELL_GROUPS().map(([g, label]) => { const list = rows.filter(r => r.group === g); const open = list.filter(r => !r.ignored).length;
+    return list.length ? `<div class="bell-sec">${esc(label)} <span class="chip">${open}</span><span class="spacer"></span>${open > 1 ? `<button type="button" class="btn sm ghost bell-ign" data-a="bellignall" data-g="${g}">${L2("Ignore all", "تجاهل الكل")}</button>` : ""}</div>${list.map(row).join("")}` : ""; }).join("");
+  const openAll = rows.filter(r => !r.ignored).length;
   m.innerHTML = `<div class="dd-head">${esc(L2("Requires attention", "يتطلب المتابعة"))}</div>` + (body ||
     `<div class="empty" style="padding:18px">${svg("check")}<div>${esc(L2("Nothing requires attention", "لا شيء يتطلب المتابعة"))}</div></div>`) +
-    (d.ignored || S.bellIgnored ? `<div class="bell-foot"><button type="button" class="btn sm ghost" data-a="bellshowign">${S.bellIgnored ? L2("Hide ignored", "إخفاء المتجاهَل") : L2(`Show ignored (${d.ignored})`, `عرض المتجاهَل (${d.ignored})`)}</button></div>` : "");
+    (openAll > 1 || d.ignored || S.bellIgnored ? `<div class="bell-foot">${openAll > 1 ? `<button type="button" class="btn sm ghost" data-a="bellignall">${L2(`Ignore all (${openAll})`, `تجاهل الكل (${openAll})`)}</button>` : ""}${d.ignored || S.bellIgnored ? `<button type="button" class="btn sm ghost" data-a="bellshowign">${S.bellIgnored ? L2("Hide ignored", "إخفاء المتجاهَل") : L2(`Show ignored (${d.ignored})`, `عرض المتجاهَل (${d.ignored})`)}</button>` : ""}</div>` : "");
 }
 const BELL_H = {          // global: the bell sits in the top bar on every screen
   bellign: async el => { try { await api("POST", "/api/alerts/ignore", { key: el.dataset.key, sig: el.dataset.sig, restore: !!el.dataset.restore }); await loadAlerts(true); } catch (e) { fail(e); } },
+  // several at once: one section's alerts, or all of them (for this person only; they come back when something changes)
+  bellignall: async el => { const g = el.dataset.g, items = (S.bell.rows || []).filter(r => !r.ignored && (!g || r.group === g)).map(r => ({ key: r.key, sig: r.sig }));
+    if (!items.length) return;
+    if (!await uiConfirm(L2(`Ignore ${items.length} alert(s)? They return if something changes, and can be restored with Show ignored.`, `تجاهل ${items.length} تنبيه؟ تعود إذا تغير شيء، ويمكن استرجاعها من عرض المتجاهَل.`))) return;
+    try { await api("POST", "/api/alerts/ignore", { items }); await loadAlerts(true); } catch (e) { fail(e); } },
   bellshowign: async () => { S.bellIgnored = !S.bellIgnored; await loadAlerts(true); },
 };
 // opening the bell clears its unread mark (the alerts stay inside until dealt with or ignored)
@@ -2083,7 +2090,7 @@ Object.assign(S.GLOBAL_H, {
   bulkall: () => bulkSet(bulkIds(), true),
   bulkclear: () => bulkSet([...BULK.sel], false),
   bulkact: async el => { const a = BULK.cfg.acts[+el.dataset.i], n = BULK.sel.size;
-    if (a.ask === "reason") { const r = await uiPrompt(L2(`Reason for voiding ${n} record(s)`, `سبب إلغاء ${n} سجل`)); if (r === null) return; if (!r.trim()) return toast(t("void_reason"), true); return bulkRun(a.a, { reason: r }); }
+    if (a.ask === "reason") { const r = await uiPrompt(a.prompt ? a.prompt(n) : L2(`Reason for voiding ${n} record(s)`, `سبب إلغاء ${n} سجل`)); if (r === null) return; if (!r.trim()) return toast(t("void_reason"), true); return bulkRun(a.a, { reason: r }); }
     if (a.ask === "date") { const d = await uiPrompt(L2("Reversal date (YYYY-MM-DD)", "تاريخ القيود العكسية (YYYY-MM-DD)"), today()); if (d === null) return; return bulkRun(a.a, { date: d }); }
     if (a.danger && !await uiConfirm(L2(`${a.label}: ${n} selected record(s)?`, `${a.label}: ${n} سجل محدد؟`))) return;
     bulkRun(a.a); },
@@ -2096,6 +2103,18 @@ Object.assign(S.GLOBAL_H, {
 // what each list offers
 const bulkBuOpts = () => [keepAsIs(), ["none", "— " + L2("No business unit", "بدون وحدة أعمال") + " —"], ...buOpts()];
 const BULKS = {
+  // drafts held for approval: approve or return several at once (each checked against who may approve it)
+  hr_requests: () => ({ target: "hr_requests",
+    actions: [{ a: "approve", label: L2("Approve", "اعتماد"), need: ["payroll.requests", "edit"] },
+      { a: "reject", label: L2("Reject", "رفض"), ask: "reason", need: ["payroll.requests", "edit"],
+        prompt: n => L2(`Reason for rejecting ${n} request(s)`, `سبب رفض ${n} طلب`) }] }),
+  followups: () => ({ target: "followups",
+    actions: [{ a: "done", label: L2("Mark completed", "تمييز كمكتملة"), need: ["crm.followups", "add"] },
+      { a: "delete", label: t("delete"), danger: true, need: ["crm.followups", "add"] }] }),
+  approvals: () => ({ target: "approvals",
+    actions: [{ a: "approve", label: L2("Approve and post", "اعتماد وترحيل"), danger: true },
+      { a: "reject", label: L2("Return for changes", "إعادة للتعديل"), ask: "reason",
+        prompt: n => L2(`Reason for returning ${n} draft(s) (shown to whoever entered them)`, `سبب إعادة ${n} مسودة (يظهر لمن أدخلها)`) }] }),
   entries: mod => ({ target: "entries", editNeed: [mod, "edit"],
     actions: [{ a: "void", label: L2("Void", "إلغاء"), ask: "reason", danger: true, need: [mod, "edit"] },
       { a: "reverse", label: L2("Reverse", "عكس"), ask: "date", need: [mod, "edit"] },
@@ -3445,16 +3464,44 @@ PAGES.prices = async (view, parts, q) => {
   // prices and costs seen on invoices, BOQs and booked materials that the price list does not have yet
   S.H.rcap = async (el, showIgnored) => {
     const c = await api("GET", "/api/rate-capture?" + qs({ ignored: showIgnored ? 1 : "" })).catch(fail); if (!c) return;
-    const ed = can("estimating.prices", "add"), num = (x, k) => x[k] ? `${money(x[k].last)}<div class="lines">${x[k].count}× · ${fd(x[k].last_date)}${x[k].min !== x[k].max ? ` · ${money(x[k].min)}–${money(x[k].max)}` : ""}</div>` : "—";
-    drawer(t("m_ratecap"), `<p class="muted">${L2("Rates found in invoices, BOQs and booked materials that are not in the price list. Matched on description and unit. Nothing is added until you add it.",
-        "أسعار وُجدت في الفواتير والمقايسات والمواد المسجّلة وليست في قائمة الأسعار. المطابقة بالوصف والوحدة، ولا يُضاف شيء إلا بموافقتك.")}</p>
-      <label class="row" style="gap:6px"><input type="checkbox" id="rcig" ${showIgnored ? "checked" : ""}> ${L2("Show ignored", "عرض المتجاهَل")}</label>
-      ${c.rows.length ? `<div class="tbl"><table><thead><tr><th>${t("description")}</th><th>${t("unit")}</th><th class="num">${t("client_price")}</th><th class="num">${t("unit_cost")}</th><th>${L2("Last seen in", "آخر ظهور في")}</th><th></th></tr></thead><tbody>
-      ${c.rows.map((r, i) => `<tr><td style="max-width:360px">${esc(r.description)}${r.category ? `<div class="lines">${esc(r.category)}</div>` : ""}</td><td>${esc(r.unit)}</td><td class="num">${num(r, "price")}</td><td class="num">${num(r, "cost")}</td>
+    const ed = can("estimating.prices", "add"), ign = can("estimating.prices", "edit"), num = (x, k) => x[k] ? `${money(x[k].last)}<div class="lines">${x[k].count}× · ${fd(x[k].last_date)}${x[k].min !== x[k].max ? ` · ${money(x[k].min)}–${money(x[k].max)}` : ""}</div>` : "—";
+    drawer(t("m_ratecap"), `<p class="muted">${L2("Rates found in invoices and booked costs that are not in the price list. Matched on description and unit. Nothing is added until you add it.",
+        "أسعار وُجدت في الفواتير والتكاليف المسجّلة وليست في قائمة الأسعار. المطابقة بالوصف والوحدة، ولا يُضاف شيء إلا بموافقتك.")}</p>
+      <div class="row" style="gap:6px;flex-wrap:wrap;align-items:center"><label class="chk"><input type="checkbox" id="rcig" ${showIgnored ? "checked" : ""}> ${L2("Show ignored", "عرض المتجاهَل")}</label><span class="spacer"></span>
+        ${c.rows.length && ed ? `<button class="btn sm pri" data-a="rcbatch" data-k="add">${L2("Add selected", "إضافة المحدد")}</button>` : ""}
+        ${c.rows.length && ign ? `<button class="btn sm" data-a="rcbatch" data-k="${showIgnored ? "restore" : "ignore"}">${showIgnored ? L2("Restore selected", "استرجاع المحدد") : L2("Ignore selected", "تجاهل المحدد")}</button>` : ""}
+        ${c.rows.length && ed ? `<button class="btn sm" data-a="rcbatch" data-k="add" data-all="1">${L2(`Add all (${c.rows.length})`, `إضافة الكل (${c.rows.length})`)}</button>` : ""}
+        ${c.rows.length && ign && !showIgnored ? `<button class="btn sm" data-a="rcbatch" data-k="ignore" data-all="1">${L2(`Ignore all (${c.rows.length})`, `تجاهل الكل (${c.rows.length})`)}</button>` : ""}</div>
+      ${c.rows.length ? `<div class="tbl"><table><thead><tr>${ed || ign ? `<th class="bsel"><input type="checkbox" id="rcall" title="${esc(L2("Select all", "تحديد الكل"))}"></th>` : ""}<th>${t("description")}</th><th>${t("unit")}</th><th class="num">${t("client_price")}</th><th class="num">${t("unit_cost")}</th><th>${L2("Last seen in", "آخر ظهور في")}</th><th></th></tr></thead><tbody>
+      ${c.rows.map((r, i) => `<tr>${ed || ign ? `<td class="bsel"><input type="checkbox" class="rcsel" data-i="${i}"></td>` : ""}<td style="max-width:360px">${esc(r.description)}${r.category ? `<div class="lines">${esc(r.category)}</div>` : ""}</td><td>${esc(r.unit)}</td><td class="num">${num(r, "price")}</td><td class="num">${num(r, "cost")}</td>
         <td>${esc((r.price && r.price.last_date >= ((r.cost || {}).last_date || "") ? r.price : r.cost).source)}</td>
         <td class="nowrap">${ed ? `<button class="btn sm pri" data-a="rcadd" data-i="${i}">${L2("Add", "إضافة")}</button> ` : ""}${can("estimating.prices", "edit") ? `<button class="btn sm" data-a="rcign" data-i="${i}">${r.ignored ? L2("Restore", "استرجاع") : L2("Ignore", "تجاهل")}</button>` : ""}</td></tr>`).join("")}</tbody></table></div>`
       : `<div class="empty">${L2("Every rate in the books is already in the price list.", "كل الأسعار المسجّلة موجودة في قائمة الأسعار.")}</div>`}`, null, { readOnly: true });
     $("#rcig").onchange = e => S.H.rcap(null, e.target.checked);
+    const all = $("#rcall"); if (all) all.onchange = () => $$(".rcsel").forEach(x => { x.checked = all.checked; });
+    // several at once: the ticked rows, or every row listed
+    S.H.rcbatch = async b => {
+      const rows = b.dataset.all ? c.rows : $$(".rcsel").filter(x => x.checked).map(x => c.rows[+x.dataset.i]);
+      if (!rows.length) return toast(L2("Tick the rates first.", "حدد الأسعار أولاً."), true);
+      const k = b.dataset.k, keys = rows.map(r => r.key);
+      try {
+        if (k === "add") {
+          let category = "";
+          if (rows.some(r => !r.category)) {
+            category = await uiPrompt(L2(`${rows.filter(r => !r.category).length} of these rates have no category. Category to file them under:`,
+              `${rows.filter(r => !r.category).length} من هذه الأسعار بلا فئة. الفئة التي تُسجل تحتها:`)); if (category === null) return;
+            if (!category.trim()) return toast(L2("Give a category.", "حدد فئة."), true);
+          }
+          if (!await uiConfirm(L2(`Add ${rows.length} rate(s) to the price list? Each keeps the cost and client price it was seen at; a price never seen stays blank.`,
+            `إضافة ${rows.length} سعر إلى قائمة الأسعار؟ يحتفظ كل سعر بالتكلفة وسعر العميل كما ظهرا؛ والسعر غير الظاهر يبقى فارغاً.`))) return;
+          const r = await api("POST", "/api/rate-capture/add", { keys, category }); toast(L2(`Added: ${r.done}`, `تمت الإضافة: ${r.done}`));
+        } else {
+          if (k === "ignore" && b.dataset.all && !await uiConfirm(L2(`Ignore all ${rows.length} rates? They can be restored with Show ignored.`, `تجاهل كل الأسعار (${rows.length})؟ يمكن استرجاعها من عرض المتجاهَل.`))) return;
+          await api("POST", "/api/rate-capture/ignore", { keys, restore: k === "restore" });
+        }
+        if (k === "add") await route();            // the price list behind shows the new rates
+        S.H.rcap(null, showIgnored);
+      } catch (e) { fail(e); } };
     S.H.rcign = async b => { const r = c.rows[+b.dataset.i]; try { await api("POST", "/api/rate-capture/ignore", { key: r.key, restore: r.ignored }); S.H.rcap(null, showIgnored); } catch (e) { fail(e); } };
     S.H.rcadd = b => { const r = c.rows[+b.dataset.i], cost = r.cost ? r.cost.last : "", price = r.price ? r.price.last : "";
       const src = [r.price, r.cost].filter(Boolean).map(x => `${x.source} ${x.last_date}`.trim()).join(" · ");
@@ -3708,6 +3755,7 @@ PAGES.followups = async (view, parts, q) => {
         <td>${r.party ? `<a href="#/contact/${encodeURIComponent(r.party)}" onclick="event.stopPropagation()">${esc(r.party)}</a>` : ""}</td><td>${esc(r.assigned_to)}</td>
         <td><span class="chip ${r.state === "overdue" ? "bad" : r.state === "today" ? "warn" : r.state === "done" ? "ok" : ""}">${esc(st[r.state])}</span></td></tr>`).join("")}</tbody></table></div>`
       : `<div class="empty">${svg("check")}<div>${esc(L2("No follow-ups.", "لا توجد متابعات."))}</div></div>`}</div>`;
+  bulkify($("table", view), BULKS.followups());
 };
 // ---------------------------------------------------------- healthcare: clinics, medical centres and home healthcare (care.py)
 const CARE_ST = () => ({ booked: L2("Booked", "محجوز"), arrived: L2("Arrived", "حضر"), done: L2("Completed", "مكتملة"), no_show: L2("No-show", "لم يحضر"), cancelled: L2("Cancelled", "ملغى") });
@@ -4357,13 +4405,14 @@ PAGES.requests = async (view, parts, q) => {
   view.innerHTML = `<div class="toolbar"><div class="seg">${[["", L2("All", "الكل")], ["pending", L2("Pending", "قيد الاعتماد")], ["approved", L2("Approved", "معتمد")], ["rejected", L2("Rejected", "مرفوض")]].map(([k, l]) => `<a class="btn ${st === k ? "pri" : ""}" href="#/requests?${qs({ ...q, status: k })}">${esc(l)}</a>`).join("")}</div><span class="spacer"></span>
       <select data-change="reqk" style="max-width:220px"><option value="">${esc(L2("All types", "كل الأنواع"))}</option>${optHtml(REQ_KINDS(), q.kind || "")}</select></div>` +
     `<div class="card">${rows.length ? `<div class="tbl stack"><table><thead><tr><th>#</th><th>${esc(L2("Employee", "الموظف"))}</th><th>${esc(L2("Type", "النوع"))}</th><th>${esc(L2("Details", "التفاصيل"))}</th><th>${esc(L2("Reason", "السبب"))}</th><th>${t("status")}</th><th></th></tr></thead><tbody>
-      ${rows.map(r => `<tr><td>${r.id}</td><td><b>${esc(r.emp_name || r.username)}</b><div class="lines">${esc(r.emp_code || "")} ${esc(r.username)}</div></td><td>${esc(reqKind(r))}</td><td>${reqWhen(r)}</td><td>${esc(r.reason || "")}${r.decision_note ? `<div class="lines">${esc(r.decision_note)}</div>` : ""}</td>
+      ${rows.map(r => `<tr data-bid="${r.id}"><td>${r.id}</td><td><b>${esc(r.emp_name || r.username)}</b><div class="lines">${esc(r.emp_code || "")} ${esc(r.username)}</div></td><td>${esc(reqKind(r))}</td><td>${reqWhen(r)}</td><td>${esc(r.reason || "")}${r.decision_note ? `<div class="lines">${esc(r.decision_note)}</div>` : ""}</td>
         <td>${reqChip(r.status)}${r.entry_id ? ` <a class="chip ok" href="#/journal/${r.entry_id}">${esc(L2("Paid", "مدفوعة"))}</a>` : ""}${r.decided_by ? `<div class="lines">${esc(r.decided_by)}</div>` : ""}</td>
         <td style="white-space:nowrap">${d.can_decide ? `${r.status !== "approved" && r.status !== "cancelled" ? `<button class="btn sm pri" data-a="reqdecide" data-ok="1" data-id="${r.id}">${esc(L2("Approve", "اعتماد"))}</button>` : ""}
           ${r.status !== "rejected" && r.status !== "cancelled" && !r.entry_id ? `<button class="btn sm" data-a="reqdecide" data-ok="0" data-id="${r.id}">${esc(L2("Reject", "رفض"))}</button>` : ""}
           ${r.kind === "advance" && r.status === "approved" && !r.entry_id ? `<button class="btn sm" data-a="reqpay" data-id="${r.id}">${esc(L2("Pay", "صرف"))}</button>` : ""}` : ""}</td></tr>`).join("")}</tbody></table></div>`
       : `<div class="empty">${svg("clock")}<div>${esc(L2("No requests.", "لا توجد طلبات."))}</div></div>`}</div>`;
   S.H.reqk = el => setQ({ ...q, kind: el.value });
+  if (d.can_decide) bulkify($("table", view), BULKS.hr_requests());
 };
 // work sites: a place from the map (search, click or drag), a pasted Google Maps link or coordinates, or this device's position
 let leafletLoading = null;
@@ -4748,6 +4797,7 @@ PAGES.approvals = async (view, parts, q) => {
       "dates", ["select", "created_by", L2("Entered by", "أدخله"), d.makers.map(m => [m, m])],
       ["select", "dtype", t("kind"), ["journal", ...Object.keys(DOCS)].map(k => [k, dtypeLabel(k)])], "q"]) +
     `<div class="card">${approvalRows(d.rows)}</div>`;
+  if (d.rows.some(r => r.can_approve && r.status === "pending")) bulkify($("table.atbl", view), BULKS.approvals());
 };
 async function openApproval(id) {
   const r = await api("GET", "/api/approvals/" + id), p = r.payload || {};
