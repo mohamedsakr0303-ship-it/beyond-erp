@@ -236,6 +236,21 @@ class RateCaptureAndFlags(unittest.TestCase):
         self.assertEqual(categories.clean([{"name": "", "accounts": ""}, {"name": "A", "accounts": "60*, 6010-6040"}]),
                          [{"name": "A", "name_ar": "", "accounts": "60*, 6010-6040"}])
 
+    def test_cash_position_follows_the_funding_facility(self):
+        """Facility mode: the funding partner's account is the bank, so the cash position shows the room left in his
+        facility instead of the company's own cash against a safety floor."""
+        from erp import settlement
+        db = books()
+        db.x("INSERT INTO partners(name,default_share) VALUES ('F',1)")
+        for k, v in (("funding_partner", "F"), ("funding_limit", "1000")):
+            db.set_setting(k, v)
+        self.assertIsNone(a.cash_position(db)["facility"])                 # capital mode: the floor as before
+        db.set_setting("funding_mode", "facility"); settlement.apply_funding_mode(db, "facility")
+        a.record_expense(db, {"date": "2026-01-05", "account": "6075", "description": "Travel", "amount": 300, "paid": 300,
+                              "paid_from": "3015"})          # his account
+        f = a.cash_position(db)["facility"]
+        self.assertEqual((f["limit"], f["fronted"], f["room_after"]), (1000.0, 300.0, 700.0))
+
     def test_cash_below_zero_flag(self):
         """Money paid out before any came in is flagged with the day and the lowest balance, even if cash is positive now."""
         db = books()

@@ -1911,3 +1911,6 @@ body:has(.drawer-bg) .toast{top:auto;bottom:calc(78px + env(safe-area-inset-bott
 /* a focused or scrolled-to field stays clear of the form's sticky title bar and buttons */
 .drawer{scroll-padding-top:76px;scroll-padding-bottom:96px}
 html{scroll-padding-top:calc(var(--top-h,56px) + 12px)}
+
+/* a dropdown is open (bell, menus): floating bars and cards step aside so its items take the tap */
+body:has(.dd.open) .tourbar,body:has(.dd.open) .nnudge{display:none}

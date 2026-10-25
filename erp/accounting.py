@@ -2038,8 +2038,17 @@ def cash_position(db):
                                                            "other_operating"))
     owed = -sum(r["net"] for r in rows if r["subtype"] in ("payable", "accrued"))
     floor = opex / n * 3 + owed
-    return {"cash": to_major(cash), "monthly_overhead": to_major(opex / n), "months": n, "owed": to_major(owed),
-            "floor": to_major(floor), "gap": to_major(max(floor - cash, 0))}
+    out = {"cash": to_major(cash), "monthly_overhead": to_major(opex / n), "months": n, "owed": to_major(owed),
+           "floor": to_major(floor), "gap": to_major(max(floor - cash, 0)), "facility": None}
+    # the funding partner's account is the company's bank (facility mode): what matters is the room left in his
+    # facility once suppliers and staff are paid, not the company's own cash against a floor
+    if (db.setting("funding_mode") or "capital") == "facility":
+        from . import settlement
+        f = settlement.facility(db)
+        if f and f["limit"]:
+            out["facility"] = {k: f[k] for k in ("partner", "limit", "fronted", "after_suppliers", "room_after", "used", "state", "status", "status_ar")}
+            out["gap"] = round(max(0.0, -f["room_after"]), 2)
+    return out
 
 
 def dashboard(db, date_from=None, date_to=None, bu_id=None):

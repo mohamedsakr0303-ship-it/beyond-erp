@@ -546,7 +546,12 @@ def plan_distribute(db, d):
                                 "against “Profit Distributions Payable”."]
     from .accounting import cash_position
     cp = cash_position(db)
-    if pay_now and cp["cash"] - total < cp["floor"]:
+    if pay_now and cp.get("facility"):
+        left = cp["facility"]["room_after"] - total
+        if left < 0:
+            notes.append(f"Paying this would take the funding facility {-left:,.2f} over its {cp['facility']['limit']:,.2f} limit "
+                         f"once suppliers are paid.")
+    elif pay_now and cp["cash"] - total < cp["floor"]:
         notes.append(f"Cash after paying would be {cp['cash'] - total:,.2f}, below the safety floor of {cp['floor']:,.2f}.")
     return _plan("Profit Distribution", text(d.get("memo")) or f"Profit distribution {total:,.2f}", "", lines, date,
                  {"split": {ps[k]["name"]: v for k, v in split.items()}, "paid_now": pay_now}, notes=notes)

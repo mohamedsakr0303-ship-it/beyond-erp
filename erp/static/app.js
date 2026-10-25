@@ -68,6 +68,9 @@ async function api(method, path, body, raw) {
       body: `${me().full_name || me().username}`, href: "#/approvals", tag: "approval" });
     if (r && r._push) pushHints(r._push);
     if (typeof path === "string") autoAfterChange(path.split("?")[0]);
+    // something changed: the bell follows shortly (one refresh for a burst of saves)
+    if (typeof path === "string" && !/^\/api\/(alerts|my-alerts\/read|presence|chat)/.test(path)) {
+      S.alertsAt = 0; clearTimeout(S.bellT); S.bellT = setTimeout(() => { if ($("#bellmenu")) loadAlerts(true); }, 1500); }
     return r; }
   finally { API_WRITES--; }
 }
@@ -598,7 +601,12 @@ document.addEventListener("click", e => {
     Promise.resolve().then(() => S.H[a](el, e)).catch(err => { ok = false; throw err; }).finally(() => Hist.end(ut, ok)); return; }
   const dd = e.target.closest(".dd > .btn");
   $$(".dd.open").forEach(d => { if (!dd || d !== dd.parentElement) d.classList.remove("open"); });
-  if (dd) { e.preventDefault(); dd.parentElement.classList.toggle("open"); }
+  if (dd) { e.preventDefault(); dd.parentElement.classList.toggle("open");
+    // the bell shows what needs attention now, not what it loaded earlier
+    if (dd.parentElement.classList.contains("bell") && dd.parentElement.classList.contains("open")) loadAlerts(true).then(bellSeen); }
+  // an alert (or any link) to the screen already shown: open it again (the address does not change, so nothing else would)
+  const same = e.target.closest('a[href^="#/"]');
+  if (same && same.getAttribute("href") === location.hash && !e.defaultPrevented) { e.preventDefault(); $$(".dd.open").forEach(d => d.classList.remove("open")); route(); }
   const row = e.target.closest("tr[data-href]");
   if (row && !e.target.closest("button,a,input,select")) location.hash = row.dataset.href;
 });
@@ -2658,14 +2666,18 @@ const WIDGET_DRAW = {
   revenue: (x, w, e) => heroCard("h-rev", "in", L2(w.en, w.ar), x.value, trendOf(x, e), lookColor(e, "#34c77b")),
   costs: (x, w, e) => heroCard("h-cost", "out", L2(w.en, w.ar), x.value, trendOf(x, e), lookColor(e, "#ff5a5f")),
   net_profit: (x, w, e) => heroCard("h-prof", "chart", L2(w.en, w.ar), x.value, trendOf(x, e), lookColor(e, "#ffa726"), `<span class="chip ${x.value < 0 ? "bad" : "ok"} hero-chip">${pct(x.chip)}</span>`),
-  cash: (x, w) => { const cp = x.floor, gap = cp.floor ? cp.cash / cp.floor : NaN;
+  cash: (x, w) => { const cp = x.floor, gap = cp.floor ? cp.cash / cp.floor : NaN, f = cp.facility;
+    // facility mode: the funding partner's account is the bank, so the card shows the room left in his facility
+    if (f) return heroCard("h-cash", "wallet", L2("Funding room left", "المتاح من حد التمويل"), f.room_after, null, "#5b9dff", "", `<a class="hero-floor" href="#/partner-exit"><div class="meter"><i style="width:${Math.max(3, Math.min(100, (1 - (f.used || 0)) * 100)).toFixed(0)}%"></i></div>
+      <small>${esc(L2(`Limit ${money(f.limit)} · fronted ${money(f.fronted)} · ${money(f.after_suppliers)} once suppliers are paid`, `الحد ${money(f.limit)} · المموَّل ${money(f.fronted)} · ${money(f.after_suppliers)} بعد سداد الموردين`))}</small>
+      <small class="${f.state === "ok" ? "" : "neg"}">${esc(S.lang === "ar" ? f.status_ar : f.status)}</small></a>`);
     return heroCard("h-cash", "wallet", L2(w.en, w.ar), x.value, null, "#5b9dff", "", `<div class="hero-floor"><div class="meter"><i style="width:${Math.max(3, Math.min(100, (isFinite(gap) ? gap : 1) * 100)).toFixed(0)}%"></i></div>
       <small>${esc(t("cash_floor"))} ${money(cp.floor)} ${cp.gap > 0 ? `· <b class="neg">−${money(cp.gap)}</b>` : "✓"}</small></div>`); },
-  money_position: x => { const cp = x.cash_position, gap = cp.floor ? cp.cash / cp.floor : NaN;
+  money_position: x => { const cp = x.cash_position, gap = cp.facility ? 1 - (cp.facility.used || 0) : cp.floor ? cp.cash / cp.floor : NaN;
     const pos = [["receivable", t("receivable"), "#/receivables", "var(--info)"], ["payable", t("payable"), "#/payables", "var(--bad)"], ["advances", t("advances"), "#/receipts", "#a855f7"],
       ["accrued", t("accrued"), "#/payables", "var(--warn)"], ["inventory", t("inventory"), "#/stock", "#14b8a6"], ["ebitda", t("ebitda"), "#/report/income_statement", "var(--good)"]];
     return `<div class="posgrid">${pos.map(([k, l, href, c]) => `<a class="posit" href="${href}" style="--c:${c}"><i></i><div><small>${esc(l)}</small><b class="${x[k] < 0 ? "neg" : ""}" data-count="${x[k]}" data-fmt="money">${money(x[k])}</b></div></a>`).join("")}</div>
-      <div class="rings">${ring(x.margins.ebitda, t("ebitda"), "r1")}${ring(x.margins.net, t("net_profit"), "r2")}${ring(gap, L2("Cash against minimum balance", "النقدية مقابل الحد الأدنى للرصيد"), "r3")}</div>`; },
+      <div class="rings">${ring(x.margins.ebitda, t("ebitda"), "r1")}${ring(x.margins.net, t("net_profit"), "r2")}${ring(gap, cp.facility ? L2("Funding room left", "المتاح من حد التمويل") : L2("Cash against minimum balance", "النقدية مقابل الحد الأدنى للرصيد"), "r3")}</div>`; },
   monthly_chart: (x, w, e) => { const months = +(store.get("dashMonths", "12")) || 12, sr = (x.series || []).slice(-months), kind = ((e || {}).look || {}).chart;
     return `<div class="row" style="justify-content:flex-end;margin:-6px 0 6px"><span class="seg">${[6, 12].map(m => `<button class="btn sm ${months === m ? "pri" : ""}" data-a="dmonths" data-m="${m}">${m} ${esc(L2("months", "شهر"))}</button>`).join("")}</span></div>
       <div class="legend"><span class="r">${t("rev")}</span><span class="c">${t("costs")}</span></div>${kind === "lines" || kind === "area" ? monthLines(sr, kind === "area") : monthBars(sr)}`; },
