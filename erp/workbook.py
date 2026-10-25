@@ -877,6 +877,7 @@ def build_workbook(db, template=False, data=None, hide=None, lang="en", extend=N
 
     # ------------------------------------------------------------ budget vs actual
     _budget_sheet(wb, colmap, F, fill, NAVY, BLUE, MONEY, PCT, L)
+    _category_sheet(wb, db, data, n_acc, F, fill, NAVY, BLUE, MONEY, PCT, L, lang)
 
     # ------------------------------------------------------------ quick estimator
     qe = wb.create_sheet("Quick Estimator")
@@ -1043,7 +1044,7 @@ def build_workbook(db, template=False, data=None, hide=None, lang="en", extend=N
 _AR_SEGMENT = re.compile(r"\s*[/|—]\s*[^/|A-Za-z]*[\u0600-\u06FF][^/|]*")
 _ARABIC_LEAD = re.compile(r"^[^A-Za-z]*[\u0600-\u06FF][^A-Za-z]*—\s*")
 REPORT_SHEETS = ("Cover", "Trial Balance", "Income Statement", "Balance Sheet", "Cash Flow", "Tax Summary",
-                 "BU Profitability", "Partner Equity", "Payables", "Quick Estimator", "Model Audit")
+                 "BU Profitability", "Partner Equity", "Payables", "Quick Estimator", "Model Audit", "Profit by Category")
 
 
 def english_labels(wb):
@@ -1441,6 +1442,78 @@ def _budget_sheet(wb, colmap, F, fill, NAVY, BLUE, MONEY, PCT, L):
 
 
 
+def _category_sheet(wb, db, data, n_acc, F, fill, NAVY, BLUE, MONEY, PCT, L, lang="en"):
+    """Profit by category (rent, installation, transport…): each income / cost account carries a category (blue, change
+    it here); the table on top adds up each category's revenue and costs for the report period from the Trial Balance.
+    Accounts without a category stay in "Not in a category", so the total is the net profit."""
+    from . import categories
+    cats, _ = categories.load(db) if db is not None else ([], True)
+    label = lambda c: (c.get("name_ar") or c["name"]) if lang == "ar" else c["name"]  # noqa: E731
+    ws = wb.create_sheet("Profit by Category")
+    ws.sheet_view.showGridLines = False
+    ws["A1"] = "Profit by Category  |  الربح حسب الفئة"
+    ws["A1"].font = F(bold=True, size=14, color=NAVY)
+    ws["A2"] = '="Period "&TEXT(ReportFrom,"yyyy-mm-dd")&" to "&TEXT(ReportTo,"yyyy-mm-dd")&" — choose each account\'s category in the list below"'
+    ws["A2"].font = F(size=9, color="555555")
+    heads = ["Category / الفئة", "Revenue / الإيراد", "Direct costs / التكاليف المباشرة", "Other costs / تكاليف أخرى",
+             "Profit / الربح", "Margin / الهامش"]
+    for i, h in enumerate(heads, start=1):
+        c = ws.cell(4, i, h)
+        c.font, c.fill = F(bold=True, color="FFFFFF", size=9), fill(NAVY)
+        ws.column_dimensions[L(i)].width = [34, 16, 16, 16, 16, 10][i - 1]
+    n_cat = max(12, len(cats) + 4)
+    first_acc = 4 + n_cat + 6           # the account list starts below the summary
+    last_acc = first_acc + n_acc - 1
+    rng = lambda col: f"${col}${first_acc}:${col}${last_acc}"  # noqa: E731
+    for k in range(n_cat):
+        r = 5 + k
+        if k < len(cats):
+            ws.cell(r, 1, label(cats[k])).font = F(color=BLUE)
+        for ci, kind in ((2, "Revenue"), (3, "Direct"), (4, "Other")):
+            ws.cell(r, ci, f'=IF($A{r}="",0,SUMIFS({rng("E")},{rng("D")},$A{r},{rng("F")},"{kind}"))').number_format = MONEY
+        ws.cell(r, 5, f"=B{r}-C{r}-D{r}").number_format = MONEY
+        ws.cell(r, 6, f'=IF(B{r}=0,"",E{r}/B{r})').number_format = PCT
+    rr = 5 + n_cat
+    ws.cell(rr, 1, "Not in a category / خارج الفئات").font = F(italic=True)
+    for ci, kind in ((2, "Revenue"), (3, "Direct"), (4, "Other")):
+        ws.cell(rr, ci, f'=SUMIFS({rng("E")},{rng("D")},"",{rng("F")},"{kind}")').number_format = MONEY
+    ws.cell(rr, 5, f"=B{rr}-C{rr}-D{rr}").number_format = MONEY
+    tr = rr + 1
+    ws.cell(tr, 1, "NET PROFIT / صافي الربح").font = F(bold=True)
+    for ci in range(2, 6):
+        c = ws.cell(tr, ci, f"=SUM({L(ci)}5:{L(ci)}{rr})")
+        c.number_format, c.font = MONEY, F(bold=True)
+    ws.cell(tr, 6, f'=IF(B{tr}=0,"",E{tr}/B{tr})').number_format = PCT
+    # the accounts, from the Trial Balance (same rows as the Chart of Accounts)
+    hr = first_acc - 1
+    for i, h in enumerate(["Code / الكود", "Account / الحساب", "Type / النوع", "Category / الفئة", "Amount (period) / المبلغ", "Kind / إيراد أو تكلفة"], start=1):
+        c = ws.cell(hr, i, h)
+        c.font, c.fill = F(bold=True, color="FFFFFF", size=9), fill(NAVY)
+    ws.cell(hr - 1, 1, "Accounts / الحسابات").font = F(bold=True, color=NAVY)
+    coa = data.get("Chart of Accounts") or []
+    names = [label(c) for c in cats]
+    for k in range(n_acc):
+        r, t = first_acc + k, 5 + k
+        ws.cell(r, 1, f"=IF(OR('Trial Balance'!C{t}=\"Revenue\",'Trial Balance'!C{t}=\"COGS\",'Trial Balance'!C{t}=\"Expense\"),'Trial Balance'!A{t},\"\")")
+        ws.cell(r, 2, f'=IF(A{r}="","",\'Trial Balance\'!B{t})')
+        ws.cell(r, 3, f'=IF(A{r}="","",\'Trial Balance\'!C{t})')
+        code = str((coa[k] if k < len(coa) else {}).get("code") or "")
+        pick = next((label(c) for c in cats if code and categories.account_matches(c["accounts"], code)), "")
+        if pick:
+            ws.cell(r, 4, pick)
+        ws.cell(r, 4).font = F(color=BLUE, size=9)
+        ws.cell(r, 5, f"=IF(A{r}=\"\",0,IF(C{r}=\"Revenue\",'Trial Balance'!G{t}-'Trial Balance'!F{t},'Trial Balance'!F{t}-'Trial Balance'!G{t}))").number_format = MONEY
+        ws.cell(r, 6, f'=IF(A{r}="","",IF(C{r}="Revenue","Revenue",IF(C{r}="COGS","Direct","Other")))')
+        for ci in (1, 2, 3, 5, 6):
+            ws.cell(r, ci).font = F(size=9)
+    if names:
+        from openpyxl.worksheet.datavalidation import DataValidation
+        dv = DataValidation(type="list", formula1=f"=$A$5:$A${4 + n_cat}", allow_blank=True)
+        ws.add_data_validation(dv)
+        dv.add(f"D{first_acc}:D{last_acc}")
+    ws.column_dimensions["B"].width = 34
+
+
 def _extract_print(wb, data, colmap, F, fill):
     """An extract (مستخلص) laid out like the client's: pick the invoice number; running = every work to date on the site
     (its earlier issued extracts too), less what was paid before, less deductions = due."""
@@ -1588,11 +1661,11 @@ GUIDE = [
      "كمخزون خارج)، واللوح البونط في سطر مستقل، والتركيب والفك والنقل كسطور رسوم مع تكلفتها. التسعير بالقطعة ما زال متاحاً."),
     ("Issue an extract (progress invoice)", "Sales Invoices, Invoice Lines",
      "One Sales Invoices row (number, date, client, business unit, Status = Posted) and one Invoice Lines row per extract "
-     "line (rent → 4045, installation / transport → 4046). Keep it Draft until it is issued. → Receivables, Income "
+     "line (rent → 4045, installation / dismantling → 4046, transport → 4047). Keep it Draft until it is issued. → Receivables, Income "
      "Statement, Dashboard 'Invoiced', Partner Pack.",
      "إصدار مستخلص / فاتورة",
      "صف في فواتير المبيعات (الرقم، التاريخ، العميل، وحدة العمل، الحالة = Posted) وصف في بنود الفواتير لكل بند (إيجار ← 4045، "
-     "تركيب / نقل ← 4046). اتركها Draft حتى تصدر ← المدينون وقائمة الدخل ولوحة المتابعة وتقرير الشركاء."),
+     "تركيب / فك ← 4046، نقل ← 4047). اتركها Draft حتى تصدر ← المدينون وقائمة الدخل ولوحة المتابعة وتقرير الشركاء."),
     ("Mark how far a rental is billed", "Rental Contracts",
      "Type the last day billed in 'Invoiced to' on the contract's first row. → Dashboard shows 'still to invoice'; the app "
      "starts the next extract from the day after.",
@@ -1690,7 +1763,7 @@ SHEET_ORDER = ["Cover", "How to Use", "Partner Pack", "Dashboard", "Journal Vouc
                "Balance Sheet", "Cash Flow", "BU Profitability", "Payables", "Receivables", "Partner Equity", "Business Units",
                "Sales Invoices", "Invoice Lines", "Rental Contracts", "Rental Equipment", "Rental Stock Lots", "Loans",
                "Loan Transactions", "Employees", "Payroll Run", "Price List", "BOQ Lines", "Quick Estimator", "Scaffold Calculator",
-               "Crew Pay Calculator", "Extract Print", "Budget vs Actual",
+               "Crew Pay Calculator", "Extract Print", "Budget vs Actual", "Profit by Category",
                "Tax Summary", "Model Audit", "Receipt Vouchers", "Payment Vouchers", "Direct Costs", "Operating Expenses", "Payroll",
                "Partner Transactions", "Cash Custody", "Custody Expenses", "Settings", "Parties", "Partners", "Partner Shares",
                "Payroll Settings", "Tax Codes"]
@@ -1987,6 +2060,7 @@ COVER_SECTIONS = [
                       ("BU Profitability", "Each project's own result, after shared overhead"),
                       ("Partner Equity", "Profit share, reserve, drawings and balances"),
                       ("Budget vs Actual", "The budget for the period against the books"),
+                      ("Profit by Category", "What each line of business earned: rent, installation, transport…"),
                       ("Tax Summary", "VAT and withholding balances"), ("Tax Codes", "VAT / withholding rates")]),
     ("PEOPLE & PAYROLL", [("Employees", "Staff and workers: pay type, allowances, insurance, tax, cost type and project"),
                           ("Payroll Run", "Monthly payroll: absence, overtime, bonuses, penalties, advances → insurance, tax, net"),

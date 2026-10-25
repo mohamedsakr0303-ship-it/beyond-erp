@@ -40,7 +40,7 @@ def _seen(db):
     estimates, not the books, so they are not read; nor are rent lines (priced on the rental contract)."""
     out = []
     # rent and its one-time charges are priced on the rental contract, not from the price list
-    rent = {r["code"] for r in db.q("SELECT code FROM accounts WHERE role IN ('rental_revenue','rental_services','rental_compensation')")}
+    rent = {r["code"] for r in db.q("SELECT code FROM accounts WHERE role IN ('rental_revenue','rental_services','rental_transport','rental_compensation')")}
     for r in db.q("SELECT l.description, l.unit, l.category, l.price, l.account, x.date, x.number, x.status "
                   "FROM extract_lines l JOIN extracts x ON x.id=l.extract_id WHERE l.price>0"):
         if r["account"] in rent:

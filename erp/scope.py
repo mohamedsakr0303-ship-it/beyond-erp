@@ -24,7 +24,7 @@ COMPANY_WIDE = re.compile(r"^/api/(?:cash-accounts|assets-overview|bank(?:-state
                           r"|depreciation-history|budgets)$")
 # reports that run for one project
 PROJECT_REPORTS = {"income_statement", "balance_sheet", "cash_flow", "trial_balance", "general_ledger", "bu_pnl", "materials_used",
-                   "negotiations", "budget", "vouchers"}
+                   "negotiations", "budget", "vouchers", "profit_categories"}
 # new entries: must name one of the person's projects
 POSTING = re.compile(r"^/api/(?:docs/[\w-]+|journal|entry/[\w-]+)$")
 ONE_ENTRY = re.compile(r"^/api/(?:journal|docs/[\w-]+)/(\d+)(?:/.*)?$")

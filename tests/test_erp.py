@@ -2545,7 +2545,7 @@ class Rentals(unittest.TestCase):
             R.create_invoice(db, rid, {"from": "2026-08-15", "to": "2026-09-10"})
         a.post_extract(db, xid)
         e = a.get_entry(db, a.get_extract(db, xid)["entry_id"])
-        self.assertEqual({ln["account"] for ln in e["lines"] if ln["credit"]}, {"4045", "4046", "2200"})
+        self.assertEqual({ln["account"] for ln in e["lines"] if ln["credit"]}, {"4045", "4046", "4047", "2200"})
         # return the frame sets on 15 Sep: 2 braces lost, 1 frame damaged
         t = R.handover_template(db, rid, "return")
         kl = d["lines"][1]["id"]

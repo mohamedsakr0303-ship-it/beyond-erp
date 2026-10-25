@@ -1719,6 +1719,8 @@ def _charge_account(db, kind):
         return _role_or(db, "rental_compensation")
     if kind in ("rent", "minimum"):
         return _role_or(db, "rental_revenue")
+    if kind == "transport":     # its own income line, so transport shows its own profit (books before it: with installation)
+        return _role_or(db, "rental_transport") or _role_or(db, "rental_services")
     return _role_or(db, "rental_services")
 
 

@@ -115,9 +115,10 @@ COMPANY_KEYS = ("company_name", "company_tagline", "company_address", "company_t
 PUBLIC_SETTINGS = COMPANY_KEYS + ("demo_loaded", "desk_site", "workday_location", "menu_labels", "reserve_pct", "reserve_early_pct",
                                   "reserve_early_until", "capital_goal", "buffer_months", "repay_funder_first", "funding_repay_pct", "expected_cost_pct", "legal_reserve_pct", "legal_reserve_cap", "funding_partner", "funding_limit",
                                   "funding_extra", "funding_extra_shrinks", "funding_warn", "funding_critical", "funding_mode", "costplus_overhead", "report_from", "report_to", "lock_date", "hidden_modules",
-                                  "appearance", "po_self_approve_limit", "menu_layout", "form_custom", "duplicate_check", "two_step_required")
+                                  "appearance", "po_self_approve_limit", "menu_layout", "form_custom", "duplicate_check", "two_step_required",
+                                  "profit_categories", "distribute_noncash")
 JSON_SETTINGS = {"menu_labels": {}, "units": [], "hidden_modules": [], "appearance": {}, "regional": {}, "banks": [],
-                 "menu_layout": {}, "form_custom": {}}
+                 "menu_layout": {}, "form_custom": {}, "profit_categories": []}
 
 
 def _my_bus(db, user):
@@ -350,7 +351,7 @@ def put_settings(ctx):
                     ctx.body["appearance"].pop(k, None)
     if keys & {"reserve_pct", "legal_reserve_pct", "legal_reserve_cap", "funding_partner", "funding_limit", "reserve_early_pct", "reserve_early_until",
                "capital_goal", "buffer_months", "repay_funder_first", "funding_repay_pct", "funding_extra", "funding_extra_shrinks", "funding_warn",
-               "funding_critical", "funding_mode"} and not ctx.can("partners.equity", "edit"):
+               "funding_critical", "funding_mode", "distribute_noncash"} and not ctx.can("partners.equity", "edit"):
         ctx.require("settings.company", "edit")
     if "funding_mode" in keys:          # moves the funding account between equity and liabilities
         from . import settlement
@@ -359,6 +360,11 @@ def put_settings(ctx):
         if k in keys and ctx.body[k] not in ("", None):
             x = acc.num(ctx.body[k], k)
             ctx.body[k] = str(x / 100 if x > 1 else x)
+    if "profit_categories" in keys:
+        if not ctx.can("accounting.coa", "edit"):
+            ctx.require("settings.company", "edit")
+        from . import categories
+        ctx.body["profit_categories"] = categories.clean(ctx.body["profit_categories"])
     if keys & {"expected_cost_pct", "costplus_overhead"} and not ctx.can("partners.equity", "edit"):
         ctx.require("business_units.units", "edit")
     if keys & {"backup_keep", "lock_date", "po_self_approve_limit", "duplicate_check"}:
@@ -432,7 +438,7 @@ def put_settings(ctx):
             v = "" if v in (None, "") else str(max(0.0, min(5.0, acc.num(v, "expected cost %"))))
         if k in ("reserve_early_until", "capital_goal", "buffer_months"):
             v = str(max(0.0, acc.num(v or 0, k.replace("_", " "))))
-        if k == "repay_funder_first":
+        if k in ("repay_funder_first", "distribute_noncash"):
             v = "1" if v in (True, 1, "1", "yes", "true") else "0"
         # JSON settings were size-checked above; cutting them short would leave broken JSON behind
         ctx.db.set_setting(k, v if k in JSON_SETTINGS else acc.text(v, maxlen=20000))
@@ -2252,6 +2258,12 @@ def partners(ctx):
     pk = partner_pack.compute(ctx.db, None, ctx.q.get("date_to"))
     rep["policy"], rep["dist"] = pk["policy"], {**pk["dist"], "clean": pk["clean_total"], "held": pk["held_total"],
                                                 "verdict": pk["verdict_ar"] if ctx.lang == "ar" else pk["verdict"]}
+    # each partner's part of what can be paid now, in proportion to what is still owed to them
+    owed = {p["id"]: max(0.0, p["balance"]) for p in rep["partners"]}
+    tot, now = sum(owed.values()), rep["dist"]["max_safe"]
+    for p in rep["partners"]:
+        p["payable_now"] = round(now * owed[p["id"]] / tot, 2) if tot else 0.0
+        p["not_payable"] = round(p["balance"] - p["payable_now"], 2)
     return ok(rep)
 
 

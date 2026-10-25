@@ -289,7 +289,7 @@ const ROUTE_IC = { bills: "repeat", alerts: "bell", deals: "target", "crm-contac
   cash: "wallet", assets: "truck", depreciation: "down", loans: "bank", custody: "coins", partners: "hands", taxcodes: "pct", "report/tax": "chart", extracts: "clip",
   einvoice: "send", journal: "book", approvals: "check", ledger: "bookopen", coa: "tree", bankrec: "compare", recurring: "repeat", budgets: "target",
   "report/partner_pack": "pack", "report/income_statement": "chart", "report/balance_sheet": "layers", "report/cash_flow": "swap",
-  "report/trial_balance": "list", "report/bu_pnl": "pie", "budget-report": "target", aging: "hour", statement: "file", data: "updown",
+  "report/trial_balance": "list", "report/bu_pnl": "pie", "report/profit_categories": "pie", "budget-report": "target", aging: "hour", statement: "file", data: "updown",
   settings: "gear", industry: "store", users: "users", audit: "history",
   projects: "target", tasks: "check", contracts: "pen", variations: "swap", certificates: "clip", "purchase-requests": "list", "stock-counts": "check",
   equipment: "truck", "equipment-usage": "hour", maintenance: "gear", attendance: "users", ereceipts: "receipt",
@@ -5129,6 +5129,7 @@ async function reportPage(view, name, q, fields) {
   view.innerHTML = `<div class="toolbar"><span class="spacer"></span><button class="btn" data-a="doprint">${t("print")}</button>${exportMenu(name, params)}</div>` +
     filterBar(params, fields) + `<div class="card"><h2>${esc(tb.title)}</h2><div class="muted" style="margin:-4px 0 10px;font-size:.85em">${esc(tb.subtitle || "")}</div>${reportTable(tb)}</div>`;
   S.H.doprint = () => openApi(`/api/reports/${name}?` + qs({ ...params, format: "pdf" }), true);
+  return tb;
 }
 // every material that went into a project — issued from a store, bought for it, or a direct cost — filtered by date,
 // project, material and any text, with what it all cost and how much of it (per unit) on top
@@ -5155,8 +5156,36 @@ PAGES.report = async (view, parts, q) => {
     cash_flow: ["dates", "compare", "bu", "lang"], trial_balance: ["dates", "bu", "lang"], bu_pnl: ["dates", "lang"], tax: ["dates", "lang"],
     partner_pack: ["dates", "lang"] }[name] || ["dates", "lang"];
   if (name === "balance_sheet" && q.compare && q.compare !== "none" && !q.date_from) q.date_from = yearStart();
+  if (name === "profit_categories") return profitCategories(view, q);
   return reportPage(view, name, q, name === "balance_sheet" && q.compare && q.compare !== "none" ? ["dates", "compare", "bu", "lang"] : f);
 };
+
+// profit by category (rent, installation, transport…): the report, and the categories with their accounts
+async function profitCategories(view, q) {
+  const tb = await reportPage(view, "profit_categories", q, ["dates", "bu", "lang"]);
+  if (!can("accounting.coa", "edit") && !can("settings.company", "edit")) return;
+  let cats = (tb.data.defined || []).map(c => ({ ...c }));
+  const names = code => S.boot.accounts.filter(a => a.active !== 0 && scopeHas(code, a.code));
+  const scopeHas = (scope, code) => String(scope || "").split(/[,;\s]+/).filter(Boolean).some(p => p.endsWith("*") ? code.startsWith(p.slice(0, -1))
+    : p.includes("-") ? (([a, b]) => /^\d+$/.test(code) && +a <= +code && +code <= +b)(p.split("-")) : p === code);
+  const card = document.createElement("div"); card.className = "card";
+  const draw = () => { card.innerHTML = `<h2>${L2("Categories", "الفئات")}</h2>
+    <p class="muted" style="font-size:.85em;margin:-4px 0 10px">${esc(L2("Each category takes its revenue and cost accounts: codes, prefixes (60*) or ranges (6010-6040). An account counts in the first category that lists it.", "كل فئة تضم حسابات إيرادها وتكلفتها: أكواد أو بادئات (60*) أو نطاقات (6010-6040). يُحسب الحساب في أول فئة تذكره."))}${tb.data.suggested && cats.length ? " " + esc(L2("These are suggestions until you save.", "هذه مقترحات حتى تحفظها.")) : ""}</p>
+    ${cats.map((c, i) => `<div class="row" style="gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px">
+      <label class="f" style="max-width:200px">${t("name")}<input data-k="name" data-i="${i}" value="${esc(c.name || "")}"></label>
+      <label class="f" style="max-width:200px">${L2("Arabic name", "الاسم بالعربية")}<input data-k="name_ar" data-i="${i}" value="${esc(c.name_ar || "")}" dir="rtl"></label>
+      <label class="f" style="flex:1;min-width:200px">${L2("Accounts", "الحسابات")}<input data-k="accounts" data-i="${i}" value="${esc(c.accounts || "")}" dir="ltr" placeholder="4045, 5065, 60*">
+        <span class="muted" style="font-weight:400;font-size:.8em">${esc(names(c.accounts).map(a => a.code + " " + (S.lang === "ar" && a.name_ar ? a.name_ar : a.name)).join(" · ") || L2("No account matches yet", "لا يوجد حساب مطابق بعد"))}</span></label>
+      <button class="btn sm" data-a="pcdel" data-i="${i}" aria-label="${esc(t("delete"))}">✕</button></div>`).join("")}
+    <div class="row" style="gap:8px"><button class="btn" data-a="pcadd">+ ${L2("Category", "فئة")}</button><span class="spacer"></span>
+      <button class="btn pri" data-a="pcsave">${t("save")}</button></div>`; };
+  card.addEventListener("change", e => { const el = e.target.closest("[data-k]"); if (!el) return; cats[+el.dataset.i][el.dataset.k] = el.value; if (el.dataset.k === "accounts") draw(); });
+  S.H.pcadd = () => { cats.push({ name: "", name_ar: "", accounts: "" }); draw(); };
+  S.H.pcdel = el => { cats.splice(+el.dataset.i, 1); draw(); };
+  S.H.pcsave = async () => { $$("[data-k]", card).forEach(el => { cats[+el.dataset.i][el.dataset.k] = el.value; });
+    try { await api("PUT", "/api/settings", { profit_categories: cats.filter(c => c.name || c.accounts) }); toast(t("saved")); route(); } catch (e) { fail(e); } };
+  draw(); view.appendChild(card);
+}
 
 // ------------------------------------------------------------ import/export
 PAGES.data = async (view) => {
@@ -6384,6 +6413,7 @@ PAGES.partners = async (view, parts, q) => {
   S.H.rsave = async () => { const n = id => $(id).value.trim(), body = { reserve_pct: (+$("#rpct").value || 0) / 100 };
     if ($("#rearly")) Object.assign(body, { reserve_early_pct: n("#rearly") === "" ? "" : (+n("#rearly") || 0) / 100, reserve_early_until: +n("#runtil") || 0,
       capital_goal: +n("#rgoal") || 0, buffer_months: n("#rbuf") === "" ? 3 : +n("#rbuf"), ...($("#rrepay") ? { repay_funder_first: $("#rrepay").checked ? "1" : "0" } : {}),
+      ...($("#rnoncash") ? { distribute_noncash: $("#rnoncash").checked ? "1" : "0" } : {}),
       ...($("#rfund") ? { funding_repay_pct: n("#rfund") === "" ? "" : (+n("#rfund") || 0) / 100 } : {}),
       expected_cost_pct: n("#rexp") === "" ? "" : (+n("#rexp") || 0) / 100 });
     try { await api("PUT", "/api/settings", body); await refreshBoot(); toast(t("saved")); route(); } catch (e) { fail(e); } };
@@ -6398,7 +6428,8 @@ PAGES.partners = async (view, parts, q) => {
       ${act("admit", L2("Admit a new partner", "دخول شريك جديد"))}${act("exit", L2("Partner retirement / buy-out", "تخارج شريك"))}${act("set", L2("Change shares directly", "تعديل النسب مباشرة"))}
       ${can("partners.ownership", "edit") ? `<button data-a="stageown">${L2("Ownership by stage", "الملكية حسب المرحلة")}</button>` : ""}</div></div>` : "";
   S.H.stageown = () => stageOwnership();
-  const cp = d.cash_position, pol = d.policy || {}, dist = d.dist || {}, anyInt = d.partners.some(p => p.capital_interest), anyWip = d.partners.some(p => Math.abs(p.held_in_wip || 0) >= 0.01);
+  const cp = d.cash_position, pol = d.policy || {}, dist = d.dist || {}, anyInt = d.partners.some(p => p.capital_interest), anyWip = d.partners.some(p => Math.abs(p.held_in_wip || 0) >= 0.01),
+    anyRes = d.partners.some(p => Math.abs((p.distributable || 0) - (p.profit_share || 0) + (p.held_in_wip || 0)) >= 0.01);
   const acctRow = p => { const a = p.accounts; return `<tr class="click ${p.active ? "" : "void"}" data-a="${ed ? "pedit" : ""}" data-id="${p.id}">
       <td><b>${esc(p.name)}</b>${p.active ? "" : ` <span class="chip">${L2("Former partner", "شريك سابق")}${p.left_on ? " · " + fd(p.left_on) : ""}</span>`}${p.joined ? `<div class="lines">${L2("since", "منذ")} ${fd(p.joined)}</div>` : ""}</td>
       <td class="num"><b>${pct(p.default_share)}</b></td><td class="num">${money(a.capital)}</td><td class="num">${money(a.current)}</td><td class="num">${money(a.drawings)}</td>
@@ -6422,11 +6453,13 @@ PAGES.partners = async (view, parts, q) => {
         ${S.boot.settings.funding_partner ? `<label class="f" style="max-width:240px" title="${esc(L2("Blank: no fixed share. When set, only what is due to him from client payments is held back.", "فارغ: لا توجد نسبة ثابتة. عند تحديدها يُحتجز فقط المستحق له من دفعات العملاء."))}">${L2("Funding partner's share of each client payment %", "نصيب الشريك الممول من كل دفعة عميل %")}<input id="rfund" type="number" step="any" min="0" max="100" value="${pol.funding_repay_pct != null ? +(pol.funding_repay_pct * 100).toFixed(2) : ""}" ${ed ? "" : "disabled"}></label>` : ""}
         ${S.boot.settings.funding_partner ? `<div class="f" style="max-width:360px"><label class="chk" style="display:flex;gap:8px;align-items:center"><input id="rrepay" type="checkbox" ${pol.repay_funder_first ? "checked" : ""} ${ed ? "" : "disabled"}>${L2("Repay the funding partner before distributing", "سداد الشريك الممول قبل التوزيع")}</label>
           <span class="muted" style="font-size:.85em">${esc(L2("Ticked: nothing is distributed until all his money is repaid. Unticked: only his share of each client payment (above) is held back.", "مُفعَّل: لا توزيع حتى تُسدَّد كل أمواله. غير مُفعَّل: يُحتجز فقط نصيبه من كل دفعة عميل (أعلاه)."))}</span></div>` : ""}
+        <div class="f" style="max-width:360px"><label class="chk" style="display:flex;gap:8px;align-items:center"><input id="rnoncash" type="checkbox" ${pol.distribute_noncash ? "checked" : ""} ${ed ? "" : "disabled"}>${L2("Allow distributing profit that is not in cash", "السماح بتوزيع ربح غير متاح نقداً")}</label>
+          <span class="muted" style="font-size:.85em">${esc(L2("Off: only cash can be distributed. On: profit still owed by clients or held in equipment can be distributed too.", "غير مُفعَّل: يُوزَّع النقد فقط. مُفعَّل: يمكن أيضاً توزيع الربح المستحق على العملاء أو المحتجز في المعدات."))}</span></div>
         ${ed ? `<button class="btn" data-a="rsave">${t("save")}</button>` : ""}</div>
       <div class="kpis" style="margin-top:10px">${kpiBox(L2("Clean net profit", "صافي الربح بعد التكاليف المتبقية"), money(dist.clean), dist.clean < 0 ? "neg" : "pos", dist.held ? L2(`after ${money(dist.held)} held for remaining project costs`, `بعد احتجاز ${money(dist.held)} لتكاليف المشروعات المتبقية`) : "")}
         ${kpiBox(L2("Company capital reserve", "احتياطي رأس مال الشركة"), money(dist.reserve), "", dist.capital_goal ? L2(`${pct(dist.progress)} of the ${money(dist.capital_goal)} goal`, `${pct(dist.progress)} من هدف ${money(dist.capital_goal)}`) : "")}
         ${kpiBox(L2("Free own cash", "النقدية الذاتية الحرة"), money(dist.free), dist.free < 0 ? "neg" : "pos", L2(`after a ${money(dist.buffer)} buffer`, `بعد احتياطي ${money(dist.buffer)}`))}
-        ${kpiBox(L2("Maximum safe to distribute", "الحد الأقصى الآمن للتوزيع"), money(dist.max_safe), dist.max_safe > 0 ? "pos" : "")}</div>
+        ${kpiBox(L2("Maximum safe to distribute", "الحد الأقصى الآمن للتوزيع"), money(dist.max_safe), dist.max_safe > 0 ? "pos" : "", dist.not_in_cash > 0.005 ? L2(`${money(dist.not_in_cash)} more earned, not in cash yet`, `${money(dist.not_in_cash)} أخرى مكتسبة وغير متاحة نقداً بعد`) : "")}</div>
       <div class="banner ${dist.max_safe > 0 ? "ok" : "err"}" style="margin-top:6px">${esc(dist.verdict)}</div>
       ${dist.funder_due ? `<p class="muted" style="margin:6px 0 0">${esc(L2(`Funding partner: ${pct(pol.funding_repay_pct)} of ${money(dist.funder_due.client_payments)} paid by clients = ${money(dist.funder_due.share)}; repaid ${money(dist.funder_due.repaid)}; due to him now ${money(dist.funder_due.due)}.`, `الشريك الممول: ${pct(pol.funding_repay_pct)} من ${money(dist.funder_due.client_payments)} دفعها العملاء = ${money(dist.funder_due.share)}؛ تم سداد ${money(dist.funder_due.repaid)}؛ المستحق له الآن ${money(dist.funder_due.due)}.`))}</p>` : ""}
       <p class="muted" style="margin:6px 0 0">${t("company_result")}: ${money(d.company_result)}</p>
@@ -6436,11 +6469,12 @@ PAGES.partners = async (view, parts, q) => {
         ${ed ? `<button class="btn" data-a="lrsave" style="align-self:flex-end">${t("save")}</button>` : ""}</div>
       <p class="muted" style="font-size:.85em;margin:6px 0 0">${L2("Statutory requirements vary by company type and country; confirm with your auditor. 0: none.", "تختلف المتطلبات النظامية حسب نوع الشركة والدولة؛ راجعها مع مراقب الحسابات. 0: لا يوجد.")}</p>
 </div>
-    <div class="card"><h2>${L2("Profit shares", "حصص الأرباح")}</h2><div class="tbl"><table><thead><tr><th>${t("partner")}</th>${d.units.map(u => `<th class="num">${esc(u.code)}</th>`).join("")}${anyInt ? `<th class="num">${L2("Interest on capital", "فائدة رأس المال")}</th>` : ""}<th class="num">${t("profit_share")}</th>${anyWip ? `<th class="num" title="${esc(L2("Profit on work performed but not invoiced: earned, but not distributable until invoiced", "ربح أعمال منفذة غير مفوترة: مكتسب لكنه غير قابل للتوزيع حتى الفوترة"))}">${L2("Held in work in progress", "محتجز في الأعمال تحت التنفيذ")}</th>` : ""}<th class="num">${t("distributable")}</th><th class="num">${t("drawn")}</th><th class="num">${t("balance")}</th></tr></thead><tbody>
+    <div class="card"><h2>${L2("Profit shares", "حصص الأرباح")}</h2><div class="tbl"><table><thead><tr><th>${t("partner")}</th>${d.units.map(u => `<th class="num">${esc(u.code)}</th>`).join("")}${anyInt ? `<th class="num">${L2("Interest on capital", "فائدة رأس المال")}</th>` : ""}<th class="num">${t("profit_share")}</th>${anyWip ? `<th class="num" title="${esc(L2("Profit on work performed but not invoiced: earned, but not distributable until invoiced", "ربح أعمال منفذة غير مفوترة: مكتسب لكنه غير قابل للتوزيع حتى الفوترة"))}">${L2("Held in work in progress", "محتجز في الأعمال تحت التنفيذ")}</th>` : ""}${anyRes ? `<th class="num" title="${esc(L2("Profit share after the company reserve", "حصة الربح بعد احتياطي الشركة"))}">${L2("After reserve", "بعد الاحتياطي")}</th>` : ""}<th class="num">${t("drawn")}</th><th class="num" title="${esc(L2("Earned and not yet drawn", "مكتسب ولم يُسحب بعد"))}">${t("balance")}</th><th class="num" title="${esc(L2("This partner's part of the maximum safe to distribute now", "نصيب الشريك من الحد الأقصى الآمن للتوزيع الآن"))}">${L2("Payable now", "قابل للصرف الآن")}</th><th class="num" title="${esc(L2("Earned, but not in cash yet: still owed by clients or held in equipment", "مكتسب لكنه غير متاح نقداً بعد: مستحق على العملاء أو في المعدات"))}">${L2("Not in cash yet", "غير متاح نقداً بعد")}</th></tr></thead><tbody>
       ${d.partners.filter(p => p.active || p.profit_share || p.drawn).map(p => `<tr class="click" data-a="${ed ? "pedit" : ""}" data-id="${p.id}"><td>${esc(p.name)}<div class="lines">${t("default")} ${pct(p.default_share)}</div></td>${d.units.map(u => `<td class="num">${pct(p.units[u.code].share)}<div class="lines">${money(p.units[u.code].profit)}</div></td>`).join("")}
-        ${anyInt ? `<td class="num">${money(p.capital_interest)}</td>` : ""}<td class="num">${money(p.profit_share)}</td>${anyWip ? `<td class="num muted">${money(p.held_in_wip)}</td>` : ""}<td class="num">${money(p.distributable)}</td><td class="num">${money(p.drawn)}</td><td class="num ${p.balance < 0 ? "neg" : "pos"}"><b>${money(p.balance)}</b></td></tr>`).join("")}
-      <tr class="total"><td>${t("total")}</td>${d.units.map(u => `<td class="num ${Math.abs(d.share_checks[u.code] - 1) < 0.001 ? "pos" : "neg"}">${pct(d.share_checks[u.code])}</td>`).join("")}${anyInt ? `<td class="num">${money(d.partners.reduce((s, p) => s + p.capital_interest, 0))}</td>` : ""}<td class="num">${money(d.partners.reduce((s, p) => s + p.profit_share, 0))}</td>${anyWip ? `<td class="num muted">${money(d.partners.reduce((s, p) => s + p.held_in_wip, 0))}</td>` : ""}<td class="num">${money(d.partners.reduce((s, p) => s + p.distributable, 0))}</td><td class="num">${money(d.partners.reduce((s, p) => s + p.drawn, 0))}</td><td class="num">${money(d.partners.reduce((s, p) => s + p.balance, 0))}</td></tr>
-      </tbody></table></div>${anyWip ? `<p class="muted" style="font-size:.85em;margin:8px 0 0">${L2("Only invoiced profit is distributable. Uninvoiced work is included in profit on an accrual basis, but its share is retained until invoiced.", "الربح المفوتر فقط قابل للتوزيع. تدخل الأعمال غير المفوترة في الربح وفق أساس الاستحقاق، لكن حصتها تُحتجز حتى الفوترة.")}</p>` : ""}</div>
+        ${anyInt ? `<td class="num">${money(p.capital_interest)}</td>` : ""}<td class="num">${money(p.profit_share)}</td>${anyWip ? `<td class="num muted">${money(p.held_in_wip)}</td>` : ""}${anyRes ? `<td class="num">${money(p.distributable)}</td>` : ""}<td class="num">${money(p.drawn)}</td><td class="num ${p.balance < 0 ? "neg" : ""}">${money(p.balance)}</td><td class="num pos"><b>${money(p.payable_now)}</b></td><td class="num muted">${money(p.not_payable)}</td></tr>`).join("")}
+      <tr class="total"><td>${t("total")}</td>${d.units.map(u => `<td class="num ${Math.abs(d.share_checks[u.code] - 1) < 0.001 ? "pos" : "neg"}">${pct(d.share_checks[u.code])}</td>`).join("")}${anyInt ? `<td class="num">${money(d.partners.reduce((s, p) => s + p.capital_interest, 0))}</td>` : ""}<td class="num">${money(d.partners.reduce((s, p) => s + p.profit_share, 0))}</td>${anyWip ? `<td class="num muted">${money(d.partners.reduce((s, p) => s + p.held_in_wip, 0))}</td>` : ""}${anyRes ? `<td class="num">${money(d.partners.reduce((s, p) => s + p.distributable, 0))}</td>` : ""}<td class="num">${money(d.partners.reduce((s, p) => s + p.drawn, 0))}</td><td class="num">${money(d.partners.reduce((s, p) => s + p.balance, 0))}</td><td class="num">${money(d.partners.reduce((s, p) => s + (p.payable_now || 0), 0))}</td><td class="num">${money(d.partners.reduce((s, p) => s + (p.not_payable || 0), 0))}</td></tr>
+      </tbody></table></div>
+      ${dist.not_in_cash > 0.005 ? `<p class="muted" style="font-size:.85em;margin:8px 0 0">${esc(L2(`${money(dist.not_in_cash)} of the partners' balance is not in cash yet: clients owe ${money(dist.receivable)}, the rest is held in equipment or went to repay funding. ${dist.noncash_allowed ? "Distributing it is switched on in the distribution policy." : "It is shown but not distributable; switch it on in the distribution policy if needed."}`, `${money(dist.not_in_cash)} من رصيد الشركاء غير متاح نقداً بعد: على العملاء ${money(dist.receivable)}، والباقي في المعدات أو ذهب لسداد التمويل. ${dist.noncash_allowed ? "توزيعه مُفعَّل في سياسة التوزيع." : "يظهر هنا لكنه غير قابل للتوزيع؛ فعّله من سياسة التوزيع عند الحاجة."}`))}</p>` : ""}${anyWip ? `<p class="muted" style="font-size:.85em;margin:8px 0 0">${L2("Only invoiced profit is distributable. Uninvoiced work is included in profit on an accrual basis, but its share is retained until invoiced.", "الربح المفوتر فقط قابل للتوزيع. تدخل الأعمال غير المفوترة في الربح وفق أساس الاستحقاق، لكن حصتها تُحتجز حتى الفوترة.")}</p>` : ""}</div>
     ${d.appropriations.length ? `<div class="card"><h2>${L2("Profit appropriated", "الأرباح الموزعة")}</h2><div class="tbl"><table><thead><tr><th>${L2("Period", "الفترة")}</th><th class="num">${L2("Result", "النتيجة")}</th><th class="num">${L2("Reserve", "الاحتياطي")}</th><th class="num">${L2("To partners", "للشركاء")}</th><th></th></tr></thead><tbody>
       ${d.appropriations.map(a => `<tr><td>${fd(a.period_from)} → ${fd(a.period_to)}</td><td class="num">${money(a.profit)}</td><td class="num">${money((a.statement || {}).reserve || 0)}</td>
         <td class="num">${money(((a.statement || {}).partners || []).reduce((x, r) => x + r.total, 0))}</td><td><button class="btn sm" data-a="apprview" data-id="${a.id}">${L2("Statement", "القائمة")}</button> <a href="#" class="btn sm" data-a="openv" data-id="${a.id}">#${a.id}</a></td></tr>`).join("")}</tbody></table></div>

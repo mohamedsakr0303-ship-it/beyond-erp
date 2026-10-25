@@ -16,7 +16,7 @@ REPORT_AR = {
     "Cover": "الغلاف", "How to Use": "دليل الاستخدام", "Extract Print": "طباعة المستخلص", "Partner Pack": "تقرير الشركاء", "Dashboard": "لوحة المتابعة", "Trial Balance": "ميزان المراجعة",
     "Income Statement": "قائمة الدخل", "Balance Sheet": "الميزانية العمومية", "Cash Flow": "التدفقات النقدية",
     "BU Profitability": "ربحية المشروعات", "Payables": "الدائنون", "Receivables": "المدينون", "Partner Equity": "حقوق الشركاء",
-    "Tax Summary": "ملخص الضرائب", "Model Audit": "فحص سلامة الدفاتر", "Budget vs Actual": "الموازنة مقابل الفعلي",
+    "Tax Summary": "ملخص الضرائب", "Model Audit": "فحص سلامة الدفاتر", "Budget vs Actual": "الموازنة مقابل الفعلي", "Profit by Category": "الربح حسب الفئة",
     "Quick Estimator": "التقدير السريع", "Scaffold Calculator": "حاسبة السقالات الهندسية", "Crew Pay Calculator": "حاسبة أجور الأطقم",
     "Funder Account": "حساب الممول", "Building Calculator": "حاسبة المباني", "Lists": "Lists",
 }
@@ -41,7 +41,8 @@ TERMS = {
     "What the business owns and owes": "ما تملكه الشركة وما عليها", "Where the cash actually went": "أين ذهبت النقدية فعلاً",
     "Each project's own result, after shared overhead": "نتيجة كل مشروع بعد المصروفات المشتركة",
     "Profit share, reserve, drawings and balances": "حصص الأرباح والاحتياطي والمسحوبات والأرصدة",
-    "The budget for the period against the books": "موازنة الفترة مقابل الدفاتر", "VAT and withholding balances": "أرصدة القيمة المضافة والخصم والتحصيل",
+    "The budget for the period against the books": "موازنة الفترة مقابل الدفاتر",
+    "What each line of business earned: rent, installation, transport…": "ربح كل نشاط: الإيجار والتركيب والنقل…", "VAT and withholding balances": "أرصدة القيمة المضافة والخصم والتحصيل",
     "VAT / withholding rates": "نسب الضرائب", "Projects: client, billing basis and fee": "المشروعات: العميل وأساس الفوترة والأتعاب",
     "Clients, suppliers, staff": "العملاء والموردون والعاملون", "Owners and their default share": "الشركاء وحصصهم",
     "Each partner's share per project": "حصة كل شريك في كل مشروع", "Bills of quantities": "المقايسات", "Your priced item library": "قائمة الأسعار",

@@ -197,6 +197,45 @@ class RateCaptureAndFlags(unittest.TestCase):
         self.assertEqual(d["max_safe"], 0.0)
         self.assertIn("repay the funding partner first", d["verdict"][0])
 
+    def test_profit_not_in_cash_is_not_distributable_unless_allowed(self):
+        """Profit billed but not collected is shown as not in cash; only cash is offered for distribution until the
+        company allows more."""
+        from erp import partner_pack
+        db = books()
+        for k, v in (("reserve_pct", "0"), ("buffer_months", "0")):
+            db.set_setting(k, v)
+        db.x("INSERT INTO partners(name,default_share) VALUES ('F',0.5),('G',0.5)")
+        x = a.save_extract(db, {"bu_code": "P-1", "number": "INV-9", "date": "2026-01-05", "lines": [{"description": "Works", "qty": 1, "price": 3000}]})
+        a.post_extract(db, x)
+        a.record_collection(db, {"bu_code": "P-1", "amount": 1000, "date": "2026-01-10", "received_into": "1020", "credit_account": "1100"})
+        d = partner_pack.compute(db)["dist"]
+        self.assertEqual((d["cash_safe"], d["max_safe"], d["not_in_cash"], d["receivable"]), (1000.0, 1000.0, 2000.0, 2000.0))
+        db.set_setting("distribute_noncash", "1")
+        d = partner_pack.compute(db)["dist"]
+        self.assertEqual((d["cash_safe"], d["max_safe"]), (1000.0, 3000.0))
+        self.assertIn("1,000 from cash now, 2,000 not in cash yet", d["verdict"][0])
+
+    def test_profit_by_category(self):
+        """Each category's revenue less its costs; the rest stays outside, so the categories add up to the net profit."""
+        import json
+        from erp import categories
+        db = books()
+        x = a.save_extract(db, {"bu_code": "P-1", "number": "INV-9", "date": "2026-01-05", "lines": [
+            {"description": "Rent", "qty": 1, "price": 5000, "account": "4045"},
+            {"description": "Transport", "qty": 1, "price": 800, "account": "4047"}]})
+        a.post_extract(db, x)
+        a.record_expense(db, {"date": "2026-01-06", "account": "6075", "description": "Travel", "amount": 300, "paid": 300, "paid_from": "1010"})
+        a.record_expense(db, {"date": "2026-01-06", "account": "6090", "description": "Truck", "amount": 500, "paid": 500, "paid_from": "1010"})
+        db.set_setting("profit_categories", json.dumps([{"name": "Rent", "accounts": "4045"}, {"name": "Transport", "accounts": "4047, 6090"}]))
+        d = categories.compute(db)
+        got = {o["name"]: (o["revenue"], o["cost"], o["profit"]) for o in d["categories"]}
+        self.assertEqual(got, {"Rent": (5000.0, 0.0, 5000.0), "Transport": (800.0, 500.0, 300.0)})
+        self.assertEqual((d["rest"]["cost"], d["total"]["profit"]), (300.0, a.income_statement(db)["net_profit"]))
+        with self.assertRaises(a.ValidationError):
+            categories.clean([{"name": "Bad", "accounts": "40x5"}])
+        self.assertEqual(categories.clean([{"name": "", "accounts": ""}, {"name": "A", "accounts": "60*, 6010-6040"}]),
+                         [{"name": "A", "name_ar": "", "accounts": "60*, 6010-6040"}])
+
     def test_cash_below_zero_flag(self):
         """Money paid out before any came in is flagged with the day and the lowest balance, even if cash is positive now."""
         db = books()

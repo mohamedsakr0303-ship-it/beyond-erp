@@ -76,7 +76,9 @@ def policy(db):
             "reserve_early_until": f("reserve_early_until", 0.0), "capital_goal": f("capital_goal", 0.0),
             "buffer_months": f("buffer_months", POLICY["buffer_months"]),
             "repay_funder_first": (db.setting("repay_funder_first") or "1") not in ("0", "no", "false"),
-            "funding_repay_pct": f("funding_repay_pct", None)}
+            "funding_repay_pct": f("funding_repay_pct", None),
+            # profit that is not cash yet (equipment, client balances) is shown but not offered for distribution unless allowed
+            "distribute_noncash": (db.setting("distribute_noncash") or "0") in ("1", "yes", "true")}
 
 
 def funder_due(db, pct, funder, date_to):
@@ -138,7 +140,10 @@ def distributable(db, pol, rows, bs, earned, held, reserve_amt, partners, date_t
     # facility mode: the room left in his facility already counts his money, so there is no separate hold for him
     # ticked, "repay him first" holds everything until all his money is back, whatever his share of each payment
     hold_funder = pol["repay_funder_first"] and funder > 0.005 and room is None
-    safe = 0.0 if hold_funder else round(max(0.0, min(free, to_partners)), 2)
+    cash_safe = 0.0 if hold_funder else round(max(0.0, min(free, to_partners)), 2)
+    # earned but not in cash: still owed by clients, or spent on equipment / repaying funding
+    not_in_cash = round(max(0.0, to_partners - cash_safe), 2) if not hold_funder else round(max(0.0, to_partners), 2)
+    safe = round(max(0.0, to_partners), 2) if pol.get("distribute_noncash") and not hold_funder else cash_safe
     if room is not None and to_partners <= 0:          # facility mode, as the workbook: what is owed to partners first
         v = ((f"DO NOT DISTRIBUTE — partners are already ahead of their earned share by {-ahead:,.0f}",
               f"لا يُنصح بالتوزيع — حصل الشركاء على أكثر من نصيبهم المستحق بمقدار {-ahead:,.0f}") if ahead < 0 else
@@ -160,11 +165,17 @@ def distributable(db, pol, rows, bs, earned, held, reserve_amt, partners, date_t
         by = ("the funding facility", "حد التمويل") if room is not None else ("cash", "النقدية")
         v = (f"OK to distribute up to {safe:,.0f}" + (f" (limited by {by[0]})" if lim else " (limited by clean profit)"),
              f"يمكن التوزيع حتى {safe:,.0f}" + (f" (محدود ب{by[1]})" if lim else " (محدود بالربح الصافي)"))
+    if safe > cash_safe + 0.005:
+        v = (f"OK to distribute up to {safe:,.0f}: {cash_safe:,.0f} from cash now, {safe - cash_safe:,.0f} not in cash yet "
+             f"(distributing beyond cash is switched on)",
+             f"يمكن التوزيع حتى {safe:,.0f}: {cash_safe:,.0f} من النقدية الآن، و{safe - cash_safe:,.0f} غير متاح نقداً بعد "
+             f"(التوزيع بما يتجاوز النقدية مُفعَّل)")
     set_aside = round(sum(r["net"] for r in rows if r.get("role") == "reserve_cash") / 100, 2)
     goal = pol["capital_goal"] or 0
     return {"cash": cash, "owed": owed, "advances": bs["advances"], "held": held, "monthly_overhead": monthly,
             "buffer": buffer, "reserve": reserve_amt, "free": free, "owed_to_partners": to_partners, "funder_money": funder,
-            "max_safe": safe, "verdict": v, "facility_room": room, "facility": fac, "capital_goal": goal, "progress": round(min(1, reserve_amt / goal), 4) if goal else None,
+            "max_safe": safe, "cash_safe": cash_safe, "not_in_cash": not_in_cash, "receivable": bs["receivable"],
+            "noncash_allowed": bool(pol.get("distribute_noncash")), "verdict": v, "facility_room": room, "facility": fac, "capital_goal": goal, "progress": round(min(1, reserve_amt / goal), 4) if goal else None,
             "set_aside": set_aside, "not_backed": round(max(0.0, reserve_amt - set_aside), 2), "funder_due": due,
             "months_covered": round(reserve_amt / monthly, 2) if monthly else None}
 
