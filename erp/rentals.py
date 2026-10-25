@@ -28,7 +28,7 @@ CHARGE_TYPES = ("install", "dismantle", "transport", "materials", "other")
 CHARGE_WHEN = ("delivery", "return", "manual")
 STATUSES = ("quote", "ordered", "active", "returned", "closed", "cancelled")
 KINDS = ("Rental Equipment Purchase", "Rental Equipment Loss", "Rental Equipment Depreciation", "Rental Deposit",
-         "Rental Equipment Discount", "Rental Accrual")
+         "Rental Equipment Cost Adjustment", "Rental Accrual")
 LIVE_REF = f"{acc.LIVE} AND e.reversed_by IS NULL AND e.reversal_of IS NULL"
 EPS = 1e-9
 
@@ -179,11 +179,11 @@ def _lot_states(db, item_id=None, lot_id=None):
                 "COALESCE((SELECT SUM(CASE WHEN kind IN ('lost','damaged') THEN qty ELSE 0 END) FROM rent_moves m WHERE m.lot_id=l.id),0) AS m_lost, "
                 "COALESCE((SELECT SUM(CASE WHEN kind='scrap' THEN qty ELSE 0 END) FROM rent_moves m WHERE m.lot_id=l.id),0) AS m_scrap "
                 "FROM rent_lots l" + (" WHERE " + " AND ".join(w) if w else "") + " ORDER BY l.date, l.id", p)
-    dep, disc = lot_depreciation(db), lot_discounts(db)
+    dep, disc = lot_depreciation(db), lot_adjustments(db)
     for r in rows:
-        r["list_cost"] = r["unit_cost"]     # as bought; a supplier discount booked later lowers the cost of every piece
+        r["list_cost"] = r["unit_cost"]     # as bought; a later discount (−) or extra cost (+) changes every piece's cost
         if disc.get(r["code"]) and r["qty"] > EPS:
-            r["unit_cost"] = r["unit_cost"] - disc[r["code"]] / r["qty"]
+            r["unit_cost"] = r["unit_cost"] + disc[r["code"]] / r["qty"]
         r["with_clients"] = r["m_out"] - r["m_back"] - r["m_lost"]
         r["in_yard"] = r["qty"] - r["m_out"] + r["m_back"] - r["m_scrap"]
         r["gone"] = r["m_lost"] + r["m_scrap"]
@@ -228,48 +228,61 @@ def lot_depreciation(db):
     return out
 
 
-def lot_discounts(db):
-    """{lot code: discount (minor)} — supplier discounts / credit notes booked against a stock lot (a voided one stops counting)."""
+def lot_adjustments(db):
+    """{lot code: change in cost (minor)} — supplier discounts (−) and extra costs (+) booked against a stock lot after the
+    purchase (a voided one stops counting)."""
     out = {}
     for e in db.q(f"SELECT e.meta FROM journal_entries e WHERE {LIVE_REF} AND e.kind=?", (KINDS[4],)):
-        for code, amt in (_j(e["meta"], {}).get("lot_discount") or {}).items():
+        for code, amt in (_j(e["meta"], {}).get("lot_adjust") or {}).items():
             out[code] = out.get(code, 0) + int(amt)
     return out
 
 
-def lot_discount(db, lot_id, d, user=""):
-    """A discount or credit note from the supplier after the purchase: it lowers the lot's cost (not income). Refunded
-    into a cash / bank account, or taken off what is still owed to the supplier. Depreciation follows the lower cost
-    from the next run. Only while every piece of the lot is still owned (pieces already gone left at the old cost)."""
+def lot_adjust(db, lot_id, d, user=""):
+    """A change to a stock lot's cost after the purchase: a supplier discount / credit note lowers it (it is not income);
+    an extra cost that belongs to the equipment (more paid to the supplier, freight, customs…) raises it. Settled against
+    what is owed to the supplier, or in money (refund received / amount paid). Depreciation follows from the next run.
+    Only while every piece of the lot is still owned (pieces already gone left at the old cost)."""
     lot = next(iter(_lot_states(db, lot_id=int(lot_id))), None)
     if not lot:
         raise ValidationError("Stock lot not found")
     if lot["gone"] > EPS:
-        raise ValidationError("Pieces from this lot were lost or scrapped at the old cost. Record this discount as other income instead.")
-    amount = to_minor(num(d.get("amount"), "discount", allow_zero=False))
+        raise ValidationError("Pieces from this lot were lost or scrapped at the old cost. Record this as other income or expense instead.")
+    kind = d.get("kind") or "discount"
+    if kind not in ("discount", "extra"):
+        raise ValidationError("Choose a discount or an extra cost")
+    amount = to_minor(num(d.get("amount"), "amount", allow_zero=False))
     cost = int(round(lot["qty"] * lot["unit_cost"]))
-    if amount <= 0 or amount > cost - int(round(lot["accum"])):
+    if amount <= 0 or (kind == "discount" and amount > cost - int(round(lot["accum"]))):
         raise ValidationError("The discount must be more than zero and no more than the lot's remaining value")
     date = acc.clean_date(d.get("date") or acc.today())
     how = d.get("how") or "credit"
+    supplier = text(d.get("supplier")) or lot["supplier"]
     if how == "credit":
-        supplier = text(d.get("supplier")) or lot["supplier"]
         if not supplier:
-            raise ValidationError("Name the supplier whose balance is reduced")
-        dr = {"account": acc.account_code(db, d.get("payable_account") or db.acct("ap"), types=("Liability",)), "debit": to_major(amount),
-              "party": supplier}
-    elif how == "refund":
-        supplier = text(d.get("supplier")) or lot["supplier"]
-        dr = {"account": acc.money_account(db, d.get("method"), d.get("paid_into")), "debit": to_major(amount)}
+            raise ValidationError("Name the supplier whose balance changes")
+        other = {"account": acc.account_code(db, d.get("payable_account") or db.acct("ap"), types=("Liability",)), "party": supplier}
+    elif how == "money":
+        other = {"account": acc.money_account(db, d.get("method"), d.get("paid_into") or d.get("paid_from"))}
     else:
-        raise ValidationError("Choose how the discount was received")
+        raise ValidationError("Choose how it was settled")
     it = get_item(db, lot["item_id"])
-    fleet = acc.account_code(db, d.get("account") or _role_or(db, "rental_fleet"), types=("Asset",), field="equipment account")
+    fleet = {"account": acc.account_code(db, d.get("account") or _role_or(db, "rental_fleet"), types=("Asset",), field="equipment account")}
+    up = kind == "extra"
+    lines = [{**fleet, "debit": to_major(amount)}, {**other, "credit": to_major(amount)}] if up else \
+        [{**other, "debit": to_major(amount)}, {**fleet, "credit": to_major(amount)}]
+    memo = text(d.get("memo")) or (f"Extra cost on {it['name']} ({lot['code']})" if up else f"Discount on {it['name']} ({lot['code']})")
     with db.tx():
-        return acc._insert_entry(db, date=date, kind=KINDS[4], memo=text(d.get("memo")) or f"Discount on {it['name']} ({lot['code']})",
-                                 party=supplier, ref=f"RENT:DISC:{lot['code']}",
-                                 lines=[dr, {"account": fleet, "credit": to_major(amount)}],
-                                 meta={"lot_discount": {lot["code"]: amount}, "rent_item": it["code"]}, user=user)
+        return acc._insert_entry(db, date=date, kind=KINDS[4], memo=memo, party=supplier, ref=f"RENT:ADJ:{lot['code']}", lines=lines,
+                                 meta={"lot_adjust": {lot["code"]: amount if up else -amount}, "rent_item": it["code"]}, user=user)
+
+
+def spread(total, weights):
+    """Split an amount (minor units) over weights in whole minor units, the remainder on the largest share."""
+    tw = sum(weights) or 1
+    parts = [int(total * w // tw) for w in weights]
+    parts[max(range(len(weights)), key=lambda i: weights[i])] += total - sum(parts)
+    return parts
 
 
 def plan_depreciation(db, through):

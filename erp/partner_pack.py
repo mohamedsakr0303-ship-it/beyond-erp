@@ -75,7 +75,21 @@ def policy(db):
     return {"reserve_pct": f("reserve_pct", POLICY["reserve_pct"]), "reserve_early_pct": f("reserve_early_pct", None),
             "reserve_early_until": f("reserve_early_until", 0.0), "capital_goal": f("capital_goal", 0.0),
             "buffer_months": f("buffer_months", POLICY["buffer_months"]),
-            "repay_funder_first": (db.setting("repay_funder_first") or "1") not in ("0", "no", "false")}
+            "repay_funder_first": (db.setting("repay_funder_first") or "1") not in ("0", "no", "false"),
+            "funding_repay_pct": f("funding_repay_pct", None)}
+
+
+def funder_due(db, pct, funder, date_to):
+    """The funding partner's share of what clients paid against invoices (his agreed % of each payment), less what he
+    has been paid back — never more than his money still in the company."""
+    paid = db.one(f"""SELECT COALESCE(SUM(l.credit),0) n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
+                      JOIN accounts a ON a.code=l.account WHERE {acc.LIVE} AND e.date<=? AND e.kind='Receipt Voucher'
+                      AND (a.subtype='receivable' OR a.role='client_advances')""", (date_to,))["n"]
+    back = db.one(f"""SELECT COALESCE(SUM(l.debit),0) n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
+                      JOIN accounts a ON a.code=l.account WHERE {acc.LIVE} AND e.date<=? AND a.role='funding_partner'""", (date_to,))["n"]
+    share = to_major(int(round(paid * pct)))
+    return {"client_payments": to_major(paid), "share": share, "repaid": to_major(back),
+            "due": round(max(0.0, min(max(funder, 0.0), share - to_major(back))), 2)}
 
 
 def reserve_for(clean, pol):
@@ -115,10 +129,14 @@ def distributable(db, pol, rows, bs, earned, held, reserve_amt, partners, date_t
     else:
         room = None
         free = round(cash - owed - bs["advances"] - held - buffer - reserve_amt, 2)
+    # his agreed share of each client payment: only what is due to him now is held back (instead of all his money)
+    due = funder_due(db, pol["funding_repay_pct"], funder, date_to) if pol.get("funding_repay_pct") else None
+    if due:
+        free = round(free - due["due"], 2)
     to_partners = round(sum(max(0.0, x["undistributed"]) for x in partners), 2)
     ahead = round(sum(x["undistributed"] for x in partners), 2)
     # facility mode: the room left in his facility already counts his money, so there is no separate hold for him
-    hold_funder = pol["repay_funder_first"] and funder > 0.005 and room is None
+    hold_funder = pol["repay_funder_first"] and funder > 0.005 and room is None and not due
     safe = 0.0 if hold_funder else round(max(0.0, min(free, to_partners)), 2)
     if room is not None and to_partners <= 0:          # facility mode, as the workbook: what is owed to partners first
         v = ((f"DO NOT DISTRIBUTE — partners are already ahead of their earned share by {-ahead:,.0f}",
@@ -146,7 +164,7 @@ def distributable(db, pol, rows, bs, earned, held, reserve_amt, partners, date_t
     return {"cash": cash, "owed": owed, "advances": bs["advances"], "held": held, "monthly_overhead": monthly,
             "buffer": buffer, "reserve": reserve_amt, "free": free, "owed_to_partners": to_partners, "funder_money": funder,
             "max_safe": safe, "verdict": v, "facility_room": room, "facility": fac, "capital_goal": goal, "progress": round(min(1, reserve_amt / goal), 4) if goal else None,
-            "set_aside": set_aside, "not_backed": round(max(0.0, reserve_amt - set_aside), 2),
+            "set_aside": set_aside, "not_backed": round(max(0.0, reserve_amt - set_aside), 2), "funder_due": due,
             "months_covered": round(reserve_amt / monthly, 2) if monthly else None}
 
 

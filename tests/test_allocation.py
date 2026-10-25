@@ -159,7 +159,7 @@ class RateCaptureAndFlags(unittest.TestCase):
         a.record_partner_tx(db, {"partner": "A", "type": "Capital", "amount": 1000, "date": "2026-01-02"})
         a.record_project_cost(db, {"bu_code": "P-1", "vendor": "Sup", "description": "Works", "qty": 1, "rate": 900, "date": "2026-02-01"})
         x = a.save_extract(db, {"bu_code": "P-1", "number": "INV-1", "date": "2026-03-01",
-                                "lines": [{"description": "Works", "qty": 1, "price": 500}]})
+                                "lines": [{"description": "Works", "unit": "m2", "qty": 1, "price": 500}]})
         a.post_extract(db, x)
         a.record_partner_tx(db, {"partner": "A", "type": "Distribution", "amount": 100, "date": "2026-03-02"})
         flags = " | ".join(f["flag"] for f in a.review_flags(db))
@@ -171,6 +171,27 @@ class RateCaptureAndFlags(unittest.TestCase):
         self.assertEqual(links["P-1"], f"#/bu/{p1}")
         self.assertEqual(links["A"], "#/statement?party=A")
         self.assertTrue(any(h == "#/prices?ratecap=1" for h in links.values()))
+
+    def test_funder_share_of_client_payments(self):
+        """A funding partner repaid an agreed % of every client payment: only what is due to him now is held back from
+        distributions (not all his money), whichever clients paid."""
+        from erp import partner_pack
+        db = books()
+        db.set_setting("funding_partner", "F")
+        for k, v in (("funding_repay_pct", "0.5"), ("reserve_pct", "0"), ("buffer_months", "0")):
+            db.set_setting(k, v)
+        db.x("INSERT INTO partners(name,default_share) VALUES ('F',0.5),('G',0.5)")
+        a.record_journal(db, {"date": "2026-01-02", "memo": "lent", "lines": [{"account": "1020", "debit": 5000}, {"account": "3015", "credit": 5000}]})
+        x = a.save_extract(db, {"bu_code": "P-1", "number": "INV-9", "date": "2026-01-05", "lines": [{"description": "Works", "qty": 1, "price": 3000}]})
+        a.post_extract(db, x)
+        a.record_collection(db, {"bu_code": "P-1", "amount": 2000, "date": "2026-01-10", "received_into": "1020", "credit_account": "1100"})
+        due = partner_pack.compute(db)["dist"]["funder_due"]
+        self.assertEqual((due["client_payments"], due["share"], due["repaid"], due["due"]), (2000.0, 1000.0, 0.0, 1000.0))
+        before = partner_pack.compute(db)["dist"]["free"]
+        a.record_journal(db, {"date": "2026-01-11", "memo": "his half", "lines": [{"account": "3015", "debit": 1000}, {"account": "1020", "credit": 1000}]})
+        d = partner_pack.compute(db)["dist"]
+        self.assertEqual((d["funder_due"]["due"], d["free"]), (0.0, before))      # paying him his half: cash and the hold both drop 1,000
+        self.assertNotIn("repay the funding partner first", d["verdict"][0])
 
     def test_cash_below_zero_flag(self):
         """Money paid out before any came in is flagged with the day and the lowest balance, even if cash is positive now."""

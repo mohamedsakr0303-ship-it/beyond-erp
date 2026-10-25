@@ -6384,6 +6384,7 @@ PAGES.partners = async (view, parts, q) => {
   S.H.rsave = async () => { const n = id => $(id).value.trim(), body = { reserve_pct: (+$("#rpct").value || 0) / 100 };
     if ($("#rearly")) Object.assign(body, { reserve_early_pct: n("#rearly") === "" ? "" : (+n("#rearly") || 0) / 100, reserve_early_until: +n("#runtil") || 0,
       capital_goal: +n("#rgoal") || 0, buffer_months: n("#rbuf") === "" ? 3 : +n("#rbuf"), repay_funder_first: $("#rrepay").checked ? "1" : "0",
+      funding_repay_pct: n("#rfund") === "" ? "" : (+n("#rfund") || 0) / 100,
       expected_cost_pct: n("#rexp") === "" ? "" : (+n("#rexp") || 0) / 100 });
     try { await api("PUT", "/api/settings", body); await refreshBoot(); toast(t("saved")); route(); } catch (e) { fail(e); } };
   const act = (a, l) => `<button data-a="eqa" data-act="${a}">${esc(l)}</button>`;
@@ -6418,13 +6419,15 @@ PAGES.partners = async (view, parts, q) => {
         <label class="f" style="max-width:170px">${L2("Company capital goal", "هدف رأس مال الشركة")}<input id="rgoal" type="number" step="any" min="0" value="${pol.capital_goal || ""}" ${ed ? "" : "disabled"}></label>
         <label class="f" style="max-width:190px">${L2("Cash buffer (months of overhead)", "احتياطي نقدي (أشهر مصروفات)")}<input id="rbuf" type="number" step="any" min="0" value="${pol.buffer_months}" ${ed ? "" : "disabled"}></label>
         <label class="f" style="max-width:220px">${L2("Default expected project cost (% of revenue)", "التكلفة المتوقعة الافتراضية للمشروع (% من الإيراد)")}<input id="rexp" type="number" step="any" min="0" value="${S.boot.settings.expected_cost_pct ? +(S.boot.settings.expected_cost_pct * 100).toFixed(2) : ""}" ${ed ? "" : "disabled"}></label>
-        <label class="f chk"><input id="rrepay" type="checkbox" ${pol.repay_funder_first ? "checked" : ""} ${ed ? "" : "disabled"}>${L2("Repay the funding partner before distributing", "سداد الشريك الممول قبل التوزيع")}</label>
+        ${S.boot.settings.funding_partner ? `<label class="f" style="max-width:240px" title="${esc(L2("Blank: no fixed share. When set, only what is due to him from client payments is held back.", "فارغ: لا توجد نسبة ثابتة. عند تحديدها يُحتجز فقط المستحق له من دفعات العملاء."))}">${L2("Funding partner's share of each client payment %", "نصيب الشريك الممول من كل دفعة عميل %")}<input id="rfund" type="number" step="any" min="0" max="100" value="${pol.funding_repay_pct != null ? +(pol.funding_repay_pct * 100).toFixed(2) : ""}" ${ed ? "" : "disabled"}></label>` : ""}
+        <label class="f chk"><input id="rrepay" type="checkbox" ${pol.repay_funder_first && !pol.funding_repay_pct ? "checked" : ""} ${ed && !pol.funding_repay_pct ? "" : "disabled"}>${L2("Repay the funding partner before distributing", "سداد الشريك الممول قبل التوزيع")}</label>
         ${ed ? `<button class="btn" data-a="rsave">${t("save")}</button>` : ""}</div>
       <div class="kpis" style="margin-top:10px">${kpiBox(L2("Clean net profit", "صافي الربح الصافي"), money(dist.clean), dist.clean < 0 ? "neg" : "pos", dist.held ? L2(`after ${money(dist.held)} held for remaining project costs`, `بعد احتجاز ${money(dist.held)} لتكاليف المشروعات المتبقية`) : "")}
         ${kpiBox(L2("Company capital reserve", "احتياطي رأس مال الشركة"), money(dist.reserve), "", dist.capital_goal ? L2(`${pct(dist.progress)} of the ${money(dist.capital_goal)} goal`, `${pct(dist.progress)} من هدف ${money(dist.capital_goal)}`) : "")}
         ${kpiBox(L2("Free own cash", "النقدية الذاتية الحرة"), money(dist.free), dist.free < 0 ? "neg" : "pos", L2(`after a ${money(dist.buffer)} buffer`, `بعد احتياطي ${money(dist.buffer)}`))}
         ${kpiBox(L2("Maximum safe to distribute", "الحد الأقصى الآمن للتوزيع"), money(dist.max_safe), dist.max_safe > 0 ? "pos" : "")}</div>
       <div class="banner ${dist.max_safe > 0 ? "ok" : "err"}" style="margin-top:6px">${esc(dist.verdict)}</div>
+      ${dist.funder_due ? `<p class="muted" style="margin:6px 0 0">${esc(L2(`Funding partner: ${pct(pol.funding_repay_pct)} of ${money(dist.funder_due.client_payments)} paid by clients = ${money(dist.funder_due.share)}; repaid ${money(dist.funder_due.repaid)}; due to him now ${money(dist.funder_due.due)}.`, `الشريك الممول: ${pct(pol.funding_repay_pct)} من ${money(dist.funder_due.client_payments)} دفعها العملاء = ${money(dist.funder_due.share)}؛ تم سداد ${money(dist.funder_due.repaid)}؛ المستحق له الآن ${money(dist.funder_due.due)}.`))}</p>` : ""}
       <p class="muted" style="margin:6px 0 0">${t("company_result")}: ${money(d.company_result)}</p>
       <h4 style="margin:14px 0 6px">${L2("Legal reserve (appropriated from profit)", "الاحتياطي القانوني (يُجنَّب من الربح)")}</h4>
       <div class="row" style="gap:8px;flex-wrap:wrap"><label class="f" style="max-width:180px">${L2("% of profit", "% من الربح")}<input id="lrpct" type="number" step="any" min="0" max="100" value="${+(d.legal_reserve_pct * 100).toFixed(2)}" ${ed ? "" : "disabled"}></label>
@@ -7157,13 +7160,14 @@ function rentAccrualForm() {
           : L2("Nothing earned and not invoiced by that month's end.", "لا يوجد مستحق غير مفوتر حتى نهاية هذا الشهر."); } catch (e) { $("#racpv", f).innerHTML = `<span class="neg">${esc(e.message)}</span>`; } };
       f.addEventListener("change", run); run(); } });
 }
-function rentLotDiscountForm(it, l, done) {
-  drawer(`${L2("Supplier discount", "خصم من المورد")} — ${l.code}`, `<p class="muted">${L2("A discount or credit note received after buying this lot lowers its cost (not income). Depreciation follows the lower cost from the next run.", "الخصم أو الإشعار الدائن بعد شراء هذه الدفعة يخفّض تكلفتها (ولا يُعد إيراداً). يُحتسب الإهلاك على التكلفة الأقل من التشغيل التالي.")}</p>` + form([
+function rentLotAdjustForm(it, l, done) {
+  drawer(`${L2("Adjust cost", "تعديل التكلفة")} — ${l.code}`, `<p class="muted">${L2("A supplier discount or credit note lowers this lot's cost (it is not income); an extra cost that belongs to the equipment (more paid to the supplier, freight, customs) raises it. Depreciation follows from the next run.", "خصم المورد أو الإشعار الدائن يخفّض تكلفة هذه الدفعة (ولا يُعد إيراداً)، والتكلفة الإضافية الخاصة بالمعدات (مبلغ إضافي للمورد، نقل، جمارك) ترفعها. يُحتسب الإهلاك على التكلفة الجديدة من التشغيل التالي.")}</p>` + form([
+    { k: "kind", l: L2("Change", "التعديل"), type: "select", opts: [["discount", L2("Discount (lowers the cost)", "خصم (يخفّض التكلفة)")], ["extra", L2("Extra cost (raises the cost)", "تكلفة إضافية (ترفع التكلفة)")]] },
     { k: "date", l: t("date"), type: "date", v: today(), req: 1 }, { k: "amount", l: t("amount"), type: "number", req: 1 },
-    { k: "how", l: L2("Received as", "استُلم في صورة"), type: "select", opts: [["credit", L2("Less owed to the supplier", "تخفيض المستحق للمورد")], ["refund", L2("Refund into a cash / bank account", "استرداد في حساب نقدي / بنكي")]] },
-    { k: "supplier", l: t("supplier"), list: "parties", v: l.supplier || "" }, { k: "paid_into", l: L2("Refunded into", "استُرد في"), type: "select", opts: moneyAccts(), v: defMoney("bank") },
+    { k: "how", l: L2("Settled", "التسوية"), type: "select", opts: [["credit", L2("On the supplier's balance", "على رصيد المورد")], ["money", L2("In money (refund received / amount paid)", "نقداً (استرداد مستلم / مبلغ مدفوع)")]] },
+    { k: "supplier", l: t("supplier"), list: "parties", v: l.supplier || "" }, { k: "paid_into", l: L2("Cash / bank account", "الحساب النقدي / البنكي"), type: "select", opts: moneyAccts(), v: defMoney("bank") },
     { k: "memo", l: t("memo") }]),
-    async v => { await api("POST", `/api/rent-lots/${l.id}/discount`, v); toast(t("posted")); done(); });
+    async v => { await api("POST", `/api/rent-lots/${l.id}/adjust`, v); toast(t("posted")); done(); });
 }
 function rentItemForm(it) {
   it = it || { category: "scaffolding", unit: "piece", active: 1 };
@@ -7187,7 +7191,7 @@ async function rentItemView(id) {
     <h4>${L2("Stock lots (FIFO)", "دفعات المخزون (الوارد أولاً)")}</h4><div class="tbl"><table><thead><tr><th>${L2("Lot", "الدفعة")}</th><th>${t("date")}</th><th class="num">${L2("Purchased", "المشترى")}</th><th class="num">${L2("Unit cost", "تكلفة القطعة")}</th><th class="num">${L2("In stock", "بالمخزن")}</th><th class="num">${L2("With clients", "لدى العملاء")}</th><th class="num">${L2("Disposed", "مستبعد")}</th><th class="num">${L2("Depreciation", "الإهلاك")}</th><th class="num">${L2("Book value", "القيمة الدفترية")}</th><th></th></tr></thead><tbody>
       ${d.lots.map(l => `<tr><td>${esc(l.code)}${l.supplier ? `<div class="lines">${esc(l.supplier)}</div>` : ""}${l.source === "opening" ? `<div class="lines">${L2("Previously owned", "مملوك سابقاً")}</div>` : ""}</td><td>${fd(l.date)}</td><td class="num">${numf(l.qty)}</td><td class="num">${money(l.unit_cost)}</td><td class="num">${numf(l.in_yard)}</td><td class="num">${numf(l.with_clients)}</td><td class="num">${numf(l.gone)}</td>
         <td class="num">${money(l.accum)}${l.depr_through ? `<div class="lines">${esc(l.depr_through)}</div>` : ""}</td><td class="num">${money(l.book_value)}</td>
-        <td>${add && l.source === "purchase" && !l.gone ? `<button type="button" class="btn sm" data-a="rlotdisc" data-id="${l.id}">${L2("Discount", "خصم")}</button>` : ""}${ed && !l.m_out && !l.m_scrap && !l.depr_through ? `<button type="button" class="btn sm danger" data-a="rlotdel" data-id="${l.id}">✕</button>` : ""}</td></tr>`).join("") || `<tr><td colspan="10" class="muted">${L2("No stock recorded.", "لا يوجد مخزون مسجل.")}</td></tr>`}</tbody></table></div>
+        <td>${add && l.source === "purchase" && !l.gone ? `<button type="button" class="btn sm" data-a="rlotadj" data-id="${l.id}">${L2("Adjust cost", "تعديل التكلفة")}</button>` : ""}${ed && !l.m_out && !l.m_scrap && !l.depr_through ? `<button type="button" class="btn sm danger" data-a="rlotdel" data-id="${l.id}">✕</button>` : ""}</td></tr>`).join("") || `<tr><td colspan="10" class="muted">${L2("No stock recorded.", "لا يوجد مخزون مسجل.")}</td></tr>`}</tbody></table></div>
     ${d.on_rent.length ? `<h4>${L2("On rent", "مؤجر حالياً")}</h4><div class="tbl"><table><tbody>${d.on_rent.map(r => `<tr><td><a href="#/rental/${r.id}" data-a="vgo2">${esc(r.code)}</a> ${esc(r.client)} — ${esc(r.site)}</td><td class="num">${numf(r.qty)}</td></tr>`).join("")}</tbody></table></div>` : ""}
     ${d.moves.length ? `<h4>${L2("Movements", "الحركات")}</h4><div class="tbl"><table><tbody>${d.moves.slice(0, 60).map(m => `<tr><td>${fd(m.date)}</td><td>${esc(K[m.kind] || m.kind)}</td><td>${esc(m.rental_code || m.note || "")}</td><td>${esc(m.lot_code)}</td><td class="num">${numf(m.qty)}</td></tr>`).join("")}</tbody></table></div>` : ""}`,
     null, { readOnly: true, wide: true, extraButtons: [add ? `<button type="button" class="btn pri" data-a="rlot">+ ${L2("Stock in", "إدخال مخزون")}</button>` : "", ed && it.in_yard > 0 ? `<button type="button" class="btn" data-a="rscrap">${L2("Scrap", "تكهين")}</button>` : "",
@@ -7195,7 +7199,7 @@ async function rentItemView(id) {
   Object.assign(S.H, { riedit: () => rentItemForm(it), rlot: () => rentLotForm(it), rscrap: () => rentScrapForm(it),
     ridel: () => confirmDelete(it.code, "/api/rent-items/" + it.id), vgo2: el => { const hh = el.getAttribute("href"); closeDrawer(); location.hash = hh; },
     rlotdel: async el => { if (!await uiConfirm(t("confirm_delete"))) return; try { await api("DELETE", "/api/rent-lots/" + el.dataset.id); rentItemView(id); } catch (e) { fail(e); } },
-    rlotdisc: el => rentLotDiscountForm(it, d.lots.find(x => x.id === +el.dataset.id), () => rentItemView(id)) });
+    rlotadj: el => rentLotAdjustForm(it, d.lots.find(x => x.id === +el.dataset.id), () => rentItemView(id)) });
 }
 function rentLotForm(it) {
   drawer(`${L2("Stock in", "إدخال مخزون")} — ${it.code} ${nm(it)}`, `<p class="muted">${L2("Each purchase is a lot at its own cost; pieces are issued from the oldest lot first (FIFO).", "كل عملية شراء دفعة بتكلفتها، وتُصرف القطع من الدفعة الأقدم أولاً.")}</p>` + form([

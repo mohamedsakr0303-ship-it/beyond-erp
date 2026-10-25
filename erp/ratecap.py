@@ -37,10 +37,14 @@ def set_ignored(db, k, on=True):
 
 def _seen(db):
     """(kind, description, unit, category, rate_minor, date, source) for every priced line in the books. BOQs are
-    estimates, not the books, so they are not read."""
+    estimates, not the books, so they are not read; nor are rent lines (priced on the rental contract)."""
     out = []
-    for r in db.q("SELECT l.description, l.unit, l.category, l.price, x.date, x.number, x.status "
+    # rent and its one-time charges are priced on the rental contract, not from the price list
+    rent = {r["code"] for r in db.q("SELECT code FROM accounts WHERE role IN ('rental_revenue','rental_services','rental_compensation')")}
+    for r in db.q("SELECT l.description, l.unit, l.category, l.price, l.account, x.date, x.number, x.status "
                   "FROM extract_lines l JOIN extracts x ON x.id=l.extract_id WHERE l.price>0"):
+        if r["account"] in rent:
+            continue
         out.append(("price", r["description"], r["unit"], r["category"], r["price"], r["date"] or "",
                     f"Invoice {r['number']}" + (" (draft)" if r["status"] == "draft" else "")))
     for r in db.q("SELECT e.memo, e.date, e.ref, json_extract(e.meta,'$.unit') AS unit, json_extract(e.meta,'$.rate') AS rate "
@@ -59,7 +63,7 @@ def candidates(db, include_ignored=False):
     skip = ignored(db)
     found = {}
     for kind, desc, unit, cat, rate, date, src in _seen(db):
-        if not norm(desc):
+        if not norm(desc) or not norm(unit):   # no unit: a lump sum, not a rate
             continue
         k = key(desc, unit)
         if k in known or (k in skip and not include_ignored):

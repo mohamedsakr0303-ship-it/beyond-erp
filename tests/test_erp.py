@@ -3279,7 +3279,7 @@ class RentalsLanguageAssets(unittest.TestCase):
         self.assertEqual(on[0]["pieces_out"], 200)
         self.assertEqual(on[0]["billed_to"], "2026-10-31")
 
-    def test_lot_discount_lowers_cost_and_follows_through(self):
+    def test_lot_cost_adjustment(self):
         """A supplier discount after buying lowers the lot's cost (not income); depreciation follows; voiding restores it;
         it survives the workbook round trip; refused once pieces have left at the old cost."""
         from erp import rentals, workbook
@@ -3288,13 +3288,13 @@ class RentalsLanguageAssets(unittest.TestCase):
                                      "residual_pct": 0})
         rentals.add_lot(db, iid, {"qty": 200, "unit_cost": 940, "date": "2026-08-01", "supplier": "Supplier A", "paid": 0})
         lot = rentals._lot_states(db)[0]
-        eid = rentals.lot_discount(db, lot["id"], {"amount": 2000, "date": "2026-08-05"})
+        eid = rentals.lot_adjust(db, lot["id"], {"amount": 2000, "date": "2026-08-05"})
         tb = {r["code"]: r for r in a.trial_balance(db)["rows"]}
         self.assertEqual((tb["1415"]["debit"], tb["2010"]["credit"]), (186000.0, 186000.0))   # cost 188,000 − 2,000; owed the same
         self.assertAlmostEqual(rentals._lot_states(db)[0]["unit_cost"], 93000)                 # 930.00 a piece
         self.assertEqual(rentals.plan_depreciation(db, "2026-08")["total"], 3100.0)            # 186,000 / 60
         with self.assertRaises(a.ValidationError):
-            rentals.lot_discount(db, lot["id"], {"amount": 999999})
+            rentals.lot_adjust(db, lot["id"], {"amount": 999999})
         raw = workbook.build_workbook(db)
         p = Path(tempfile.mkdtemp()) / "w.xlsx"
         p.write_bytes(raw)
@@ -3303,11 +3303,14 @@ class RentalsLanguageAssets(unittest.TestCase):
         self.assertAlmostEqual(rentals._lot_states(db2)[0]["unit_cost"], 93000)
         a.void_entry(db, eid, "wrong lot")
         self.assertAlmostEqual(rentals._lot_states(db)[0]["unit_cost"], 94000)
-        rentals.lot_discount(db, lot["id"], {"amount": 500, "how": "refund", "paid_into": "1010"})
+        rentals.lot_adjust(db, lot["id"], {"amount": 500, "how": "money", "paid_into": "1010"})
         self.assertEqual({r["code"]: r for r in a.trial_balance(db)["rows"]}["1010"]["debit"], 500.0)
+        rentals.lot_adjust(db, lot["id"], {"kind": "extra", "amount": 4760})       # more paid for the same pieces raises their cost
+        self.assertAlmostEqual(rentals._lot_states(db)[0]["unit_cost"], 94000 - 250 + 2380)
+        self.assertEqual(rentals.spread(476000, [247000, 35000, 18200]), [391646, 55496, 28858])
         rentals.scrap(db, {"item": iid, "qty": 1, "date": "2026-09-01"})
         with self.assertRaises(a.ValidationError):
-            rentals.lot_discount(db, lot["id"], {"amount": 100})
+            rentals.lot_adjust(db, lot["id"], {"amount": 100})
 
     def test_month_end_rent_accrual(self):
         """Rent earned but not invoiced is booked on the month's last day (same lines as the invoice) and reversed the

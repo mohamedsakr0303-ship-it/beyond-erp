@@ -2103,7 +2103,8 @@ def review_flags(db, date_from=None, date_to=None, partners=None):
         if b["revenue"] and b["gross_profit"] < 0:
             add(f"{b['code']}: costs are higher than income by {-b['gross_profit']:,.2f}",
                 f"{b['code']}: التكاليف أعلى من الإيراد بمقدار {-b['gross_profit']:,.2f}", b["code"], f"#/bu/{b['id']}")
-        if b["expected_billing"] > 0 and b["revenue"] > b["expected_billing"] + 0.005:
+        # only where the expected billing is a real expectation (cost-plus or a fixed price), not "what was collected"
+        if b["basis"] in ("Cost-Plus %", "Fixed Price") and b["expected_billing"] > 0 and b["revenue"] > b["expected_billing"] + 0.005:
             add(f"{b['code']}: invoiced {b['revenue']:,.2f}, more than the expected {b['expected_billing']:,.2f}",
                 f"{b['code']}: المفوتر {b['revenue']:,.2f} أكثر من المتوقع {b['expected_billing']:,.2f}", b["code"], f"#/bu/{b['id']}")
     if partners is None:          # drawn ahead = drawn more than the share of CLEAN profit (after costs still to come)
