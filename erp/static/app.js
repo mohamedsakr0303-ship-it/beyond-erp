@@ -126,6 +126,20 @@ function toast(msg, err) {
   document.body.appendChild(el);
   setTimeout(() => el.remove(), err ? 6000 : 2600);
 }
+// Motion only where it answers what the person just did, kept short; none when the device asks for reduced motion.
+const calm = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+// rows leaving a list slide out and the rest close the gap (AutoAnimate, vendor/auto-animate, MIT); the list is redrawn after
+const AA = new WeakMap();
+async function leave(nodes) {
+  nodes = [...nodes].filter(n => n && n.isConnected);
+  if (!nodes.length || !window.autoAnimate || calm()) return;
+  const parents = [...new Set(nodes.map(n => n.parentElement))];
+  parents.forEach(p => { const c = AA.get(p); if (c) c.enable(); else AA.set(p, window.autoAnimate(p, { duration: 180, easing: "ease-out" })); });
+  await new Promise(r => requestAnimationFrame(() => r()));
+  nodes.forEach(n => n.remove());
+  await new Promise(r => setTimeout(r, 200));
+  parents.forEach(p => { const c = AA.get(p); if (c) c.disable(); });
+}
 // the last few errors, attached to a support report so a problem can be reproduced
 const RECENT_ERRS = [];
 const noteErr = m => { if (!m) return; RECENT_ERRS.push(`${new Date().toISOString().slice(11, 19)} ${String(m).slice(0, 300)}`); if (RECENT_ERRS.length > 8) RECENT_ERRS.shift(); };
@@ -595,7 +609,7 @@ new MutationObserver(ms => { for (const m of ms) { const el = m.target;
   if (el.classList && el.classList.contains("app") && !el.classList.contains("menu") && innerWidth <= 900) $$(".ucard.dd.open", el).forEach(d => d.classList.remove("open")); } })
   .observe(document.body, { attributes: true, attributeFilter: ["class"], subtree: true });
 document.addEventListener("keydown", e => { if (e.key === "Escape") { closeDrawer(); const app = $(".app"); if (app) app.classList.remove("menu"); } });
-window.addEventListener("hashchange", () => { S.navCount = (S.navCount || 0) + 1; route(); });
+window.addEventListener("hashchange", () => { S.navCount = (S.navCount || 0) + 1; S.navAnim = true; route(); });
 
 // ---------------------------------------------------------------- routing
 function parseHash() {
@@ -643,8 +657,20 @@ async function route() {
   // each visit draws into its own box: a slower page still loading when the person moved on draws off-screen
   const host = $("#view"), view = document.createElement("div");
   view.className = "page"; view.innerHTML = `<div class="empty ld"><i class="ecl-ld"></i>${t("loading")}</div>`;
-  host.replaceChildren(view);
-  try { await page(view, parts, q); } catch (e) { view.innerHTML = `<div class="banner err">${esc(e.message)}</div>`; }
+  let draw;
+  const show = () => { if (draw) return draw; host.replaceChildren(view);
+    return (draw = (async () => { try { await page(view, parts, q); } catch (e) { view.innerHTML = `<div class="banner err">${esc(e.message)}</div>`; } })()); };
+  // moving to another screen: the content area cross-fades (View Transitions, built into the browser); the menu and top
+  // bar stay still. The old screen is held at most a quarter of a second while the new one draws.
+  const nav = S.navAnim; S.navAnim = false;
+  if (nav && document.startViewTransition && !calm() && !document.hidden) {
+    host.classList.add("vt");
+    try { const vt = document.startViewTransition(() => Promise.race([show(), new Promise(r => setTimeout(r, 250))]));
+      vt.finished.finally(() => host.classList.remove("vt")); } catch { host.classList.remove("vt"); }
+    setTimeout(show, 400);                             // never wait on a transition the browser skipped
+    await new Promise(r => { const k = () => (draw ? r() : setTimeout(k, 16)); k(); });
+  }
+  await show();
   if (view.isConnected) { if ($("[data-a=xsave]", view)) Drafts.track(view, $("h1,h2", view)?.textContent || t("m_invoices"), { page: true }); Drafts.banner(view); Hist.page(view); }
   if (parts.length === 1) addImportMenu(view, parts[0]).catch(() => {});
   stackify(view);
@@ -973,12 +999,15 @@ function renderBell() {
     (openAll > 1 || d.ignored || S.bellIgnored ? `<div class="bell-foot">${openAll > 1 ? `<button type="button" class="btn sm ghost" data-a="bellignall">${L2(`Ignore all (${openAll})`, `تجاهل الكل (${openAll})`)}</button>` : ""}${d.ignored || S.bellIgnored ? `<button type="button" class="btn sm ghost" data-a="bellshowign">${S.bellIgnored ? L2("Hide ignored", "إخفاء المتجاهَل") : L2(`Show ignored (${d.ignored})`, `عرض المتجاهَل (${d.ignored})`)}</button>` : ""}</div>` : "");
 }
 const BELL_H = {          // global: the bell sits in the top bar on every screen
-  bellign: async el => { try { await api("POST", "/api/alerts/ignore", { key: el.dataset.key, sig: el.dataset.sig, restore: !!el.dataset.restore }); await loadAlerts(true); } catch (e) { fail(e); } },
+  bellign: async el => { try { await api("POST", "/api/alerts/ignore", { key: el.dataset.key, sig: el.dataset.sig, restore: !!el.dataset.restore });
+    if (!S.bellIgnored) await leave([el.closest(".alert-row-wrap")]); await loadAlerts(true); } catch (e) { fail(e); } },
   // several at once: one section's alerts, or all of them (for this person only; they come back when something changes)
   bellignall: async el => { const g = el.dataset.g, items = (S.bell.rows || []).filter(r => !r.ignored && (!g || r.group === g)).map(r => ({ key: r.key, sig: r.sig }));
     if (!items.length) return;
     if (!await uiConfirm(L2(`Ignore ${items.length} alert(s)? They return if something changes, and can be restored with Show ignored.`, `تجاهل ${items.length} تنبيه؟ تعود إذا تغير شيء، ويمكن استرجاعها من عرض المتجاهَل.`))) return;
-    try { await api("POST", "/api/alerts/ignore", { items }); await loadAlerts(true); } catch (e) { fail(e); } },
+    try { await api("POST", "/api/alerts/ignore", { items });
+      if (!S.bellIgnored) await leave($$("#bellmenu [data-a=bellign]").filter(b => items.some(i => i.key === b.dataset.key)).map(b => b.closest(".alert-row-wrap")));
+      await loadAlerts(true); } catch (e) { fail(e); } },
   bellshowign: async () => { S.bellIgnored = !S.bellIgnored; await loadAlerts(true); },
 };
 // opening the bell clears its unread mark (the alerts stay inside until dealt with or ignored)
@@ -2078,6 +2107,8 @@ async function bulkRun(action, extra = {}) {
     const r = await api("POST", "/api/bulk", { target: c.target, action, ids, ...extra });
     BULK.sel.clear(); const b = $("#bulkbar"); if (b) b.remove();
     closeDrawer();
+    if (action === "delete" && BULK.table) { const bad = new Set(r.failed.map(f => String(f.id)));
+      await leave(ids.filter(id => !bad.has(String(id))).map(id => $(`tr[data-bsid="${CSS.escape(String(id))}"]`, BULK.table))); }
     if (!r.failed.length) { toast(L2(`Completed: ${r.done}`, `تم: ${r.done}`)); route(); return; }
     const name = id => { const tr = BULK.table && $(`tr[data-bsid="${CSS.escape(id)}"]`, BULK.table); return tr ? tr.innerText.replace(/\s+/g, " ").trim().slice(0, 70) : "#" + id; };
     const names = Object.fromEntries(r.failed.map(f => [f.id, name(f.id)])); await route();
@@ -3499,10 +3530,11 @@ PAGES.prices = async (view, parts, q) => {
           if (k === "ignore" && b.dataset.all && !await uiConfirm(L2(`Ignore all ${rows.length} rates? They can be restored with Show ignored.`, `تجاهل كل الأسعار (${rows.length})؟ يمكن استرجاعها من عرض المتجاهَل.`))) return;
           await api("POST", "/api/rate-capture/ignore", { keys, restore: k === "restore" });
         }
+        await leave($$(".rcsel").filter(x => keys.includes(c.rows[+x.dataset.i].key)).map(x => x.closest("tr")));
         if (k === "add") await route();            // the price list behind shows the new rates
         S.H.rcap(null, showIgnored);
       } catch (e) { fail(e); } };
-    S.H.rcign = async b => { const r = c.rows[+b.dataset.i]; try { await api("POST", "/api/rate-capture/ignore", { key: r.key, restore: r.ignored }); S.H.rcap(null, showIgnored); } catch (e) { fail(e); } };
+    S.H.rcign = async b => { const r = c.rows[+b.dataset.i]; try { await api("POST", "/api/rate-capture/ignore", { key: r.key, restore: r.ignored }); await leave([b.closest("tr")]); S.H.rcap(null, showIgnored); } catch (e) { fail(e); } };
     S.H.rcadd = b => { const r = c.rows[+b.dataset.i], cost = r.cost ? r.cost.last : "", price = r.price ? r.price.last : "";
       const src = [r.price, r.cost].filter(Boolean).map(x => `${x.source} ${x.last_date}`.trim()).join(" · ");
       edit({ category: r.category, description: r.description, unit: r.unit, cost, price,
@@ -4445,6 +4477,7 @@ function devicePosition() {
     ask(true, true);
   });
 }
+const MAP_REF = "strict-origin-when-cross-origin";
 const fmtPlace = ([a, b]) => `${(+a).toFixed(6)}, ${(+b).toFixed(6)}`;
 function siteMap(row) {
   const box = $(".asite-map", row);
@@ -4457,7 +4490,10 @@ function siteMap(row) {
   loadLeaflet().then(() => {
     const at = parsePlace($("[data-s=place]", row).value), rad = () => +$("[data-s=radius]", row).value || 150;
     const map = L.map($("[data-m=map]", box)).setView(at || [20, 0], at ? 16 : 2);
-    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(map);
+    // OpenStreetMap serves map tiles only to requests that say which site they come from; the rest of the app sends no
+    // referrer (Referrer-Policy: same-origin), so map requests alone carry this site's address — never the page path
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap", referrerPolicy: MAP_REF }).addTo(map);
+    row._map = map;
     let pin = null, ring = null;
     const put = ll => { const [a, b] = Array.isArray(ll) ? ll : [ll.lat, ll.lng];
       if (!pin) { pin = L.marker([a, b], { draggable: true }).addTo(map); pin.on("dragend", () => put(pin.getLatLng())); ring = L.circle([a, b], { radius: rad() }).addTo(map); }
@@ -4474,8 +4510,12 @@ async function siteFind(row) {
   const direct = parsePlace(q); if (direct) { row._mapPut && row._mapPut(direct); return; }
   hits.innerHTML = `<p class="muted">${esc(t("loading"))}</p>`;
   try {
-    const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=6&accept-language=${S.lang === "ar" ? "ar" : "en"}&q=${encodeURIComponent(q)}`);
-    const list = await r.json();
+    // look around the area the map shows first (widened), then everywhere
+    const look = async area => { const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=8&accept-language=${S.lang === "ar" ? "ar" : "en"}${area}&q=${encodeURIComponent(q)}`, { referrerPolicy: MAP_REF });
+      if (!r.ok) throw new Error(r.status); return r.json(); };
+    const b = row._map && row._map.getZoom() > 6 ? row._map.getBounds().pad(2) : null;
+    let list = b ? await look(`&viewbox=${b.getWest()},${b.getNorth()},${b.getEast()},${b.getSouth()}&bounded=1`) : [];
+    if (!list.length) list = await look("");
     hits.innerHTML = list.length ? list.map(h => `<button type="button" class="btn sm" style="display:block;width:100%;text-align:start;margin-bottom:4px;white-space:normal" data-a="asitehit" data-ll="${h.lat},${h.lon}">${esc(h.display_name)}</button>`).join("")
       : `<p class="muted">${esc(L2("No places found.", "لم يُعثر على أماكن."))}</p>`;
   } catch { hits.innerHTML = `<p class="muted">${esc(L2("Search is unavailable. Click the map to set the site.", "البحث غير متاح. انقر على الخريطة لتحديد الموقع."))}</p>`; }

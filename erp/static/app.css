@@ -1864,3 +1864,12 @@ input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 4px color
 .bell-foot{padding:6px 10px;border-top:1px solid var(--line,rgba(255,255,255,.08));text-align:center}
 .dd-menu .bell-foot button{width:auto;display:inline-block}
 .bell-sec .bell-ign{text-transform:none;letter-spacing:0;font-weight:600;font-size:1.25em}
+
+/* moving between screens: only the content area cross-fades (View Transitions); the menu and top bar stay still */
+#view.vt{view-transition-name:page}
+::view-transition-old(root),::view-transition-new(root){animation:none}
+::view-transition-old(page){animation:vt-out .12s ease-in both}
+::view-transition-new(page){animation:vt-in .2s cubic-bezier(.2,.7,.2,1) both}
+@keyframes vt-out{to{opacity:0}}
+@keyframes vt-in{from{opacity:0;transform:translateY(6px)}}
+@media (prefers-reduced-motion:reduce){::view-transition-group(*),::view-transition-old(*),::view-transition-new(*){animation:none!important}}
