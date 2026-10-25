@@ -178,7 +178,7 @@ class RateCaptureAndFlags(unittest.TestCase):
         from erp import partner_pack
         db = books()
         db.set_setting("funding_partner", "F")
-        for k, v in (("funding_repay_pct", "0.5"), ("reserve_pct", "0"), ("buffer_months", "0")):
+        for k, v in (("funding_repay_pct", "0.5"), ("reserve_pct", "0"), ("buffer_months", "0"), ("repay_funder_first", "0")):
             db.set_setting(k, v)
         db.x("INSERT INTO partners(name,default_share) VALUES ('F',0.5),('G',0.5)")
         a.record_journal(db, {"date": "2026-01-02", "memo": "lent", "lines": [{"account": "1020", "debit": 5000}, {"account": "3015", "credit": 5000}]})
@@ -192,6 +192,10 @@ class RateCaptureAndFlags(unittest.TestCase):
         d = partner_pack.compute(db)["dist"]
         self.assertEqual((d["funder_due"]["due"], d["free"]), (0.0, before))      # paying him his half: cash and the hold both drop 1,000
         self.assertNotIn("repay the funding partner first", d["verdict"][0])
+        db.set_setting("repay_funder_first", "1")                                 # ticked: all his money first, whatever the share
+        d = partner_pack.compute(db)["dist"]
+        self.assertEqual(d["max_safe"], 0.0)
+        self.assertIn("repay the funding partner first", d["verdict"][0])
 
     def test_cash_below_zero_flag(self):
         """Money paid out before any came in is flagged with the day and the lowest balance, even if cash is positive now."""

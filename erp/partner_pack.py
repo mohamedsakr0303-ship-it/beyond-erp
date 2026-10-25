@@ -136,7 +136,8 @@ def distributable(db, pol, rows, bs, earned, held, reserve_amt, partners, date_t
     to_partners = round(sum(max(0.0, x["undistributed"]) for x in partners), 2)
     ahead = round(sum(x["undistributed"] for x in partners), 2)
     # facility mode: the room left in his facility already counts his money, so there is no separate hold for him
-    hold_funder = pol["repay_funder_first"] and funder > 0.005 and room is None and not due
+    # ticked, "repay him first" holds everything until all his money is back, whatever his share of each payment
+    hold_funder = pol["repay_funder_first"] and funder > 0.005 and room is None
     safe = 0.0 if hold_funder else round(max(0.0, min(free, to_partners)), 2)
     if room is not None and to_partners <= 0:          # facility mode, as the workbook: what is owed to partners first
         v = ((f"DO NOT DISTRIBUTE — partners are already ahead of their earned share by {-ahead:,.0f}",
