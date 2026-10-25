@@ -902,7 +902,7 @@ const Hist = {
     const el = document.createElement("div"); el.className = "toast undo-toast";
     el.innerHTML = `<span>${esc(t.what === "del" ? L2("Deleted.", "تم الحذف.") : L2("Saved.", "تم الحفظ."))}</span><button type="button" class="btn sm">↶ ${esc(L2("Undo", "تراجع"))}</button>`;
     document.body.appendChild(el);
-    const gone = setTimeout(() => el.remove(), 12000);
+    const gone = setTimeout(() => el.remove(), 8000);
     $("button", el).addEventListener("click", async () => {
       clearTimeout(gone); $("button", el).disabled = true;
       try { const x = await api("POST", "/api/undo/" + t.tag, {}); el.remove(); toast(L2("Change undone.", "تم التراجع عن التغيير."));
@@ -6349,7 +6349,6 @@ PAGES.partners = async (view, parts, q) => {
   const [d, hist] = await Promise.all([api("GET", "/api/partners?" + qs(q)),
     (can("partners.equity") || can("partners.ownership")) ? api("GET", "/api/equity/history").catch(() => ({ rows: [] })) : { rows: [] }]);
   const ed = can("partners.equity", "edit"), tx = can("partners.transactions", "add"), own = can("partners.ownership", "add");
-  const shareOf = (pid, bid, def) => { const s = d.shares.find(x => x.partner_id === pid && x.bu_id === bid); return s ? s.share : def; };
   const edit = p => drawer(t("partner"), form([{ k: "name", l: t("name"), v: p.name, req: 1 },
     { k: "default_share", l: t("default_share"), type: "number", v: p.default_share != null ? pctIn(p.default_share) : "", help: p.id ? L2("Changes are recorded in the ownership history.", "تُسجَّل التغييرات في سجل الملكية.") : "" },
     { k: "active", l: L2("Active partner", "شريك حالي"), type: "checkbox", v: p.active !== 0 },
@@ -6364,7 +6363,9 @@ PAGES.partners = async (view, parts, q) => {
     { k: "drawings_interest", l: L2("Interest on drawings (% p.a.)", "فائدة المسحوبات (% سنوياً)"), type: "number", v: pctIn(p.drawings_interest) || "",
       help: L2("Only where the agreement charges interest on drawings.", "فقط إذا نص العقد على فائدة على المسحوبات.") },
     { k: "notes", l: t("notes"), type: "textarea", v: p.notes, span: "spanall" },
-    { html: `<h4>${t("ownership")}</h4>`, span: "spanall" }, ...d.units.map(u => ({ k: "s_" + u.id, l: u.code + " %", type: "number", v: p.id ? pctIn(shareOf(p.id, u.id, p.default_share)) : "" }))]),
+    { html: `<h4>${t("ownership")}</h4><p class="muted" style="margin:0">${esc(L2("Leave a unit blank to use the default share; enter a % only where that unit is owned differently.", "اترك الوحدة فارغة لتطبيق النسبة الافتراضية؛ أدخل نسبة فقط إذا كانت ملكية هذه الوحدة مختلفة."))}</p>`, span: "spanall" },
+    ...d.units.map(u => { const own = p.id ? d.shares.find(x => x.partner_id === p.id && x.bu_id === u.id) : null;   // only a unit's own share, never the default copied in
+      return { k: "s_" + u.id, l: u.code + " %", type: "number", v: own ? pctIn(own.share) : "", ph: `${L2("Default", "افتراضي")}${p.default_share != null ? ": " + pctIn(p.default_share) + "%" : ""}` }; })]),
   async v => { const body = { ...v, default_share: (+v.default_share || 0) / 100, shares: {} };
     d.units.forEach(u => { body.shares[u.id] = v["s_" + u.id] === "" ? "" : (+v["s_" + u.id] || 0) / 100; delete body["s_" + u.id]; });
     if (p.id) await api("PUT", "/api/partners/" + p.id, body); else { const r = await api("POST", "/api/partners", body); await api("PUT", "/api/partners/" + r.id, body); }
@@ -6822,8 +6823,8 @@ async function rentCatalog() { if (!S.cache.rentCat) S.cache.rentCat = await api
 
 PAGES.rentals = async (view, parts, q) => {
   const d = await api("GET", "/api/rentals?" + qs(q));
-  S.H.rnew = () => rentalForm();
-  view.innerHTML = `<div class="toolbar">${can("rentals.contracts", "add") ? `<button class="btn pri" data-a="rnew">+ ${L2("New quotation", "عرض سعر جديد")}</button>` : ""}<span class="spacer"></span>${exportMenu("rentals", q)}</div>
+  S.H.rnew = () => rentalForm(); S.H.racr = () => rentAccrualForm();
+  view.innerHTML = `<div class="toolbar">${can("rentals.contracts", "add") ? `<button class="btn pri" data-a="rnew">+ ${L2("New quotation", "عرض سعر جديد")}</button><button class="btn" data-a="racr">${L2("Month-end accrual", "استحقاق نهاية الشهر")}</button>` : ""}<span class="spacer"></span>${exportMenu("rentals", q)}</div>
     <div class="kpis">${kpiBox(L2("On site", "بالموقع حالياً"), String(d.totals.active), "", L2("Contracts", "عقود"))}${kpiBox(L2("Monthly rent on site", "الإيجار الشهري بالموقع"), d.totals.monthly, "pos")}
       ${kpiBox(L2("Open quotations", "عروض أسعار مفتوحة"), String(d.totals.quotes))}</div>` +
     filterBar(q, ["q", ["select", "status", t("status"), [["open", L2("Open contracts", "العقود المفتوحة")], ...["quote", "ordered", "active", "returned", "closed", "cancelled"].map(s => [s, RENT_ST(s)[1]])]]]) +
@@ -7145,6 +7146,25 @@ function rentDeprForm() {
           : L2("Nothing to depreciate up to that month.", "لا يوجد ما يُهلك حتى هذا الشهر."); } catch (e) { $("#rdpv", f).innerHTML = `<span class="neg">${esc(e.message)}</span>`; } };
       f.addEventListener("change", run); run(); } });
 }
+function rentAccrualForm() {
+  const prev = (() => { const d = new Date(); d.setDate(0); return d.toISOString().slice(0, 7); })();
+  drawer(L2("Month-end accrual of rent", "استحقاق الإيجار في نهاية الشهر"), `<p class="muted">${L2("Rent and one-time charges earned but not invoiced by the month's last day, worked out exactly as the next invoice will be. Booked on the last day (unbilled revenue against rental revenue) and reversed the next day, so the invoice is not counted twice. Run it after the month's invoices; running a month again replaces it.", "الإيجار والمبالغ لمرة واحدة المستحقة ولم تُفوتر حتى آخر يوم في الشهر، محسوبة تماماً كما ستظهر في الفاتورة القادمة. تُقيد في آخر يوم (إيرادات غير مفوترة مقابل إيرادات التأجير) وتُعكس في اليوم التالي حتى لا تُحتسب الفاتورة مرتين. شغّلها بعد فواتير الشهر؛ وإعادة تشغيل الشهر تستبدلها.")}</p>` +
+    form([{ k: "month", l: L2("Month", "الشهر"), type: "month", v: prev, req: 1 }]) + `<div id="racpv" class="muted">…</div>`,
+    async v => { const r = await api("POST", "/api/rent-accrual", v); toast(L2(`Accrued ${money(r.total)} on ${r.count} contract(s)`, `تم استحقاق ${money(r.total)} على ${r.count} عقد`)); },
+    { submitLabel: t("post"), onOpen: f => { const run = async () => { try { const r = await api("POST", "/api/rent-accrual-preview", readForm(f));
+        $("#racpv", f).innerHTML = r.rows.length ? `<div class="tbl"><table><thead><tr><th>${t("code")}</th><th>${t("client")}</th><th>${L2("Period", "الفترة")}</th><th class="num">${t("amount")}</th></tr></thead><tbody>
+          ${r.rows.map(x => `<tr><td>${esc(x.code)}</td><td>${esc(x.client)}</td><td>${fd(x.from)} → ${fd(x.to)}</td><td class="num">${money(x.amount)}</td></tr>`).join("")}<tr class="total"><td colspan="3">${t("total")}</td><td class="num">${money(r.total)}</td></tr></tbody></table></div>`
+          : L2("Nothing earned and not invoiced by that month's end.", "لا يوجد مستحق غير مفوتر حتى نهاية هذا الشهر."); } catch (e) { $("#racpv", f).innerHTML = `<span class="neg">${esc(e.message)}</span>`; } };
+      f.addEventListener("change", run); run(); } });
+}
+function rentLotDiscountForm(it, l, done) {
+  drawer(`${L2("Supplier discount", "خصم من المورد")} — ${l.code}`, `<p class="muted">${L2("A discount or credit note received after buying this lot lowers its cost (not income). Depreciation follows the lower cost from the next run.", "الخصم أو الإشعار الدائن بعد شراء هذه الدفعة يخفّض تكلفتها (ولا يُعد إيراداً). يُحتسب الإهلاك على التكلفة الأقل من التشغيل التالي.")}</p>` + form([
+    { k: "date", l: t("date"), type: "date", v: today(), req: 1 }, { k: "amount", l: t("amount"), type: "number", req: 1 },
+    { k: "how", l: L2("Received as", "استُلم في صورة"), type: "select", opts: [["credit", L2("Less owed to the supplier", "تخفيض المستحق للمورد")], ["refund", L2("Refund into a cash / bank account", "استرداد في حساب نقدي / بنكي")]] },
+    { k: "supplier", l: t("supplier"), list: "parties", v: l.supplier || "" }, { k: "paid_into", l: L2("Refunded into", "استُرد في"), type: "select", opts: moneyAccts(), v: defMoney("bank") },
+    { k: "memo", l: t("memo") }]),
+    async v => { await api("POST", `/api/rent-lots/${l.id}/discount`, v); toast(t("posted")); done(); });
+}
 function rentItemForm(it) {
   it = it || { category: "scaffolding", unit: "piece", active: 1 };
   drawer(it.id ? `${t("edit")} — ${it.code}` : L2("New equipment item", "صنف معدات جديد"), form([
@@ -7167,14 +7187,15 @@ async function rentItemView(id) {
     <h4>${L2("Stock lots (FIFO)", "دفعات المخزون (الوارد أولاً)")}</h4><div class="tbl"><table><thead><tr><th>${L2("Lot", "الدفعة")}</th><th>${t("date")}</th><th class="num">${L2("Purchased", "المشترى")}</th><th class="num">${L2("Unit cost", "تكلفة القطعة")}</th><th class="num">${L2("In stock", "بالمخزن")}</th><th class="num">${L2("With clients", "لدى العملاء")}</th><th class="num">${L2("Disposed", "مستبعد")}</th><th class="num">${L2("Depreciation", "الإهلاك")}</th><th class="num">${L2("Book value", "القيمة الدفترية")}</th><th></th></tr></thead><tbody>
       ${d.lots.map(l => `<tr><td>${esc(l.code)}${l.supplier ? `<div class="lines">${esc(l.supplier)}</div>` : ""}${l.source === "opening" ? `<div class="lines">${L2("Previously owned", "مملوك سابقاً")}</div>` : ""}</td><td>${fd(l.date)}</td><td class="num">${numf(l.qty)}</td><td class="num">${money(l.unit_cost)}</td><td class="num">${numf(l.in_yard)}</td><td class="num">${numf(l.with_clients)}</td><td class="num">${numf(l.gone)}</td>
         <td class="num">${money(l.accum)}${l.depr_through ? `<div class="lines">${esc(l.depr_through)}</div>` : ""}</td><td class="num">${money(l.book_value)}</td>
-        <td>${ed && !l.m_out && !l.m_scrap && !l.depr_through ? `<button type="button" class="btn sm danger" data-a="rlotdel" data-id="${l.id}">✕</button>` : ""}</td></tr>`).join("") || `<tr><td colspan="10" class="muted">${L2("No stock recorded.", "لا يوجد مخزون مسجل.")}</td></tr>`}</tbody></table></div>
+        <td>${add && l.source === "purchase" && !l.gone ? `<button type="button" class="btn sm" data-a="rlotdisc" data-id="${l.id}">${L2("Discount", "خصم")}</button>` : ""}${ed && !l.m_out && !l.m_scrap && !l.depr_through ? `<button type="button" class="btn sm danger" data-a="rlotdel" data-id="${l.id}">✕</button>` : ""}</td></tr>`).join("") || `<tr><td colspan="10" class="muted">${L2("No stock recorded.", "لا يوجد مخزون مسجل.")}</td></tr>`}</tbody></table></div>
     ${d.on_rent.length ? `<h4>${L2("On rent", "مؤجر حالياً")}</h4><div class="tbl"><table><tbody>${d.on_rent.map(r => `<tr><td><a href="#/rental/${r.id}" data-a="vgo2">${esc(r.code)}</a> ${esc(r.client)} — ${esc(r.site)}</td><td class="num">${numf(r.qty)}</td></tr>`).join("")}</tbody></table></div>` : ""}
     ${d.moves.length ? `<h4>${L2("Movements", "الحركات")}</h4><div class="tbl"><table><tbody>${d.moves.slice(0, 60).map(m => `<tr><td>${fd(m.date)}</td><td>${esc(K[m.kind] || m.kind)}</td><td>${esc(m.rental_code || m.note || "")}</td><td>${esc(m.lot_code)}</td><td class="num">${numf(m.qty)}</td></tr>`).join("")}</tbody></table></div>` : ""}`,
     null, { readOnly: true, wide: true, extraButtons: [add ? `<button type="button" class="btn pri" data-a="rlot">+ ${L2("Stock in", "إدخال مخزون")}</button>` : "", ed && it.in_yard > 0 ? `<button type="button" class="btn" data-a="rscrap">${L2("Scrap", "تكهين")}</button>` : "",
       ed ? `<button type="button" class="btn" data-a="riedit">${t("edit")}</button>` : "", ed && !d.lots.length ? `<button type="button" class="btn danger" data-a="ridel">${t("delete")}</button>` : ""].join("") });
   Object.assign(S.H, { riedit: () => rentItemForm(it), rlot: () => rentLotForm(it), rscrap: () => rentScrapForm(it),
     ridel: () => confirmDelete(it.code, "/api/rent-items/" + it.id), vgo2: el => { const hh = el.getAttribute("href"); closeDrawer(); location.hash = hh; },
-    rlotdel: async el => { if (!await uiConfirm(t("confirm_delete"))) return; try { await api("DELETE", "/api/rent-lots/" + el.dataset.id); rentItemView(id); } catch (e) { fail(e); } } });
+    rlotdel: async el => { if (!await uiConfirm(t("confirm_delete"))) return; try { await api("DELETE", "/api/rent-lots/" + el.dataset.id); rentItemView(id); } catch (e) { fail(e); } },
+    rlotdisc: el => rentLotDiscountForm(it, d.lots.find(x => x.id === +el.dataset.id), () => rentItemView(id)) });
 }
 function rentLotForm(it) {
   drawer(`${L2("Stock in", "إدخال مخزون")} — ${it.code} ${nm(it)}`, `<p class="muted">${L2("Each purchase is a lot at its own cost; pieces are issued from the oldest lot first (FIFO).", "كل عملية شراء دفعة بتكلفتها، وتُصرف القطع من الدفعة الأقدم أولاً.")}</p>` + form([

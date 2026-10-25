@@ -1873,3 +1873,8 @@ input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 4px color
 @keyframes vt-out{to{opacity:0}}
 @keyframes vt-in{from{opacity:0;transform:translateY(6px)}}
 @media (prefers-reduced-motion:reduce){::view-transition-group(*),::view-transition-old(*),::view-transition-new(*){animation:none!important}}
+/* messages sit just under the top bar, clear of every form's Save / Cancel at the bottom; clicks pass straight
+   through them (only the Undo button takes a click), so a fast worker is never held up */
+.toast{top:calc(var(--top-h,56px) + 10px + env(safe-area-inset-top,0px));bottom:auto;inset-inline-end:auto;left:50%;transform:translateX(-50%);
+  pointer-events:none;z-index:200;max-width:min(440px,calc(100vw - 24px));width:max-content}
+.toast .btn,.toast button,.toast a{pointer-events:auto}

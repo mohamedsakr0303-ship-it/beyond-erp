@@ -27,7 +27,8 @@ LINE_KINDS = ("item", "kit", "sqm", "charge")
 CHARGE_TYPES = ("install", "dismantle", "transport", "materials", "other")
 CHARGE_WHEN = ("delivery", "return", "manual")
 STATUSES = ("quote", "ordered", "active", "returned", "closed", "cancelled")
-KINDS = ("Rental Equipment Purchase", "Rental Equipment Loss", "Rental Equipment Depreciation", "Rental Deposit")
+KINDS = ("Rental Equipment Purchase", "Rental Equipment Loss", "Rental Equipment Depreciation", "Rental Deposit",
+         "Rental Equipment Discount", "Rental Accrual")
 LIVE_REF = f"{acc.LIVE} AND e.reversed_by IS NULL AND e.reversal_of IS NULL"
 EPS = 1e-9
 
@@ -178,8 +179,11 @@ def _lot_states(db, item_id=None, lot_id=None):
                 "COALESCE((SELECT SUM(CASE WHEN kind IN ('lost','damaged') THEN qty ELSE 0 END) FROM rent_moves m WHERE m.lot_id=l.id),0) AS m_lost, "
                 "COALESCE((SELECT SUM(CASE WHEN kind='scrap' THEN qty ELSE 0 END) FROM rent_moves m WHERE m.lot_id=l.id),0) AS m_scrap "
                 "FROM rent_lots l" + (" WHERE " + " AND ".join(w) if w else "") + " ORDER BY l.date, l.id", p)
-    dep = lot_depreciation(db)
+    dep, disc = lot_depreciation(db), lot_discounts(db)
     for r in rows:
+        r["list_cost"] = r["unit_cost"]     # as bought; a supplier discount booked later lowers the cost of every piece
+        if disc.get(r["code"]) and r["qty"] > EPS:
+            r["unit_cost"] = r["unit_cost"] - disc[r["code"]] / r["qty"]
         r["with_clients"] = r["m_out"] - r["m_back"] - r["m_lost"]
         r["in_yard"] = r["qty"] - r["m_out"] + r["m_back"] - r["m_scrap"]
         r["gone"] = r["m_lost"] + r["m_scrap"]
@@ -222,6 +226,50 @@ def lot_depreciation(db):
         for code, amt in (m.get("accum_out") or {}).items():
             out.setdefault(code, {"booked": 0, "out": 0, "through": ""})["out"] += int(amt)
     return out
+
+
+def lot_discounts(db):
+    """{lot code: discount (minor)} — supplier discounts / credit notes booked against a stock lot (a voided one stops counting)."""
+    out = {}
+    for e in db.q(f"SELECT e.meta FROM journal_entries e WHERE {LIVE_REF} AND e.kind=?", (KINDS[4],)):
+        for code, amt in (_j(e["meta"], {}).get("lot_discount") or {}).items():
+            out[code] = out.get(code, 0) + int(amt)
+    return out
+
+
+def lot_discount(db, lot_id, d, user=""):
+    """A discount or credit note from the supplier after the purchase: it lowers the lot's cost (not income). Refunded
+    into a cash / bank account, or taken off what is still owed to the supplier. Depreciation follows the lower cost
+    from the next run. Only while every piece of the lot is still owned (pieces already gone left at the old cost)."""
+    lot = next(iter(_lot_states(db, lot_id=int(lot_id))), None)
+    if not lot:
+        raise ValidationError("Stock lot not found")
+    if lot["gone"] > EPS:
+        raise ValidationError("Pieces from this lot were lost or scrapped at the old cost. Record this discount as other income instead.")
+    amount = to_minor(num(d.get("amount"), "discount", allow_zero=False))
+    cost = int(round(lot["qty"] * lot["unit_cost"]))
+    if amount <= 0 or amount > cost - int(round(lot["accum"])):
+        raise ValidationError("The discount must be more than zero and no more than the lot's remaining value")
+    date = acc.clean_date(d.get("date") or acc.today())
+    how = d.get("how") or "credit"
+    if how == "credit":
+        supplier = text(d.get("supplier")) or lot["supplier"]
+        if not supplier:
+            raise ValidationError("Name the supplier whose balance is reduced")
+        dr = {"account": acc.account_code(db, d.get("payable_account") or db.acct("ap"), types=("Liability",)), "debit": to_major(amount),
+              "party": supplier}
+    elif how == "refund":
+        supplier = text(d.get("supplier")) or lot["supplier"]
+        dr = {"account": acc.money_account(db, d.get("method"), d.get("paid_into")), "debit": to_major(amount)}
+    else:
+        raise ValidationError("Choose how the discount was received")
+    it = get_item(db, lot["item_id"])
+    fleet = acc.account_code(db, d.get("account") or _role_or(db, "rental_fleet"), types=("Asset",), field="equipment account")
+    with db.tx():
+        return acc._insert_entry(db, date=date, kind=KINDS[4], memo=text(d.get("memo")) or f"Discount on {it['name']} ({lot['code']})",
+                                 party=supplier, ref=f"RENT:DISC:{lot['code']}",
+                                 lines=[dr, {"account": fleet, "credit": to_major(amount)}],
+                                 meta={"lot_discount": {lot["code"]: amount}, "rent_item": it["code"]}, user=user)
 
 
 def plan_depreciation(db, through):
@@ -1245,9 +1293,9 @@ def detail(db, rid):
         out_lines.append({**ln, "rate": to_major(ln["rate"]), "cost": to_major(ln.get("cost") or 0), "components": comps, "inputs": _j(ln["inputs"], {}),
                           "on_site": round(on.get(ln["id"], 0), 4), **delivered.get(ln["id"], {"delivered": 0, "returned": 0}),
                           "monthly": to_major(int(round(ln["qty"] * ln["rate"]))) if ln["kind"] != "charge" else 0})
-    held = {}
+    held, lot_cost = {}, {x["id"]: x["unit_cost"] for x in _lot_states(db)}
     for h in _held(db, r["id"]):
-        lot = db.one("SELECT unit_cost FROM rent_lots WHERE id=?", (h["lot_id"],))
+        lot = {"unit_cost": lot_cost.get(h["lot_id"], 0)}
         x = held.setdefault(h["item_id"], {"item_id": h["item_id"], "qty": 0, "value": 0, **{k: names.get(h["item_id"], {}).get(k) for k in ("code", "name", "name_ar", "unit")}})
         x["qty"] += h["qty"]
         x["value"] += h["qty"] * lot["unit_cost"]
@@ -1338,9 +1386,9 @@ def allocation(db, rid, line_id):
         raise ValidationError("Choose a rent line")
     on = units_on_site(db, r["id"]).get(ln["id"], 0)
     units = on if on > EPS else ln["qty"]
-    held = {}
+    held, lot_cost = {}, {x["id"]: x["unit_cost"] for x in _lot_states(db)}
     for h in _held(db, r["id"]):
-        lot = db.one("SELECT unit_cost FROM rent_lots WHERE id=?", (h["lot_id"],))
+        lot = {"unit_cost": lot_cost.get(h["lot_id"], 0)}
         a = held.setdefault(h["item_id"], [0.0, 0.0])
         a[0] += h["qty"]
         a[1] += h["qty"] * lot["unit_cost"]
@@ -1798,6 +1846,60 @@ def invoice_lines(db, rid, frm, to, lang="en", style=""):
                     "item_no": "", "unit": "", "description": c["description"], "qty": c["qty"], "price": to_major(c["amount"]),
                     "account": c["account"] or _charge_account(db, c["kind"]), "charge_id": c["id"]})
     return {"from": frm, "to": to, "lines": out, "total": round(sum(x["qty"] * x["price"] for x in out), 2)}
+
+
+def accrual_plan(db, month):
+    """Rent and one-time charges earned but not invoiced by the end of a month, per contract — the same lines the next
+    invoice would carry (so the accrual and the bill always agree)."""
+    month = _month(month, "month")
+    through = _month_end(month)
+    rows = []
+    for r in list_rentals(db, status="open")["rows"]:
+        if r["status"] not in ("active", "returned"):
+            continue
+        nxt = next_period(db, r["id"])
+        if not nxt or nxt["from"] > through:
+            continue
+        try:
+            lines = invoice_lines(db, r["id"], nxt["from"], through, "en")["lines"]
+        except ValidationError:
+            continue
+        by = {}
+        for ln in lines:
+            amt = to_minor(ln["qty"] * ln["price"] * ln.get("pct", 1))
+            if amt:
+                acct = ln.get("account") or _role_or(db, "rental_revenue")
+                by[acct] = by.get(acct, 0) + amt
+        total = sum(by.values())
+        if total > 0:
+            rows.append({"id": r["id"], "code": r["code"], "client": r["client"], "bu_id": r["bu_id"], "from": nxt["from"], "to": through,
+                         "accounts": by, "amount": to_major(total)})
+    return {"month": month, "through": through, "rows": rows, "total": round(sum(x["amount"] for x in rows), 2)}
+
+
+def run_accrual(db, month, user=""):
+    """Book the plan on the month's last day and reverse it on the next day: the month shows what it earned, and the
+    real invoice next month is not counted twice. Running a month again replaces its accrual."""
+    plan = accrual_plan(db, month)
+    nxt_day = (_dt.date.fromisoformat(plan["through"]) + _dt.timedelta(days=1)).isoformat()
+    unbilled = _role_or(db, "unbilled_revenue")
+    made = []
+    with db.tx():
+        for e in db.q(f"SELECT id FROM journal_entries e WHERE {acc.LIVE} AND (e.ref LIKE ? OR e.ref LIKE ?)",
+                      (f"RENT:ACR:{plan['month']}:%", f"RENT:ACR-R:{plan['month']}:%")):
+            acc.void_entry(db, e["id"], "Replaced by a new month-end accrual", user)
+        for r in plan["rows"]:
+            cr = [{"account": a, "credit": to_major(v)} for a, v in r["accounts"].items()]
+            dr = [{"account": unbilled, "debit": r["amount"]}]
+            meta = {"accrual": plan["month"], "rental": r["code"], "period": [r["from"], r["to"]]}
+            made.append(acc._insert_entry(db, date=plan["through"], kind=KINDS[5], bu_id=r["bu_id"], party=r["client"],
+                                          memo=f"Rent earned, not invoiced yet: {r['code']} {r['from']} to {r['to']}",
+                                          ref=f"RENT:ACR:{plan['month']}:{r['code']}", lines=dr + cr, meta=meta, user=user))
+            acc._insert_entry(db, date=nxt_day, kind=KINDS[5], bu_id=r["bu_id"], party=r["client"],
+                              memo=f"Reversal of the {plan['month']} accrual: {r['code']}", ref=f"RENT:ACR-R:{plan['month']}:{r['code']}",
+                              lines=[{"account": x["account"], "debit": x["credit"]} for x in cr] + [{"account": unbilled, "credit": r["amount"]}],
+                              meta=meta, user=user)
+    return {**plan, "entries": made}
 
 
 def create_invoice(db, rid, d, user=""):

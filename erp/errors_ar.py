@@ -4,6 +4,10 @@ English stays the source; {} in a message is a value, {1}, {2}… place it in th
 generic message ("{} is required") have their own list."""
 
 MESSAGES = {
+    'Choose how the discount was received': 'اختر طريقة استلام الخصم',
+    'Name the supplier whose balance is reduced': 'حدد المورد الذي يُخفَّض رصيده',
+    "The discount must be more than zero and no more than the lot's remaining value": 'يجب أن يكون الخصم أكبر من صفر ولا يتجاوز القيمة المتبقية للدفعة',
+    'Pieces from this lot were lost or scrapped at the old cost. Record this discount as other income instead.': 'خرجت قطع من هذه الدفعة (فقد أو تكهين) بالتكلفة القديمة. سجّل هذا الخصم كإيراد آخر.',
     'Choose a project.': 'اختر مشروعاً.',
     'Choose at least one rate': 'اختر سعراً واحداً على الأقل',
     'Give a category for the rates that have none': 'حدد فئة للأسعار التي ليس لها فئة',

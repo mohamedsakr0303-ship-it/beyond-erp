@@ -3247,6 +3247,25 @@ def rent_depr_run(ctx):
     return ok({"id": eid})
 
 
+@route("POST", "/api/rent-accrual-preview", "rentals.contracts", "add")
+def rent_accrual_preview(ctx):
+    return ok(rentals.accrual_plan(ctx.db, ctx.body.get("month")))
+
+
+@route("POST", "/api/rent-accrual", "rentals.contracts", "add")
+def rent_accrual_run(ctx):
+    r = rentals.run_accrual(ctx.db, ctx.body.get("month"), ctx.user["username"])
+    ctx.log("rent.accrual", f"{r['month']} {r['total']}")
+    return ok({"month": r["month"], "total": r["total"], "count": len(r["entries"])})
+
+
+@route("POST", "/api/rent-lots/<lid>/discount", "rentals.fleet", "add")
+def rent_lot_discount(ctx, lid):
+    eid = rentals.lot_discount(ctx.db, lid, ctx.body, ctx.user["username"])
+    ctx.log("rent.lot_discount", f"{lid} entry {eid}")
+    return ok({"id": eid})
+
+
 @route("POST", "/api/rent-starter", "rentals.fleet", "add")
 def rent_starter(ctx):
     return ok(rentals.starter(ctx.db))

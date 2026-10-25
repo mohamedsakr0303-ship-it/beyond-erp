@@ -3279,6 +3279,54 @@ class RentalsLanguageAssets(unittest.TestCase):
         self.assertEqual(on[0]["pieces_out"], 200)
         self.assertEqual(on[0]["billed_to"], "2026-10-31")
 
+    def test_lot_discount_lowers_cost_and_follows_through(self):
+        """A supplier discount after buying lowers the lot's cost (not income); depreciation follows; voiding restores it;
+        it survives the workbook round trip; refused once pieces have left at the old cost."""
+        from erp import rentals, workbook
+        db = Database(":memory:")
+        iid = rentals.save_item(db, {"code": "FR", "name": "Frame", "category": "scaffolding", "unit": "piece", "monthly_rate": 60, "life_months": 60,
+                                     "residual_pct": 0})
+        rentals.add_lot(db, iid, {"qty": 200, "unit_cost": 940, "date": "2026-08-01", "supplier": "Supplier A", "paid": 0})
+        lot = rentals._lot_states(db)[0]
+        eid = rentals.lot_discount(db, lot["id"], {"amount": 2000, "date": "2026-08-05"})
+        tb = {r["code"]: r for r in a.trial_balance(db)["rows"]}
+        self.assertEqual((tb["1415"]["debit"], tb["2010"]["credit"]), (186000.0, 186000.0))   # cost 188,000 − 2,000; owed the same
+        self.assertAlmostEqual(rentals._lot_states(db)[0]["unit_cost"], 93000)                 # 930.00 a piece
+        self.assertEqual(rentals.plan_depreciation(db, "2026-08")["total"], 3100.0)            # 186,000 / 60
+        with self.assertRaises(a.ValidationError):
+            rentals.lot_discount(db, lot["id"], {"amount": 999999})
+        raw = workbook.build_workbook(db)
+        p = Path(tempfile.mkdtemp()) / "w.xlsx"
+        p.write_bytes(raw)
+        db2 = Database(":memory:")
+        interchange.import_data(db2, interchange.read_xlsx(str(p)), mode="replace")
+        self.assertAlmostEqual(rentals._lot_states(db2)[0]["unit_cost"], 93000)
+        a.void_entry(db, eid, "wrong lot")
+        self.assertAlmostEqual(rentals._lot_states(db)[0]["unit_cost"], 94000)
+        rentals.lot_discount(db, lot["id"], {"amount": 500, "how": "refund", "paid_into": "1010"})
+        self.assertEqual({r["code"]: r for r in a.trial_balance(db)["rows"]}["1010"]["debit"], 500.0)
+        rentals.scrap(db, {"item": iid, "qty": 1, "date": "2026-09-01"})
+        with self.assertRaises(a.ValidationError):
+            rentals.lot_discount(db, lot["id"], {"amount": 100})
+
+    def test_month_end_rent_accrual(self):
+        """Rent earned but not invoiced is booked on the month's last day (same lines as the invoice) and reversed the
+        next day; running a month again replaces it; nothing is accrued twice."""
+        from erp import rentals
+        db = self.books()   # 200 frames at 94.5 a month, delivered 2026-08-01, invoiced to 2026-10-31; install 38,250 linked
+        self.assertEqual(rentals.accrual_plan(db, "2026-10")["rows"], [])          # all billed through October
+        p = rentals.accrual_plan(db, "2026-11")
+        self.assertEqual((len(p["rows"]), p["total"]), (1, 18900.0))               # November: one full month, not billed yet
+        rentals.run_accrual(db, "2026-11")
+        rentals.run_accrual(db, "2026-11")                                        # again: replaces, never doubles
+        nov = a.income_statement(db, "2026-11-01", "2026-11-30")
+        dec = a.income_statement(db, "2026-12-01", "2026-12-31")
+        self.assertEqual(round(nov["revenue_total"] if "revenue_total" in nov else sum(r["amount"] for r in nov["revenue"]), 2), 18900.0)
+        self.assertEqual(round(dec["revenue_total"] if "revenue_total" in dec else sum(r["amount"] for r in dec["revenue"]), 2), -18900.0)
+        tb = {r["code"]: r for r in a.trial_balance(db, date_to="2026-11-30")["rows"]}
+        self.assertEqual(tb["1180"]["debit"], 18900.0)
+        self.assertNotIn("1180", {r["code"] for r in a.trial_balance(db)["rows"] if r.get("debit") or r.get("credit")})
+
     def test_fleet_depreciation_reminder(self):
         """Rental equipment not depreciated up to last month is on the dashboard, like the fixed-asset register; booking it clears it."""
         from erp import dashboards, rentals
