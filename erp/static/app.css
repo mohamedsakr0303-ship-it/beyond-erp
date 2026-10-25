@@ -1878,3 +1878,36 @@ input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 4px color
 .toast{top:calc(var(--top-h,56px) + 10px + env(safe-area-inset-top,0px));bottom:auto;inset-inline-end:auto;left:50%;transform:translateX(-50%);
   pointer-events:none;z-index:200;max-width:min(440px,calc(100vw - 24px));width:max-content}
 .toast .btn,.toast button,.toast a{pointer-events:auto}
+
+/* surfaces that cover scrolling content are solid: nothing shows through a form's title bar or buttons and looks
+   tappable while the bar takes the tap (the night theme's glass panels are see-through) */
+:root{--solid:#fff}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--solid:#0c0d2e}}
+:root[data-theme="dark"]{--solid:#0c0d2e}
+.drawer,.dlg,.dd-menu{background-color:var(--solid)}
+:root[data-theme="dark"] .drawer,:root[data-theme="dark"] .dlg,:root[data-theme="dark"] .dd-menu,:root[data-theme="dark"] .tour-card{background:var(--solid)}
+@media (prefers-color-scheme:dark){:root:not([data-theme]) .drawer,:root:not([data-theme]) .dlg,:root:not([data-theme]) .dd-menu{background:var(--solid)}}
+.drawer .dhead,.drawer .foot{background:linear-gradient(var(--panel),var(--panel)),var(--solid)}
+/* touch screens: every control at least ~40px to tap */
+@media (pointer:coarse){
+  .btn,.btn.sm{min-height:38px}
+  .btn.sm.icon{min-width:38px}
+  input[type=checkbox],input[type=radio]{width:22px;height:22px;flex:none}
+  label.chk,.f.chk,label:has(> input[type=checkbox]),label:has(> input[type=radio]){min-height:40px;align-items:center}
+  select,input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]),textarea{min-height:40px}
+  .btn.sm{min-width:38px}
+  td.bsel,th.bsel{min-width:44px;cursor:pointer;padding-block:10px}
+  td:has(> input[type=checkbox]:only-child),td:has(> input[type=radio]:only-child){min-width:44px;cursor:pointer}
+  select{min-width:64px}
+  input.num{min-width:56px}
+  .perm input[type=radio]{width:24px;height:24px}
+  .perm .ptog{width:34px;min-height:34px;font-size:1.1em}
+  .wv-btn{min-height:36px;padding:6px 14px}
+  .wg-tools{position:static;margin:0 0 8px;flex-wrap:wrap;justify-content:flex-end;border-radius:12px;padding:4px}
+  .wg-tools .lnk,.wg-drag{min-width:34px;min-height:34px;display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box}
+}
+/* a form is open: the saved / undo notice sits low at the start corner, clear of the fields being typed */
+body:has(.drawer-bg) .toast{top:auto;bottom:calc(78px + env(safe-area-inset-bottom,0px));left:auto;inset-inline-start:12px;inset-inline-end:auto;transform:none;max-width:calc(100% - 24px)}
+/* a focused or scrolled-to field stays clear of the form's sticky title bar and buttons */
+.drawer{scroll-padding-top:76px;scroll-padding-bottom:96px}
+html{scroll-padding-top:calc(var(--top-h,56px) + 12px)}

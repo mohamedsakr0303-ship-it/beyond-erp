@@ -2102,6 +2102,11 @@ document.addEventListener("change", e => {
   const one = e.target.closest("[data-bsel]"); if (one) return bulkSet([one.dataset.bsel], one.checked);
   if (e.target.closest("[data-ball]")) bulkSet(bulkIds(), e.target.checked);
 });
+// the whole selection cell is the tap target: a near miss ticks the box instead of opening the row
+// any table cell whose only control is one tick box or option works the same way
+document.addEventListener("click", e => { const c = e.target.closest("td,th"); if (!c || e.target.closest("input,select,textarea,button,a,label")) return;
+  const ctl = $$("input,select,textarea,button,a", c); if (ctl.length !== 1 || !ctl[0].matches("input[type=checkbox],input[type=radio]") || ctl[0].disabled) return;
+  e.preventDefault(); e.stopPropagation(); ctl[0].click(); }, true);
 window.addEventListener("hashchange", () => { if (BULK.key !== location.hash) { BULK.sel.clear(); BULK.cfg = null; const b = $("#bulkbar"); if (b) b.remove(); } });
 async function bulkRun(action, extra = {}) {
   const c = BULK.cfg, ids = [...BULK.sel];
@@ -7660,14 +7665,14 @@ async function deprPolicyForm() {
     { k: "remind", l: L2("Show a dashboard reminder when last month's depreciation is not recorded", "إظهار تذكير في لوحة التحكم إذا لم يُسجل إهلاك الشهر الماضي"), type: "checkbox", v: p.remind, span: "spanall" },
     { html: `<h4 class="fsec">${L2("By asset account (blank: default above)", "حسب حساب الأصل (فارغ: الافتراضي أعلاه)")}</h4>
       <div class="tbl"><table id="dpacc"><thead><tr><th>${t("account")}</th><th>${L2("Life (months)", "العمر (بالأشهر)")}</th><th>${L2("Residual %", "التخريدية %")}</th><th>${L2("Method", "الطريقة")}</th></tr></thead><tbody>
-      ${rows.map(([c, l]) => { const r = p.by_account[c] || {}; return `<tr data-code="${esc(c)}"><td>${esc(l)}${c === rentAcc ? `<div class="lines">${L2("Rental equipment: life and residual value are set per item; the method applies.", "معدات التأجير: يُحدد العمر والقيمة التخريدية لكل صنف، وتُطبق الطريقة.")}</div>` : ""}</td>
-        <td><input data-skip="1" class="num" type="number" step="1" data-k="life_months" value="${r.life_months ?? ""}" style="width:90px" ${c === rentAcc ? "disabled" : ""}></td>
-        <td><input data-skip="1" class="num" type="number" step="any" data-k="residual_pct" value="${r.residual_pct ?? ""}" style="width:80px" ${c === rentAcc ? "disabled" : ""}></td>
+      ${rows.map(([c, l]) => { const r = p.by_account[c] || {}; return `<tr data-code="${esc(c)}"><td>${esc(l)}${c === rentAcc ? `<div class="lines">${L2("Life and residual value are set on each item in Rental equipment; the method here applies.", "يُحدد العمر والقيمة التخريدية لكل صنف في معدات التأجير، وتُطبق الطريقة هنا.")}</div>` : ""}</td>
+        ${c === rentAcc ? `<td colspan="2"><button type="button" class="btn sm" data-a="dpitems">${L2("Set per item", "تُحدد لكل صنف")}</button></td>` : `<td><input data-skip="1" class="num" type="number" step="1" min="0" data-k="life_months" value="${r.life_months ?? ""}" style="width:90px"></td>
+        <td><input data-skip="1" class="num" type="number" step="any" min="0" data-k="residual_pct" value="${r.residual_pct ?? ""}" style="width:80px"></td>`}
         <td><select data-skip="1" data-k="method">${mopts(r.method)}</select></td></tr>`; }).join("")}</tbody></table></div>`, span: "spanall" }]),
   async (v, f) => { v.by_account = {};
     $$("#dpacc tbody tr", f).forEach(tr => { const r = {}; $$("[data-k]", tr).forEach(el => { if (el.value !== "") r[el.dataset.k] = el.value; }); if (Object.keys(r).length) v.by_account[tr.dataset.code] = r; });
     await api("PUT", "/api/depreciation-policy", v); toast(t("saved")); },
-  { wide: true, onOpen: f => { S.H.dpm = () => showFields(f, $("[name=method]", f).value === "declining" ? ["factor"] : [], ["factor"]); S.H.dpm(); } });
+  { wide: true, onOpen: f => { S.H.dpitems = () => { closeDrawer(true); location.hash = "#/rentfleet"; }; S.H.dpm = () => showFields(f, $("[name=method]", f).value === "declining" ? ["factor"] : [], ["factor"]); S.H.dpm(); } });
 }
 function deprForm() {
   const month = today().slice(0, 7);
