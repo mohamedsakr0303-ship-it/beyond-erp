@@ -3279,6 +3279,18 @@ class RentalsLanguageAssets(unittest.TestCase):
         self.assertEqual(on[0]["pieces_out"], 200)
         self.assertEqual(on[0]["billed_to"], "2026-10-31")
 
+    def test_fleet_depreciation_reminder(self):
+        """Rental equipment not depreciated up to last month is on the dashboard, like the fixed-asset register; booking it clears it."""
+        from erp import dashboards, rentals
+        db = Database(":memory:")
+        iid = rentals.save_item(db, {"code": "FR", "name": "Frame", "category": "scaffolding", "unit": "piece", "monthly_rate": 60, "life_months": 60})
+        rentals.add_lot(db, iid, {"qty": 10, "unit_cost": 600, "date": "2025-01-10", "source": "opening"})
+        due = [r for r in dashboards.alerts(db, lambda *a: True) if r["href"] == "#/rentfleet"]
+        self.assertEqual(len(due), 1)
+        self.assertIn("Rental equipment depreciation not booked", due[0]["en"])
+        rentals.run_depreciation(db, due[0]["en"].rsplit(" ", 1)[1])
+        self.assertEqual([r for r in dashboards.alerts(db, lambda *a: True) if r["href"] == "#/rentfleet"], [])
+
     def test_assets_overview_and_cash_transfer(self):
         from erp import asset_views
         db = Database(":memory:")

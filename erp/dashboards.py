@@ -620,6 +620,12 @@ def alerts(db, can, detail=False):
         d = assets.due(db)
         if d:
             add("warn", f"Depreciation not booked up to {d['through']}", f"لم يُحتسب الإهلاك حتى {d['through']}", "#/depreciation", d["count"])
+    if can("rentals.fleet", "add") and assets.policy(db)["remind"] and db.one("SELECT 1 FROM rent_lots LIMIT 1"):
+        last = assets._add_months(acc.today()[:7], -1)          # the rental fleet: its own depreciation run
+        p = rentals.plan_depreciation(db, last)
+        if p["rows"]:
+            add("warn", f"Rental equipment depreciation not booked up to {p['through']}",
+                f"لم يُحتسب إهلاك معدات التأجير حتى {p['through']}", "#/rentfleet", len(p["rows"]))
     if can("projects.tasks") or can("projects.overview"):
         from . import projects
         p = projects.alerts(db)
