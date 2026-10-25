@@ -1879,7 +1879,8 @@ def _dashboard(wb, data, colmap, posting, rng, pl_refs, bs_refs, n_bu, audit_ref
     bar(r, "WHERE THE MONEY WENT  (period)")
     for h, c1, c2 in (("Cost", 2, 5), ("Amount", 6, 7), ("Share", 8, 8), ("", 9, 13)):
         span(r + 1, c1, c2, h, font=F(bold=True, size=9, color=NAVY), bg="E6ECF4", align=center)
-    lines = [(a["name"], f'SUMIFS({tb}!$F:$F,{tb}!$A:$A,"{a["code"]}")-SUMIFS({tb}!$G:$G,{tb}!$A:$A,"{a["code"]}")')
+    lines = [(f'{a["name"]}  |  {a["name_ar"]}' if a.get("name_ar") else a["name"],   # each language keeps its half
+              f'SUMIFS({tb}!$F:$F,{tb}!$A:$A,"{a["code"]}")-SUMIFS({tb}!$G:$G,{tb}!$A:$A,"{a["code"]}")')
              for a in (data.get("Chart of Accounts") or []) if a.get("type") == "COGS"
              and not (a.get("role") == "cost_of_sales" and "shop" in hide) and not (a.get("role") == "stock_adjust" and "stock" in hide)]
     sub = lambda *subs: "+".join(f'SUMIFS({tb}!$F:$F,{tb}!$D:$D,"{x}")-SUMIFS({tb}!$G:$G,{tb}!$D:$D,"{x}")' for x in subs)  # noqa: E731

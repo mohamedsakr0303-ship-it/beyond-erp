@@ -608,7 +608,7 @@ def _standalone(sheets, C):
         calc("x_cum", "certified to here", f'=SUMIFS([[{sc_}.x_val]],[[{sc_}.contract]],{{contract}},[[{sc_}.number]],"<="&N({{number}}))'),
         calc("x_rec", "advance recovered", f'=IF({{x_first}}=1,MIN({{x_adv}},ROUND({{x_cum}}*N({head("advance_recovery_pct")}),2))'
                                            f'-MIN({{x_adv}},ROUND(({{x_cum}}-{{x_this}})*N({head("advance_recovery_pct")}),2)),0)'),
-        calc("x_vatc", "VAT code", f'={head("vat_code")}&""'), calc("x_whtc", "WHT code", f'={head("wht_code")}&""'),
+        calc("x_vatc", "VAT code", f'=IFERROR({head("vat_code")}&"","")'), calc("x_whtc", "WHT code", f'=IFERROR({head("wht_code")}&"","")'),
         calc("x_vat", "VAT", f'=ROUND({{x_base}}*{TAXRATE("{x_vatc}")},2)'), calc("x_wht", "withholding", f'=ROUND({{x_base}}*{TAXRATE("{x_whtc}")},2)'),
         calc("x_net", "owed to him", "={x_base}+{x_vat}-{x_ret}-{x_rec}-{x_wht}"),
         role("x_cost", "subcontract_cost"), role("x_vin", "vat_input"), role("x_pay", "sub_payable"), role("x_retp", "retention_payable"),
@@ -636,7 +636,7 @@ def _standalone(sheets, C):
         calc("x_net", "net", "=ROUND((N(IF({qty}=\"\",1,{qty}))*N({price})-N({discount}))*{x_sign},2)"),
         calc("x_vat", "VAT", f'=ROUND({{x_net}}*{TAXRATE("{vat_code}")},2)'),
         calc("x_total", "total", "={x_net}+{x_vat}"),
-        calc("x_money", "money account", f'=IF(OR({hd("payment_method")}="C",{hd("payment_method")}="CC"),{ROLE("cash")},{ROLE("bank")})'),
+        calc("x_money", "money account", f'=IF({{number}}="","",IF(OR({hd("payment_method")}="C",{hd("payment_method")}="CC"),{ROLE("cash")},{ROLE("bank")}))'),
         role("x_rev", "revenue"), role("x_vo", "vat_output")]
     by[er]["legs"] = [("x_total", "x_money", "D"), ("x_net", "x_rev", "C"), ("x_vat", "x_vo", "C")]
 
