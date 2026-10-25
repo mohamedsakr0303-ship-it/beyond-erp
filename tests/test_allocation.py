@@ -163,9 +163,9 @@ class RateCaptureAndFlags(unittest.TestCase):
         a.post_extract(db, x)
         a.record_partner_tx(db, {"partner": "A", "type": "Distribution", "amount": 100, "date": "2026-03-02"})
         flags = " | ".join(f["flag"] for f in a.review_flags(db))
-        self.assertIn("P-1: costs are above revenue", flags)
-        self.assertIn("A has drawn", flags)
-        self.assertIn("1 rates seen in the books", flags)
+        self.assertIn("P-1: costs are higher than income", flags)
+        self.assertIn("A has taken", flags)
+        self.assertIn("1 prices used in the books", flags)
         links = {f["flag"].split(":")[0].split(" has")[0]: f["href"] for f in a.review_flags(db)}
         p1 = db.one("SELECT id FROM business_units WHERE code='P-1'")["id"]
         self.assertEqual(links["P-1"], f"#/bu/{p1}")

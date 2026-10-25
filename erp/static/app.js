@@ -1140,10 +1140,12 @@ S.GLOBAL_H = {
   draftgo: el => { closeDrawer(true); Drafts.resume(el.dataset.id); },
   draftdrop: async el => { if (!await uiConfirm(L2("Discard this draft? Its content will be lost.", "هل تريد حذف هذه المسودة؟ سيُفقد محتواها."))) return;
     Drafts.discard(el.dataset.id); const bar = el.closest(".draft-bar > div, tr"); if (bar) bar.remove(); $$(".draft-bar").forEach(b => { if (!b.children.length) b.remove(); }); },
-  menu: () => { const app = $(".app"); if (innerWidth <= 900) app.classList.toggle("menu"); else { app.classList.toggle("mini"); store.set("navMini", app.classList.contains("mini") ? "1" : ""); } },
-  palette: () => openPalette(),
+  menu: () => { const app = $(".app"); $$(".dd.open").forEach(d => d.classList.remove("open")); if (innerWidth <= 900) app.classList.toggle("menu"); else { app.classList.toggle("mini"); store.set("navMini", app.classList.contains("mini") ? "1" : ""); } },
+  palette: () => { $$(".dd.open").forEach(d => d.classList.remove("open")); openPalette(); },
   clocktoggle: el => Clock.toggle(el),
-  bellopen: () => { const b = $(".bell"); if (b) { b.classList.add("open"); loadAlerts(true).then(bellSeen); } },
+  bellopen: () => { const b = $(".bell"); if (!b) return;          // the phone bar's Alerts: a second tap closes it
+    if (b.classList.contains("open")) { b.classList.remove("open"); return; }
+    $(".app") && $(".app").classList.remove("menu"); b.classList.add("open"); loadAlerts(true).then(bellSeen); },
   grp: el => { const w = el.closest(".grp-wrap"), app = $(".app");
     if (innerWidth <= 900 && app.classList.contains("pm-rail") && !app.classList.contains("menu")) {   // the icon strip: open the menu at that section
       app.classList.add("menu"); w.classList.add("open"); setTimeout(() => w.scrollIntoView({ block: "nearest", behavior: "smooth" }), 230); return; }
@@ -3018,9 +3020,9 @@ PAGES.extracts = async (view, parts, q) => {
   const d = await api("GET", "/api/extracts-board?" + qs(q));
   const add = can("sales.extracts", "add");
   const k = (l, v, cls = "") => `<div class="kpi"><div class="l">${esc(l)}</div><div class="v ${cls}">${money(v)}</div></div>`;
-  S.H.xnext = async el => { try { const r = await api("POST", `/api/rentals/${el.dataset.r}/next-extract`, {}); toast(L2("Draft extract created. Review and issue it.", "تم إنشاء مسودة المستخلص. راجعها ثم أصدرها.")); location.hash = "#/extract/" + r.id; } catch (e) { fail(e); } };
+  S.H.xnext = async el => { try { const r = await api("POST", `/api/rentals/${el.dataset.r}/next-extract`, {}); toast(L2("Draft progress bill created. Review and issue it.", "تم إنشاء مسودة المستخلص. راجعها ثم أصدرها.")); location.hash = "#/extract/" + r.id; } catch (e) { fail(e); } };
   S.H.xnew = el => newExtract(el.dataset.bu ? +el.dataset.bu : null);
-  view.innerHTML = `<div class="toolbar">${add ? `<button class="btn pri" data-a="xnew">+ ${L2("New extract", "مستخلص جديد")}</button>` : ""}<span class="spacer"></span></div>
+  view.innerHTML = `<div class="toolbar">${add ? `<button class="btn pri" data-a="xnew">+ ${L2("New progress bill", "مستخلص جديد")}</button>` : ""}<span class="spacer"></span></div>
     <div class="kpis">${k(L2("Billed (issued)", "المفوتر (الصادر)"), d.totals.billed)}${k(L2("Collected", "المحصل"), d.totals.collected, "pos")}
       ${k(L2("Receivable", "المستحق على العملاء"), d.totals.owed, d.totals.owed > 0 ? "neg" : "")}<div class="kpi"><div class="l">${esc(L2("Drafts to issue", "مسودات للإصدار"))}</div><div class="v">${d.totals.drafts}</div></div></div>
     <div class="xsites">${d.sites.map(s => { const p = s.billed ? Math.min(1, (s.collected || 0) / s.billed) : 0;
@@ -3028,21 +3030,21 @@ PAGES.extracts = async (view, parts, q) => {
         <div class="meter"><i style="width:${(p * 100).toFixed(0)}%"></i></div>
         <div class="xs-nums"><span><small>${esc(L2("Billed", "المفوتر"))}</small><b>${money(s.billed)}</b></span><span><small>${esc(L2("Collected", "المحصل"))}</small><b>${money(s.collected || 0)}</b></span><span><small>${esc(L2("Outstanding", "المستحق"))}</small><b class="${s.owed > 0 ? "neg" : "pos"}">${money(s.owed || 0)}</b></span></div>
         <div class="row" style="margin-top:10px">${s.next ? `<span class="chip">${esc(L2("Next period from", "الفترة التالية من"))} ${fd(s.next.from)}</span>` : ""}<span class="spacer"></span>
-          ${add && s.rental_id ? `<button class="btn sm pri" data-a="xnext" data-r="${s.rental_id}">+ ${esc(L2("Next extract", "المستخلص التالي"))}</button>` : ""}
+          ${add && s.rental_id ? `<button class="btn sm pri" data-a="xnext" data-r="${s.rental_id}">+ ${esc(L2("Next progress bill", "المستخلص التالي"))}</button>` : ""}
           ${add && s.bu_id ? `<button class="btn sm" data-a="xnew" data-bu="${s.bu_id}">+ ${esc(L2("Blank", "فارغ"))}</button>` : ""}</div></div>`; }).join("") || ""}</div>` +
     filterBar(q, ["q", ["select", "status", t("status"), [["draft", L2("Draft", "مسودة")], ["unpaid", L2("Unpaid", "غير محصل")], ["part", L2("Partly paid", "محصل جزئياً")], ["paid", L2("Paid", "محصل")]]]]) +
     `<div class="card">${d.rows.length ? `<div class="tbl stack"><table><thead><tr><th>${esc(L2("Number", "الرقم"))}</th><th>${esc(L2("Site", "الموقع"))}</th><th>#</th><th>${t("date")}</th><th>${esc(L2("Period", "الفترة"))}</th>
-      <th class="num">${esc(L2("This extract", "هذا المستخلص"))}</th><th class="num">${esc(L2("Due on the extract", "المستحق بالمستخلص"))}</th><th class="num">${esc(L2("Collected", "المحصل"))}</th><th>${t("status")}</th></tr></thead><tbody>
+      <th class="num">${esc(L2("This progress bill", "هذا المستخلص"))}</th><th class="num">${esc(L2("Due on this progress bill", "المستحق بالمستخلص"))}</th><th class="num">${esc(L2("Collected", "المحصل"))}</th><th>${t("status")}</th></tr></thead><tbody>
       ${d.rows.map(x => `<tr class="click" data-href="#/extract/${x.id}"><td><b>${esc(x.number)}</b></td><td>${esc(x.work || x.bu_name)}<div class="lines">${esc(x.customer || "")}</div></td><td>${x.seq_no || ""}${x.final ? ` <span class="chip">${esc(L2("final", "ختامي"))}</span>` : ""}</td>
         <td>${fd(x.date)}</td><td>${x.period_from ? `${fd(x.period_from)} → ${fd(x.period_to)}` : ""}</td><td class="num">${money(x.receivable)}</td><td class="num"><b>${money(x.due)}</b></td>
         <td class="num">${x.status === "posted" ? money(x.collected) : ""}</td><td>${xstChip(x.pay_state)}</td></tr>`).join("")}</tbody></table></div>`
-      : `<div class="empty">${esc(L2("No extracts. Use “Next extract” on a site or “New extract”.", "لا توجد مستخلصات. استخدم «المستخلص التالي» على موقع أو «مستخلص جديد»."))}</div>`}</div>`;
+      : `<div class="empty">${esc(L2("No progress bills yet. Use “Next progress bill” on a site, or “New progress bill”.", "لا توجد مستخلصات. استخدم «المستخلص التالي» على موقع أو «مستخلص جديد»."))}</div>`}</div>`;
 };
 async function newExtract(bu) {
   const bus = S.boot.bus || [];
-  drawer(L2("New extract", "مستخلص جديد"), form([
+  drawer(L2("New progress bill", "مستخلص جديد"), form([
     { k: "bu_id", l: t("bu"), type: "select", opts: bus.map(b => [b.id, `${b.code} — ${b.name}`]), v: bu || (bus[0] && bus[0].id), req: 1 },
-    { k: "number", l: L2("Extract / invoice number", "رقم المستخلص / الفاتورة"), req: 1, ph: "EXT-…" }, { k: "date", l: t("date"), type: "date", v: today(), req: 1 },
+    { k: "number", l: L2("Progress bill / invoice number", "رقم المستخلص / الفاتورة"), req: 1, ph: "EXT-…" }, { k: "date", l: t("date"), type: "date", v: today(), req: 1 },
     { k: "customer", l: t("customer"), list: "parties" }]) + partyList("parties"),
     async v => { const r = await api("POST", "/api/extracts", { ...v, lines: [{ description: L2("Works", "أعمال"), qty: 1, price: 0 }] }); location.hash = "#/extract/" + r.id; });
 }
@@ -3078,9 +3080,9 @@ PAGES.extract = async (view, parts) => {
     xdel: el => { lines.splice(+el.dataset.i, 1); drawLines(); },
     xup: el => { const i = +el.dataset.i; if (i > 0) { [lines[i - 1], lines[i]] = [lines[i], lines[i - 1]]; drawLines(); } },
     xsave: async () => { try { await api("PUT", "/api/extracts/" + x.id, body()); toast(t("saved")); route(); } catch (e) { fail(e); } },
-    xissue: async () => { if (!await uiConfirm(L2("Issue this extract? It will be recorded as a sales invoice.", "هل تريد إصدار المستخلص؟ سيُسجَّل فاتورة مبيعات."))) return;
+    xissue: async () => { if (!await uiConfirm(L2("Issue this progress bill? It will be recorded as a sales invoice.", "هل تريد إصدار المستخلص؟ سيُسجَّل فاتورة مبيعات."))) return;
       try { await api("PUT", "/api/extracts/" + x.id, { ...body(), post: true }); toast(L2("Issued.", "تم الإصدار.")); route(); } catch (e) { fail(e); } },
-    xreopen: async () => { if (!await uiConfirm(L2("Reopen for adjustment? The invoice entry is reversed (retained in the audit trail) and the extract returns to draft.", "هل تريد إعادة الفتح للتعديل؟ يُعكس قيد الفاتورة (ويبقى في سجل المراجعة) ويعود المستخلص مسودة."))) return;
+    xreopen: async () => { if (!await uiConfirm(L2("Reopen to adjust it? The invoice entry is reversed (kept in the history) and the progress bill returns to draft.", "هل تريد إعادة الفتح للتعديل؟ يُعكس قيد الفاتورة (ويبقى في سجل المراجعة) ويعود المستخلص مسودة."))) return;
       try { await api("POST", `/api/extracts/${x.id}/reopen`, {}); route(); } catch (e) { fail(e); } },
     xdelete: async () => { if (!await uiConfirm(t("confirm_delete") || "Delete?")) return; try { await api("DELETE", "/api/extracts/" + x.id); location.hash = "#/extracts"; } catch (e) { fail(e); } },
     xdoclang: el => store.set("xdocLang", el.value),
@@ -3091,22 +3093,22 @@ PAGES.extract = async (view, parts) => {
   view.innerHTML = `<div class="toolbar"><a class="btn" href="#/extracts">← ${esc(t("m_extracts"))}</a>${xstChip(x.pay_state)}<span class="spacer"></span>
       <select class="in" style="width:auto" data-change="xdoclang"><option value="ar" ${xdocLang() === "ar" ? "selected" : ""}>العربية</option><option value="en" ${xdocLang() === "en" ? "selected" : ""}>English</option></select>
       <button class="btn" data-a="xprint">🖨 ${esc(L2("Print / PDF", "طباعة / PDF"))}</button><button class="btn" data-a="xexcel">⬇ Excel</button>
-      ${ed ? `<button class="btn" data-a="xsave">${t("save")}</button><button class="btn pri" data-a="xissue">${esc(L2("Issue extract", "إصدار المستخلص"))}</button><button class="btn danger" data-a="xdelete">${t("delete")}</button>` : ""}
+      ${ed ? `<button class="btn" data-a="xsave">${t("save")}</button><button class="btn pri" data-a="xissue">${esc(L2("Issue progress bill", "إصدار المستخلص"))}</button><button class="btn danger" data-a="xdelete">${t("delete")}</button>` : ""}
       ${x.status === "posted" && can("sales.extracts", "edit") ? `<button class="btn" data-a="xreopen">✎ ${esc(L2("Reopen for adjustment", "إعادة فتح للتعديل"))}</button>` : ""}</div>
     ${x.rental ? `<div class="banner info">${esc(L2("Rental contract", "عقد التأجير"))} <a href="#/rental/${x.rental.rental_id}">${esc(x.rental.rental_code)}</a> · ${esc(L2("Rental period", "فترة الإيجار"))} ${fd(x.rental.period_from)} → ${fd(x.rental.period_to)}</div>` : ""}
-    <div class="xgrid"><div><div class="card" id="xhead"><h2>${esc(L2("Extract", "المستخلص"))} ${esc(x.number)}</h2>${form([
-      { k: "number", l: L2("Extract / invoice number", "رقم المستخلص / الفاتورة"), v: x.number, req: 1, dis: !ed }, { k: "date", l: t("date"), type: "date", v: x.date, dis: !ed },
-      { k: "seq_no", l: L2("Extract no.", "رقم المستخلص"), type: "number", v: x.seq_no || "", dis: !ed },
+    <div class="xgrid"><div><div class="card" id="xhead"><h2>${esc(L2("Progress bill", "المستخلص"))} ${esc(x.number)}</h2>${form([
+      { k: "number", l: L2("Progress bill / invoice number", "رقم المستخلص / الفاتورة"), v: x.number, req: 1, dis: !ed }, { k: "date", l: t("date"), type: "date", v: x.date, dis: !ed },
+      { k: "seq_no", l: L2("Progress bill no.", "رقم المستخلص"), type: "number", v: x.seq_no || "", dis: !ed },
       { k: "final", l: L2("Type", "النوع"), type: "select", opts: [["", L2("Interim", "جاري")], ["1", L2("Final", "ختامي")]], v: x.final ? "1" : "", dis: !ed },
       { k: "project", l: L2("Project", "المشروع"), v: x.project || "", dis: !ed }, { k: "work", l: L2("Works", "الأعمال"), v: x.work || "", dis: !ed },
       { k: "customer", l: t("customer"), v: x.customer || "", dis: !ed },
       { k: "prev_paid", l: L2("Previously paid (blank: from the books)", "المسدد سابقاً (فارغ: من الدفاتر)"), type: "number", v: x.prev_auto ? "" : x.prev, ph: money(x.prev), dis: !ed, input: "xrec" },
       { k: "deductions", l: L2("Deductions", "الاستقطاعات"), type: "number", v: x.deductions || "", dis: !ed, input: "xrec" },
-      { k: "notes", l: L2("Notes on the extract", "ملاحظات المستخلص"), v: x.notes || "", dis: !ed, span: "spanall" }], 2)}<span id="xprevauto" data-v="${x.prev_auto ? x.prev : 0}" hidden></span></div>
-      <div class="card"><h2>${esc(L2("Works on this extract", "أعمال هذا المستخلص"))}</h2><div class="tbl" id="xlines"></div></div>
-      ${x.earlier.length ? `<div class="card"><h2>${esc(L2("Previous extracts on this site", "المستخلصات السابقة على هذا الموقع"))}</h2>${x.earlier.map(e => `<div class="row"><a href="#/extract/${e.id}"><b>${esc(e.number)}</b></a> · #${e.seq_no || ""}<span class="spacer"></span>${money(e.total)}</div>`).join("")}</div>` : ""}</div>
+      { k: "notes", l: L2("Notes on this progress bill", "ملاحظات المستخلص"), v: x.notes || "", dis: !ed, span: "spanall" }], 2)}<span id="xprevauto" data-v="${x.prev_auto ? x.prev : 0}" hidden></span></div>
+      <div class="card"><h2>${esc(L2("Work in this progress bill", "أعمال هذا المستخلص"))}</h2><div class="tbl" id="xlines"></div></div>
+      ${x.earlier.length ? `<div class="card"><h2>${esc(L2("Earlier progress bills on this site", "المستخلصات السابقة على هذا الموقع"))}</h2>${x.earlier.map(e => `<div class="row"><a href="#/extract/${e.id}"><b>${esc(e.number)}</b></a> · #${e.seq_no || ""}<span class="spacer"></span>${money(e.total)}</div>`).join("")}</div>` : ""}</div>
     <div><div class="card xsum"><h2>${esc(L2("Totals", "الإجماليات"))}</h2>
-      ${rows(L2("This extract", "هذا المستخلص"), { id: "xtot" })}${Object.keys(x.fees_map || {}).length ? rows(L2("Fees", "الأتعاب"), { id: "xfee" }) : ""}${rows(L2("Total works to date", "إجمالي الأعمال حتى تاريخه"), { id: "xtodate" })}
+      ${rows(L2("This progress bill", "هذا المستخلص"), { id: "xtot" })}${Object.keys(x.fees_map || {}).length ? rows(L2("Fees", "الأتعاب"), { id: "xfee" }) : ""}${rows(L2("Total works to date", "إجمالي الأعمال حتى تاريخه"), { id: "xtodate" })}
       ${x.vat_to_date ? rows(L2("VAT", "ضريبة القيمة المضافة"), x.vat_to_date) : ""}${x.wht_to_date ? rows(L2("Withholding tax", "خصم من المنبع"), -x.wht_to_date) : ""}
       ${rows(L2("Less previously paid", "يخصم المسدد سابقاً"), x.prev)}${x.deductions ? rows(L2("Deductions", "الاستقطاعات"), x.deductions) : ""}
       ${rows(L2("AMOUNT DUE", "المبلغ المستحق"), { id: "xdue" }, "big")}
@@ -11602,7 +11604,7 @@ PAGES.ereceipts = async (view, parts, q) => {
   Object.assign(S.H, { ernew: () => erForm(), erret: () => erForm(null, true), erset: () => erSettings(),
     eriss: async el => { try { const r = await api("POST", `/api/ereceipts/${el.dataset.id}/issue`, {}); toast(L2("Issued.", "تم الإصدار.")); if (r.warnings.length) uiAlert("• " + r.warnings.join("\n• ")); route(); } catch (e) { fail(e); } },
     erdel: el => confirmDelete(el.dataset.n, "/api/ereceipts/" + el.dataset.id),
-    erchain: async () => { try { const r = await api("GET", "/api/ereceipts-chain"); uiAlert(r.ok ? L2("The chain is intact: each receipt's UUID matches its content and references the previous receipt.", "السلسلة سليمة: يطابق معرّف كل إيصال محتواه ويشير إلى الإيصال السابق.") : r.problems.map(p => `${p.number}: ${p.problem}`).join("\n")); } catch (e) { fail(e); } },
+    erchain: async () => { try { const r = await api("GET", "/api/ereceipts-chain"); uiAlert(r.ok ? L2("The chain is intact: each receipt's unique code matches its content and points to the previous receipt.", "السلسلة سليمة: يطابق معرّف كل إيصال محتواه ويشير إلى الإيصال السابق.") : r.problems.map(p => `${p.number}: ${p.problem}`).join("\n")); } catch (e) { fail(e); } },
     erexp: () => openApi("/api/ereceipts-export", false),
     ersend: async () => { if (!await uiConfirm(L2("Submit all issued receipts to the tax authority now?", "هل تريد إرسال جميع الإيصالات الصادرة لمصلحة الضرائب الآن؟"))) return;
       try { const r = await api("POST", "/api/ereceipts-submit", {}); toast(`${r.results.length} ${L2("Processed", "تمت معالجتها")}`); route(); } catch (e) { fail(e); } } });
@@ -11616,7 +11618,7 @@ PAGES.ereceipts = async (view, parts, q) => {
       ${rows.map(r => `<tr data-bid="${r.id}"><td><b>${esc(r.number)}</b>${r.kind === "return" ? ` ${chipS("warn", L2("Return", "مرتجع"))}` : ""}${r.uuid ? `<div class="lines" title="${esc(r.uuid)}">${esc(r.uuid.slice(0, 16))}…</div>` : ""}</td><td>${fd(r.issued_at.slice(0, 10))} ${esc(r.issued_at.slice(11, 16))}</td><td>${esc(r.buyer_name || "—")}</td><td>${esc((ER_PAY().find(p => p[0] === r.payment_method) || [, r.payment_method])[1])}</td>
         <td class="num">${money(r.net)}</td><td class="num">${money(r.vat)}</td><td class="num"><b>${money(r.total)}</b></td><td>${chipS(ER_ST[r.status][0], L2(ER_ST[r.status][1], ER_ST[r.status][2]))}${r.error ? `<div class="lines neg" title="${esc(r.error)}">${esc(r.error.slice(0, 60))}</div>` : ""}</td>
         <td style="white-space:nowrap">${r.status === "draft" && add ? `<button class="btn sm pri" data-a="eriss" data-id="${r.id}">${L2("Issue", "إصدار")}</button>` : ""}${r.status === "draft" && ed ? `<button class="btn sm danger" data-a="erdel" data-id="${r.id}" data-n="${esc(r.number)}">✕</button>` : ""}${r.entry_id ? `<a href="#" data-a="openv" data-id="${r.entry_id}">#${r.entry_id}</a>` : ""}</td></tr>`).join("")}</tbody></table></div>`
-      : `<div class="empty">${L2("Point-of-sale receipts to consumers (B2C) for the tax authority. Each receipt is chained to the previous one by UUID, posts the sale and can be exported or submitted. Configure POS details first (⚙ POS settings).", "إيصالات البيع للمستهلك (B2C) لمصلحة الضرائب. يرتبط كل إيصال بالسابق عبر معرّفه، ويُرحّل البيع، ويمكن تصديره أو إرساله. اضبط بيانات نقطة البيع أولاً (⚙ إعدادات نقطة البيع).")}</div>`}</div>`;
+      : `<div class="empty">${L2("Point-of-sale receipts to consumers (B2C) for the tax authority. Each receipt is linked to the previous one by a unique code, posts the sale and can be exported or submitted. Configure POS details first (⚙ POS settings).", "إيصالات البيع للمستهلك (B2C) لمصلحة الضرائب. يرتبط كل إيصال بالسابق عبر معرّفه، ويُرحّل البيع، ويمكن تصديره أو إرساله. اضبط بيانات نقطة البيع أولاً (⚙ إعدادات نقطة البيع).")}</div>`}</div>`;
   bulkify(bulkTable(view, 'tr[data-bid]'), BULKS.ereceipts());
 };
 

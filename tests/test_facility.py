@@ -88,7 +88,7 @@ class FundingFacility(unittest.TestCase):
         self.assertEqual((f["fronted"], f["after_suppliers"]), (1200, 1600))    # the loan left his account too
         self.assertEqual(f["state"], "near")                                # 1,600 of 1,700 = 94% ≥ 90% (critical)
         flags = " | ".join(x["flag"] for x in a.review_flags(db, None, "2026-02-20"))
-        self.assertIn("funding facility NEAR LIMIT", flags)
+        self.assertIn("funding is near its", flags)
 
     def test_distribution_test_uses_room_in_the_facility(self):
         db, fund = books("facility")

@@ -1842,7 +1842,7 @@ def import_delivery(db, rid, date, our_name, client_name, invoiced_to=None, user
         bu = _ensure_bu(db, r)
         x = db.one("SELECT id FROM extracts WHERE bu_id=? ORDER BY date DESC, id DESC LIMIT 1", (bu,))
         if not x:
-            raise ValidationError(f"{r['code']}: 'Invoiced up to' needs the extract on Sales Invoices (same business unit)")
+            raise ValidationError(f"{r['code']}: 'Invoiced up to' needs the progress bill on Sales Invoices (same business unit)")
         db.conn.execute("INSERT INTO rental_invoices(rental_id,extract_id,period_from,period_to) VALUES (?,?,?,?)",
                         (r["id"], x["id"], date, invoiced_to))
         db.conn.execute("UPDATE rental_charges SET extract_id=? WHERE rental_id=? AND extract_id IS NULL", (x["id"], r["id"]))

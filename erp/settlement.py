@@ -155,13 +155,13 @@ def facility(db, date_to=None, led=None):
     if not limit:
         state, en, ar = "none", "No limit set", "لم يُحدد حد"
     elif used >= 1:
-        state, en, ar = "over", f"OVER LIMIT by {after - limit:,.0f}", f"تجاوز الحد بمقدار {after - limit:,.0f}"
+        state, en, ar = "over", f"Over the limit by {after - limit:,.0f}", f"تجاوز الحد بمقدار {after - limit:,.0f}"
     elif used >= crit:
-        state, en, ar = "near", f"NEAR LIMIT — {limit - after:,.0f} left", f"قريب من الحد — متبقٍ {limit - after:,.0f}"
+        state, en, ar = "near", f"Near the limit, {limit - after:,.0f} left", f"قريب جداً من الحد، متبقٍ {limit - after:,.0f}"
     elif used >= warn:
-        state, en, ar = "approaching", f"APPROACHING LIMIT — {limit - after:,.0f} left", f"يقترب من الحد — متبقٍ {limit - after:,.0f}"
+        state, en, ar = "approaching", f"Getting close to the limit, {limit - after:,.0f} left", f"يقترب من الحد، متبقٍ {limit - after:,.0f}"
     else:
-        state, en, ar = "ok", f"Within limit — {limit - after:,.0f} left", f"ضمن الحد — متبقٍ {limit - after:,.0f}"
+        state, en, ar = "ok", f"Within the limit, {limit - after:,.0f} left", f"ضمن الحد، متبقٍ {limit - after:,.0f}"
     return {"partner": name, "base": base, "extra": extra, "extra_shrinks": shrinks, "partner_loans": loans_out,
             "extra_now": extra_now, "limit": limit, "fronted": fronted, "room": round(limit - fronted, 2), "owed": owed,
             "after_suppliers": after, "room_after": round(limit - after, 2), "used": used, "peak": round(peak, 2),

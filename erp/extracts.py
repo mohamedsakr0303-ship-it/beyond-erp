@@ -51,7 +51,7 @@ def _earlier(db, x):
 def detail(db, xid):
     x = acc.get_extract(db, xid)
     if not x:
-        raise ValidationError("Extract not found")
+        raise ValidationError("Progress bill not found")
     x["prev"], x["prev_auto"] = prev_paid(db, x)
     x["deductions"] = to_major(x.get("deductions") or 0)
     # a running extract (جاري) lists every work to date: the earlier issued extracts of the site, then this one

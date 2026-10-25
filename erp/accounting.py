@@ -1146,9 +1146,9 @@ def save_extract(db, d, extract_id=None):
         if extract_id:
             x = db.one("SELECT status FROM extracts WHERE id=?", (extract_id,))
             if not x:
-                raise ValidationError("Extract not found")
+                raise ValidationError("Progress bill not found")
             if x["status"] == "posted":
-                raise ValidationError("Posted extracts are locked. Reverse the invoice entry first.")
+                raise ValidationError("Issued progress bills are locked. Reverse the invoice entry first.")
             db.conn.execute("UPDATE extracts SET bu_id=?,boq_id=?,number=?,date=?,customer=?,vat_code=?,wht_code=?,"
                             "project=?,work=?,seq_no=?,prev_paid=?,deductions=?,notes=?,final=?,fees=? WHERE id=?", vals + (extract_id,))
             db.conn.execute("DELETE FROM extract_lines WHERE extract_id=?", (extract_id,))
@@ -1233,11 +1233,11 @@ def post_extract(db, xid, date=None, user="", ar_account=None, revenue_account=N
     """Invoice executed work: Dr Receivables / Cr Revenue."""
     x = get_extract(db, xid)
     if not x:
-        raise ValidationError("Extract not found")
+        raise ValidationError("Progress bill not found")
     if x["status"] == "posted":
         raise ValidationError("Already invoiced")
     if x["total"] <= 0:
-        raise ValidationError("Extract total must be greater than zero")
+        raise ValidationError("The progress bill total must be greater than zero")
     ar = account_code(db, ar_account or db.acct("ar"), types=("Asset",))
     rev = account_code(db, revenue_account or db.acct("revenue"), types=("Revenue",))
     lines = [{"account": ar, "debit": x["receivable"]}]
@@ -2101,11 +2101,11 @@ def review_flags(db, date_from=None, date_to=None, partners=None):
 
     for b in bu_summaries(db, date_from, date_to):
         if b["revenue"] and b["gross_profit"] < 0:
-            add(f"{b['code']}: costs are above revenue (gross margin {b['gross_profit']:,.2f})",
-                f"{b['code']}: التكاليف أعلى من الإيراد (مجمل الربح {b['gross_profit']:,.2f})", b["code"], f"#/bu/{b['id']}")
+            add(f"{b['code']}: costs are higher than income by {-b['gross_profit']:,.2f}",
+                f"{b['code']}: التكاليف أعلى من الإيراد بمقدار {-b['gross_profit']:,.2f}", b["code"], f"#/bu/{b['id']}")
         if b["expected_billing"] > 0 and b["revenue"] > b["expected_billing"] + 0.005:
-            add(f"{b['code']}: billed {b['revenue']:,.2f}, more than the expected {b['expected_billing']:,.2f}",
-                f"{b['code']}: الفوترة {b['revenue']:,.2f} أعلى من المتوقع {b['expected_billing']:,.2f}", b["code"], f"#/bu/{b['id']}")
+            add(f"{b['code']}: invoiced {b['revenue']:,.2f}, more than the expected {b['expected_billing']:,.2f}",
+                f"{b['code']}: المفوتر {b['revenue']:,.2f} أكثر من المتوقع {b['expected_billing']:,.2f}", b["code"], f"#/bu/{b['id']}")
     if partners is None:          # drawn ahead = drawn more than the share of CLEAN profit (after costs still to come)
         from . import partner_pack
         try:
@@ -2114,19 +2114,20 @@ def review_flags(db, date_from=None, date_to=None, partners=None):
             partners = []
     for p in partners:
         if p["undistributed"] < -0.005:
-            add(f"{p['name']} has drawn {-p['undistributed']:,.2f} more than the earned share",
-                f"{p['name']} سحب {-p['undistributed']:,.2f} أكثر من النصيب المستحق", p["name"], "#/statement?party=" + quote(p["name"]))
+            add(f"{p['name']} has taken {-p['undistributed']:,.2f} more than their share of the profit",
+                f"{p['name']} سحب {-p['undistributed']:,.2f} أكثر من نصيبه في الربح", p["name"], "#/statement?party=" + quote(p["name"]))
     from . import settlement
     f = settlement.facility(db, date_to)
-    if f and f["state"] in ("approaching", "near", "over"):
-        add(f"{f['partner']}: funding facility {f['status']} — fronted today {f['fronted']:,.0f}, once suppliers are paid "
-            f"{f['after_suppliers']:,.0f}, peak {f['peak']:,.0f}, limit {f['limit']:,.0f}",
-            f"{f['partner']}: حد التمويل {f['status_ar']} — الممول اليوم {f['fronted']:,.0f}، بعد سداد الموردين "
-            f"{f['after_suppliers']:,.0f}، الذروة {f['peak']:,.0f}، الحد {f['limit']:,.0f}", f["partner"], "#/partner-exit")
+    if f and f["state"] in ("approaching", "near", "over"):     # the full picture (fronted, peak, weeks) is on the linked screen
+        lim, left = f"{f['limit']:,.0f}", f"{abs(f['room_after']):,.0f}"
+        en, ar = ((f"over its {lim} limit by {left}", f"تجاوز حده البالغ {lim} بمقدار {left}") if f["state"] == "over" else
+                  (f"near its {lim} limit, {left} left", f"قريب جداً من حده البالغ {lim}، متبقٍ {left}") if f["state"] == "near" else
+                  (f"getting close to its {lim} limit, {left} left", f"يقترب من حده البالغ {lim}، متبقٍ {left}"))
+        add(f"{f['partner']}'s funding is {en}", f"تمويل {f['partner']} {ar}", f["partner"], "#/partner-exit")
     from . import ratecap
     n = len(ratecap.candidates(db))
     if n:
-        add(f"{n} rates seen in the books are not in the price list", f"{n} سعرًا في الدفاتر غير موجود في قائمة الأسعار", "", "#/prices?ratecap=1")
+        add(f"{n} prices used in the books are not in the price list yet", f"{n} سعرًا مستخدمًا في الدفاتر غير موجود في قائمة الأسعار بعد", "", "#/prices?ratecap=1")
     return out
 
 
