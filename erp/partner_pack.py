@@ -331,7 +331,7 @@ def table(db, date_from=None, date_to=None, lang="en"):
     note = lambda text: _row(text, pad([]), "note")  # noqa: E731
     e, c, bs, cf = d["earned"], d["cash"], d["bs"], d["cf"]
     rows = [sec(T("1. At a glance", "١. نظرة سريعة")),
-            R(T("Clean net profit (what partners can distribute from)", "صافي الربح الصافي (أساس التوزيع)"), d["clean_total"], style="total"),
+            R(T("Clean net profit (what partners can distribute from)", "صافي الربح بعد التكاليف المتبقية (أساس التوزيع)"), d["clean_total"], style="total"),
             R(T("Net profit — billed", "صافي الربح المفوتر"), d["billed_total"]),
             R(T("Held for remaining project costs (received, still needed by the projects)", "محتجز لتكاليف المشروعات المتبقية"), d["held_total"]),
             R(T("Work in progress — work done, not yet invoiced", "أعمال تحت التنفيذ — منفذة ولم تُفوتر"), bs["wip"]),
@@ -486,7 +486,7 @@ def table(db, date_from=None, date_to=None, lang="en"):
                     "نصيب كل شريك حسب نسبته في كل مشروع بعد الاحتياطي."))]
     q, pol = d["dist"], d["policy"]
     rows += [sec(T("6. Distribution and company capital", "٦. التوزيع ورأس مال الشركة")),
-             R(T("Clean net profit", "صافي الربح الصافي"), d["clean_total"]),
+             R(T("Clean net profit", "صافي الربح بعد التكاليف المتبقية"), d["clean_total"]),
              R(T("Company capital reserve", "احتياطي رأس مال الشركة") + (f" ({pol['reserve_early_pct']:.0%} " + T("until", "حتى") +
                f" {pol['reserve_early_until']:,.0f}, " + T("then", "ثم") + f" {pol['reserve_pct']:.0%})" if pol["reserve_early_pct"] and pol["reserve_early_until"]
                else f" ({pol['reserve_pct']:.0%})"), -d["reserve_amount"]),

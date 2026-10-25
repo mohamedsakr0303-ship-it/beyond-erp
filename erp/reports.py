@@ -247,7 +247,7 @@ def income_statement_table(db, date_from=None, date_to=None, compare="none", bu_
             ar = lang == "ar"
             rows.append(_row("منه: ربح أعمال تحت التنفيذ لم يُفوتر" if ar else "Of which: profit on work in progress, not yet billed", [pk["wip_profit"]], "item", 1))
             rows.append(_row("منه: محتجز لتكاليف المشروعات المتبقية" if ar else "Of which: held for remaining project costs", [pk["held_total"]], "item", 1))
-            rows.append(_row("صافي الربح الصافي (أساس التوزيع)" if ar else "Clean net profit (distributable base)", [pk["clean_total"]], "total"))
+            rows.append(_row("صافي الربح بعد التكاليف المتبقية (أساس التوزيع)" if ar else "Clean net profit (distributable base)", [pk["clean_total"]], "total"))
     return {"title": L("income_statement", lang), "subtitle": _subtitle(db, lang, pers, bu_id),
             "columns": _cols(pers, lang), "rows": rows, "lang": lang}
 

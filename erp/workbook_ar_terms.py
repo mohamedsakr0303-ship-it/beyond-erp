@@ -118,7 +118,8 @@ MORE_AR = {
     "Helpers (project & partner workings for the Partner Pack)": "حسابات مساعدة (للمشروعات والشركاء في تقرير الشركاء)",
     "Company overhead not charged to a project": "مصروفات الشركة غير المحملة على مشروع", "Billed profit — company": "الربح المفوتر — الشركة",
     "Profit held in work in progress": "ربح محجوز في الأعمال تحت التنفيذ", "Months of activity (first entry to today / report end)": "شهور النشاط (من أول قيد حتى اليوم / نهاية التقرير)",
-    "Cash safety floor (3 months of overhead + owed)": "حد الأمان النقدي (3 شهور مصروفات + المستحق)", "Revenue received in cash": "إيراد محصل نقداً",
+    "Cash safety floor (months of overhead in Settings + owed + due to the funding partner)": "حد الأمان النقدي (شهور المصروفات في الإعدادات + المستحق + المستحق للشريك الممول)",
+    "Funding partner: share of client payments, less repaid (due now)": "الشريك الممول: نصيبه من دفعات العملاء ناقص ما سُدد (المستحق الآن)", "Revenue received in cash": "إيراد محصل نقداً",
     "Direct costs paid in cash": "تكاليف مباشرة مدفوعة نقداً", "Staff costs paid in cash": "تكاليف عاملين مدفوعة نقداً", "G&A paid in cash": "عمومية وإدارية مدفوعة نقداً",
     "Other costs paid in cash": "تكاليف أخرى مدفوعة نقداً", "Cost of Goods & Units Sold": "تكلفة البضاعة والوحدات المباعة", "Inventory Adjustments": "تسويات المخزون",
     "From the Rental Contracts sheet (one block of rows per contract). Rent to date = rent a month ÷ 30 × days since delivery, up to today or the report end. Invoiced and collected are the contract's business unit on Sales Invoices and Receipt Vouchers.":

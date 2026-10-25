@@ -983,7 +983,8 @@ def build_workbook(db, template=False, data=None, hide=None, lang="en", extend=N
     hidden = _hidden_sheets(db, wb, data, hide)
     _dashboard(wb, data, colmap, POSTING_SHEETS, rng, pl_refs, bs_refs, n_bu, audit_ref, currency, F, fill, L, hide)
     wb.move_sheet("Dashboard", offset=-(len(wb.sheetnames) - 2))
-    _partner_pack(wb, data, colmap, POSTING_SHEETS, rng, within, upto, pl_refs, n_bu, audit_ref, currency, F, fill, L, WIPACCT, CUSTACCT)
+    _partner_pack(wb, data, colmap, POSTING_SHEETS, rng, within, upto, pl_refs, n_bu, audit_ref, currency, F, fill, L, WIPACCT, CUSTACCT,
+                  legs=leg_sum, role_f=ROLE_F)
     for name in hidden:
         wb[name].sheet_state = "hidden"
     # sheet order: as in the BEYOND V1.4 workbook — what partners and managers read first, then the books, then the
@@ -2144,7 +2145,8 @@ def _polish(wb, data, fill):
 
 
 # ------------------------------------------------------------------ partner pack
-def _partner_pack(wb, data, colmap, posting, rng, within, upto, pl_refs, n_bu, audit_ref, currency, F, fill, L, wipacct, custacct):
+def _partner_pack(wb, data, colmap, posting, rng, within, upto, pl_refs, n_bu, audit_ref, currency, F, fill, L, wipacct, custacct,
+                  legs=None, role_f=None):
     """The partners' management accounts (BEYOND V1.4 'Partner Pack'), live formulas over this workbook:
     at a glance & project results, income statement earned vs cash, balance sheet, cash flow, partners' equity.
     Profit is distributable once BILLED: a project's billed profit = its net result when it has no revenue or makes a
@@ -2260,8 +2262,21 @@ def _partner_pack(wb, data, colmap, posting, rng, within, upto, pl_refs, n_bu, a
     ws.cell(he + 5, 14, f"=MIN({firsts})")
     ws.cell(he + 5, 14).number_format = DATE
     ws.cell(he + 6, 12, f'=MAX(1,(YEAR(MIN(ReportTo,TODAY()))-YEAR($N${he + 5}))*12+MONTH(MIN(ReportTo,TODAY()))-MONTH($N${he + 5})+1)')
-    ws.cell(he + 7, 11, "Cash safety floor (3 months of overhead + owed)")
-    ws.cell(he + 7, 12, f'=({H(("employee", "general_admin", "marketing", "utilities", "other_operating"))})/L{he + 6}*3-({H(("payable", "accrued"))})')
+    setting = lambda key, default: (f'IFERROR(VALUE(INDEX(Settings!${st["value"]}$5:${st["value"]}$500,'  # noqa: E731
+                                    f'MATCH("{key}",Settings!$A$5:$A$500,0))&""),{default})')
+    # the funding partner's agreed share of each client payment, less what he was paid back = what is due to him now
+    ws.cell(he + 13, 11, "Funding partner: share of client payments, less repaid (due now)")
+    if legs and role_f:   # helpers beside it: client payments against invoices (N), his account (M) and what he got back (N)
+        rv = [sh for sh in posting if sh["name"] == "Receipt Vouchers"]
+        ws.cell(he + 13, 14, "=" + "+".join(legs(role_f(x), "C", upto, rv) for x in ("ar", "client_advances")))
+        ws.cell(he + 14, 13, "=" + role_f("funding_partner"))
+        ws.cell(he + 14, 14, "=" + legs(f"$M${he + 14}", "D", upto))
+        ws.cell(he + 13, 12, f'=MAX(0,{setting("funding_repay_pct", 0)}*$N${he + 13}-$N${he + 14})')
+    else:
+        ws.cell(he + 13, 12, 0)
+    ws.cell(he + 7, 11, "Cash safety floor (months of overhead in Settings + owed + due to the funding partner)")
+    ws.cell(he + 7, 12, f'=({H(("employee", "general_admin", "marketing", "utilities", "other_operating"))})/L{he + 6}*{setting("buffer_months", 3)}'
+                        f'-({H(("payable", "accrued"))})+$L${he + 13}')
     FLOOR = f"$L${he + 7}"
     for i, (key, lab) in enumerate((("_cr", "Revenue received in cash"), ("_ccogs", "Direct costs paid in cash"),
                                     ("_cemp", "Staff costs paid in cash"), ("_cga", "G&A paid in cash"), ("_coth", "Other costs paid in cash"))):
