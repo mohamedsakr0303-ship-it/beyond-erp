@@ -172,6 +172,16 @@ class RateCaptureAndFlags(unittest.TestCase):
         self.assertEqual(links["A"], "#/statement?party=A")
         self.assertTrue(any(h == "#/prices?ratecap=1" for h in links.values()))
 
+    def test_cash_below_zero_flag(self):
+        """Money paid out before any came in is flagged with the day and the lowest balance, even if cash is positive now."""
+        db = books()
+        a.record_expense(db, {"date": "2026-01-05", "account": "6075", "description": "Travel", "amount": 300, "paid": 300, "paid_from": "1010"})
+        a.record_journal(db, {"date": "2026-01-20", "memo": "funds", "lines": [{"account": "1010", "debit": 1000}, {"account": "3010", "credit": 1000}]})
+        flags = [f for f in a.review_flags(db) if f["href"] == "#/ledger?account=1010"]
+        self.assertEqual(len(flags), 1)
+        self.assertIn("below zero from 2026-01-05 (lowest -300.00 on 2026-01-05)", flags[0]["flag"])
+        self.assertEqual([f for f in a.review_flags(db, date_to="2026-01-04") if f["href"].startswith("#/ledger")], [])
+
 
 class DealPayables(unittest.TestCase):
     def test_two_deals_same_supplier_paid_in_stages(self):

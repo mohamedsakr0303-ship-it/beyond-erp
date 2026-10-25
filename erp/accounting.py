@@ -2116,6 +2116,24 @@ def review_flags(db, date_from=None, date_to=None, partners=None):
         if p["undistributed"] < -0.005:
             add(f"{p['name']} has taken {-p['undistributed']:,.2f} more than their share of the profit",
                 f"{p['name']} سحب {-p['undistributed']:,.2f} أكثر من نصيبه في الربح", p["name"], "#/statement?party=" + quote(p["name"]))
+    # cash / bank that went below zero on any day: money was paid out before it came in (someone paid from their pocket,
+    # or a receipt is missing) — the year-end check only sees the closing balance
+    for acct in db.q("SELECT code, name, name_ar FROM accounts WHERE subtype='cash' ORDER BY code"):
+        days = db.q(f"""SELECT e.date, SUM(l.debit-l.credit) n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
+                        WHERE {LIVE} AND l.account=? {"AND e.date<=?" if date_to else ""} GROUP BY e.date ORDER BY e.date""",
+                    (acct["code"],) + ((date_to,) if date_to else ()))
+        run, low, low_on, first = 0, 0, "", ""
+        for d in days:
+            run += d["n"]
+            if run < low:
+                low, low_on = run, d["date"]
+            if run < 0 and not first:
+                first = d["date"]
+        if low < 0:
+            add(f"{acct['name']} went below zero from {first} (lowest {to_major(low):,.2f} on {low_on}): money was paid out before it "
+                f"came in — record where it came from", f"رصيد {acct['name_ar'] or acct['name']} أصبح بالسالب من {first} (أدنى رصيد "
+                f"{to_major(low):,.2f} في {low_on}): صُرف مبلغ قبل وروده — سجّل مصدره", acct["code"],
+                "#/ledger?account=" + quote(acct["code"]))
     from . import settlement
     f = settlement.facility(db, date_to)
     if f and f["state"] in ("approaching", "near", "over"):     # the full picture (fronted, peak, weeks) is on the linked screen
