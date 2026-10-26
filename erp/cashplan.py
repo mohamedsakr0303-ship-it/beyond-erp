@@ -95,7 +95,7 @@ def _items(db, today, until):
         elif kind == "partner_tx":
             flow = amt if p.get("type") == "Capital" else -amt
         elif kind == "journal":
-            cash = {r["code"] for r in db.q("SELECT code FROM accounts WHERE subtype='cash'")}
+            cash = {r["code"] for r in db.q("SELECT code FROM accounts WHERE subtype='cash'")} | _facility_accounts(db)
             flow = sum(float(x.get("debit") or 0) - float(x.get("credit") or 0) for x in p.get("lines") or [] if x.get("account") in cash)
         else:
             flow = 0
@@ -140,6 +140,19 @@ def _undated(db):
             {"key": "purchase_orders", "label": "Purchase orders with no expected date", "amount": round(po, 2), "dir": "out", "href": "#/po"}]
 
 
+def _facility(db):
+    """The funding partner's facility when his account is the company's bank (facility mode), else None."""
+    if (db.setting("funding_mode") or "capital") != "facility":
+        return None
+    from . import settlement
+    f = settlement.facility(db)
+    return f if f and f["limit"] else None
+
+
+def _facility_accounts(db):
+    return {r["code"] for r in db.q("SELECT code FROM accounts WHERE role='funding_partner'")} if _facility(db) else set()
+
+
 def build(db, days=90, include_overdue=True, today=None):
     days = max(7, min(int(days or 90), 366))
     today = today or acc.today()
@@ -148,6 +161,9 @@ def build(db, days=90, include_overdue=True, today=None):
     overdue = [r for r in items if r["date"] < today]
     dated = [r for r in items if r["date"] >= today]
     start = cash_now(db)
+    fac = _facility(db)
+    if fac:       # facility mode: what can be spent is the room left in his facility, plus any cash of the company's own
+        start = round(start + fac["room"], 2)
     o_in = round(sum(r["amount"] for r in overdue if r["amount"] > 0), 2)
     o_out = round(-sum(r["amount"] for r in overdue if r["amount"] < 0), 2)
     opening = round(start + (o_in - o_out if include_overdue else 0), 2)
@@ -178,7 +194,8 @@ def build(db, days=90, include_overdue=True, today=None):
         s = by_source.setdefault(r["source"], {"source": r["source"], "in": 0.0, "out": 0.0, "count": 0})
         s["in" if r["amount"] > 0 else "out"] = round(s["in" if r["amount"] > 0 else "out"] + abs(r["amount"]), 2)
         s["count"] += 1
-    return {"today": today, "until": until, "days": days, "cash_now": start, "include_overdue": bool(include_overdue),
+    return {"today": today, "until": until, "days": days, "cash_now": start, "basis": "facility" if fac else "cash",
+            "facility": {k: fac[k] for k in ("partner", "limit", "fronted", "room")} if fac else None, "include_overdue": bool(include_overdue),
             "overdue": {"in": o_in, "out": o_out, "rows": overdue}, "opening": opening, "windows": windows, "weeks": weeks,
             "lowest": {"balance": low[0], "date": low[1]}, "items": dated, "sources": sorted(by_source.values(), key=lambda s: s["source"]),
             "undated": _undated(db)}

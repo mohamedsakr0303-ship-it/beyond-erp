@@ -288,7 +288,8 @@ def w_active_projects(c, o):
 
 
 def w_attention(c, o):
-    return {"rows": alerts(c.db, c.can)}
+    from . import alerttypes          # the same notification choices as the bell
+    return {"rows": alerttypes.filter_rows(c.db, c.user or {}, alerts(c.db, c.can)) if c.user else alerts(c.db, c.can)}
 
 
 def w_books_check(c, o):

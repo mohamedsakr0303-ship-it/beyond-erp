@@ -250,6 +250,13 @@ class RateCaptureAndFlags(unittest.TestCase):
                               "paid_from": "3015"})          # his account
         f = a.cash_position(db)["facility"]
         self.assertEqual((f["limit"], f["fronted"], f["room_after"]), (1000.0, 300.0, 700.0))
+        from erp import automations, cashplan
+        fc = cashplan.build(db)
+        self.assertEqual((fc["basis"], fc["cash_now"]), ("facility", 700.0))      # the forecast starts from his facility
+        hits = list(automations._t_cash_low(db, {"below": 800}))                 # the "cash below" rule watches it too
+        self.assertEqual(len(hits), 1)
+        self.assertIn("Funding room left is 700.00", hits[0]["text"])
+        self.assertEqual(list(automations._t_cash_low(db, {"below": 500})), [])
 
     def test_cash_below_zero_flag(self):
         """Money paid out before any came in is flagged with the day and the lowest balance, even if cash is positive now."""

@@ -108,7 +108,14 @@ TYPES = {
                               "Bill rent per period with a minimum; installation, dismantling and transport are separate services "
                               "with their own client price and crew / truck cost (rental calculator).",
                               "Crews paid per m² (frames × width × height) use the crew calculator; record what you actually paid.",
-                              "Watch utilisation (pieces out ÷ owned) and payback (purchase cost ÷ monthly rent) per piece."]},
+                              "Watch utilisation (pieces out ÷ owned) and payback (purchase cost ÷ monthly rent) per piece.",
+                              "Rent (4045), installation and dismantling (4046) and transport (4047) are separate income lines, so "
+                              "Reports → Profit by category shows what each one earned after its own costs.",
+                              "A supplier discount or an extra cost after buying changes the lot's cost (Rental equipment → lot → "
+                              "Adjust cost), not income; depreciation follows. At month end, book rent earned but not yet billed "
+                              "(Rental contracts → Month-end accrual).",
+                              "A funding partner repaid a share of every client payment: set the share in Partners → Distribution "
+                              "policy; only what is due to him is held back from distributions."]},
     "healthcare": {"name": "Clinics & medical centres", "ar": "العيادات والمراكز الطبية", "hide": ["rentals", "shop", "estimating", "contracts", "projects"],
                    "departments": ["Clinics / Outpatient", "Laboratory", "Radiology", "Nursing", "Reception & Billing", "Insurance & Claims",
                                    "Pharmacy & Stores", "Finance", "Admin"],
@@ -215,7 +222,10 @@ TYPES_AR = {
         "المخزون يُتابع حسب مكانه: في الساحة أو في موقع كل عقد، عبر محاضر تسليم واستلام موقعة (سليم / تالف / مفقود) — وعد المرتجع يحاسب المفقود بقائمة الأسعار.",
         "فوترة الإيجار لكل فترة بحد أدنى؛ والتركيب والفك والنقل خدمات منفصلة بسعرها للعميل وتكلفة الطاقم / السيارة (حاسبة التأجير).",
         "الأطقم المدفوع لها بالمتر (الشبابيك × العرض × الارتفاع) تُحسب في حاسبة الأطقم؛ وسجّل ما دفعته فعلاً.",
-        "تابع نسبة التشغيل (القطع المؤجرة ÷ المملوكة) واسترداد التكلفة (سعر الشراء ÷ الإيجار الشهري) لكل قطعة."]),
+        "تابع نسبة التشغيل (القطع المؤجرة ÷ المملوكة) واسترداد التكلفة (سعر الشراء ÷ الإيجار الشهري) لكل قطعة.",
+        "الإيجار (4045) والتركيب والفك (4046) والنقل (4047) إيرادات منفصلة، فيعرض «التقارير ← الربح حسب الفئة» ربح كل منها بعد تكاليفه.",
+        "خصم المورد أو التكلفة الإضافية بعد الشراء يغيّر تكلفة الدفعة (معدات التأجير ← الدفعة ← تعديل التكلفة) لا الإيراد، ويتبعه الإهلاك. وفي آخر الشهر سجّل الإيجار المستحق غير المفوتر (عقود التأجير ← استحقاق آخر الشهر).",
+        "الشريك الممول الذي يُسدَّد له نصيب من كل دفعة عميل: حدد النصيب من الشركاء ← سياسة التوزيع؛ ولا يُحتجز من التوزيع إلا المستحق له."]),
     "healthcare": ("فرع / عيادة / قسم", [
         "الرعاية الصحية: المرضى (بشركة التأمين / إدارة المطالبات، والوثيقة ونسبة التغطية)، وقائمة أسعار الخدمات (السعر النقدي، سعر التعاقد مع التأمين، حصة الطبيب، المستهلكات)، ومواعيد تتحول إلى زيارات.",
         "فوترة الزيارة تقسمها إلى حصة المريض (نقداً / ببطاقة في الاستقبال) وحصة التأمين (1105، تُطالب شهرياً)؛ والإيراد في 4061. حصة الطبيب تُسجّل كتكلفة (5090) مستحقة له (2115) — تُصرف من المدفوعات أو عبر الرواتب.",

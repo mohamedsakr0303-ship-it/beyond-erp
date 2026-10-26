@@ -147,8 +147,8 @@ def facility(db, date_to=None, led=None):
     limit = round(base + extra_now, 2)
     fronted = led["own_money"]
     owed = acc.deals(db, date_to)["total_owed"]
-    own_cash = to_major(sum(r["net"] for r in acc.account_totals(db, date_to=date_to) if r["subtype"] == "cash"))
-    after = round(max(0.0, fronted + owed - max(0.0, own_cash + led["in_his_account"])), 2)
+    # the company's own cash is already part of the ledger (money in), so only what is left over in his favour offsets
+    after = round(max(0.0, fronted + owed - led["in_his_account"]), 2)
     peak = max([r["own_money"] for r in led["rows"]] + [fronted, 0.0])
     warn, crit = num("funding_warn", 0.75), num("funding_critical", 0.9)
     used = round(after / limit, 4) if limit else None

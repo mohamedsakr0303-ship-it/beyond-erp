@@ -1868,7 +1868,8 @@ def _dashboard(wb, data, colmap, posting, rng, pl_refs, bs_refs, n_bu, audit_ref
     bal = lambda sub, sign=1: f"={'-' if sign < 0 else ''}SUMIFS({tb}!$H:$H,{tb}!$D:$D,\"{sub}\")"  # noqa: E731
     IS = lambda k: f"='Income Statement'!$B${pl_refs[k]}"  # noqa: E731
     bar(4, '="POSITION ON "&UPPER(TEXT(ReportTo,"dd mmm yyyy"))')
-    tiles(5, [("Cash & bank", bal("cash"), MONEY), ("Clients owe us", bal("receivable"), MONEY),
+    tiles(5, [('=IF(IFERROR(FacilityOn,0)=1,"Funding room left","Cash & bank")',
+               f'=IF(IFERROR(FacilityOn,0)=1,IFERROR(FundingRoom,0),{bal("cash")[1:]})', MONEY), ("Clients owe us", bal("receivable"), MONEY),
               ("Work done, not invoiced", f"=SUMIFS({tb}!$H:$H,{tb}!$A:$A,\"1180\")", MONEY),
               ("We owe suppliers", bal("payable", -1), MONEY), ("Client advances held", bal("deferred_revenue", -1), MONEY),
               ("Stock & goods", bal("inventory"), MONEY)])
@@ -2352,6 +2353,26 @@ def _partner_pack(wb, data, colmap, posting, rng, within, upto, pl_refs, n_bu, a
     ws.cell(he + 7, 12, f'=({H(("employee", "general_admin", "marketing", "utilities", "other_operating"))})/L{he + 6}*{setting("buffer_months", 3)}'
                         f'-({H(("payable", "accrued"))})+$L${he + 13}')
     FLOOR = f"$L${he + 7}"
+    # facility mode (the funding partner's account is the company's bank): the room left in his facility, as in the app —
+    # base line + the temporary extra line (in force while partners owe on loans; it shrinks with them), less what he
+    # has fronted once suppliers and staff still owed are paid. Helpers P..S on the floor row.
+    FAC, FRONT, LIMIT, ROOM = (f"$P${he + 7}", f"$Q${he + 7}", f"$R${he + 7}", f"$S${he + 7}")
+    txt = lambda key, default: (f'IFERROR(INDEX(Settings!${st["value"]}$5:${st["value"]}$500,'  # noqa: E731
+                                f'MATCH("{key}",Settings!$A$5:$A$500,0))&"","{default}")')
+    ws.cell(he + 7, 16, f'=IF(LOWER({txt("funding_mode", "capital")})="facility",1,0)')
+    if role_f:
+        ws.cell(he + 7, 17, f"=-{CODE(role_f('funding_partner'))}")
+        lent = "+".join(CODE(role_f(x)) for x in ("loans_receivable", "loans_receivable_lt"))
+        extra = setting("funding_extra", 0)
+        ws.cell(he + 7, 18, f'={setting("funding_limit", 0)}+IF(({lent})<=0.005,0,IF(LOWER({txt("funding_extra_shrinks", "yes")})="no",'
+                            f'{extra},MIN({extra},{lent})))')
+    else:
+        ws.cell(he + 7, 17, 0)
+        ws.cell(he + 7, 18, 0)
+    ws.cell(he + 7, 19, f"={LIMIT}-MAX(0,{FRONT}-({H(('payable', 'accrued'))})-MAX(0,{H(('cash',))}))")
+    from openpyxl.workbook.defined_name import DefinedName      # the Dashboard's cash tile follows the facility too
+    for nm, col in (("FacilityOn", "P"), ("FundingRoom", "S")):
+        wb.defined_names[nm] = DefinedName(nm, attr_text=f"'{ws.title}'!${col}${he + 7}")
     for i, (key, lab) in enumerate((("_cr", "Revenue received in cash"), ("_ccogs", "Direct costs paid in cash"),
                                     ("_cemp", "Staff costs paid in cash"), ("_cga", "G&A paid in cash"), ("_coth", "Other costs paid in cash"))):
         ws.cell(he + 8 + i, 11, lab)
@@ -2398,8 +2419,11 @@ def _partner_pack(wb, data, colmap, posting, rng, within, upto, pl_refs, n_bu, a
     put("Loans owed", f"=-({H(('short_term_debt', 'long_term_debt'))})")
     put("Partner capital — funding", f"=-({H(('capital', 'partner_current'))})")
     cash_now = H(("cash",))
-    put("Distribution recommendation", f'=IF(({cash_now})<{FLOOR},"DO NOT DISTRIBUTE — below the cash floor ("&TEXT({FLOOR},"#,##0.00")&")",'
-                                         f'"Distribution possible up to "&TEXT(({cash_now})-{FLOOR},"#,##0.00")&" above the cash floor")', fmt="General")
+    put("Distribution recommendation", f'=IF(AND({FAC}=1,{LIMIT}>0),IF({ROOM}<0,"DO NOT DISTRIBUTE — the funding facility is short by "'
+                                         f'&TEXT(-{ROOM},"#,##0")&" once suppliers are paid","Funding room left once suppliers are paid: "&TEXT({ROOM},"#,##0")&'
+                                         f'" — facility limit "&TEXT({LIMIT},"#,##0")),'
+                                         f'IF(({cash_now})<{FLOOR},"DO NOT DISTRIBUTE — below the cash floor ("&TEXT({FLOOR},"#,##0.00")&")",'
+                                         f'"Distribution possible up to "&TEXT(({cash_now})-{FLOOR},"#,##0.00")&" above the cash floor"))', fmt="General")
     put("Books integrity (Model Audit)", f'=IF({audit_ref}="ALL OK","ALL INTEGRITY CHECKS PASS","REVIEW THE MODEL AUDIT")', fmt="General")
     r[0] += 1
     put("PROJECT RESULTS", style="section")

@@ -3330,6 +3330,51 @@ class RentalsLanguageAssets(unittest.TestCase):
         self.assertEqual(tb["1180"]["debit"], 18900.0)
         self.assertNotIn("1180", {r["code"] for r in a.trial_balance(db)["rows"] if r.get("debit") or r.get("credit")})
 
+    def test_new_features_survive_the_workbook_round_trip(self):
+        """Month-end rent accrual, profit categories, who gets which notification and the distribution switches come back
+        unchanged from the Excel workbook, in English and in Arabic."""
+        import json
+        from erp import categories, rentals, workbook
+        db = self.books()
+        rentals.run_accrual(db, "2026-11")
+        db.set_setting("profit_categories", json.dumps([{"name": "Rent", "name_ar": "الإيجار", "accounts": "4045, 7010"},
+                                                        {"name": "Installation", "accounts": "4046, 5065"}]))
+        db.set_setting("alert_access", json.dumps({"groups": {"general": {"price_capture": False}}, "users": {"ali": {"funding_limit": True}}}))
+        db.set_setting("distribute_noncash", "1")
+        for lang in ("en", "ar"):
+            p = Path(tempfile.mkdtemp()) / f"w-{lang}.xlsx"
+            p.write_bytes(workbook.build_workbook(db, lang=lang))
+            db2 = Database(":memory:")
+            interchange.import_data(db2, interchange.read_xlsx(str(p)), mode="replace")
+            for d in ("2026-11-30", None):
+                tb = lambda x: {r["code"]: (r["debit"], r["credit"]) for r in a.trial_balance(x, date_to=d)["rows"]}  # noqa: E731
+                self.assertEqual(tb(db2), tb(db), (lang, d))
+            for k in ("profit_categories", "alert_access", "distribute_noncash"):
+                self.assertEqual(json.loads(db2.setting(k)), json.loads(db.setting(k)), (lang, k))
+            self.assertEqual(categories.compute(db2)["total"], categories.compute(db)["total"])
+            self.assertEqual(rentals.accrual_plan(db2, "2026-12")["total"], rentals.accrual_plan(db, "2026-12")["total"])
+
+    def test_notifications_by_department(self):
+        """A department can be set not to receive a notification type; a person can be set apart from their department."""
+        import json
+        from erp import alerttypes
+        db = Database(":memory:")
+        rows = [{"href": "#/prices?ratecap=1", "en": "3 prices used in the books are not in the price list yet", "kind": "review"},
+                {"href": "#/partner-exit", "en": "F's funding is near its limit", "kind": "review"},
+                {"href": "#/approvals", "en": "Entries waiting for your approval: 2", "kind": "approvals"}]
+        self.assertEqual([alerttypes.classify(r) for r in rows], ["price_capture", "funding_limit", "approvals"])
+        db.set_setting("alert_access", json.dumps(alerttypes.clean({"groups": {"site": {"price_capture": False, "funding_limit": False}},
+                                                                    "users": {"mona": {"funding_limit": True}, "x": {"nope": False}}})))
+        types = lambda u: [r["type"] for r in alerttypes.filter_rows(db, u, [dict(r) for r in rows])]  # noqa: E731
+        self.assertEqual(types({"username": "omar", "group_key": "site"}), ["approvals"])
+        self.assertEqual(types({"username": "mona", "group_key": "site"}), ["funding_limit", "approvals"])
+        self.assertEqual(types({"username": "sara", "group_key": "finance"}), ["price_capture", "funding_limit", "approvals"])
+        self.assertNotIn("x", alerttypes.load(db)["users"])                      # unknown types are dropped
+        # departments start with their own work: sales is not told about the funding facility, a super admin is
+        self.assertEqual(types({"username": "lina", "group_key": "sales"}), ["approvals"])
+        self.assertEqual(types({"username": "boss", "group_key": "sales", "is_super": 1}), ["price_capture", "funding_limit", "approvals"])
+        self.assertEqual(types({"username": "nogroup", "group_key": ""}), ["price_capture", "funding_limit", "approvals"])
+
     def test_fleet_depreciation_reminder(self):
         """Rental equipment not depreciated up to last month is on the dashboard, like the fixed-asset register; booking it clears it."""
         from erp import dashboards, rentals

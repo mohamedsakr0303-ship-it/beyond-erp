@@ -159,7 +159,10 @@ MORE_AR = {
 LITERALS_AR = {
     "Management accounts as at ": "الحسابات الإدارية في ", "   ·   EGP   ·   period from ": "   ·   جنيه   ·   الفترة من ", " to ": " إلى ",
     "DO NOT DISTRIBUTE — below the cash floor (": "لا توزع — أقل من حد الأمان النقدي (", "Distribution possible up to ": "يمكن التوزيع حتى ",
-    " above the cash floor": " فوق حد الأمان النقدي", "ALL INTEGRITY CHECKS PASS": "كل فحوص السلامة سليمة", "REVIEW THE MODEL AUDIT": "راجع فحص سلامة الدفاتر",
+    " above the cash floor": " فوق حد الأمان النقدي",
+    "DO NOT DISTRIBUTE — the funding facility is short by ": "لا توزع — حد التمويل أقل بمقدار ", " once suppliers are paid": " بعد سداد الموردين",
+    "CASH & BANK": "النقدية والبنوك", "FUNDING ROOM LEFT": "المتاح من حد التمويل",
+    "Funding room left once suppliers are paid: ": "المتاح من حد التمويل بعد سداد الموردين: ", " — facility limit ": " — حد التمويل ", "ALL INTEGRITY CHECKS PASS": "كل فحوص السلامة سليمة", "REVIEW THE MODEL AUDIT": "راجع فحص سلامة الدفاتر",
     "✓  Balanced — total assets equal total liabilities plus equity": "✓  متوازنة — إجمالي الأصول = الالتزامات + حقوق الملكية",
     "✗  NOT balanced — open the Model Audit": "✗  غير متوازنة — افتح فحص سلامة الدفاتر",
     "✓  Ties to the cash & bank on the balance sheet": "✓  يطابق النقدية والبنوك في الميزانية", "✗  Does not tie to the balance sheet cash": "✗  لا يطابق نقدية الميزانية",

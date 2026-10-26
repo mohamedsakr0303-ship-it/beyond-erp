@@ -5923,7 +5923,8 @@ PAGES.users = async (view) => {
       if (vals.every(v => v === vals[0])) return `<span class="chip">${esc(t("mod_" + m))}: ${esc(t("perm_" + (vals[0] === "edit" ? "full" : vals[0])))}</span>`;
       return `<span class="chip warn">${esc(t("mod_" + m))}: ${ss.map((s, i) => vals[i] === "none" ? "" : `${esc(t(window.SUBPERM[`${m}.${s}`] || s))} ${esc({ view: "👁", add: "+", edit: "✎" }[vals[i]])}`).filter(Boolean).join(", ")}</span>`; }).join(" ");
   };
-  view.innerHTML = `<div class="toolbar">${can("users.users", "add") ? `<button class="btn pri" data-a="unew">+ ${t("new")}</button>` : ""}</div><div class="card"><div class="tbl"><table><thead><tr><th>${t("username")}</th><th>${t("full_name")}</th><th>${t("email")}</th><th>${L2("Group", "المجموعة")}</th><th>${t("perm_matrix")}</th><th>${t("status")}</th></tr></thead><tbody>
+  S.H.ualerts = () => alertAccessForm();
+  view.innerHTML = `<div class="toolbar">${can("users.users", "add") ? `<button class="btn pri" data-a="unew">+ ${t("new")}</button>` : ""}${S.boot.user.is_super ? `<button class="btn" data-a="ualerts">🔔 ${L2("Notifications by department", "الإشعارات حسب القسم")}</button>` : ""}</div><div class="card"><div class="tbl"><table><thead><tr><th>${t("username")}</th><th>${t("full_name")}</th><th>${t("email")}</th><th>${L2("Group", "المجموعة")}</th><th>${t("perm_matrix")}</th><th>${t("status")}</th></tr></thead><tbody>
     ${rows.map(u => `<tr class="click ${u.active ? "" : "void"}" data-a="${ed ? "uedit" : ""}" data-id="${u.id}"><td><b>${esc(u.username)}</b></td><td>${esc(u.full_name)}</td><td>${esc(u.email || "")}</td><td>${esc(groupName(u.group_key))}</td><td>${u.needs_approval ? `<span class="chip warn">${esc(L2("Requires approval", "يتطلب الاعتماد"))}</span> ` : ""}${summary(u)}</td><td>${u.active ? "" : `<span class="chip bad">${t("no")}</span>`}</td></tr>`).join("")}</tbody></table></div>
     <p class="muted" style="font-size:.82em">👁 ${t("perm_view")} · + ${t("perm_add")} · ✎ ${t("perm_full")}</p></div>`;
 };
@@ -5951,6 +5952,36 @@ if (STATIC) window.addEventListener("beyond-remote-change", () => {
   refreshBoot().then(() => route()).catch(() => {});
 });
 
+// who receives which notifications: per department (user group), and per person when needed (super administrators)
+async function alertAccessForm() {
+  const d = await api("GET", "/api/alert-access").catch(fail); if (!d) return;
+  const ar = S.lang === "ar", rules = { groups: { ...d.rules.groups }, users: { ...d.rules.users } };
+  const gname = g => (ar && g.name_ar) || g.name, tl2 = x => ar ? x.ar : x.en;
+  let who = "g:" + d.groups[0].key;
+  const body = () => { const [kind, key] = [who.slice(0, 1), who.slice(2)], isUser = kind === "u";
+    const u = isUser ? d.users.find(x => x.username === key) : null, grp = isUser ? ((u && u.group_key) || "general") : key;
+    const dflt = new Set((d.defaults || {})[grp] || d.catalog.map(c => c.type)), gr0 = rules.groups[grp] || {};
+    const gr = Object.fromEntries(d.catalog.map(c => [c.type, c.type in gr0 ? gr0[c.type] : dflt.has(c.type)])), mine = isUser ? (rules.users[key] || {}) : null;
+    return d.sections.map(sec => { const list = d.catalog.filter(c => c.section === sec.key); if (!list.length) return "";
+      return `<h4 class="fsec">${esc(tl2(sec))}</h4>` + list.map(c => { const groupOn = gr[c.type] !== false;
+        return isUser
+          ? `<div class="row" style="gap:8px;align-items:center;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--line)"><span>${esc(tl2(c))}</span>
+              <select data-at="${c.type}" style="max-width:200px;flex:none"><option value="" ${!(c.type in mine) ? "selected" : ""}>${esc(u && u.is_super ? L2("Default: shown", "الافتراضي: ظاهر") : L2(`Department: ${groupOn ? "shown" : "hidden"}`, `القسم: ${groupOn ? "ظاهر" : "مخفي"}`))}</option>
+              <option value="1" ${mine[c.type] === true ? "selected" : ""}>${esc(L2("Show", "إظهار"))}</option><option value="0" ${mine[c.type] === false ? "selected" : ""}>${esc(L2("Hide", "إخفاء"))}</option></select></div>`
+          : `<label class="f chk"><input type="checkbox" data-at="${c.type}" ${groupOn ? "checked" : ""}>${esc(tl2(c))}</label>`; }).join(""); }).join(""); };
+  const read = f => { const [kind, key] = [who.slice(0, 1), who.slice(2)];
+    if (kind === "g") { const r = {}; $$("[data-at]", f).forEach(i => { r[i.dataset.at] = i.checked; }); rules.groups[key] = r; }
+    else { const r = {}; $$("[data-at]", f).forEach(i => { if (i.value !== "") r[i.dataset.at] = i.value === "1"; }); rules.users[key] = r; } };
+  drawer(L2("Notifications by department", "الإشعارات حسب القسم"), `<p class="muted">${esc(L2("Choose the notifications each department receives in the bell and on its dashboard. A person can be set apart from their department. People only ever see notifications for screens their permissions open.", "اختر الإشعارات التي يتلقاها كل قسم في الجرس وعلى لوحة التحكم. يمكن استثناء شخص من إعدادات قسمه. لا يرى أي شخص إلا إشعارات الشاشات المسموح له بها."))}</p>
+    <label class="f">${esc(L2("Department or person", "القسم أو الشخص"))}<select id="atwho"><optgroup label="${esc(L2("Departments (user groups)", "الأقسام (مجموعات المستخدمين)"))}">${d.groups.map(g => `<option value="g:${esc(g.key)}">${esc(gname(g))}</option>`).join("")}</optgroup>
+      <optgroup label="${esc(L2("People", "الأشخاص"))}">${d.users.map(u => `<option value="u:${esc(u.username)}">${esc(u.full_name || u.username)}</option>`).join("")}</optgroup></select></label>
+    <div class="row" style="gap:6px;margin:8px 0" id="atbulk"><button type="button" class="btn sm" data-a="atall" data-v="1">${esc(L2("All on", "تفعيل الكل"))}</button><button type="button" class="btn sm" data-a="atall" data-v="0">${esc(L2("All off", "إيقاف الكل"))}</button></div>
+    <div id="atbody">${body()}</div>`,
+  async () => { read($(".drawer")); await api("PUT", "/api/alert-access", rules); toast(t("saved")); loadAlerts(true); },
+  { onOpen: f => { const sel = $("#atwho", f);
+    sel.onchange = () => { read(f); who = sel.value; $("#atbody", f).innerHTML = body(); };
+    S.H.atall = b => $$("[data-at]", f).forEach(i => { if (i.type === "checkbox") i.checked = b.dataset.v === "1"; else i.value = b.dataset.v; }); } });
+}
 PAGES.workspace = async (view) => view.innerHTML = "";  // (tab under Settings)
 
 // Top bar → Companies: open another company (browser edition: reloads with that company's books), create, join.
@@ -11715,7 +11746,7 @@ const TOUR = () => [
   ["#nav", L2("The menu", "القائمة"), L2("All screens, grouped by area. Select a group to show its screens.", "جميع الشاشات مصنفة حسب المجال. اختر مجموعة لعرض شاشاتها."), "core"],
   [".newbtn", L2("+ New", "+ جديد"), L2("Record payments, receipts, invoices and entries from any screen.", "سجّل المدفوعات والمقبوضات والفواتير والقيود من أي شاشة."), "core"],
   [".top .search", L2("Search", "البحث"), L2("Go to any screen or action, or press Ctrl K.", "انتقل إلى أي شاشة أو إجراء، أو اضغط Ctrl K."), "core"],
-  ['#nav a[href="#/dashboard"]', L2("Dashboard", "لوحة التحكم"), L2("Cash, receivables, payables and profit at a glance. Super administrators and authorised users can tailor it for each team.", "النقدية والذمم المدينة والدائنة والربح في نظرة واحدة. يمكن للمسؤول الأعلى والمستخدمين المخوَّلين تخصيصها لكل فريق."), "core"],
+  ['#nav a[href="#/dashboard"]', L2("Dashboard", "لوحة التحكم"), L2("Cash, receivables, payables and profit at a glance. When a funding partner's account is the company's bank, the cash card shows the room left in his facility. Super administrators and authorised users can tailor it for each team.", "النقدية والذمم المدينة والدائنة والربح في نظرة واحدة. عندما يكون حساب الشريك الممول هو بنك الشركة، تعرض بطاقة النقدية المتاح من حد تمويله. يمكن للمسؤول الأعلى والمستخدمين المخوَّلين تخصيصها لكل فريق."), "core"],
   ['[data-g="g_bu"]', L2("Business units", "وحدات الأعمال"), L2("Each project or branch has its own costs, billing and profit.", "لكل مشروع أو فرع تكاليفه وفواتيره وربحه."), "interior contracting development scaffolding general"],
   ['[data-g="g_crm"]', L2("Customers and deals", "العملاء والصفقات"), L2("Deals by stage, each call and visit per contact, and follow-up reminders.", "الصفقات حسب المرحلة، وكل مكالمة وزيارة لكل جهة اتصال، وتذكيرات المتابعة."), "core"],
   ['[data-g="g_care"]', L2("Healthcare", "الرعاية الصحية"), L2("Appointments and visits (clinic or home), patients and insurers, the price list with practitioner shares, prepaid packages and monthly insurance claims.", "المواعيد والزيارات (بالعيادة أو بالمنزل)، والمرضى وشركات التأمين، وقائمة الأسعار بحصص مقدمي الخدمة، والباقات المدفوعة مقدماً، ومطالبات التأمين الشهرية."), "healthcare homecare"],
@@ -11724,19 +11755,19 @@ const TOUR = () => [
   ['[data-g="g_sales"]', L2("Sales and receivables", "المبيعات والذمم المدينة"), L2("Invoices, customer receipts and balances due by customer.", "الفواتير ومقبوضات العملاء والأرصدة المستحقة على كل عميل."), "core"],
   ['[data-g="g_shop"]', L2("Showroom and unit sales", "المعرض وبيع الوحدات"), L2("Units and products with images, instalment sales and cheques.", "الوحدات والمنتجات بالصور، والبيع بالتقسيط، والشيكات."), "development sales"],
   ['[data-g="g_buy"]', L2("Procurement and payables", "المشتريات والذمم الدائنة"), L2("Purchase requests, supplier quotations, purchase orders and payments.", "طلبات الشراء وعروض الموردين وأوامر الشراء والمدفوعات."), "core"],
-  ['[data-g="g_stock"]', L2("Inventory", "المخزون"), L2("Items and prices (with or without stock), warehouses, movements and counts.", "الأصناف وأسعارها (بمخزون أو بدونه)، والمخازن، والحركات، والجرد."), "interior contracting sales scaffolding"],
-  ['[data-g="g_rent"]', L2("Equipment rental", "تأجير المعدات"), L2("Rental contracts, deliveries and returns, monthly billing and rental calculators.", "عقود التأجير والتسليم والإرجاع والفوترة الشهرية وحاسبات التأجير."), "scaffolding"],
+  ['[data-g="g_stock"]', L2("Inventory", "المخزون"), L2("Items and prices (with or without stock), warehouses, movements and counts. New rates to capture lists prices used in invoices and costs that are not in the price list yet.", "الأصناف وأسعارها (بمخزون أو بدونه)، والمخازن، والحركات، والجرد. «أسعار جديدة للإضافة» تعرض الأسعار المستخدمة في الفواتير والتكاليف وغير الموجودة في قائمة الأسعار."), "interior contracting sales scaffolding"],
+  ['[data-g="g_rent"]', L2("Equipment rental", "تأجير المعدات"), L2("Rental contracts, deliveries and returns, monthly billing and rental calculators. Month-end accrual books rent earned but not yet billed; a supplier discount or extra cost adjusts a lot's cost.", "عقود التأجير والتسليم والإرجاع والفوترة الشهرية وحاسبات التأجير. استحقاق آخر الشهر يسجّل الإيجار المستحق غير المفوتر، وخصم المورد أو التكلفة الإضافية يعدّل تكلفة الدفعة."), "scaffolding"],
   ['[data-g="g_eq"]', L2("Plant and equipment", "المعدات والآلات"), L2("Equipment register, maintenance and operating hours charged to projects.", "سجل المعدات والصيانة وساعات التشغيل المحمّلة على المشروعات."), "scaffolding contracting"],
   ['[data-g="g_hr"]', L2("Employees and payroll", "الموظفون والرواتب"), L2("Employees, attendance and monthly payroll with statutory tax and social insurance.", "الموظفون والحضور والرواتب الشهرية مع الضرائب والتأمينات القانونية."), "core"],
   ['[data-g="g_assets"]', L2("Assets and treasury", "الأصول والخزينة"), L2("Fixed assets with monthly depreciation, bank accounts and reconciliation.", "الأصول الثابتة والإهلاك الشهري والحسابات البنكية والتسويات."), "investment general development"],
   ['[data-g="g_fin"]', L2("Financing and cash custody", "التمويل والعهد النقدية"), L2("Loans taken and granted with schedules, and employee cash custody.", "القروض المأخوذة والممنوحة بجداولها، والعهد النقدية للموظفين."), "core"],
-  ['[data-g="g_equity"]', L2("Owners' equity", "حقوق الملكية"), L2("Partners, shares, the funding partner (account 3015) and profit appropriation.", "الشركاء والحصص والشريك الممول (حساب 3015) وتوزيع الأرباح."), "core"],
+  ['[data-g="g_equity"]', L2("Owners' equity", "حقوق الملكية"), L2("Partners, shares, the funding partner (account 3015) and profit appropriation. The distribution policy shows what each partner can be paid now from cash and what is earned but not in cash yet; the funding partner's share of each client payment is held back.", "الشركاء والحصص والشريك الممول (حساب 3015) وتوزيع الأرباح. توضح سياسة التوزيع ما يمكن صرفه لكل شريك الآن من النقدية وما هو مكتسب وغير متاح نقداً بعد، ويُحتجز نصيب الشريك الممول من كل دفعة عميل."), "core"],
   ['[data-g="g_tax"]', L2("Tax and e-invoicing", "الضرائب والفاتورة الإلكترونية"), L2("VAT and withholding tax, e-invoices and e-receipts.", "ضريبة القيمة المضافة والخصم من المنبع، والفواتير والإيصالات الإلكترونية."), "core"],
-  ['[data-g="g_acc"]', L2("General accounting", "المحاسبة العامة"), L2("Journal and chart of accounts. Select rows to edit, void or delete several at once; find accounts by code or name.", "اليومية ودليل الحسابات. حدد الصفوف لتعديل عدة قيود أو إلغائها أو حذفها معاً، وابحث عن الحسابات بالرقم أو الاسم."), "core"],
-  ['[data-g="g_rep"]', L2("Reports", "التقارير"), L2("Statements and lists, exportable to PDF, Excel or Word.", "القوائم والكشوف، قابلة للتصدير بصيغة PDF أو Excel أو Word."), "core"],
-  ['[data-g="g_sys"]', L2("Administration", "الإدارة"), L2("Settings, users, and Excel import and export.", "الإعدادات والمستخدمون واستيراد Excel وتصديره."), "core"],
+  ['[data-g="g_acc"]', L2("General accounting", "المحاسبة العامة"), L2("Journal and chart of accounts. Select rows to edit, void, approve or delete several at once; find accounts by code or name.", "اليومية ودليل الحسابات. حدد الصفوف لتعديل عدة قيود أو إلغائها أو اعتمادها أو حذفها معاً، وابحث عن الحسابات بالرقم أو الاسم."), "core"],
+  ['[data-g="g_rep"]', L2("Reports", "التقارير"), L2("Statements and lists, exportable to PDF, Excel or Word: the partners' report pack, profit by category (what each line of business earned after its own costs), cash forecast and the books checks.", "القوائم والكشوف، قابلة للتصدير بصيغة PDF أو Excel أو Word: حزمة تقارير الشركاء، والربح حسب الفئة (ربح كل نشاط بعد تكاليفه)، وتوقعات النقدية، وفحوصات الدفاتر."), "core"],
+  ['[data-g="g_sys"]', L2("Administration", "الإدارة"), L2("Settings, users and permissions, and Excel or Google Sheets import and export. Super administrators choose which notifications each department receives (Users → Notifications by department).", "الإعدادات والمستخدمون والصلاحيات، واستيراد وتصدير Excel أو Google Sheets. يختار المسؤول الأعلى الإشعارات التي يتلقاها كل قسم (المستخدمون ← الإشعارات حسب القسم)."), "core"],
   ['#nav a[href="#/chat"]', L2("Team chat", "محادثات الفريق"), L2("Rooms and direct messages with files and mentions.", "غرف ورسائل مباشرة مع الملفات والإشارات."), "core"],
-  [".dd.bell", L2("Alerts", "التنبيهات"), L2("Items requiring attention: invoices to issue, amounts due, reviews.", "ما يتطلب المتابعة: فواتير للإصدار، ومبالغ مستحقة، ومراجعات."), "core"],
+  [".dd.bell", L2("Alerts", "التنبيهات"), L2("Items requiring attention for your department: invoices to issue, amounts due, approvals, reviews. Ignore one or all; something new brings it back. Select the bell again to close it.", "ما يتطلب متابعة قسمك: فواتير للإصدار، ومبالغ مستحقة، واعتمادات، ومراجعات. تجاهل عنصراً أو الكل، ويعود عند حدوث جديد. اضغط الجرس مرة أخرى لإغلاقه."), "core"],
   [".ucard", L2("Account, settings and help", "الحساب والإعدادات والمساعدة"), L2("Settings, Help and support for reporting issues or questions, and this tour.", "الإعدادات، و«المساعدة والدعم» للإبلاغ عن مشكلة أو طرح سؤال، وهذه الجولة."), "core"],
 ];
 const tourPref = () => ((S.boot && S.boot.profile && S.boot.profile.prefs) || {}).tour || null;
@@ -12917,7 +12948,7 @@ PAGES["cash-forecast"] = async (view, parts, q) => {
       <label class="f chk" style="margin:0"><input type="checkbox" data-change="cfover" ${over ? "checked" : ""}>${esc(L2("Treat overdue amounts as collected / paid today", "اعتبار المبالغ المتأخرة محصلة / مدفوعة اليوم"))}</label>
       <select data-change="cfdays" aria-label="${esc(L2("Days ahead", "الأيام القادمة"))}">${[30, 60, 90, 180].map(n => `<option value="${n}" ${n === d.days ? "selected" : ""}>${n} ${L2("Days", "يوماً")}</option>`).join("")}</select></div>
     ${neg ? `<div class="banner err">${esc(L2(`Cash is forecast to fall below zero: ${money(d.lowest.balance)} around ${fd(d.lowest.date)}.`, `يُتوقع أن تنخفض النقدية دون الصفر: ${money(d.lowest.balance)} في حدود ${fd(d.lowest.date)}.`))}</div>` : ""}
-    <div class="kpis">${kpiBox(L2("Cash and bank today", "النقدية والبنوك اليوم"), d.cash_now)}${d.windows.map(w => kpiBox(L2(`In ${w.days} days`, `بعد ${w.days} يوماً`), w.balance, w.balance < 0 ? "neg" : "",
+    <div class="kpis">${kpiBox(d.basis === "facility" ? L2("Funding room left today", "المتاح من حد التمويل اليوم") : L2("Cash and bank today", "النقدية والبنوك اليوم"), d.cash_now, "", d.facility ? L2(`Limit ${money(d.facility.limit)} · fronted ${money(d.facility.fronted)}`, `الحد ${money(d.facility.limit)} · المموَّل ${money(d.facility.fronted)}`) : "")}${d.windows.map(w => kpiBox(L2(`In ${w.days} days`, `بعد ${w.days} يوماً`), w.balance, w.balance < 0 ? "neg" : "",
       `${esc(L2("In", "وارد"))} ${money(w.in)} · ${esc(L2("Out", "منصرف"))} ${money(w.out)}`)).join("")}${kpiBox(L2("Lowest balance", "أدنى رصيد"), d.lowest.balance, neg ? "neg" : "", fd(d.lowest.date))}</div>
     ${d.overdue.rows.length ? `<div class="banner ${over ? "info" : "warn"}">${esc(L2(`Overdue (due before today): ${money(d.overdue.in)} to collect and ${money(d.overdue.out)} to pay; ${over ? "included in today's balance" : "excluded from the forecast"}.`, `متأخر (مستحق قبل اليوم): ${money(d.overdue.in)} للتحصيل و${money(d.overdue.out)} للسداد؛ ${over ? "مدرجة في رصيد اليوم" : "مستبعدة من التوقعات"}.`))}</div>` : ""}
     <div class="card"><h2 style="margin-bottom:2px">${esc(L2("Weekly", "أسبوعياً"))}</h2><div class="muted" style="font-size:.82em;margin-bottom:6px">${esc(L2("Green: inflows · Red: outflows · Line: balance", "الأخضر: الوارد · الأحمر: المنصرف · الخط: الرصيد"))}</div>${chart}</div>

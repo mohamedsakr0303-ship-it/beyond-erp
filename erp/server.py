@@ -3587,6 +3587,8 @@ def alerts(ctx):
     for f in reversed(feed):
         out.insert(0, {"level": "warn", "en": f"{f['title']}: {f['body']}", "ar": f"{f['title']}: {f['body']}", "href": f["href"] or "#/alerts",
                        "kind": "feed", "id": f["id"]})
+    from . import alerttypes          # what this person's department (and they themselves) are set to receive
+    out = alerttypes.filter_rows(ctx.db, ctx.user, out)
     prefs = _bell_prefs(ctx)
     seen, ignored = set(prefs.get("bell_seen") or []), prefs.get("bell_ignored") or {}
     rows, hidden = [], 0
@@ -3603,6 +3605,33 @@ def alerts(ctx):
     return ok({"rows": rows, "count": sum(1 for r in rows if not r["ignored"]), "unseen": sum(1 for r in rows if r["new"]),
                "ignored": hidden, "approvals": [w["id"] for w in waiting], "followups": [f["id"] for f in follow],
                "feed": [f["id"] for f in feed]})
+
+
+@route("GET", "/api/alert-access")
+def alert_access_get(ctx):
+    """The notification types and who receives them (super administrators)."""
+    if not ctx.user.get("is_super"):
+        raise PermissionError("Only a super administrator decides who receives which notifications")
+    from . import alerttypes
+    return ok({"catalog": [{"type": k, "section": s, "en": en, "ar": a} for k, s, en, a in alerttypes.CATALOG],
+               "sections": [{"key": k, "en": en, "ar": a} for k, en, a in alerttypes.SECTIONS],
+               "groups": [{"key": "general", "name": "General", "name_ar": "عام"}] +
+                         [g for g in ctx.db.q("SELECT key, name, name_ar FROM user_groups ORDER BY sort, id") if g["key"] != "general"],
+               "users": ctx.db.q("SELECT username, full_name, group_key, is_super FROM users WHERE active=1 ORDER BY username"),
+               "rules": alerttypes.load(ctx.db),
+               "defaults": {g["key"]: [t for t in alerttypes.TYPES if alerttypes.default_on(g["key"], t)]
+                            for g in [{"key": "general"}] + ctx.db.q("SELECT key FROM user_groups")}})
+
+
+@route("PUT", "/api/alert-access")
+def alert_access_put(ctx):
+    if not ctx.user.get("is_super"):
+        raise PermissionError("Only a super administrator decides who receives which notifications")
+    from . import alerttypes
+    rules = alerttypes.clean(ctx.body)
+    ctx.db.set_setting("alert_access", json.dumps(rules, ensure_ascii=False))
+    ctx.log("settings", "alert access")
+    return ok(rules)
 
 
 _BELL_GROUPS = {"approvals": "entries", "approvals_back": "entries", "review": "review", "feed": "mine", "checkin_self": "team",

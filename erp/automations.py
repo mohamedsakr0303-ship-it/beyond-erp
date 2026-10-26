@@ -168,6 +168,14 @@ def _t_loan_due(db, p):
 def _t_cash_low(db, p):
     """Cash and bank together fall below an amount."""
     floor = float(p.get("below") or 0)
+    if (db.setting("funding_mode") or "capital") == "facility":       # his account is the bank: the room left in it
+        from . import settlement
+        f = settlement.facility(db)
+        if f and f["limit"]:
+            if f["room_after"] < floor:
+                yield {"ref": f"cash:{_local_day(p)}", "href": "#/partner-exit",
+                       "text": f"Funding room left is {f['room_after']:,.2f} once suppliers are paid — below {floor:,.2f}"}
+            return
     bal = acc.to_major(db.one("""SELECT COALESCE(SUM(l.debit-l.credit),0) n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
                                   JOIN accounts a ON a.code=l.account WHERE e.status='posted' AND a.subtype='cash'""")["n"])
     if bal < floor:
@@ -240,7 +248,7 @@ TRIGGERS = {
     "bill_due": (_t_bill_due, "A company subscription / bill is due within N days", {"days": 3}, "اشتراك / فاتورة للشركة مستحقة خلال N يوم"),
     "cheque_due": (_t_cheque_due, "A customer cheque is due within N days", {"days": 2}, "شيك عميل يستحق خلال N يوم"),
     "loan_due": (_t_loan_due, "A loan instalment is due within N days", {"days": 3}, "قسط قرض يستحق خلال N يوم"),
-    "cash_low": (_t_cash_low, "Cash & bank fall below an amount", {"below": 50000}, "النقدية والبنوك أقل من مبلغ"),
+    "cash_low": (_t_cash_low, "Cash & bank (or the funding room left) fall below an amount", {"below": 50000}, "النقدية والبنوك (أو المتاح من حد التمويل) أقل من مبلغ"),
     "approvals_waiting": (_t_approvals_waiting, "Entries wait for approval more than N hours", {"hours": 24}, "قيود تنتظر الاعتماد أكثر من N ساعة"),
     "maintenance_due": (_t_maintenance_due, "Equipment maintenance is due", {}, "صيانة معدة مستحقة"),
     "budget_over": (_t_budget_over, "A cost passes X% of its budget", {"pct": 90}, "تكلفة تتجاوز X% من موازنتها"),

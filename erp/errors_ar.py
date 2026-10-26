@@ -21,6 +21,7 @@ MESSAGES = {
     'The split totals {}%; the total cannot exceed 100%.': 'مجموع التوزيع {1}%، ولا يجوز أن يتجاوز 100%.',
     'Choose the project that takes the cost.': 'اختر المشروع الذي يتحمل التكلفة.',
     'Account scope not understood: {}. Use codes, prefixes (60*) or ranges (6010-6040).': 'نطاق الحسابات غير مفهوم: {1}. استخدم أكواداً أو بادئات (60*) أو نطاقات (6010-6040).',
+    'Only a super administrator decides who receives which notifications': 'يحدد المسؤول الأعلى فقط من يتلقى أي إشعارات',
     'Give each category a name.': 'أدخل اسماً لكل فئة.',
     'Choose the accounts of {}.': 'اختر حسابات الفئة {1}.',
     'A rule with the code {} already exists.': 'توجد قاعدة بالكود {1} بالفعل.',
