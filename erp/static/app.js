@@ -601,7 +601,10 @@ document.addEventListener("click", e => {
     Promise.resolve().then(() => S.H[a](el, e)).catch(err => { ok = false; throw err; }).finally(() => Hist.end(ut, ok)); return; }
   const dd = e.target.closest(".dd > .btn");
   $$(".dd.open").forEach(d => { if (!dd || d !== dd.parentElement) d.classList.remove("open"); });
-  if (dd) { e.preventDefault(); dd.parentElement.classList.toggle("open");
+  if (dd) { e.preventDefault();
+    const app = dd.closest(".app.pm-rail:not(.menu)");      // the phone icon strip: the menu opens first, then the account menu inside it
+    if (app && innerWidth <= 900 && dd.closest(".side")) app.classList.add("menu");
+    dd.parentElement.classList.toggle("open");
     // the bell shows what needs attention now, not what it loaded earlier
     if (dd.parentElement.classList.contains("bell") && dd.parentElement.classList.contains("open")) loadAlerts(true).then(bellSeen); }
   // an alert (or any link) to the screen already shown: open it again (the address does not change, so nothing else would)
@@ -1159,6 +1162,8 @@ S.GLOBAL_H = {
       app.classList.add("menu"); w.classList.add("open"); setTimeout(() => w.scrollIntoView({ block: "nearest", behavior: "smooth" }), 230); return; }
     if (app.classList.contains("mini") && innerWidth > 900 && matchMedia("(hover:hover) and (pointer:fine)").matches) {   // slim menu: the group opens as a panel beside the icons
       const was = w.classList.contains("fly"); $$(".grp-wrap.fly").forEach(x => x.classList.remove("fly")); if (!was) w.classList.add("fly"); return; }
+    if (app.classList.contains("mini") && innerWidth > 900) {   // slim menu on a touch screen: widen the menu and open the group
+      app.classList.remove("mini"); store.set("navMini", ""); w.classList.add("open"); return; }
     if (hoverNav()) return;                                    // hover mode: groups open while the pointer is on them
     const open = new Set(store.get("navOpen", "").split(",").filter(Boolean)); w.classList.toggle("open");
     if (w.classList.contains("open")) open.add(el.dataset.g); else open.delete(el.dataset.g); store.set("navOpen", [...open].join(",")); },

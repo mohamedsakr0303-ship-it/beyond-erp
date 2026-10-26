@@ -369,17 +369,19 @@ svg.i{width:20px;height:20px;flex:none}
 .grp-wrap .grp-items a svg.i{width:16px;height:16px}
 .grp-items{display:block;max-height:0;overflow:hidden;transition:max-height .25s ease}
 .grp-wrap.open .grp-items{max-height:900px}
-/* slim mode (desktop): icons only */
-.app.mini{--side-w:84px}
-.app.mini .side{padding-inline:12px;align-items:stretch}
-.app.mini .brand small,.app.mini .brand b,.app.mini .ucard-t,.app.mini .ucard .chev,.app.mini .grp>span,.app.mini .grp .chev,.app.mini .nav a span{display:none}
-.app.mini .brand-logo{max-width:52px;margin:0 auto}
-.app.mini .ucard-btn{justify-content:center;padding:8px}
-.app.mini .grp{justify-content:center;padding:10px 0}
-.app.mini .grp-wrap .grp-items{max-height:0}
-.app.mini .grp-wrap.has .grp{background:var(--side-active);color:var(--brand)}
-.app.mini .nav a{justify-content:center;padding:10px 0}
-.app.mini .grp-solo a.on::before,.app.mini .nav a.on::before{inset-inline-start:-12px}
+/* slim mode (desktop): icons only; never on phones, where the menu is a drawer */
+@media (min-width:901px){
+  .app.mini{--side-w:84px}
+  .app.mini .side{padding-inline:12px;align-items:stretch}
+  .app.mini .brand small,.app.mini .brand b,.app.mini .ucard-t,.app.mini .ucard .chev,.app.mini .grp>span,.app.mini .grp .chev,.app.mini .nav a span{display:none}
+  .app.mini .brand-logo{max-width:52px;margin:0 auto}
+  .app.mini .ucard-btn{justify-content:center;padding:8px}
+  .app.mini .grp{justify-content:center;padding:10px 0}
+  .app.mini .grp-wrap .grp-items{max-height:0}
+  .app.mini .grp-wrap.has .grp{background:var(--side-active);color:var(--brand)}
+  .app.mini .nav a{justify-content:center;padding:10px 0}
+  .app.mini .grp-solo a.on::before,.app.mini .nav a.on::before{inset-inline-start:-12px}
+}
 /* top bar */
 .top{min-height:var(--top-h);padding:10px 26px;gap:12px;background:color-mix(in srgb,var(--bg) 82%,transparent);backdrop-filter:saturate(1.6) blur(14px);border-bottom:1px solid var(--line)}
 .top h1{font-size:1.55em;font-weight:800;letter-spacing:-.2px}
@@ -446,7 +448,6 @@ tr.click:hover td{background:color-mix(in srgb,var(--brand) 6%,transparent)}
 .bottombar{display:none}
 @media (max-width:900px){
   .app,.app.mini{grid-template-columns:1fr;--side-w:272px}
-  .app.mini .side *{display:revert}
   .side{width:var(--side-w);border-radius:0 22px 22px 0;box-shadow:var(--shadow-lg)}
   [dir=rtl] .side{border-radius:22px 0 0 22px}
   .top{min-height:60px;padding:8px 12px}
@@ -561,6 +562,8 @@ tr.click:hover td{background:color-mix(in srgb,var(--brand) 6%,transparent)}
   .app.nav-hover:not(.mini) .grp-wrap:hover .grp-in{opacity:1;transition-delay:.12s}
   .app.nav-hover:not(.mini) .grp-wrap:hover>.grp .chev{transform:rotate(180deg);transition-delay:.12s}
   .app.nav-hover:not(.mini) .grp-wrap:hover>.grp{background:var(--hover)}
+}
+@media (hover:hover) and (pointer:fine) and (min-width:901px){
   /* slim menu: a group opens as a panel beside the icons (on hover, or on click in click mode) */
   .app.mini .side{overflow:visible;z-index:45}
   .app.mini .grp-wrap{position:relative}
@@ -600,7 +603,7 @@ tr.click:hover td{background:color-mix(in srgb,var(--brand) 6%,transparent)}
 :root[data-sidebar="custom"] .ucard-btn{background:color-mix(in srgb,var(--sb-ink) 8%,transparent);border-color:transparent;color:var(--sb-ink)}
 :root[data-nav="custom"] .brand{background:var(--nav-bg);margin:-14px -14px 8px;padding:20px 22px 16px}
 :root[data-nav="custom"] .brand b,:root[data-nav="custom"] .brand small{color:var(--nav-ink)}
-:root[data-nav="custom"] .app.mini .brand{margin-inline:-12px}
+@media (min-width:901px){:root[data-nav="custom"] .app.mini .brand{margin-inline:-12px}}
 :root[data-top="custom"] .top{background:var(--top-bg);color:var(--top-ink);border-color:transparent;backdrop-filter:none}
 :root[data-top="custom"] .top .icbtn,:root[data-top="custom"] .top h1{color:var(--top-ink)}
 :root[data-top="custom"] .top .crumb{color:color-mix(in srgb,var(--top-ink) 70%,transparent)}
@@ -653,7 +656,7 @@ tr.click:hover td{background:color-mix(in srgb,var(--brand) 6%,transparent)}
 .ucard img.avatar{width:36px;height:36px;border-radius:50%;object-fit:cover}
 .nav a .nbadge{margin-inline-start:auto;background:var(--brand);color:#fff;border-radius:999px;font-size:.7em;font-weight:800;padding:1px 7px;line-height:1.5}
 .nav a .nbadge.at{background:var(--bad)}
-.app.mini .nav a .nbadge{position:absolute;top:2px;inset-inline-end:2px;padding:0 5px}
+@media (min-width:901px){.app.mini .nav a .nbadge{position:absolute;top:2px;inset-inline-end:2px;padding:0 5px}}
 .chat{display:grid;grid-template-columns:320px minmax(0,1fr);height:calc(100vh - var(--top-h,72px) - 56px);min-height:420px;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}
 .chl{border-inline-end:1px solid var(--line);display:flex;flex-direction:column;min-height:0;background:color-mix(in srgb,var(--bg) 45%,var(--panel))}
 .chl-head{padding:12px;border-bottom:1px solid var(--line)}
