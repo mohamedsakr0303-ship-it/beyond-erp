@@ -220,7 +220,7 @@ tr.pending td{background:rgba(37,99,235,.06)}
   .login{margin:24px auto;max-width:calc(100% - 24px)}
 }
 @media (max-width:560px){
-  input,select,textarea{font-size:16px}               /* iPhone zooms in on anything smaller when typing */
+  input,select,textarea{font-size:16px}
   .filters{grid-template-columns:repeat(2,minmax(0,1fr))}
   .filters .row{grid-column:1/-1}
   .tbl table{font-size:.88em}
@@ -1917,3 +1917,6 @@ html{scroll-padding-top:calc(var(--top-h,56px) + 12px)}
 
 /* a dropdown is open (bell, menus): floating bars and cards step aside so its items take the tap */
 body:has(.dd.open) .tourbar,body:has(.dd.open) .nnudge{display:none}
+/* phones and tablets (also turned sideways): iPhone and iPad zoom in on a field with smaller text when typing — last, so
+   no screen's own field style undoes it */
+@media (pointer:coarse){input:not([type=checkbox]):not([type=radio]),select,textarea{font-size:16px!important}}

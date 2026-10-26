@@ -2282,8 +2282,10 @@ def _imp_journal(db, rows, errors, counts, user):
                                                "rate": r.get("item_rate"), "warehouse": r.get("item_to") or None,
                                                "account": r.get("account") if not r.get("item_to") else None}
                                               for _, r in items if acc.text(r.get("item"))],
-                                    "lines": [{"account": r.get("account"), "debit": r.get("debit"),
-                                               "credit": r.get("credit"), "party": r.get("line_party")}
+                                    # a later row naming another party than the voucher's: that line is that party's
+                                    "lines": [{"account": r.get("account"), "debit": r.get("debit"), "credit": r.get("credit"),
+                                               "party": r.get("line_party") or (r.get("party") if acc.text(r.get("party")) not in
+                                                                                ("", acc.text(first.get("party"))) else None)}
                                               for _, r in items if not acc.text(r.get("item"))]}, user)
             n += 1
         except acc.ValidationError as e:

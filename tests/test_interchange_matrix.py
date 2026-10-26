@@ -107,6 +107,23 @@ class HostileFiles(unittest.TestCase):
         self.assertEqual(self.db.q("SELECT COUNT(*) n FROM parties WHERE name='Acme'")[0]["n"], 1)
 
 
+class JournalVoucherParties(unittest.TestCase):
+    def test_a_later_row_naming_another_party_keeps_it_on_that_line(self):
+        db = Database(":memory:")
+        rows = [{"voucher": "JV-T1", "date": "2026-05-01", "kind": "Journal Voucher", "memo": "Units held for sale", "account": "1210",
+                 "debit": 5000},
+                {"voucher": "JV-T1", "date": "2026-05-01", "kind": "Journal Voucher", "party": "Some Bank", "memo": "Finance",
+                 "account": "2400", "credit": 5000},
+                {"voucher": "JV-T2", "date": "2026-05-02", "kind": "Journal Voucher", "party": "Acme", "account": "1010", "debit": 10},
+                {"voucher": "JV-T2", "date": "2026-05-02", "kind": "Journal Voucher", "party": "Acme", "account": "1020", "credit": 10}]
+        interchange.import_data(db, {"Journal Vouchers": rows}, user="t")
+        got = {(r["account"], r["party"]) for r in db.q("SELECT l.account, l.party FROM journal_lines l")}
+        self.assertIn(("2400", "Some Bank"), got)
+        self.assertIn(("1210", ""), got)
+        self.assertIn(("1010", ""), got)          # the voucher's own party stays on the voucher, not repeated per line
+        self.assertEqual(db.q("SELECT party FROM journal_entries WHERE party='Acme'")[0]["party"], "Acme")
+
+
 class FormulaText(unittest.TestCase):
     """Text typed as a formula is exported as text and imports back unchanged."""
 
