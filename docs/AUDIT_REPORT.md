@@ -126,6 +126,8 @@ No accounting treatment was changed.
 | D14 | Low | Navigation | Moving between two screens quickly left an unhandled error from the page transition | Fixed |
 | D15 | High | Themes | With a dark-sidebar theme (Rose gold, Forest, Ocean breeze, Sunset glow, or any own theme with a dark sidebar) the account menu and the slim menu's section panels showed white text on a white panel | Fixed: menus opened from a coloured sidebar take its colours. Every theme checked in light and dark, desktop and phone (lowest contrast 5.6:1); covered by a journey |
 | D16 | High | Users (cloud) | A company's creator, shown as its super administrator, was refused when removing a person's sign-in account, changing someone's sign-in, or turning off someone's two-step sign-in: the workspace function checked only the "super" mark, which a company's creator does not get. The app had already deleted the user, so the person could still sign in | Fixed: the function counts the creator as the database does; the app removes the sign-in first and keeps the user if that is refused |
+| D17 | Medium | Navigation | Choosing an action (not a screen) from a dropdown or the phone side menu left them open over what it opened: Companies, Change my password, Take the tour, Check for updates, the New and Import menus | Fixed: any action closes the dropdown and the phone menu, as a screen link does; opening a menu section and ignoring alerts keep them open. Covered by a journey |
+| D18 | Low | Look | Start-up showed a themed white card with a black disc on light themes | Start-up keeps the BeyondERP night screen in every theme; the page loader is a pale disc in the theme's accent on light themes |
 
 Checked and not defects:
 

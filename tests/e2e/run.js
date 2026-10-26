@@ -365,6 +365,54 @@ async function themes(page, browser) {
   }
 }
 
+// Choosing an action from a menu closes the menus it came from (as choosing a screen does); opening a section does not
+async function menusClose(page, browser) {
+  const phone = await open(browser, { width: 390, height: 844 }, true);
+  try {
+    const state = p => p.evaluate(() => ({ side: document.querySelector(".app").classList.contains("menu"),
+      account: !!document.querySelector(".side .ucard.open"), drawer: !!document.querySelector(".drawer"), dialog: !!document.querySelector(".dlg") }));
+    const calm = () => phone.evaluate(() => document.querySelectorAll("#nnudge,#tourbar").forEach(n => n.remove()));   // the device prompt may appear
+    const openAccount = async () => {
+      await calm();
+      await phone.locator("[data-a=menu]:visible").first().tap(); await phone.waitForTimeout(400);
+      await phone.tap(".side .ucard-btn"); await phone.waitForTimeout(300);
+    };
+    await openAccount();
+    await phone.tap(".side .ucard .dd-menu [data-a=pw]"); await phone.waitForTimeout(500);
+    let st = await state(phone);
+    expect(st.drawer && !st.side && !st.account, "Change my password left menus open: " + JSON.stringify(st));
+    await phone.evaluate(() => document.querySelectorAll(".drawer-bg").forEach(n => n.remove()));
+    await openAccount();
+    await phone.tap(".side .ucard .dd-menu [data-a=updcheck]"); await phone.waitForTimeout(800);
+    st = await state(phone);
+    expect(!st.side && !st.account, "Check for updates left menus open: " + JSON.stringify(st));
+    await phone.evaluate(() => document.querySelectorAll(".dlg-bg,.drawer-bg").forEach(n => n.remove()));
+    // opening a section keeps the menu open
+    await calm();
+    await phone.locator("[data-a=menu]:visible").first().tap(); await phone.waitForTimeout(400);
+    await phone.tap(".side .grp[data-g]"); await phone.waitForTimeout(400);
+    expect((await state(phone)).side, "opening a menu section closed the menu");
+    // the phone's own New menu (bottom bar)
+    await phone.evaluate(() => document.querySelector(".app").classList.remove("menu"));
+    const bb = await phone.$(".bb-new > .btn");
+    if (bb) {
+      await calm();
+      await bb.tap(); await phone.waitForTimeout(300);
+      await phone.tap(".bb-new .dd-menu [data-a=quicknew]"); await phone.waitForTimeout(600);
+      expect(!(await phone.$(".bb-new.open")), "the New menu stayed open behind the form");
+    }
+  } finally { await phone.context().close(); }
+  // desktop: New and Import menus
+  await go(page, "#/payments");
+  await page.click(".top .newdd > .btn"); await page.waitForTimeout(300);
+  await page.click(".top .newdd .dd-menu [data-a=quicknew]"); await page.waitForTimeout(600);
+  expect(!(await page.$(".top .newdd.open")) && (await page.$(".drawer")), "the New menu stayed open (or no form opened)");
+  await page.evaluate(() => document.querySelectorAll(".drawer-bg").forEach(n => n.remove()));
+  await page.click(".impdd > .btn"); await page.waitForTimeout(300);
+  await page.click(".impdd .dd-menu [data-a=impopen]"); await page.waitForTimeout(600);
+  expect(!(await page.$(".impdd.open")), "the Import menu stayed open behind the import window");
+}
+
 // A form filled on a phone keeps its values when the phone is turned, and still saves
 async function phoneTurn(page) {
   await go(page, "#/payments");
@@ -396,6 +444,7 @@ async function phoneTurn(page) {
     await journey("Drafts: a half-filled form left for another screen can be continued and saved", browser, draft);
     await journey("Permissions: a sales-only user cannot reach purchasing; refresh keeps the screen", browser, permissions);
     await journey("Themes: menus opened from a coloured sidebar stay readable (desktop and phone)", browser, themes);
+    await journey("Menus: choosing an action closes the dropdown and the phone side menu", browser, menusClose);
     await journey("Phone: form keeps its values when turned to landscape", browser, phoneTurn, { width: 390, height: 844 }, true);
     expect(db("balanced"), "an entry does not balance after the journeys");
     results.push({ name: "Books still balance after every journey", ok: true });

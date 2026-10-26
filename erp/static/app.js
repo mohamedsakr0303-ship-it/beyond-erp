@@ -594,6 +594,12 @@ document.addEventListener("click", e => {
   const el = e.target.closest("[data-a]");
   if (el && S.H[el.dataset.a]) { if (!el.closest(".drawer")) S.lastClick = { a: el.dataset.a, ds: { ...el.dataset }, value: el.value, hash: location.hash, at: Date.now() };
     e.preventDefault();
+    // an action chosen from a dropdown or from the phone side menu closes them first, as a link does (unless it works
+    // inside them: opening a menu section, ignoring an alert in the bell list)
+    if (!STAY_OPEN.has(el.dataset.a)) {
+      if (el.closest(".dd-menu")) { const box = el.closest(".dd.open"); if (box) box.classList.remove("open"); }
+      if (app && app.classList.contains("menu") && el.closest(".side")) app.classList.remove("menu");
+    }
     const a = el.dataset.a, undoable = /(save|post|del|delete|void|remove)$/i.test(a) && !/^(ai|ch|ws)/.test(a);
     const ut = undoable ? Hist.begin(/(del|delete|void|remove)$/i.test(a) ? "del" : "save") : null;
     if (!ut) { S.H[a](el, e); return; }
@@ -619,6 +625,7 @@ document.addEventListener("input", e => { const el = e.target.closest("[data-inp
 new MutationObserver(ms => { for (const m of ms) { const el = m.target;
   if (el.classList && el.classList.contains("app") && !el.classList.contains("menu") && innerWidth <= 900) $$(".ucard.dd.open", el).forEach(d => d.classList.remove("open")); } })
   .observe(document.body, { attributes: true, attributeFilter: ["class"], subtree: true });
+const STAY_OPEN = new Set(["grp", "menu", "bellign", "bellignall"]);
 document.addEventListener("keydown", e => { if (e.key === "Escape") { closeDrawer(); const app = $(".app"); if (app) app.classList.remove("menu"); } });
 window.addEventListener("hashchange", () => { S.navCount = (S.navCount || 0) + 1; S.navAnim = true; route(); });
 
@@ -1542,7 +1549,8 @@ async function renderAuth() {
   if (STATIC && window.BeyondCloud && window.BeyondCloud.configured() && !store.get("cloudLocal", false)) {
     // still signed in to the workspace (e.g. after switching company): carry on without asking again
     if (window.BeyondCloud.signedIn()) {
-      applyLook(); $("#root").innerHTML = `<div class="login"><div class="empty ld"><i class="ecl-ld"></i>${t("loading")}</div><div id="lerr"></div></div>`;
+      // the same dark start-up screen in every theme: the chosen colours appear once the books are open
+      applyLook(); $("#root").innerHTML = `<div class="bootld" role="status"><b>BEYONDERP</b><i class="ecl-ld"></i><span>${t("loading")}</span><div id="lerr"></div></div>`;
       try { return await cloudEnter(await window.BeyondCloud.info()); } catch (e) { return renderCloudAuth(plainNetErr(e), "err"); }
     }
     return renderCloudAuth();
@@ -12676,7 +12684,8 @@ document.addEventListener("contextmenu", e => {
   });
   document.addEventListener("dragstart", e => { if (e.target.closest && e.target.closest("#nav")) e.preventDefault(); });   // not the browser's own link dragging
   document.addEventListener("pointercancel", end);
-  document.addEventListener("keydown", e => { if (e.key === "Escape") end(); });
+  const STAY_OPEN = new Set(["grp", "menu", "bellign", "bellignall"]);
+document.addEventListener("keydown", e => { if (e.key === "Escape") end(); });
   window.__dndActive = () => !!drag;
 }
 // ---- "⚙ Customise form": the same field changes as the right-click menu, as visible buttons on every field
