@@ -318,6 +318,53 @@ async function permissions(page, browser) {
   } finally { await p2.context().close(); }
 }
 
+// lowest contrast of the visible text inside an element (colours as the browser draws them, transparency blended)
+const lowestContrast = sel => {
+  const cv = document.createElement("canvas").getContext("2d", { willReadFrequently: true });
+  const px = c => { cv.clearRect(0, 0, 1, 1); cv.fillStyle = "#000"; cv.fillStyle = c; cv.fillRect(0, 0, 1, 1); const d = cv.getImageData(0, 0, 1, 1).data; return [d[0], d[1], d[2], d[3] / 255]; };
+  const lum = c => c.slice(0, 3).map(x => { x /= 255; return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4); }).reduce((s, v, i) => s + v * [0.2126, 0.7152, 0.0722][i], 0);
+  const bgOf = e => { const layers = []; for (let b = e; b; b = b.parentElement) { const c = px(getComputedStyle(b).backgroundColor); if (c[3] > 0) { layers.push(c); if (c[3] >= 0.99) break; } }
+    let out = [255, 255, 255]; for (const c of layers.reverse()) out = out.map((v, i) => v * (1 - c[3]) + c[i] * c[3]); return out; };
+  let worst = 99;
+  for (const e of document.querySelectorAll(sel + " *")) {
+    if (![...e.childNodes].some(n => n.nodeType === 3 && n.textContent.trim()) || !e.getBoundingClientRect().width) continue;
+    const bg = bgOf(e), fc = px(getComputedStyle(e).color), fg = fc.slice(0, 3).map((v, i) => v * fc[3] + bg[i] * (1 - fc[3]));
+    const a = lum(fg), z = lum(bg); worst = Math.min(worst, (Math.max(a, z) + 0.05) / (Math.min(a, z) + 0.05));
+  }
+  return worst;
+};
+
+// Themes with a coloured sidebar: the account menu and the slim menu's section panels stay readable
+async function themes(page, browser) {
+  const ids = ["rosegold", "forest", "ocean", "sunset"];
+  for (const [vp, touch] of [[{ width: 1280, height: 800 }, false], [{ width: 390, height: 844 }, true]]) {
+    const p = touch ? await open(browser, vp, true) : page;
+    try {
+      for (const id of ids) {
+        await go(p, "#/settings?tab=theme");
+        await p.evaluate(() => document.querySelectorAll("#nnudge,#tourbar").forEach(n => n.remove()));
+        await p.click(`.thc[data-id=${id}]`);
+        await p.waitForTimeout(400);
+        if (touch) { await p.locator("[data-a=menu]:visible").first().tap(); await p.waitForTimeout(400); }
+        await p.click(".side .ucard-btn");
+        await p.waitForTimeout(300);
+        const menu = await p.evaluate(lowestContrast, ".side .ucard .dd-menu");
+        expect(menu >= 4.5, `${id} ${touch ? "phone" : "desktop"}: account menu text contrast ${menu.toFixed(2)}`);
+        await p.click(".side .ucard-btn");
+        if (!touch) {
+          await p.click("[data-a=menu]");                        // the slim menu, then a section's panel
+          await p.click(".grp[data-g]");
+          await p.waitForTimeout(300);
+          const fly = await p.evaluate(lowestContrast, ".grp-wrap.fly .grp-items");
+          expect(fly >= 4.5, `${id}: slim menu panel text contrast ${fly.toFixed(2)}`);
+          await p.click("[data-a=menu]");
+        } else await p.evaluate(() => document.querySelector(".app").classList.remove("menu"));
+      }
+      await p.click(".thc[data-id=default]").catch(() => {});
+    } finally { if (touch) await p.context().close(); }
+  }
+}
+
 // A form filled on a phone keeps its values when the phone is turned, and still saves
 async function phoneTurn(page) {
   await go(page, "#/payments");
@@ -348,6 +395,7 @@ async function phoneTurn(page) {
     await journey("Budget: project budget → actual cost → budget vs actual", browser, budget);
     await journey("Drafts: a half-filled form left for another screen can be continued and saved", browser, draft);
     await journey("Permissions: a sales-only user cannot reach purchasing; refresh keeps the screen", browser, permissions);
+    await journey("Themes: menus opened from a coloured sidebar stay readable (desktop and phone)", browser, themes);
     await journey("Phone: form keeps its values when turned to landscape", browser, phoneTurn, { width: 390, height: 844 }, true);
     expect(db("balanced"), "an entry does not balance after the journeys");
     results.push({ name: "Books still balance after every journey", ok: true });

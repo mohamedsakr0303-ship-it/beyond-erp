@@ -349,7 +349,7 @@ svg.i{width:20px;height:20px;flex:none}
 .ucard-btn{width:100%;display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:14px;background:var(--bg);border:1px solid var(--line);text-align:start}
 .ucard-btn .avatar{display:inline-flex;width:38px;height:38px;font-size:.85em;border-radius:12px;background:linear-gradient(135deg,var(--brand),color-mix(in srgb,var(--brand) 55%,#0ea5e9));color:#fff}
 .ucard-t{display:flex;flex-direction:column;min-width:0;flex:1}.ucard-t b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.ucard-t small{color:var(--muted);font-size:.78em;font-weight:500}
+.ucard-t small{color:color-mix(in srgb,var(--ink) 74%,transparent);font-size:.78em;font-weight:500}
 .ucard .dd-menu{inset-inline:0;inset-inline-end:auto;width:100%}
 .chev{width:16px;height:16px;opacity:.6;transition:transform .2s}
 .nav{display:flex;flex-direction:column;gap:2px}
@@ -574,7 +574,7 @@ tr.click:hover td{background:color-mix(in srgb,var(--brand) 6%,transparent)}
   .app.mini .grp-wrap .grp-items::before{content:"";position:absolute;inset-block:0;inset-inline-start:-18px;width:18px}
   .app.mini .grp-items a{justify-content:flex-start;padding:9px 12px}
   .app.mini .grp-items a span{display:inline}
-  .app.mini .fly-t{display:block;padding:6px 12px 8px;font-size:.72em;font-weight:800;text-transform:uppercase;letter-spacing:.7px;color:var(--muted)}
+  .app.mini .fly-t{display:block;padding:6px 12px 8px;font-size:.72em;font-weight:800;text-transform:uppercase;letter-spacing:.7px;color:color-mix(in srgb,var(--ink) 78%,transparent)}
 }
 @media (prefers-reduced-motion:reduce){.grp-items,.grp-in,.grp .chev{transition:none!important}}
 /* ---------------------------------------------------------------- extracts */
@@ -1653,6 +1653,10 @@ html.dnd-on,html.dnd-on *{cursor:grabbing!important;user-select:none!important;-
 :root[data-surf="custom"]:not([data-top]) .top{background:color-mix(in srgb,var(--bg) 92%,transparent);border-color:var(--line)}
 :root[data-surf="custom"] .tabs a.on{background:var(--card-bg,var(--panel));border-color:var(--line);border-bottom-color:var(--card-bg,var(--panel))}
 :root[data-surf="custom"] .tour-pill{box-shadow:0 10px 30px rgba(0,0,0,.35)}
+/* menus opened from a coloured sidebar (the account menu, the slim menu's section panels) take the sidebar's colours:
+   its text colour applies to everything in it, so a page-coloured panel would hide the text (white on white) */
+:root[data-sidebar="custom"] .side .dd-menu{background:color-mix(in srgb,var(--sb-ink) 7%,var(--sb-bg));border-color:var(--line);color:var(--sb-ink)}
+@media (min-width:901px){:root[data-sidebar="custom"] .app.mini .side .grp-wrap .grp-items{background:color-mix(in srgb,var(--sb-ink) 7%,var(--sb-bg));border-color:var(--line);color:var(--sb-ink)}}
 :root[data-tint="custom"] th{color:var(--muted)}
 :root[data-tint="custom"] tr:hover td{background:var(--hover)}
 :root[data-tint="custom"] .chip{color:var(--ink)}

@@ -124,6 +124,7 @@ No accounting treatment was changed.
 | D12 | Medium | Sales | An invoice saved with the suggested number left as is ("INV-2026-10-"); a second one that month was refused as a duplicate | Fixed: the screen's prefix is completed to the next number (INV-2026-10-001); imports keep numbers as given |
 | D13 | Medium | Dashboard | "What we owe suppliers" listed bank loans, partner loans and customer advances (10.7 million against 378 thousand of trade payables); the "customers owing money" automation also watched staff advances and loans | Fixed: trade payables and customer receivables only |
 | D14 | Low | Navigation | Moving between two screens quickly left an unhandled error from the page transition | Fixed |
+| D15 | High | Themes | With a dark-sidebar theme (Rose gold, Forest, Ocean breeze, Sunset glow, or any own theme with a dark sidebar) the account menu and the slim menu's section panels showed white text on a white panel | Fixed: menus opened from a coloured sidebar take its colours. Every theme checked in light and dark, desktop and phone (lowest contrast 5.6:1); covered by a journey |
 
 Checked and not defects:
 
@@ -146,6 +147,7 @@ Checked and not defects:
 | Half-filled form left for another screen | Draft listed, continued with its values, saved once, then removed from the list |
 | Sales-only user | No purchasing, payments, users or accounts in the menu; purchasing address refused on screen and by the server; refresh keeps the screen |
 | Phone turned sideways mid-form | Values kept; Save reachable; saved |
+| Dark-sidebar themes | Account menu and slim menu panels readable (contrast at least 4.5:1) on desktop and phone |
 | After all journeys | Every posted entry balances |
 
 - Browser sweeps (menu, every page, every form, Arabic) were run with Playwright against a local demo server and are not in CI yet.
