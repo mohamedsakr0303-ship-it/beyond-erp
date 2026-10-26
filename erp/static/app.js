@@ -1929,10 +1929,11 @@ function docMenu(base, formats, extra = "") {
     `<a href="${base}?format=${f}" ${f === "pdf" ? 'target="_blank" rel="noopener"' : ""}>${t(l)}</a>`).join("")}${extra}</div></div>`;
 }
 // Delete after a clear confirmation; the server refuses anything still in use and says why.
-async function confirmDelete(what, path, after) {
+// before: a step that must succeed first (it throws to stop, and nothing is deleted)
+async function confirmDelete(what, path, after, before) {
   if (!actionOk(screenKey(), "delete")) { uiAlert(L2("Deleting and voiding are not permitted for you on this screen.", "الحذف والإلغاء غير مسموحين لك في هذه الشاشة.")); return false; }
   if (!await uiConfirm((S.lang === "ar" ? "حذف " : "Delete ") + what + (S.lang === "ar" ? "؟" : "?"))) return false;
-  try { await api("DELETE", path); if (after) await after(); closeDrawer(); toast(S.lang === "ar" ? "تم الحذف." : "Deleted."); route(); return true; }
+  try { if (before) await before(); await api("DELETE", path); if (after) await after(); closeDrawer(); toast(S.lang === "ar" ? "تم الحذف." : "Deleted."); route(); return true; }
   catch (e) { fail(e); return false; }
 }
 function pager(total, q) {
@@ -5956,7 +5957,9 @@ PAGES.users = async (view) => {
       if (STATIC && cloudOn() && window.BeyondCloud.mfaReset) await window.BeyondCloud.mfaReset({ username: u.username, email: u.email });
       toast(t("saved")); closeDrawer(); route(); } catch (e) { fail(e); } };
     S.H.udel = () => confirmDelete(`${u.username}${u.full_name ? " (" + u.full_name + ")" : ""}` + (cloudOn() ? (ar ? " وحساب الدخول" : " and the sign-in account") : ""), "/api/users/" + u.id,
-      async () => { if (cloudOn()) await CloudAPI.deleteAccount({ username: u.username, email: u.email }).catch(e => { if (e.status !== 404) toast((ar ? "حُذف المستخدم، لكن لم يُحذف حساب الدخول:" : "User deleted, but the sign-in account was not: ") + e.message, true); }); }); };
+      // the sign-in account goes first: if the workspace refuses, the user stays and the reason is shown (no half-deleted
+      // user who can still sign in); a user without a sign-in account (404) is simply deleted
+      null, async () => { if (cloudOn()) await CloudAPI.deleteAccount({ username: u.username, email: u.email }).catch(e => { if (e.status !== 404) throw e; }); }); };
   const L = ["none", "view", "add", "edit"];
   const summary = u => {
     if (u.is_super) return `<span class="chip ok">★ ${L2("Super administrator", "مسؤول أعلى")}</span>`;

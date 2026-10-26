@@ -60,8 +60,10 @@ Deno.serve(async (req) => {
   const inCo = `company_id=eq.${enc(company)}`;
   const adm = await call("GET", `/rest/v1/members?select=email,is_super&${inCo}&email=eq.${enc(caller)}&active=is.true&pending=is.false&is_admin=is.true`);
   if (!adm.ok || !adm.data.length) return fail(403, "Only administrators of this company can manage sign-in accounts");
-  // administrators add people; changing or removing someone's account is for the company's super administrators
-  const isSuper = !!adm.data[0].is_super;
+  // administrators add people; changing or removing someone's account is for the company's super administrators: those
+  // marked so, and the company's creator (as public.beyond_is_super counts them; a company's creator is not marked)
+  const co = await call("GET", `/rest/v1/companies?select=created_by&id=eq.${enc(company)}`);
+  const isSuper = !!adm.data[0].is_super || !!(co.ok && co.data.length && String(co.data[0].created_by || "").toLowerCase() === caller);
 
   const username = String(b.username || "").trim().toLowerCase();
   // a username may be the person's email address: they then sign in with that address (sign-in treats "@" as an email)

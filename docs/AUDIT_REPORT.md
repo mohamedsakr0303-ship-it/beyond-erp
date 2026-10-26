@@ -125,6 +125,7 @@ No accounting treatment was changed.
 | D13 | Medium | Dashboard | "What we owe suppliers" listed bank loans, partner loans and customer advances (10.7 million against 378 thousand of trade payables); the "customers owing money" automation also watched staff advances and loans | Fixed: trade payables and customer receivables only |
 | D14 | Low | Navigation | Moving between two screens quickly left an unhandled error from the page transition | Fixed |
 | D15 | High | Themes | With a dark-sidebar theme (Rose gold, Forest, Ocean breeze, Sunset glow, or any own theme with a dark sidebar) the account menu and the slim menu's section panels showed white text on a white panel | Fixed: menus opened from a coloured sidebar take its colours. Every theme checked in light and dark, desktop and phone (lowest contrast 5.6:1); covered by a journey |
+| D16 | High | Users (cloud) | A company's creator, shown as its super administrator, was refused when removing a person's sign-in account, changing someone's sign-in, or turning off someone's two-step sign-in: the workspace function checked only the "super" mark, which a company's creator does not get. The app had already deleted the user, so the person could still sign in | Fixed: the function counts the creator as the database does; the app removes the sign-in first and keeps the user if that is refused |
 
 Checked and not defects:
 
@@ -134,7 +135,7 @@ Checked and not defects:
 
 ## 8. Automated testing
 
-- Full suite: 275 tests, all passed, 1 skipped (about 10 minutes). CI runs it on every push.
+- Full suite: 276 tests, all passed, 1 skipped (about 10 minutes). CI runs it on every push.
 - New: `test_interchange_matrix.py` (12 tests) and `test_books_integrity.py` (7 tests).
 - End-to-end journeys (`tests/e2e/run.js`, a new `e2e` CI job). Each one goes through the screens in a real browser on fresh demo books and checks the result in the database itself:
 

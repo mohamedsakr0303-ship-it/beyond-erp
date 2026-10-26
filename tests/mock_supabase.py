@@ -294,10 +294,14 @@ class Handler(BaseHTTPRequestHandler):
             if not u_is_email and not re.fullmatch(r"[a-z0-9][a-z0-9._-]{1,39}", u):
                 return 400, {"msg": "Usernames for signing in use 2–40 letters, digits, dots, dashes or underscores (no spaces) — or an email address"}
         others = lambda em: [k for k in st.members if k[1] == em and k[0] != cid]  # noqa: E731
+        # super administrators: those marked so, and the company's creator (whose row is not marked)
+        is_super = bool(cm.get("is_super")) or st.companies[cid].get("created_by") == caller
         if body.get("action") == "delete":
             tgt = e or next((em for em, un in st.people.items() if un == u), f"{u}@users.beyond-erp.invalid")
             if tgt == caller:
                 return 400, {"msg": "You cannot delete your own sign-in account"}
+            if not is_super:
+                return 403, {"msg": "Only a super administrator can remove people"}
             st.members.pop((cid, tgt), None)
             if not others(tgt):
                 st.accounts.pop(tgt, None)

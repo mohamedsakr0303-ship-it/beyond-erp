@@ -655,6 +655,13 @@ class Workspace(unittest.TestCase):
         st, r = self.node_call(0, a, "PUT", "/api/cloud/account", {"username": "sara", "active": False})
         with self.assertRaises(RuntimeError):   # untick Active: sign-in blocked
             probe.sign_in_username("sara", "sarapw1")
+        # the company's creator is its super administrator (their member row is not marked): they remove sara's account
+        cid = next(i for i, c in self.sb.state.companies.items() if c["created_by"] == "owner@x.com")
+        self.assertFalse(self.sb.state.members[(cid, "owner@x.com")].get("is_super"))
+        st, r = self.node_call(0, a, "POST", "/api/cloud/account/delete", {"username": "sara"})
+        self.assertEqual(st, 200, r)
+        self.assertNotIn("sara@users.beyond-erp.invalid", self.sb.state.accounts)
+        self.assertNotIn((cid, "sara@users.beyond-erp.invalid"), self.sb.state.members)
         # A (admin) adds B's account as a gateway member; B joins and gets A's books
         self.assertEqual(self.node_call(0, a, "PUT", "/api/cloud/members",
                                         {"email": "desk@x.com", "gateway": True})[0], 200)
