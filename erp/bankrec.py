@@ -22,7 +22,7 @@ import itertools
 import json
 import re
 
-from . import accounting as acc
+from . import accounting as acc, xlsafe
 from .accounting import ValidationError, num, text
 from .db import to_major, to_minor
 
@@ -143,16 +143,15 @@ def _table(data, filename=""):
             import openpyxl
         except ImportError:
             raise ValidationError("Excel files require openpyxl. Save the statement as CSV instead.")
-        wb = openpyxl.load_workbook(io.BytesIO(raw), data_only=True, read_only=True)
+        import zipfile
+        try:
+            wb = openpyxl.load_workbook(io.BytesIO(raw), data_only=True, read_only=True)
+        except (zipfile.BadZipFile, KeyError, ValueError, OSError):
+            raise ValidationError(xlsafe.NOT_XLSX) from None
         ws = wb.worksheets[0]
         return [list(r) for r in ws.iter_rows(values_only=True)]
     if raw is not None:
-        for enc in ("utf-8-sig", "cp1256", "latin-1"):
-            try:
-                textdata = raw.decode(enc)
-                break
-            except UnicodeDecodeError:
-                continue
+        textdata = xlsafe.decode_text(raw)
     else:
         textdata = str(data or "")
     sample = textdata[:4000]
@@ -167,11 +166,7 @@ def _text_of(data):
     if isinstance(raw, bytes):
         if raw[:2] == b"PK":
             return None
-        for enc in ("utf-8-sig", "cp1256", "latin-1"):
-            try:
-                return raw.decode(enc)
-            except UnicodeDecodeError:
-                continue
+        return xlsafe.decode_text(raw)
     return str(raw or "")
 
 

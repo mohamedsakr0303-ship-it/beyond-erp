@@ -8,7 +8,7 @@ rent period at the contract's rates, plus one-time charges not billed yet) in th
 import datetime as _dt
 import io
 
-from . import accounting as acc
+from . import accounting as acc, xlsafe
 from .accounting import ValidationError, text, to_major, to_minor
 from .rentals import EPS
 
@@ -241,6 +241,7 @@ def xlsx(db, xid, lang="ar"):
     ws["A4"] = L["contractor"].format(c=co)
     ws.merge_cells("D4:G4")
     ws["D4"] = x.get("work") or x.get("bu_name") or ""
+    xlsafe.as_text(ws["D4"])
     for a, f, al in (("A2", AF(14), ctr), ("E2", AF(14), ctr), ("A4", AF(10), side), ("D4", AF(12), ctr)):
         ws[a].font, ws[a].alignment = f, al
     for rng in ("A2:D3", "E2:G3", "A4:C4", "D4:G4"):
@@ -255,7 +256,7 @@ def xlsx(db, xid, lang="ar"):
         r = first + k
         if k < len(rows):
             for i, v in enumerate(rows[k][:6], start=1):
-                ws.cell(r, i, v)
+                xlsafe.as_text(ws.cell(r, i, v))
         ws.cell(r, 7, f"=ROUND(N(D{r})*N(E{r})*N(F{r}),2)")
         for i in range(1, 8):
             c = ws.cell(r, i)

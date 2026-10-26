@@ -15,7 +15,7 @@ import json
 import re
 
 from . import accounting as acc
-from . import countries
+from . import countries, xlsafe
 from .db import SUBTYPES, to_major
 from .interchange import FIRST_DATA_ROW, HEADER_ROW, POSTING_SHEETS, ROLE, SHEET_BY_NAME, SHEETS, export_data, input_cols
 
@@ -271,6 +271,8 @@ def build_workbook(db, template=False, data=None, hide=None, lang="en", extend=N
                 elif c["kind"] in ("acct", "bu", "text", "tax"):
                     v = str(v)
                 cell.value = v
+                if isinstance(v, str):
+                    xlsafe.as_text(cell)
                 cell.font = F(size=10, color=BLUE)
                 if c["kind"] == "date":
                     cell.number_format = DATE

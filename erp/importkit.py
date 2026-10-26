@@ -19,7 +19,7 @@ import difflib
 import io
 import re
 
-from . import accounting as acc
+from . import accounting as acc, xlsafe
 from .interchange import FIRST_DATA_ROW, HEADER_ROW, SHEET_BY_NAME, SHEETS, _cell, header_map, input_cols
 
 # which screen a sheet belongs to (permission to import = permission to add there)
@@ -246,10 +246,13 @@ def template_csv(name, rows=None):
 # ------------------------------------------------------------------- reading
 def _tables(raw, filename=""):
     """[(sheet title, rows)] from an Excel or CSV file."""
-    name = (filename or "").lower()
-    if raw[:2] == b"PK" or name.endswith((".xlsx", ".xlsm")):
+    if raw[:2] == b"PK":                     # by what the file is, not its name: a CSV renamed .xlsx is still read
+        import zipfile
         import openpyxl
-        wb = openpyxl.load_workbook(io.BytesIO(raw), data_only=True, read_only=True)
+        try:
+            wb = openpyxl.load_workbook(io.BytesIO(raw), data_only=True, read_only=True)
+        except (zipfile.BadZipFile, KeyError, ValueError, OSError):
+            raise acc.ValidationError(xlsafe.NOT_XLSX) from None
         out = []
         for ws in wb.worksheets:
             if ws.sheet_state != "visible" and len(wb.worksheets) > 1:
@@ -257,15 +260,12 @@ def _tables(raw, filename=""):
             rows = [list(r) for r in ws.iter_rows(values_only=True)]
             out.append((ws.title, rows))
         return out
-    for enc in ("utf-8-sig", "cp1256", "latin-1"):
-        try:
-            text = raw.decode(enc)
-            break
-        except UnicodeDecodeError:
-            continue
+    if raw[:4] == b"\xd0\xcf\x11\xe0":           # the old Excel format (.xls)
+        raise acc.ValidationError("This is an old Excel file (.xls). Open it in Excel, save it as .xlsx, and choose it again.")
+    text = xlsafe.decode_text(raw)
     sample = text[:4000]
     delim = "\t" if "\t" in sample else (";" if sample.count(";") > sample.count(",") else ",")
-    return [("CSV", [r for r in csv.reader(io.StringIO(text), delimiter=delim)])]
+    return [("CSV", [[xlsafe.csv_in(v) for v in r] for r in csv.reader(io.StringIO(text), delimiter=delim)])]
 
 
 def _guess(cols, headers):
@@ -362,6 +362,8 @@ def read(db, name, raw, filename="", mapping=None, table=None, header_row=None):
         raise acc.ValidationError("Match a column of your file to: " + ", ".join(missing))
     keys = {c["key"]: c for c in s["cols"]}
     rows = next(r for t, r in _tables(raw, filename) if t == a["table"])
+    from .workbook import EXAMPLES
+    example = {k: str(_cell(v, keys[k])) for k, v in EXAMPLES.get(s["name"], {}).items() if k in keys and v not in ("", None)}
     out, nums = [], []
     for n, raw_row in enumerate(rows[a["header_row"] + 1:], start=a["header_row"] + 2):
         row = {}
@@ -373,6 +375,9 @@ def read(db, name, raw, filename="", mapping=None, table=None, header_row=None):
                     if keys[k]["kind"] in ("num", "money", "pct") and re.fullmatch(r"\s*\(?[\d,]+(\.\d+)?\)?\s*", v):
                         v = ("-" if "(" in v else "") + v.strip(" ()").replace(",", "")
                 row[k] = _cell(v, keys[k])
+        if example and all(str(row.get(k, "")) == v for k, v in example.items() if k in m.values()) \
+                and any(k in m.values() for k in example):
+            continue            # the template's own example row (the CSV template has it under the headings): never imported
         if any(v not in ("", None) for v in row.values()):
             out.append(row)
             nums.append(n)

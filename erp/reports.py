@@ -11,7 +11,7 @@ import html
 import io
 import zipfile
 
-from . import accounting as acc
+from . import accounting as acc, xlsafe
 
 # ----------------------------------------------------------------- i18n labels
 T = {
@@ -1234,6 +1234,7 @@ def to_xlsx(table, company=""):
     ws.sheet_properties.pageSetUpPr.fitToPage = True
     ws.page_setup.fitToHeight = 0
     buf = io.BytesIO()
+    xlsafe.no_formulas(wb)
     wb.save(buf)
     return buf.getvalue()
 

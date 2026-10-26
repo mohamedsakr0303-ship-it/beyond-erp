@@ -22,7 +22,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from . import accounting as acc
+from . import accounting as acc, xlsafe
 
 ENDPOINTS = {
     "preprod": ("https://id.preprod.eta.gov.eg", "https://api.preprod.invoicing.eta.gov.eg"),
@@ -339,5 +339,6 @@ def batch_xlsx(db, extract_ids):
         for col in ws.columns:
             ws.column_dimensions[col[0].column_letter].width = min(max(len(str(c.value or "")) for c in col) + 2, 60)
     buf = io.BytesIO()
+    xlsafe.no_formulas(wb)
     wb.save(buf)
     return buf.getvalue()

@@ -15,7 +15,7 @@ import json
 import re
 
 from . import accounting as acc
-from . import bankrec, custody, loans, payroll, recurring, rentals, sales
+from . import bankrec, custody, loans, payroll, recurring, rentals, sales, xlsafe
 from .db import ETA_SECRETS, SUBTYPES, to_major, to_minor
 
 FORMAT = "beyond-erp"
@@ -857,7 +857,11 @@ def read_xlsx(path):
         import openpyxl
     except ImportError:
         raise acc.ValidationError("Excel import needs openpyxl:  python -m pip install openpyxl") from None
-    wb = openpyxl.load_workbook(str(path), data_only=True, read_only=True)
+    import zipfile
+    try:
+        wb = openpyxl.load_workbook(str(path), data_only=True, read_only=True)
+    except (zipfile.BadZipFile, KeyError, ValueError, OSError):
+        raise acc.ValidationError(xlsafe.NOT_XLSX) from None
     data = {}
     by_ar = {s["ar"]: s for s in SHEETS}
     for ws in wb.worksheets:
@@ -893,8 +897,8 @@ def read_csv(sheet_name, content: bytes):
     sheet = SHEET_BY_NAME.get(sheet_name)
     if not sheet:
         raise acc.ValidationError(f"Unknown sheet {sheet_name!r}")
-    textc = content.decode("utf-8-sig", errors="replace")
-    rows = list(csv.reader(io.StringIO(textc)))
+    textc = xlsafe.decode_text(content)
+    rows = [[xlsafe.csv_in(v) for v in r] for r in csv.reader(io.StringIO(textc))]
     if not rows:
         return {sheet_name: []}
     return {sheet_name: rows_from_table(sheet, rows[0], rows[1:])}
@@ -1666,7 +1670,7 @@ def to_csv(db, sheet_name, template=False):
     w.writerow([f"{c['en']} / {c['ar']}" for c in cols])
     if not template:
         for r in export_data(db)[sheet_name]:
-            w.writerow([r.get(c["key"], "") for c in cols])
+            w.writerow([xlsafe.csv_out(r.get(c["key"], "")) for c in cols])
     return ("﻿" + buf.getvalue()).encode("utf-8")
 
 
