@@ -20,7 +20,7 @@ from .accounting import ValidationError
 
 # money and company-wide views a project-limited person never opens
 COMPANY_WIDE = re.compile(r"^/api/(?:cash-accounts|assets-overview|bank(?:-statements(?:/.*)?)?|tax/summary|cash-forecast|forecast(?:/.*)?"
-                          r"|year-end(?:/.*)?|partners|equity/.*|loans(?:/.*)?|payroll/runs(?:/.*)?|export/(?:json|workbook|csv)|backup"
+                          r"|year-end(?:/.*)?|partners|equity/.*|funding-schedule|loans(?:/.*)?|payroll/runs(?:/.*)?|export/(?:json|workbook|csv)|backup"
                           r"|depreciation-history|budgets)$")
 # reports that run for one project
 PROJECT_REPORTS = {"income_statement", "balance_sheet", "cash_flow", "trial_balance", "general_ledger", "bu_pnl", "materials_used",

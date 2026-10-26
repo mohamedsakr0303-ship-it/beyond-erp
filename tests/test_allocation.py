@@ -258,6 +258,26 @@ class RateCaptureAndFlags(unittest.TestCase):
         self.assertIn("Funding room left is 700.00", hits[0]["text"])
         self.assertEqual(list(automations._t_cash_low(db, {"below": 500})), [])
 
+    def test_funding_repayment_schedule(self):
+        """His share of each client payment so far, then month by month: customers' balance first, rent until each
+        contract's last month, until his money is back."""
+        from erp import fundsched
+        db = books()
+        db.set_setting("funding_partner", "F"); db.set_setting("funding_repay_pct", "0.5")
+        db.x("INSERT INTO partners(name,default_share) VALUES ('F',1)")
+        a.record_journal(db, {"date": "2026-01-02", "memo": "lent", "lines": [{"account": "1020", "debit": 5000}, {"account": "3015", "credit": 5000}]})
+        x = a.save_extract(db, {"bu_code": "P-1", "number": "INV-9", "date": "2026-01-05", "lines": [{"description": "Works", "qty": 1, "price": 3000}]})
+        a.post_extract(db, x)
+        a.record_collection(db, {"bu_code": "P-1", "amount": 2000, "date": "2026-01-10", "received_into": "1020", "credit_account": "1100"})
+        a.record_journal(db, {"date": "2026-01-10", "memo": "his half", "lines": [{"account": "3015", "debit": 1000}, {"account": "1020", "credit": 1000}]})
+        d = fundsched.build(db, "2026-01-15", {"months": 6})
+        self.assertEqual((d["owed"], d["paid"], d["share"], d["repaid"], d["due_now"]), (4000.0, 2000.0, 1000.0, 1000.0, 0.0))
+        self.assertEqual([h["repaid"] for h in d["history"]], [1000.0])
+        self.assertEqual((d["rows"][0]["month"], d["rows"][0]["in"], d["rows"][0]["to_funder"]), ("2026-01", 1000.0, 500.0))   # the 1,000 still owed
+        self.assertEqual((d["left_at_end"], d["repaid_in"]), (3500.0, ""))
+        with self.assertRaises(a.ValidationError):
+            fundsched.clean({"rentals": {"R1": {"last": "July"}}})
+
     def test_cash_below_zero_flag(self):
         """Money paid out before any came in is flagged with the day and the lowest balance, even if cash is positive now."""
         db = books()

@@ -2267,6 +2267,23 @@ def partners(ctx):
     return ok(rep)
 
 
+@route("GET", "/api/funding-schedule")
+def funding_schedule_get(ctx):
+    """The funding partner's repayment schedule: so far, and month by month until his money is back."""
+    if not (ctx.can("partners.equity") or ctx.can("reports.partner_pack")):
+        raise PermissionError()
+    from . import fundsched
+    return ok(fundsched.build(ctx.db, ctx.q.get("date_to")))
+
+
+@route("PUT", "/api/funding-schedule", "partners.equity", "edit")
+def funding_schedule_put(ctx):
+    from . import fundsched
+    ctx.db.set_setting(fundsched.KEY, json.dumps(fundsched.clean(ctx.body), ensure_ascii=False))
+    ctx.log("settings", "funding schedule")
+    return ok(fundsched.build(ctx.db))
+
+
 @route("GET", "/api/stage-shares", "partners.ownership")
 def stage_shares_get(ctx):
     """A project's stages (its phases and the stages its costs are tagged with) and each partner's share of each."""

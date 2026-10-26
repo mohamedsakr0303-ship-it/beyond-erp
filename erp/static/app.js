@@ -292,7 +292,7 @@ const ROUTE_IC = { bills: "repeat", alerts: "bell", deals: "target", "crm-contac
   cash: "wallet", assets: "truck", depreciation: "down", loans: "bank", custody: "coins", partners: "hands", taxcodes: "pct", "report/tax": "chart", extracts: "clip",
   einvoice: "send", journal: "book", approvals: "check", ledger: "bookopen", coa: "tree", bankrec: "compare", recurring: "repeat", budgets: "target",
   "report/partner_pack": "pack", "report/income_statement": "chart", "report/balance_sheet": "layers", "report/cash_flow": "swap",
-  "report/trial_balance": "list", "report/bu_pnl": "pie", "report/profit_categories": "pie", "budget-report": "target", aging: "hour", statement: "file", data: "updown",
+  "report/trial_balance": "list", "report/bu_pnl": "pie", "report/profit_categories": "pie", "funding-schedule": "down", "budget-report": "target", aging: "hour", statement: "file", data: "updown",
   settings: "gear", industry: "store", users: "users", audit: "history",
   projects: "target", tasks: "check", contracts: "pen", variations: "swap", certificates: "clip", "purchase-requests": "list", "stock-counts": "check",
   equipment: "truck", "equipment-usage": "hour", maintenance: "gear", attendance: "users", ereceipts: "receipt",
@@ -5204,6 +5204,47 @@ async function profitCategories(view, q) {
   draw(); view.appendChild(card);
 }
 
+// the funding partner's repayment schedule: his share of each client payment so far, then month by month (erp/fundsched.py)
+PAGES["funding-schedule"] = async (view, parts, q) => {
+  const d = await api("GET", "/api/funding-schedule");
+  const ed = can("partners.equity", "edit"), ar = S.lang === "ar";
+  if (!d.partner) { view.innerHTML = `<div class="card"><div class="empty">${esc(L2("No funding partner is set. Set one under Partners or Settings → Quick setup.", "لم يُحدد شريك ممول. حدده من الشركاء أو الإعدادات ← الإعداد السريع."))}</div></div>`; return; }
+  const share = d.pct != null ? d.pct : null, ym = m => digits(m || "");
+  const label = s => s.key === "receivables" ? L2("Customers owe today", "المستحق على العملاء الآن") : s.key === "installments" ? L2("Customer installments", "أقساط العملاء")
+    : s.key === "cheques" ? L2("Customer cheques", "شيكات العملاء") : s.key === "recurring" ? L2("Recurring receipts", "مقبوضات متكررة") : L2("Rent ", "إيجار ") + s.key.slice(5);
+  const kpi = (l, v, cls = "", sub = "") => kpiBox(l, v, cls, sub);
+  view.innerHTML = `<div class="toolbar"><h1>${t("m_fundsched")}</h1><span class="spacer"></span><button class="btn" data-a="doprint">${t("print")}</button>${exportMenu("funding_schedule", {})}</div>
+    ${share == null ? `<div class="banner warn">${esc(L2("Set the funding partner's share of each client payment in Partners → Distribution policy to see the schedule.", "حدد نصيب الشريك الممول من كل دفعة عميل في الشركاء ← سياسة التوزيع لعرض الجدول."))}</div>` : ""}
+    <div class="kpis">${kpi(L2("Owed to him today", "المستحق له اليوم"), d.owed, "", esc(d.partner))}${kpi(L2("His share of each client payment", "نصيبه من كل دفعة عميل"), share != null ? pct(share) : "—")}
+      ${kpi(L2("Due to him now", "المستحق له الآن"), d.due_now, d.due_now > 0 ? "neg" : "pos", L2(`${money(d.repaid)} repaid of ${money(d.share)}`, `رُد ${money(d.repaid)} من ${money(d.share)}`))}
+      ${kpi(d.repaid_in ? L2("Repaid in full", "يُرد بالكامل في") : L2("Still owed at the end", "المتبقي له في النهاية"), d.repaid_in ? esc(ym(d.repaid_in)) : d.left_at_end, d.repaid_in ? "pos" : "neg",
+        L2(`over ${d.options.months} months`, `خلال ${d.options.months} شهراً`))}</div>
+    <div class="card"><h2>${esc(L2("Money expected in", "التحصيل المتوقع"))}</h2>
+      <p class="muted" style="margin:-4px 0 10px">${esc(L2("What customers owe today, installments, cheques, recurring receipts and each rental contract's monthly rent from its next unbilled month. A contract has no end date of its own: set its last month here, and its rent if it differs from the contract.", "المستحق على العملاء الآن، والأقساط، والشيكات، والمقبوضات المتكررة، والإيجار الشهري لكل عقد تأجير من أول شهر لم يُفوتر. لا يوجد تاريخ انتهاء للعقد: حدد آخر شهر له هنا، وإيجاره إن اختلف عن العقد."))}</p>
+      ${d.contracts.length ? `<div class="tbl"><table><thead><tr><th>${esc(L2("Rental contract", "عقد التأجير"))}</th><th class="num">${esc(L2("Rent in the contract", "الإيجار في العقد"))}</th><th class="num">${esc(L2("Rent to use", "الإيجار المستخدم"))}</th><th>${esc(L2("From", "من"))}</th><th>${esc(L2("Last month", "آخر شهر"))}</th></tr></thead><tbody>
+        ${d.contracts.map(c => `<tr><td><b>${esc(c.code)}</b><div class="lines">${esc(c.client || "")}${c.site ? " · " + esc(c.site) : ""}</div></td><td class="num">${money(c.contract_monthly)}</td>
+          <td class="num"><input type="number" step="any" min="0" class="num" data-fc="${esc(c.code)}" data-k="monthly" value="${c.monthly}" style="width:120px" ${ed ? "" : "disabled"}></td><td>${esc(ym(c.next))}</td>
+          <td><input type="month" data-fc="${esc(c.code)}" data-k="last" value="${esc(c.last || "")}" ${ed ? "" : "disabled"}></td></tr>`).join("")}</tbody></table></div>` : ""}
+      <div class="row" style="gap:8px;flex-wrap:wrap;align-items:flex-end;margin-top:8px">
+        <label class="f" style="max-width:200px">${esc(L2("Months to show", "عدد الأشهر"))}<input id="fsm" type="number" min="6" max="120" value="${d.options.months}" ${ed ? "" : "disabled"}></label>
+        <label class="f" style="max-width:240px">${esc(L2("Months between a bill and its payment", "الأشهر بين الفاتورة وسدادها"))}<input id="fsl" type="number" min="0" max="12" value="${d.options.lag}" ${ed ? "" : "disabled"}></label>
+        ${ed ? `<button class="btn pri" data-a="fssave">${t("save")}</button>` : ""}</div></div>
+    <div class="card"><h2>${esc(L2("Month by month", "شهرياً"))}</h2><div class="tbl"><table><thead><tr><th>${esc(L2("Month", "الشهر"))}</th>${d.streams.map(s => `<th class="num">${esc(label(s))}</th>`).join("")}
+      <th class="num">${esc(L2("Clients pay", "تحصيل العملاء"))}</th><th class="num">${esc(L2("To him", "يُرد له"))}</th><th class="num">${esc(L2("Owed to him after", "المستحق له بعدها"))}</th><th class="num">${esc(L2("Partners' part", "نصيب الشركاء"))}</th></tr></thead><tbody>
+      ${d.rows.map(r => `<tr class="${r.month === d.repaid_in ? "picked" : ""}"><td class="nowrap">${esc(ym(r.month))}</td>${d.streams.map(s => `<td class="num">${r.by[s.key] ? money(r.by[s.key]) : ""}</td>`).join("")}
+        <td class="num">${money(r.in)}</td><td class="num"><b>${money(r.to_funder)}</b></td><td class="num">${money(r.closing)}</td><td class="num">${money(r.partners)}</td></tr>`).join("")}
+      <tr class="total"><td>${t("total")}</td>${d.streams.map(() => "<td></td>").join("")}<td class="num">${money(d.rows.reduce((a, r) => a + r.in, 0))}</td><td class="num">${money(d.total_to_funder)}</td><td class="num">${money(d.left_at_end)}</td><td class="num">${money(d.total_partners)}</td></tr></tbody></table></div></div>
+    <div class="card"><h2>${esc(L2("So far", "ما تم حتى تاريخه"))}</h2><div class="tbl"><table><thead><tr><th>${t("date")}</th><th>${t("description")}</th><th class="num">${esc(L2("Client paid", "دفعة العميل"))}</th><th class="num">${esc(L2("His share", "نصيبه"))}</th><th class="num">${esc(L2("Repaid to him", "رُد له"))}</th><th class="num">${esc(L2("Difference", "الفرق"))}</th></tr></thead><tbody>
+      ${d.history.map(h => `<tr class="click" data-a="openv" data-id="${h.id}"><td>${fd(h.date)}</td><td>${esc(h.memo)}</td><td class="num">${money(h.payment)}</td><td class="num">${money(h.share)}</td><td class="num">${money(h.repaid)}</td><td class="num ${Math.abs(h.share - h.repaid) >= 0.01 ? "neg" : ""}">${money(h.share - h.repaid)}</td></tr>`).join("") || `<tr><td colspan="6" class="muted">${esc(L2("No client payments yet.", "لا توجد دفعات عملاء بعد."))}</td></tr>`}
+      <tr class="total"><td colspan="2">${t("total")}</td><td class="num">${money(d.paid)}</td><td class="num">${money(d.share)}</td><td class="num">${money(d.repaid)}</td><td class="num">${money(d.share - d.repaid)}</td></tr></tbody></table></div>
+      ${d.other_repaid ? `<p class="muted" style="font-size:.85em">${esc(L2(`${money(d.other_repaid)} was also repaid to him on days with no client payment.`, `رُد له أيضاً ${money(d.other_repaid)} في أيام بدون دفعات عملاء.`))}</p>` : ""}</div>`;
+  S.H.doprint = () => openApi("/api/reports/funding_schedule?" + qs({ lang: S.lang, format: "pdf" }), true);
+  S.H.fssave = async () => { const rentals = {};
+    $$("[data-fc]", view).forEach(i => { const r = rentals[i.dataset.fc] || (rentals[i.dataset.fc] = {}); if (i.value !== "") r[i.dataset.k] = i.value; });
+    try { await api("PUT", "/api/funding-schedule", { months: $("#fsm").value, lag: $("#fsl").value, rentals }); toast(t("saved")); route(); } catch (e) { fail(e); } };
+  void ar;
+};
+
 // ------------------------------------------------------------ import/export
 PAGES.data = async (view) => {
   const sheets = S.boot.enums.sheets;
@@ -6509,7 +6550,7 @@ PAGES.partners = async (view, parts, q) => {
         ${kpiBox(L2("Free own cash", "النقدية الذاتية الحرة"), money(dist.free), dist.free < 0 ? "neg" : "pos", L2(`after a ${money(dist.buffer)} buffer`, `بعد احتياطي ${money(dist.buffer)}`))}
         ${kpiBox(L2("Maximum safe to distribute", "الحد الأقصى الآمن للتوزيع"), money(dist.max_safe), dist.max_safe > 0 ? "pos" : "", dist.not_in_cash > 0.005 ? L2(`${money(dist.not_in_cash)} more earned, not in cash yet`, `${money(dist.not_in_cash)} أخرى مكتسبة وغير متاحة نقداً بعد`) : "")}</div>
       <div class="banner ${dist.max_safe > 0 ? "ok" : "err"}" style="margin-top:6px">${esc(dist.verdict)}</div>
-      ${dist.funder_due ? `<p class="muted" style="margin:6px 0 0">${esc(L2(`Funding partner: ${pct(pol.funding_repay_pct)} of ${money(dist.funder_due.client_payments)} paid by clients = ${money(dist.funder_due.share)}; repaid ${money(dist.funder_due.repaid)}; due to him now ${money(dist.funder_due.due)}.`, `الشريك الممول: ${pct(pol.funding_repay_pct)} من ${money(dist.funder_due.client_payments)} دفعها العملاء = ${money(dist.funder_due.share)}؛ تم سداد ${money(dist.funder_due.repaid)}؛ المستحق له الآن ${money(dist.funder_due.due)}.`))}</p>` : ""}
+      ${dist.funder_due ? `<p class="muted" style="margin:6px 0 0">${esc(L2(`Funding partner: ${pct(pol.funding_repay_pct)} of ${money(dist.funder_due.client_payments)} paid by clients = ${money(dist.funder_due.share)}; repaid ${money(dist.funder_due.repaid)}; due to him now ${money(dist.funder_due.due)}.`, `الشريك الممول: ${pct(pol.funding_repay_pct)} من ${money(dist.funder_due.client_payments)} دفعها العملاء = ${money(dist.funder_due.share)}؛ تم سداد ${money(dist.funder_due.repaid)}؛ المستحق له الآن ${money(dist.funder_due.due)}.`))} <a href="#/funding-schedule">${esc(L2("Repayment schedule", "جدول السداد"))}</a></p>` : ""}
       <p class="muted" style="margin:6px 0 0">${t("company_result")}: ${money(d.company_result)}</p>
       <h4 style="margin:14px 0 6px">${L2("Legal reserve (appropriated from profit)", "الاحتياطي القانوني (يُجنَّب من الربح)")}</h4>
       <div class="row" style="gap:8px;flex-wrap:wrap"><label class="f" style="max-width:180px">${L2("% of profit", "% من الربح")}<input id="lrpct" type="number" step="any" min="0" max="100" value="${+(d.legal_reserve_pct * 100).toFixed(2)}" ${ed ? "" : "disabled"}></label>
@@ -11761,7 +11802,7 @@ const TOUR = () => [
   ['[data-g="g_hr"]', L2("Employees and payroll", "الموظفون والرواتب"), L2("Employees, attendance and monthly payroll with statutory tax and social insurance.", "الموظفون والحضور والرواتب الشهرية مع الضرائب والتأمينات القانونية."), "core"],
   ['[data-g="g_assets"]', L2("Assets and treasury", "الأصول والخزينة"), L2("Fixed assets with monthly depreciation, bank accounts and reconciliation.", "الأصول الثابتة والإهلاك الشهري والحسابات البنكية والتسويات."), "investment general development"],
   ['[data-g="g_fin"]', L2("Financing and cash custody", "التمويل والعهد النقدية"), L2("Loans taken and granted with schedules, and employee cash custody.", "القروض المأخوذة والممنوحة بجداولها، والعهد النقدية للموظفين."), "core"],
-  ['[data-g="g_equity"]', L2("Owners' equity", "حقوق الملكية"), L2("Partners, shares, the funding partner (account 3015) and profit appropriation. The distribution policy shows what each partner can be paid now from cash and what is earned but not in cash yet; the funding partner's share of each client payment is held back.", "الشركاء والحصص والشريك الممول (حساب 3015) وتوزيع الأرباح. توضح سياسة التوزيع ما يمكن صرفه لكل شريك الآن من النقدية وما هو مكتسب وغير متاح نقداً بعد، ويُحتجز نصيب الشريك الممول من كل دفعة عميل."), "core"],
+  ['[data-g="g_equity"]', L2("Owners' equity", "حقوق الملكية"), L2("Partners, shares, the funding partner (account 3015) and profit appropriation. The distribution policy shows what each partner can be paid now from cash and what is earned but not in cash yet; the funding partner's share of each client payment is held back, and the funding repayment schedule shows month by month when his money is back.", "الشركاء والحصص والشريك الممول (حساب 3015) وتوزيع الأرباح. توضح سياسة التوزيع ما يمكن صرفه لكل شريك الآن من النقدية وما هو مكتسب وغير متاح نقداً بعد، ويُحتجز نصيب الشريك الممول من كل دفعة عميل، ويوضح جدول سداد التمويل شهرياً متى تُرد أمواله."), "core"],
   ['[data-g="g_tax"]', L2("Tax and e-invoicing", "الضرائب والفاتورة الإلكترونية"), L2("VAT and withholding tax, e-invoices and e-receipts.", "ضريبة القيمة المضافة والخصم من المنبع، والفواتير والإيصالات الإلكترونية."), "core"],
   ['[data-g="g_acc"]', L2("General accounting", "المحاسبة العامة"), L2("Journal and chart of accounts. Select rows to edit, void, approve or delete several at once; find accounts by code or name.", "اليومية ودليل الحسابات. حدد الصفوف لتعديل عدة قيود أو إلغائها أو اعتمادها أو حذفها معاً، وابحث عن الحسابات بالرقم أو الاسم."), "core"],
   ['[data-g="g_rep"]', L2("Reports", "التقارير"), L2("Statements and lists, exportable to PDF, Excel or Word: the partners' report pack, profit by category (what each line of business earned after its own costs), cash forecast and the books checks.", "القوائم والكشوف، قابلة للتصدير بصيغة PDF أو Excel أو Word: حزمة تقارير الشركاء، والربح حسب الفئة (ربح كل نشاط بعد تكاليفه)، وتوقعات النقدية، وفحوصات الدفاتر."), "core"],

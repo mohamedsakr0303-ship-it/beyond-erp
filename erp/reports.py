@@ -1027,6 +1027,9 @@ def build(db, name, p):
     if name == "partner_pack":
         from . import partner_pack
         return partner_pack.table(db, p.get("date_from") or None, p.get("date_to") or None, lang)
+    if name == "funding_schedule":
+        from . import fundsched
+        return fundsched.table(db, p.get("date_to") or None, lang)
     if name == "profit_categories":
         from . import categories
         return categories.table(db, p.get("date_from") or None, p.get("date_to") or None, bu, lang)
@@ -1096,7 +1099,7 @@ def build(db, name, p):
     raise acc.ValidationError(f"Unknown report {name!r}")
 
 
-REPORT_PERMS = {"payroll_register": "payroll.runs", "partner_pack": ("reports.partner_pack", "partners.equity"), "income_statement": "reports.income_statement", "profit_categories": "reports.income_statement", "balance_sheet": "reports.balance_sheet",
+REPORT_PERMS = {"payroll_register": "payroll.runs", "partner_pack": ("reports.partner_pack", "partners.equity"), "funding_schedule": ("partners.equity", "reports.partner_pack"), "income_statement": "reports.income_statement", "profit_categories": "reports.income_statement", "balance_sheet": "reports.balance_sheet",
                 "cash_flow": "reports.cash_flow", "trial_balance": "reports.trial_balance",
                 "general_ledger": "accounting.ledger", "bu_pnl": "business_units.profitability", "project_cash": "business_units.profitability",
                 "payables": "purchasing.payables", "stock": "stock.balances", "receivables": "sales.receivables",
