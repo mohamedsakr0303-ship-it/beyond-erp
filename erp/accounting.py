@@ -1123,6 +1123,17 @@ def fee_rows(fees_json, lines):
     return out
 
 
+def next_in_series(db, prefix):
+    """The next number after a prefix left as it was suggested (INV-2026-10- → INV-2026-10-001, -002 …)."""
+    n = 0
+    for r in db.q("SELECT number FROM extracts WHERE number LIKE ? ESCAPE '\\'",
+                  (prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%",)):
+        tail = r["number"][len(prefix):]
+        if tail.isdigit():
+            n = max(n, int(tail))
+    return f"{prefix}{n + 1:03d}"
+
+
 def save_extract(db, d, extract_id=None):
     bu = bu_id_or_none(db, d.get("bu_id") or d.get("bu_code"), required=True)
     number = text(d.get("number"), "invoice / extract number", required=True)

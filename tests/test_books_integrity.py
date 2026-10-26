@@ -76,5 +76,51 @@ class BooksIntegrity(unittest.TestCase):
                 self.assertAlmostEqual(sum(ag[side]["aging"]), ag[side]["balance"], 2)
 
 
+
+class CustomerStatement(unittest.TestCase):
+    def test_an_invoice_billed_out_of_unbilled_work_shows_on_the_statement(self):
+        """Work booked as done but not invoiced belongs to the business unit; invoicing it moves it to the customer.
+        The statement and the aging show what was invoiced and paid, not the unbilled balance."""
+        db = Database(":memory:")
+        demo.load(db, "t")
+        bu = db.one("SELECT id FROM business_units WHERE code='PRJ-D01'")["id"]
+        unbilled = db.one(f"""SELECT COALESCE(SUM(l.debit-l.credit),0) n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
+                               WHERE {LIVE} AND l.account=? AND e.bu_id=?""", (db.acct("unbilled_revenue"), bu))["n"]
+        self.assertGreater(unbilled, 1000000)          # the demo has work done, not invoiced, on this unit
+        x = acc.save_extract(db, {"bu_id": bu, "number": "INV-T-1", "customer": "Statement Co", "date": acc.today(),
+                                  "lines": [{"description": "Works", "qty": 2, "price": 5000}]})
+        acc.post_extract(db, x, user="t")
+        acc.record_journal(db, {"date": acc.today(), "kind": "Receipt Voucher", "party": "Statement Co", "bu_id": bu,
+                                "lines": [{"account": "1020", "debit": 4000}, {"account": "1100", "credit": 4000}]}, "t")
+        st = statements.statement(db, "Statement Co")
+        self.assertEqual([(r["kind"], r["debit"], r["credit"]) for r in st["rows"]],
+                         [("Sales Invoice", 10000.0, 0.0), ("Receipt Voucher", 0.0, 4000.0)])
+        self.assertEqual(st["closing"], 6000.0)
+        row = next(r for r in statements.aging(db)["rows"] if r["party"] == "Statement Co")
+        self.assertEqual(row["balance"], 6000.0)
+
+
+class SupplierWidget(unittest.TestCase):
+    def test_what_we_owe_suppliers_is_trade_payables_only(self):
+        from types import SimpleNamespace
+        from erp import dashboards
+        db = Database(":memory:")
+        demo.load(db, "t")
+        w = dashboards.w_payables_due(SimpleNamespace(db=db), {"count": 50})
+        payables = -sum(r["net"] for r in acc.account_totals(db, date_to=acc.today()) if r["subtype"] == "payable") / 100
+        self.assertAlmostEqual(w["total"], payables, 2)
+        self.assertNotIn("Demo Bank", [r["title"] for r in w["rows"]])      # a bank loan is not a supplier
+
+
+class InvoiceNumbers(unittest.TestCase):
+    def test_a_suggested_prefix_gets_the_next_number(self):
+        db = Database(":memory:")
+        demo.load(db, "t")
+        self.assertEqual(acc.next_in_series(db, "INV-2030-10-"), "INV-2030-10-001")
+        for n in ("INV-2030-10-007", "INV-2030-10-A", "INV-2030-1%-099"):     # a wildcard in a number is taken literally
+            db.x("INSERT INTO extracts(bu_id, number, date) VALUES (1, ?, '2030-10-01')", (n,))
+        self.assertEqual(acc.next_in_series(db, "INV-2030-10-"), "INV-2030-10-008")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -100,7 +100,9 @@ These checks work from the journal lines alone and compare with the statements. 
 | No account with a balance falls outside a balance-sheet section | Pass |
 | Aging: every contact's balance adds up to the ledger lines that name a contact; buckets add up | Pass |
 
-Note: the aging nets each contact across all their accounts and lists them by sign. Its "receivable" total is therefore not the receivable account balance. This is by design and was not changed. Accruals, unbilled work and loans with no contact stay out of the aging.
+Note: the aging nets each contact across all their accounts and lists them by sign. Its "receivable" total is therefore not the receivable account balance. This is by design and was not changed. Accruals and loans with no contact stay out of the aging.
+
+Found later by the end-to-end journeys (D11): unbilled revenue (work done, not invoiced yet) was counted on the customer's statement and aging. An invoice that bills out earlier unbilled work moves the amount from unbilled revenue to receivables, both under the customer's name, so the statement netted it to zero and showed only the payments, as money owed to the customer. Unbilled revenue belongs to the business unit until it is invoiced, so it is now left out of contact statements and aging. How invoices post was not changed.
 
 No accounting treatment was changed.
 
@@ -117,7 +119,11 @@ No accounting treatment was changed.
 | D7 | Medium | Data | Journal Vouchers import dropped a party typed on a later row of a voucher | Fixed `17872f0` |
 | D8 | Low | Mobile | Field zoom on iPhone/iPad in landscape and in the chat box | Fixed `17872f0` |
 | D9 | Low | Language | Account menu showed the theme value "dark" in English in Arabic | Fixed (this commit) |
-| D10 | Low | Privacy | Real client and company names in one document and one test | Fixed (this commit); still in earlier commits (see 11) |
+| D10 | Low | Privacy | Real client and company names in one document and one test | Fixed `fc0d74b`; still in earlier commits (see 11) |
+| D11 | High | Finance | Customer statement and aging hid invoices billed out of unbilled work, and showed the customer's payments as money we owe them | Fixed, verified by a journey and a unit test |
+| D12 | Medium | Sales | An invoice saved with the suggested number left as is ("INV-2026-10-"); a second one that month was refused as a duplicate | Fixed: the screen's prefix is completed to the next number (INV-2026-10-001); imports keep numbers as given |
+| D13 | Medium | Dashboard | "What we owe suppliers" listed bank loans, partner loans and customer advances (10.7 million against 378 thousand of trade payables); the "customers owing money" automation also watched staff advances and loans | Fixed: trade payables and customer receivables only |
+| D14 | Low | Navigation | Moving between two screens quickly left an unhandled error from the page transition | Fixed |
 
 Checked and not defects:
 
@@ -127,9 +133,22 @@ Checked and not defects:
 
 ## 8. Automated testing
 
-- Full suite: 273 tests, all passed, 1 skipped (about 10 minutes). CI runs it on every push.
-- New: `test_interchange_matrix.py` (12 tests) and `test_books_integrity.py` (4 tests).
-- Browser sweeps (menu, pages, forms, Arabic) were run with Playwright against a local demo server. They are not part of CI yet; see section 11.
+- Full suite: 275 tests, all passed, 1 skipped (about 10 minutes). CI runs it on every push.
+- New: `test_interchange_matrix.py` (12 tests) and `test_books_integrity.py` (7 tests).
+- End-to-end journeys (`tests/e2e/run.js`, a new `e2e` CI job). Each one goes through the screens in a real browser on fresh demo books and checks the result in the database itself:
+
+| Journey | What is checked |
+|---|---|
+| Purchase request → approval → two supplier quotes → order to the lowest → part and final delivery → payment | Request status; order goes to the lowest price; supplier owed 5,700 then 9,500 then 0; Save pressed twice makes one payment; supplier statement |
+| Invoice → part receipt → balance owed | Invoice number completed; a second invoice gets the next number; customer owes 10,000 then 6,000; statement shows both and "they owe us" |
+| Goods receipt → transfer → issue to a project | Quantities 70 and 20 per store; average cost 50.00; supplier paid in full |
+| Project budget → actual cost → budget vs actual | Annual total spread over the months; budget saved; actual moves by the cost; every report column for the account |
+| Half-filled form left for another screen | Draft listed, continued with its values, saved once, then removed from the list |
+| Sales-only user | No purchasing, payments, users or accounts in the menu; purchasing address refused on screen and by the server; refresh keeps the screen |
+| Phone turned sideways mid-form | Values kept; Save reachable; saved |
+| After all journeys | Every posted entry balances |
+
+- Browser sweeps (menu, every page, every form, Arabic) were run with Playwright against a local demo server and are not in CI yet.
 
 ## 9. Security and dependencies
 
@@ -138,7 +157,7 @@ Checked and not defects:
   - the cloud settings need an administrator
   - bulk actions check each record as if done by hand
 - No keys, tokens or private keys in the repository; Supabase keys appear only as placeholders.
-- Dependencies: `openpyxl`, `anthropic`; no new dependency was added.
+- Dependencies: `openpyxl`, `anthropic`. CI only: Playwright 1.63.0 (Microsoft, Apache-2.0), pinned, for the end-to-end job; nothing is added to the app.
 - Formula injection closed (D3).
 
 ## 10. Data impact
@@ -147,12 +166,15 @@ Checked and not defects:
 - CSV exports put an apostrophe before text that starts with = + - @. Excel shows the text as typed; both importers remove the apostrophe.
 - A journal voucher file with a different party on a later row now gives that line the party. Totals don't change; contact statements and aging do. Files exported by the app are unaffected.
 - A CSV row identical to the template's example is skipped.
+- Contact statements and aging no longer include unbilled revenue. Balances shown per customer change where invoices billed out unbilled work; the ledger and every financial statement are unchanged.
+- Invoices already saved with a number ending in "-" keep it; only new ones from the screen are completed.
 
 ## 11. Outstanding work
 
 - Earlier commits still contain the real names removed in D10. Removing them means rewriting the public history, which needs the owner's decision.
-- Add the browser sweeps (menu, every page, every form, both languages) to CI.
-- End-to-end journeys through the screens: quote → invoice → receipt → statement, and purchase request → order → receipt → payment. Today these are covered at the API level only.
+- Add the page and form sweeps (both languages) to CI, next to the journeys.
+- The `e2e` CI job does not yet block a deploy; make it required once it has run reliably for a while.
+- More journeys: returns and credit notes, cancellations and reversals, partial payments with VAT and withholding, rentals, payroll.
 - An accessibility pass: contrast, keyboard order and screen-reader labels.
 - The full test suite takes about 10 minutes.
 

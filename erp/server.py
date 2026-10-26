@@ -2047,7 +2047,11 @@ def extract_one(ctx, xid):
 
 @route("POST", "/api/extracts", "sales.invoices", "add")
 def extract_add(ctx):
-    xid = acc.save_extract(ctx.db, ctx.body)
+    body = dict(ctx.body)
+    number = acc.text(body.get("number"))
+    if number.endswith("-"):           # the suggested prefix left as it was: the next number in that series
+        body["number"] = acc.next_in_series(ctx.db, number)
+    xid = acc.save_extract(ctx.db, body)
     if ctx.body.get("post"):
         acc.post_extract(ctx.db, xid, user=ctx.user["username"])
     return ok({"id": xid})

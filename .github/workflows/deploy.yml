@@ -52,6 +52,29 @@ jobs:
       - run: pip install -r requirements.txt
       - run: python -m unittest discover tests
 
+  # Business journeys through the screens in a real browser (tests/e2e/run.js): purchasing, sales, stock, budget, drafts,
+  # permissions and a phone turned sideways. Runs beside the tests; it does not hold back the deploy.
+  e2e:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: Install the browser (Playwright, pinned)
+        run: |
+          npm install --no-save --no-package-lock playwright@1.63.0
+          npx playwright install --with-deps chromium
+      - run: node tests/e2e/run.js
+      - name: Keep the screenshots of failed steps
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-screenshots
+          path: tests/e2e/out/
+          retention-days: 7
+
   database:
     needs: test
     runs-on: ubuntu-24.04

@@ -29,7 +29,7 @@ def _t_receivable_overdue(db, p):
     from . import statements
     n = int(p.get("days") or 30)
     min_amt = float(p.get("min_amount") or 0)
-    d = statements.aging(db, side="receivable")
+    d = statements.aging(db, side="receivable", subtypes=("receivable",))     # customers: not staff advances or loans
     starts = [b[0] for b in statements.BUCKETS]
     for r in d["rows"]:
         old = sum(v for v, s in zip(r["aging"], starts) if s >= n)

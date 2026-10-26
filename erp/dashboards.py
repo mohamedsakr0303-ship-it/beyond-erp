@@ -368,7 +368,7 @@ def w_receivables_top(c, o):
 
 def w_payables_due(c, o):
     from . import statements
-    ag = statements.aging(c.db, side="payable")
+    ag = statements.aging(c.db, side="payable", subtypes=("payable",))    # suppliers and subcontractors, not loans or advances
     rows = [r for r in ag["rows"] if r["balance"] < 0][: int(o.get("count") or 8)]
     return {"total": -ag["payable"]["balance"], "rows": [{"title": r["party"], "sub": r["last"], "value": -r["balance"],
                                                           "href": "#/statement?" + _q(r["party"]),

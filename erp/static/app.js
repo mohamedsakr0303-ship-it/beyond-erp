@@ -677,7 +677,8 @@ async function route() {
   if (nav && document.startViewTransition && !calm() && !document.hidden) {
     host.classList.add("vt");
     try { const vt = document.startViewTransition(() => Promise.race([show(), new Promise(r => setTimeout(r, 250))]));
-      vt.finished.finally(() => host.classList.remove("vt")); } catch { host.classList.remove("vt"); }
+      // a quick second move skips this one: its promises then reject, which is expected, not an error
+      vt.ready.catch(() => {}); vt.finished.catch(() => {}).finally(() => host.classList.remove("vt")); } catch { host.classList.remove("vt"); }
     setTimeout(show, 400);                             // never wait on a transition the browser skipped
     await new Promise(r => { const k = () => (draw ? r() : setTimeout(k, 16)); k(); });
   }

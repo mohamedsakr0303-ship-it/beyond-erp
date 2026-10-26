@@ -23,3 +23,5 @@ erp/workspace_preset.json
 dist-online/
 build-online/
 beyond-erp-web.zip
+node_modules/
+tests/e2e/out/

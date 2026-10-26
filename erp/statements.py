@@ -6,11 +6,12 @@ import datetime as _dt
 from . import accounting as acc
 from .db import to_major
 
-# accounts that carry money owed by / to a contact; taxes are owed to the tax authority, not to the contact
+# accounts that carry money owed by / to a contact; taxes are owed to the tax authority, not to the contact, and work done
+# but not invoiced yet (unbilled revenue) belongs to the business unit: the customer owes it only once it is invoiced
 SUBTYPES = ("receivable", "payable", "accrued", "deferred_revenue", "prepaid", "other_current_asset",
             "other_current_liability", "short_term_debt", "long_term_debt", "other_noncurrent_liability",
             "other_noncurrent_asset")
-NOT_ROLES = ("vat_input", "vat_output", "wht_receivable", "wht_payable", "stamp_tax")
+NOT_ROLES = ("vat_input", "vat_output", "wht_receivable", "wht_payable", "stamp_tax", "unbilled_revenue")
 BUCKETS = [(0, 30, "0–30", "0–30 يوم"), (31, 60, "31–60", "31–60 يوم"), (61, 90, "61–90", "61–90 يوم"),
            (91, 180, "91–180", "91–180 يوم"), (181, None, "180+", "أكثر من 180 يوم")]
 
@@ -19,18 +20,18 @@ BUCKETS = [(0, 30, "0–30", "0–30 يوم"), (31, 60, "31–60", "31–60 يو
 PARTNER_SUBTYPES = ("capital", "partner_current", "drawings", "dividends_payable")
 
 
-def accounts(db, partner=False):
-    subs = SUBTYPES + (PARTNER_SUBTYPES if partner else ())
+def accounts(db, partner=False, subtypes=None):
+    subs = tuple(subtypes) if subtypes else SUBTYPES + (PARTNER_SUBTYPES if partner else ())
     marks = ",".join("?" * len(subs))
     nots = ",".join("?" * len(NOT_ROLES))
     return [r["code"] for r in db.q(f"SELECT code FROM accounts WHERE subtype IN ({marks}) AND COALESCE(role,'') NOT IN ({nots})",
                                     subs + NOT_ROLES)]
 
 
-def _lines(db, party=None, date_to=None):
+def _lines(db, party=None, date_to=None, subtypes=None):
     # a single contact's statement also shows a partner's capital, current account and drawings; aging (everyone at
     # once) stays on what customers and suppliers owe
-    codes = accounts(db, partner=party is not None)
+    codes = accounts(db, partner=party is not None, subtypes=subtypes)
     if not codes:
         return []
     w, p = [acc.LIVE, f"l.account IN ({','.join('?' * len(codes))})", f"{acc.PARTY}<>''"], list(codes)
@@ -132,11 +133,12 @@ def statement(db, party, date_from=None, date_to=None):
             "balances": balances, "aging": aging, "later": later(db, date_to, party), "buckets": [b[2] for b in BUCKETS], "buckets_ar": [b[3] for b in BUCKETS]}
 
 
-def aging(db, date_to=None, side="all"):
-    """Every contact's open balance by age. side: 'receivable' (they owe us), 'payable' (we owe them) or 'all'."""
+def aging(db, date_to=None, side="all", subtypes=None):
+    """Every contact's open balance by age. side: 'receivable' (they owe us), 'payable' (we owe them) or 'all'.
+    subtypes: only these kinds of account (e.g. trade payables), instead of everything owed by or to a contact."""
     date_to = acc.clean_date(date_to) if date_to else acc.today()
     groups = {}
-    for r in _lines(db, None, date_to):
+    for r in _lines(db, None, date_to, subtypes):
         groups.setdefault(r["party"], []).append(r)
     out = []
     for party, lines in groups.items():
