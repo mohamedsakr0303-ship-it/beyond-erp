@@ -152,7 +152,14 @@ const fail = e => { noteErr(e.message || String(e)); toast(e.message || String(e
 // In-app dialogs in the app's own look (never the browser's pop-ups):
 //   await uiConfirm(msg) → true / false · await uiPrompt(msg, value) → text or null · await uiAlert(msg)
 // options: ok / cancel (button labels, cancel: false = no cancel button), danger (red OK button), title
+// a panel or dialog opening: the dropdowns and the phone side menu it may have come from close first, however it was
+// opened (the guided tour keeps the side menu open on purpose)
+function closeMenus() {
+  $$(".dd.open").forEach(d => d.classList.remove("open"));
+  const app = $(".app"); if (app && !$(".tour-card")) app.classList.remove("menu");
+}
 function uiDialog(msg, o = {}) {
+  closeMenus();
   return new Promise(resolve => {
     const prev = document.activeElement, input = o.input != null;
     const danger = o.danger != null ? o.danger : /\b(delete|erase|remove|discard|cannot be undone|replaces?)\b|حذف|مسح|استبدال|لا يمكن التراجع/i.test(msg);
@@ -1612,7 +1619,7 @@ function renderFirstJoin() {
 const BACK_ICON = `<svg class="flip" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>`;
 let drawerEntry = null;
 function drawer(title, html, onSubmit, opts = {}) {
-  closeDrawer(true);
+  closeDrawer(true); closeMenus();
   if (!drawerEntry) { drawerEntry = location.hash; try { history.pushState({ berpDrawer: 1 }, ""); } catch { drawerEntry = null; } }
   const bg = document.createElement("div");
   bg.className = "drawer-bg";
@@ -12684,8 +12691,7 @@ document.addEventListener("contextmenu", e => {
   });
   document.addEventListener("dragstart", e => { if (e.target.closest && e.target.closest("#nav")) e.preventDefault(); });   // not the browser's own link dragging
   document.addEventListener("pointercancel", end);
-  const STAY_OPEN = new Set(["grp", "menu", "bellign", "bellignall"]);
-document.addEventListener("keydown", e => { if (e.key === "Escape") end(); });
+  document.addEventListener("keydown", e => { if (e.key === "Escape") end(); });
   window.__dndActive = () => !!drag;
 }
 // ---- "⚙ Customise form": the same field changes as the right-click menu, as visible buttons on every field
