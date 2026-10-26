@@ -3255,15 +3255,15 @@ class RentalsLanguageAssets(unittest.TestCase):
     def books(self):
         db = Database(":memory:")
         interchange.import_data(db, {
-            "Business Units": [{"code": "RNT-1", "name": "Building 3", "client": "Swag"}],
+            "Business Units": [{"code": "RNT-1", "name": "Building 3", "client": "Client Co"}],
             "Rental Equipment": [{"code": "FR", "name": "Frame", "category": "scaffolding", "unit": "piece", "monthly_rate": 94.5,
                                   "std_cost": 1000, "opening_qty": 200, "opening_unit_cost": 1000, "opening_date": "2026-07-01"}],
             "Rental Contracts": [
-                {"ref": "RC-1", "client": "Swag", "site": "Building 3", "quote_date": "2026-07-25", "start_date": "2026-08-01",
+                {"ref": "RC-1", "client": "Client Co", "site": "Building 3", "quote_date": "2026-07-25", "start_date": "2026-08-01",
                  "duration_months": 12, "line_kind": "item", "item": "FR", "qty": 200, "rate": 94.5, "po_number": "EXT-1",
-                 "signed_client": "Swag", "signed_us": "Rawasi", "bu_code": "RNT-1", "delivered_on": "2026-08-01", "invoiced_to": "2026-10-31"},
-                {"ref": "RC-1", "client": "Swag", "line_kind": "charge", "charge_type": "install", "qty": 1, "rate": 38250, "cost": 27702}],
-            "Sales Invoices": [{"number": "EXT-1", "date": "2026-09-30", "bu_code": "RNT-1", "status": "Posted", "customer": "Swag"}],
+                 "signed_client": "Client Co", "signed_us": "Our Co", "bu_code": "RNT-1", "delivered_on": "2026-08-01", "invoiced_to": "2026-10-31"},
+                {"ref": "RC-1", "client": "Client Co", "line_kind": "charge", "charge_type": "install", "qty": 1, "rate": 38250, "cost": 27702}],
+            "Sales Invoices": [{"number": "EXT-1", "date": "2026-09-30", "bu_code": "RNT-1", "status": "Posted", "customer": "Client Co"}],
             "Invoice Lines": [{"number": "EXT-1", "description": "Rent Aug-Oct", "qty": 600, "price": 94.5}],
         })
         return db
@@ -3441,7 +3441,7 @@ class Extracts(unittest.TestCase):
         self.db = RentalsLanguageAssets().books()      # rental RC-1 on RNT-1, extract EXT-1 (600 × 94.50) issued up to 31/10
         db = self.db
         db.x("INSERT INTO business_units(code,name) VALUES ('B9','Building 9')")
-        self.xid = a.save_extract(db, {"number": "XT-1", "date": "2026-09-30", "bu_code": "B9", "customer": "Swag", "prev_paid": 65000,
+        self.xid = a.save_extract(db, {"number": "XT-1", "date": "2026-09-30", "bu_code": "B9", "customer": "Client Co", "prev_paid": 65000,
                                        "seq_no": 1, "project": "اجورا", "work": "عمارة 9",
                                        "lines": [{"description": "تركيب و الفك", "qty": 1, "price": 38250},
                                                  {"description": "ايجار", "qty": 200, "price": 94.5, "pct": "50%"}]})

@@ -45,14 +45,14 @@ The calculator multiplies count × width × height × depth, where a blank dimen
 These practices are already in the app:
 
 - Stock is tracked by where it is: the yard or each contract's site. It moves through signed delivery and return handovers, and the return count records good, damaged and lost pieces.
-- Lost and damaged pieces are charged from a price list. In Rawasi's handover form that price is the purchase price + 15%.
+- Lost and damaged pieces are charged from a price list. In a typical scaffolding handover form that price is the purchase price + 15%.
 - Rent is billed per period with a minimum.
 - Installation, dismantling and transport are separate services, each with its own client price and its own cost.
 - Pieces are bought as purchase lots, so cost and depreciation are tracked.
 
 New in this release:
 
-- **Rent as a percentage of cost** and **months to pay a piece back**, on the fleet screen and report. In Rawasi's Building Calculator, a target payback (months) can set the rent.
+- **Rent as a percentage of cost** and **months to pay a piece back**, on the fleet screen and report. In a building calculator, a target payback (months) can set the rent.
 - **Utilisation** (pieces out ÷ pieces owned), shown per piece and for the whole fleet.
 
 ## Business-type templates
