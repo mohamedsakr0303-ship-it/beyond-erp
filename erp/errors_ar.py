@@ -1064,4 +1064,6 @@ FIELDS = {
     'weight': 'الوزن',
     'what to do': 'الإجراء المطلوب',
     'worker name': 'اسم العامل',
+    'Replace ACCOUNT_ID in the address with your Cloudflare Account ID (Workers AI → Use REST API)':
+        'استبدل ACCOUNT_ID في العنوان بمعرّف حساب Cloudflare (Workers AI ← Use REST API)',
 }

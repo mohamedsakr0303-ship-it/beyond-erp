@@ -46,6 +46,10 @@ PROVIDERS = [
     {"id": "groq", "label": "Groq", "base_url": "https://api.groq.com/openai/v1", "model": ""},
     {"id": "openrouter", "label": "OpenRouter (hundreds of models)", "base_url": "https://openrouter.ai/api/v1", "model": "provider/model"},
     {"id": "together", "label": "Together AI", "base_url": "https://api.together.xyz/v1", "model": ""},
+    {"id": "cloudflare", "label": "Cloudflare Workers AI", "base_url": "https://api.cloudflare.com/client/v4/accounts/ACCOUNT_ID/ai/v1",
+     "model": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+     "help": "Replace ACCOUNT_ID with the Account ID shown in Cloudflare → Workers AI → Use REST API, where “Create a Workers AI API Token” makes the key.",
+     "help_ar": "استبدل ACCOUNT_ID بمعرّف الحساب الظاهر في Cloudflare ← Workers AI ← Use REST API، ومن هناك ينشئ «Create a Workers AI API Token» المفتاح."},
     {"id": "ollama", "label": "Ollama (local, on this computer)", "base_url": "http://localhost:11434/v1", "model": "llama3.1"},
     {"id": "lmstudio", "label": "LM Studio (local)", "base_url": "http://localhost:1234/v1", "model": ""},
     {"id": "custom", "label": "Other — any OpenAI-compatible address", "base_url": "", "model": ""},
@@ -132,6 +136,15 @@ def save_policy(db, user, d):
     else:
         if "base_url" in d:
             u = acc.text(d["base_url"]).rstrip("/")
+            u = re.sub(r"/(chat/)?completions$", "", u)          # the full endpoint pasted: the app adds that part itself
+            # Cloudflare's per-model address (…/ai/run/@cf/vendor/model): its OpenAI-compatible address, and that model
+            cf = re.match(r"^(https://api\.cloudflare\.com/client/v4/accounts/[\w-]+/ai)/run/(@[\w.\-/]+)$", u)
+            if cf:
+                u = cf.group(1) + "/v1"
+                if not acc.text(d.get("model")):
+                    d = {**d, "model": cf.group(2)}
+            if "/accounts/ACCOUNT_ID/" in u:
+                raise AIError("Replace ACCOUNT_ID in the address with your Cloudflare Account ID (Workers AI → Use REST API)")
             if not re.match(r"^https?://[\w.\-]+(:\d+)?(/[\w.\-~%/]*)?$", u) or len(u) > 300:
                 raise AIError("Enter the provider's address, e.g. https://api.openai.com/v1")
             p["base_url"] = u

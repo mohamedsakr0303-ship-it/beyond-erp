@@ -11120,7 +11120,7 @@ async function aiSettingsTab(view, head) {
       { k: "provider", l: L2("AI provider", "مزوّد الذكاء الاصطناعي"), type: "select", opts: (r.providers || []).map(x => [x.id, x.label]), v: p.provider, change: "aiprov" },
       { html: `<label class="f" id="aimodelsel">${esc(L2("Model", "النموذج"))}<select name="model_claude">${r.models.map(([v, l]) => `<option value="${esc(v)}" ${p.model === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
         <label class="f" id="aimodeltxt">${esc(L2("Model name (as specified by the provider)", "اسم النموذج (كما يحدده المزوّد)"))}<input name="model_other" value="${esc(p.provider === "anthropic" ? "" : p.model)}" autocomplete="off"></label>` },
-      { html: `<label class="f" id="aibase">${esc(L2("Provider address (OpenAI-compatible)", "عنوان المزوّد (متوافق مع OpenAI)"))}<input name="base_url" value="${esc(p.base_url || "")}" placeholder="https://…/v1" autocomplete="off"></label>`, span: "span2" },
+      { html: `<label class="f" id="aibase">${esc(L2("Provider address (OpenAI-compatible)", "عنوان المزوّد (متوافق مع OpenAI)"))}<input name="base_url" value="${esc(p.base_url || "")}" placeholder="https://…/v1" autocomplete="off"><small class="muted" id="aibasehint" hidden></small></label>`, span: "span2" },
       { k: "effort", l: L2("Reasoning depth", "عمق التحليل"), type: "select", opts: [["low", L2("Quick", "سريع")], ["medium", L2("Balanced", "متوازن")], ["high", L2("Thorough", "معمّق")]], v: p.effort },
       { k: "write", l: L2("Data changes", "تعديل البيانات"), type: "select", opts: [["off", L2("Never (read and advise only)", "مطلقاً (قراءة واستشارة فقط)")], ["confirm", L2("Validate each change; the user reviews and approves it", "فحص كل تعديل ثم يراجعه المستخدم ويعتمده")],
         ["batch", L2("Validate all changes in a request together, show the result, then the user approves them at once", "فحص جميع تعديلات الطلب معاً وعرض النتيجة، ثم يعتمدها المستخدم دفعة واحدة")],
@@ -11164,7 +11164,9 @@ async function aiSettingsTab(view, head) {
     const id = $("#aiform [name=provider]").value, pr = provs.find(x => x.id === id) || {}, claude = id === "anthropic";
     $("#aimodelsel").hidden = !claude; $("#aimodeltxt").hidden = claude; $("#aibase").hidden = claude;
     $("#aiform [name=effort]").closest("label").hidden = !claude;
-    if (fill && !claude) { $("#aiform [name=base_url]").value = pr.base_url || ""; $("#aiform [name=model_other]").placeholder = pr.model || ""; }
+    if (fill && !claude) { $("#aiform [name=base_url]").value = pr.base_url || ""; const mo = $("#aiform [name=model_other]"); mo.placeholder = pr.model || "";
+      if (pr.model && !/…|^provider\/model$/.test(pr.model)) mo.value = pr.model; }       // a real model name: filled in, not only shown
+    const hint = $("#aibasehint"); if (hint) { hint.textContent = (S.lang === "ar" ? pr.help_ar : pr.help) || ""; hint.hidden = claude || !pr.help; }
     $("#aikey").placeholder = claude ? L2("Provider API key (leave blank to keep the current key)", "مفتاح API للمزوّد (اتركه فارغاً للإبقاء على الحالي)")
       : /localhost|127\.0\.0\.1/.test($("#aiform [name=base_url]").value) ? L2("Local model: no key required", "نموذج محلي: لا يتطلب مفتاحاً") : L2("Provider API key (leave blank to keep the current key)", "مفتاح API للمزوّد (اتركه فارغاً للإبقاء على الحالي)");
   };
