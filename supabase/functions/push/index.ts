@@ -11,6 +11,7 @@
 //                                                          the alerts' upcoming times (replace what waited for those rules)
 //   POST {action: "flush"}                                  send the reminders whose time has come (scheduled job)
 //   POST {action: "visitor", token}                         a public page received something (no sign-in)
+//   POST {action: "platform", event: "ticket" | "order", id, isNew?, text?}   owner console ⇄ customers (see below)
 //
 // The signing keys are made here the first time and kept in push_config, which only this function reads (service
 // key). Senders must be active members of the company; people are only notified inside their own company (or the
@@ -190,7 +191,7 @@ Deno.serve(async (req) => {
     return reply(200, { due: (due.data || []).length, sent });
   }
 
-  if (!["send", "schedule", "cancel", "alerts"].includes(b.action)) return fail(400, "Unknown action");
+  if (!["send", "schedule", "cancel", "alerts", "platform"].includes(b.action)) return fail(400, "Unknown action");
   const token = (req.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
   const me = await call("GET", "/auth/v1/user", undefined, { apikey: ANON, Authorization: `Bearer ${token}` });
   const caller = String(me.data?.email || "").toLowerCase();
@@ -198,6 +199,51 @@ Deno.serve(async (req) => {
   // two-step sign-in on (an authenticator is set up): only a session that passed it may act
   const aal = (() => { try { return JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))).aal || ""; } catch { return ""; } })();
   if (aal !== "aal2" && (me.data?.factors || []).some((f: any) => f.status === "verified")) return fail(401, "Finish two-step sign-in first");
+
+  // the platform team and its customers (owner console): who is told is worked out here from the ticket or order, never
+  // taken from the page — a new ticket, a customer's reply or a payment proof reaches the staff with that permission;
+  // the team's reply or decision reaches the customer on all their devices
+  if (b.action === "platform") {
+    if (await countRecent(caller, 60) >= 10) return reply(200, { sent: 0, note: "too many notifications this minute" });
+    const staff = await call("GET", "/rest/v1/platform_admins?select=email,perms&active=is.true");
+    const team = (staff.data || []) as any[];
+    const can = (area: string) => team.filter((s) => s.perms == null || s.perms?.[area] === true).map((s) => String(s.email).toLowerCase());
+    const isStaff = (area: string) => can(area).includes(caller);
+    let to: string[] = [], msg: any = null;
+    if (b.event === "ticket") {
+      const t = await call("GET", `/rest/v1/support_tickets?select=id,ref,subject,email,company_id,status&id=eq.${enc(String(Number(b.id) || 0))}`);
+      const tk = t.data?.[0];
+      if (!tk) return fail(404, "No such ticket");
+      if (isStaff("support")) {
+        to = [String(tk.email).toLowerCase()];
+        msg = { title: `Support · ${tk.ref}`, body: clip(b.text || "The support team replied", 140), href: `#/support?t=${tk.id}`, tag: `ticket-${tk.id}` };
+      } else {
+        const mine = String(tk.email).toLowerCase() === caller ||
+          (tk.company_id && ((await call("GET", `/rest/v1/members?select=email&company_id=eq.${enc(tk.company_id)}&email=eq.${enc(caller)}&active=is.true&is_admin=is.true`)).data || []).length);
+        if (!mine) return fail(403, "Not your ticket");
+        to = can("support");
+        msg = { title: `${b.isNew ? "New ticket" : "Customer replied"} · ${tk.ref}`, body: clip(tk.subject, 140), href: `#/console/ticket/${tk.id}`, tag: `ticket-${tk.id}` };
+      }
+    } else if (b.event === "order") {
+      const o = await call("GET", `/rest/v1/billing_orders?select=id,ref,email,amount,currency,status,review_note&id=eq.${enc(String(Number(b.id) || 0))}`);
+      const od = o.data?.[0];
+      if (!od) return fail(404, "No such order");
+      if (isStaff("approve") || isStaff("billing")) {
+        if (!["approved", "rejected"].includes(od.status)) return reply(200, { sent: 0 });
+        to = [String(od.email).toLowerCase()];
+        msg = od.status === "approved"
+          ? { title: "Subscription activated", body: `${od.ref} · ${od.amount} ${od.currency}`, href: "#/subscription", tag: `order-${od.id}` }
+          : { title: "Payment not accepted", body: clip(od.review_note || od.ref, 140), href: "#/subscription", tag: `order-${od.id}` };
+      } else {
+        if (String(od.email).toLowerCase() !== caller || od.status !== "submitted") return fail(403, "Not your order");
+        to = can("billing");
+        msg = { title: `Payment to verify · ${od.ref}`, body: `${od.amount} ${od.currency} · ${caller}`, href: "#/console/payments", tag: `order-${od.id}` };
+      }
+    } else return fail(400, "Unknown event");
+    const sent = await deliver(null, to.filter((e) => e !== caller), { ...msg, kind: "notify", pref: "platform" }, { kind: "notify" });
+    await logSend(null, caller, "platform", sent);
+    return reply(200, { sent });
+  }
   const company = String(b.company || "");
   if (!/^[0-9a-f-]{36}$/i.test(company)) return fail(400, "Say which company");
   const mem = await call("GET", `/rest/v1/members?select=email&company_id=eq.${enc(company)}&email=eq.${enc(caller)}&active=is.true&pending=is.false`);

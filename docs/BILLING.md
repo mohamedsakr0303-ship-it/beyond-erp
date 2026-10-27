@@ -6,27 +6,40 @@ Nothing changes for anyone until **you switch billing on**. The app stays free u
 
 | Stage | What the customer sees | What they can do |
 |---|---|---|
-| **Trial** (15 days, on the Business plan) | "Free trial — N days left · Subscribe" bar | Everything |
+| **Trial** (15 days, on the Business plan, a person's **first company only**) | "Free trial — N days left · Subscribe" bar | Everything |
+| **Not subscribed** (any further company a person creates) | Red bar: "not subscribed yet" | Sign in, view, print, export. **Saving is refused by the server** |
 | **Active** (paid) | Nothing, or "ends in N days" during the last week | Everything |
 | **Payment due** (3 grace days after a paid period ends) | Amber bar: "pay within N days" | Everything |
 | **Ended** | Red bar: "view, print and export only" | Sign in, view, print, export. **Saving is refused by the server** |
 
-* The trial is counted from when the company was created, or from when you switched billing on, whichever is later. Companies that already exist are not cut off on day one.
+* **Every plan covers one company** with its own users. A customer subscribes several companies in one order ("adding shirts to a bag"): the first company costs the plan price, each further one adds a set share of it (Plans and settings → *Each further company*, default 100 %). Extra users are bought per company.
+* The trial is counted from when the company was created, or from when you switched billing on, whichever is later. Companies that already existed when billing was switched on keep their trial too.
 * Each payment adds 1 month or 1 year after the current period. Nothing charges a card by itself. If the customer does not pay again, the company ends automatically when the period (plus grace days) is over.
 * Data is never deleted. Paying again unlocks it immediately.
 * Plans limit the number of active people. Adding, approving or re-activating someone beyond the plan is refused, with a message to add extra users.
-* The block is enforced in the database (`append_op` refuses changes), not only in the browser.
+* The block is enforced in the database (`append_op` refuses changes), not only in the browser. Prices are worked out in the database too, never in the browser.
+
+## How a customer pays
+
+1. **Subscription** (user menu): tick the companies, set extra users per company, choose the plan and monthly or yearly. The total is quoted by the server.
+2. Choose a **payment method** you set up (InstaPay, wallet, bank, cash, card). An order with a reference (BO-…) opens.
+3. Transfer methods show your number or account with copy buttons. The customer sends the money, then **uploads a screenshot** of the transfer (and optionally the transfer reference and amount sent) and presses *Send for verification*.
+4. You get a notification. In **Owner console → Payments to verify** you see the screenshot, the amount sent (flagged if it differs from the order) and the companies. **Approve and activate** records one payment per company and activates them all at once; **Not accepted…** asks for a reason the customer sees, and they can send a new proof.
+5. Card payments (with Paymob set up) approve the order automatically when Paymob confirms the exact amount.
+
+Screenshots are kept in a private storage bucket (`billing-proofs`): only the customer who uploaded them and your team can open them.
 
 ## Go-live checklist
 
-1. **Make yourself the platform owner.** Run this once in Supabase → SQL editor:
+1. **Make yourself the platform owner.** Run this once in Supabase → SQL editor (with your own sign-in email):
    ```sql
-   insert into public.platform_admins(email) values ('your-sign-in-email@example.com');
+   insert into public.platform_admins(email, name) values ('your-sign-in-email@example.com', 'Your name');
    ```
-   After that, your user menu shows **Platform billing (owner)**.
-2. **Check the plans and prices.** Go to Platform billing → **Plans & prices**. Defaults are below; change them any time. New prices apply to the next payment.
-3. **Add manual payment details.** Go to Platform billing → **Trial & payment settings**, and fill in your InstaPay address and bank account. Customers see them on their Subscription page.
-4. **Card / wallet payments (Paymob).** Create a Paymob account (accept.paymob.com). Then, in Supabase → Edge Functions → Secrets, add:
+   After that, your user menu shows **Owner console**. Everything else is done from there; you can add team members with limited access under **Team**.
+2. **Check the plans and prices.** Owner console → **Plans and settings → Plans**. Defaults are below; change them any time. New prices apply to the next payment.
+3. **Add payment methods.** Owner console → **Payment methods → + Payment method**: for example InstaPay with your InstaPay address, a mobile wallet number, a bank account. Tick *Customer uploads a picture of the transfer* for transfers.
+4. **Support contacts.** Owner console → Plans and settings → *Trial, prices and support contacts*: WhatsApp, phone, email and working hours shown on customers' Help and support page.
+5. **Card / wallet payments (Paymob, optional).** Create a Paymob account (accept.paymob.com). Then, in Supabase → Edge Functions → Secrets, add:
 
    | Secret | Where it comes from |
    |---|---|
@@ -35,16 +48,26 @@ Nothing changes for anyone until **you switch billing on**. The app stays free u
    | `PAYMOB_HMAC` | Paymob dashboard → Settings → Account info → HMAC |
    | `PAYMOB_INTEGRATION_IDS` | Comma-separated integration ids (card, mobile wallet…), from Developers → Payment integrations |
 
-   Then set Paymob's transaction processed callback to `https://<project>.supabase.co/functions/v1/billing?hook=paymob`. The checkout also sends this URL with each payment.
+   Then set Paymob's transaction processed callback to `https://<project>.supabase.co/functions/v1/billing?hook=paymob`, and add a payment method of type **Card**.
+6. **Deploy the database and functions.** Apply the migrations (`supabase db push`) and deploy the `billing` and `push` edge functions, so the console, orders, support and notifications work.
+7. **Switch billing on.** Owner console → Plans and settings → **Switch billing on**. Each person's first company gets its trial from that moment. Switching off makes the app free again, and nothing is lost.
 
-   Without these secrets, the Pay button tells customers to use InstaPay or a transfer. You then record those payments yourself.
-5. **Switch billing on.** Go to Platform billing → **Go live: switch billing on**. Every company gets its 15-day trial from that moment. Switching off makes the app free again, and nothing is lost.
+## The owner console
 
-## Day-to-day
+| Tab | What it is for |
+|---|---|
+| Overview | Expected (renewals falling due) against received, by month or day, with an export; monthly recurring revenue, paying / trial / not paying, payments to verify, open tickets; renewals and trials ending in the next 30 days; a quick look at any company |
+| Customers | Every company with owner, status, plan, end date, people, last activity, total paid and open tickets. A company page shows its people, payments, orders, tickets, and lets you **record a payment** (cash, a transfer you received directly) or set **trial / free / dates** |
+| Payments to verify | Orders waiting for your check, with the uploaded screenshots |
+| Support | Every ticket from every customer: text, screenshots, screen recordings, technical details and the activity before the report (screens opened, requests and their results, errors — never what was typed or figures). Set status, priority and who handles it; reply with files, or add **internal notes** the customer never sees |
+| Cancellations | Companies that asked not to renew (with their reason), whose payment is due, or whose period ended |
+| Plans and settings | Billing on/off, trial, grace days, yearly price, extra user, each further company %, currency, support contacts, plans |
+| Payment methods | The ways customers can pay, with the details they copy |
+| Announcements | A bar at the top of the app (maintenance, new features, price changes) for everyone, companies on trial, paying, or not paying, between two dates |
+| Team | People who help you, each with only the areas ticked (overview, customers, seeing payments, approving payments, support, announcements, settings). Only full-access members see this tab; at least one always remains |
+| Activity | Who did what in the console: approvals, rejections, payments recorded, settings changed |
 
-* **Customer paid by InstaPay / transfer / cash:** Platform billing → the company → **Record payment**. Choose the plan and period, and type the reference.
-* **Extend a trial, or make a company free** (partner, staff, pilot): use **Trial / free…** on the company.
-* The overview shows monthly recurring revenue and how many companies are in trial, paying, payment due, ended or free.
+Notifications: your team is notified of new tickets, customer replies and payments to verify; the customer is notified of your replies and of an approval or rejection. Who is notified is decided on the server.
 
 ## Pricing (October 2026)
 
@@ -69,19 +92,20 @@ The first list (690 / 1,490 / 2,990 EGP a month, 9,900–45,000 EGP desktop) was
 
 ### Cloud plans (new defaults)
 
-| Plan | Per month | Users | Companies | For |
-|---|---|---|---|---|
-| Essentials | 1,900 EGP | 3 | 1 | Offices and traders: accounting, sales, purchasing, ETA, statements of account |
-| **Business** (the anchor) | **4,500 EGP** | 8 | 1 | Contractors and fit-out firms: projects, BOQs, progress invoices, stock, POs, budgets, assets, loans, custody, bank reconciliation |
-| Pro | 8,900 EGP | 20 | 3 | Groups, rental, showroom and real-estate businesses; priority support |
-| Enterprise | from 15,000 EGP | 40+ | any | Dedicated onboarding, SLA, custom reports and integrations |
+| Plan | Per month, per company | Users per company | For |
+|---|---|---|---|
+| Essentials | 1,900 EGP | 3 | Offices and traders: accounting, sales, purchasing, ETA, statements of account |
+| **Business** (the anchor) | **4,500 EGP** | 8 | Contractors and fit-out firms: projects, BOQs, progress invoices, stock, POs, budgets, assets, loans, custody, bank reconciliation |
+| Pro | 8,900 EGP | 20 | Groups, rental, showroom and real-estate businesses; priority support |
+| Enterprise | from 15,000 EGP | 40+ | Dedicated onboarding, SLA, custom reports and integrations |
 
-* Extra user: 350 EGP a month.
+* Extra user: 350 EGP a month, for the company it is added to.
+* Each further company in the same order: the share of the plan price set in the console (default 100 %; lower it to reward groups).
 * Yearly: pay 10 months, get 12. Push annual contracts: they cut churn and fund growth.
 * Eight Business users cost about 5,700 EGP a month on Odoo before any implementation. 4,500 EGP is still clearly cheaper, with the construction features built in.
 * Launch offer: first 20 companies get 30 % off the first year in exchange for a case study or reference. This keeps the list price intact.
 
-The new defaults are applied by `supabase/migrations/20261005000000_billing_prices.sql`. They only replace the old defaults when billing is still off and nobody has edited the prices. Prices you already set yourself are kept, and you can change them any time in Platform billing → Plans & prices.
+The new defaults are applied by `supabase/migrations/20261005000000_billing_prices.sql`. They only replace the old defaults when billing is still off and nobody has edited the prices. Prices you already set yourself are kept, and you can change them any time in Owner console → Plans and settings → Plans. Since the owner console, plans no longer carry a company count; the shipped Pro feature line "Up to 3 companies, …" is reduced to its support part.
 
 ### Offline (desktop) edition — one-time licence
 

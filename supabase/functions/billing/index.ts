@@ -3,6 +3,7 @@
 //   POST {action: "checkout", company, plan, months: 1 | 12, extra_users, return_url}   (signed in, company administrator)
 //     -> {url}: open it to pay on Paymob's checkout page.
 //     The price is worked out in the database (billing_quote / billing_open_payment), never taken from the browser.
+//   POST {action: "checkout", order}   an order placed in the app (one or several companies) with the card method
 //   POST ?hook=paymob   (Paymob's "transaction processed" callback, no sign-in)
 //     The HMAC is checked with the account's HMAC secret; a successful payment of the exact amount extends the
 //     company's paid period once (billing_paid is idempotent).
@@ -90,6 +91,7 @@ async function checkout(req: Request) {
   const me = await call("GET", "/auth/v1/user", undefined, user);
   const email = String(me.data?.email || "").toLowerCase();
   if (!me.ok || !email) return fail(401, "Sign in to the workspace again");
+  if (b.order) return await checkoutOrder(b, email);
   const company = String(b.company || "");
   if (!/^[0-9a-f-]{36}$/i.test(company)) return fail(400, "Say which company");
   const months = Number(b.months) === 12 ? 12 : 1, extra = Math.max(0, Math.floor(Number(b.extra_users) || 0));
@@ -124,6 +126,36 @@ async function checkout(req: Request) {
   }
   return reply(200, { url: `${PM_BASE}/unifiedcheckout/?publicKey=${encodeURIComponent(PM_PUBLIC)}&clientSecret=${encodeURIComponent(it.client_secret)}`,
                       reference, amount: open.data.amount, currency: q.data.currency });
+}
+
+// An order (one or several companies, placed in the app with the card method): its amount comes from the database.
+async function checkoutOrder(b: any, email: string) {
+  const id = Number(b.order) || 0;
+  const o = await call("GET", `/rest/v1/billing_orders?select=id,ref,email,amount,currency,status,method_kind,plan,months,lines&id=eq.${id}`);
+  const od = o.data?.[0];
+  if (!od || String(od.email).toLowerCase() !== email) return fail(404, "Order not found");
+  if (od.status !== "open" || od.method_kind !== "card") return fail(400, "This order is not waiting for a card payment");
+  if (!PM_SECRET || !PM_PUBLIC || !PM_METHODS.length) {
+    return fail(503, "Card payments are not set up yet. Choose another payment method on this screen.");
+  }
+  const amountCents = Math.round(Number(od.amount) * 100);
+  const back = /^https?:\/\//i.test(String(b.return_url || "")) ? String(b.return_url) : undefined;
+  const name = String(b.name || email.split("@")[0]).trim().split(/\s+/);
+  const n = Array.isArray(od.lines) ? od.lines.length : 1;
+  const intent = await fetch(`${PM_BASE}/v1/intention/`, {
+    method: "POST",
+    headers: { Authorization: `Token ${PM_SECRET}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      amount: amountCents, currency: od.currency || "EGP", payment_methods: PM_METHODS, special_reference: od.ref,
+      items: [{ name: `BEYOND ERP — ${od.plan} (${od.months === 12 ? "1 year" : "1 month"}, ${n} ${n === 1 ? "company" : "companies"})`, amount: amountCents, quantity: 1 }],
+      billing_data: { first_name: name[0] || "Customer", last_name: name.slice(1).join(" ") || "-", email, phone_number: String(b.phone || "+200000000000") },
+      notification_url: `${URL_}/functions/v1/billing?hook=paymob`, redirection_url: back, extras: { order: od.ref },
+    }),
+  });
+  const it: any = await intent.json().catch(() => ({}));
+  if (!intent.ok || !it.client_secret) return fail(502, "Paymob did not accept the payment request: " + (it.detail || it.message || intent.status));
+  return reply(200, { url: `${PM_BASE}/unifiedcheckout/?publicKey=${encodeURIComponent(PM_PUBLIC)}&clientSecret=${encodeURIComponent(it.client_secret)}`,
+                      reference: od.ref, amount: od.amount, currency: od.currency });
 }
 
 Deno.serve(async (req) => {

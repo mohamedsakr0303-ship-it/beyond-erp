@@ -597,6 +597,38 @@ def cloud_new_books(name, email):
         billingRecord: x => rpc("billing_record_payment", { p_company: x.company, p_plan: x.plan, p_months: Number(x.months) || 1, p_extra_users: Number(x.extra_users) || 0,
           p_amount: x.amount === "" || x.amount == null ? null : Number(x.amount), p_reference: x.reference || "", p_note: x.note || "" }),
         billingSetCompany: (id, p) => rpc("billing_set_company", { p_company: id, p }),
+        // --- the owner console, orders of several companies, support with files (supabase/migrations/*_owner_console.sql)
+        async platform(name, params) {
+          if (!/^(billing_order_(quote|open|submit|cancel)|billing_my_orders|billing_status|support_(open|get|reply|close|mine)|console_[a-z_]+)$/.test(name)) throw new Error("Unknown workspace call");
+          return rpc(name, params || {});
+        },
+        myEmail: () => ((get(SES) || {}).email || "").toLowerCase(),
+        // a file into a private bucket, under the uploader's own folder (staff: "staff/"); the bucket's rules check it
+        async upload(bucket, file, asStaff) {
+          if (!["billing-proofs", "support-files"].includes(bucket)) throw new Error("Unknown bucket");
+          const c = cfg(), t = await token(), me = ((get(SES) || {}).email || "").toLowerCase();
+          const safe = (String(file.name || "file").normalize("NFKD").replace(/[^\w.\-]+/g, "_").replace(/^_+/, "").slice(-80)) || "file";
+          const path = `${asStaff ? "staff" : me}/${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}-${safe}`;
+          let r;
+          try {
+            r = await fetch(`${c.url}/storage/v1/object/${bucket}/${path.split("/").map(encodeURIComponent).join("/")}`,
+              { method: "POST", headers: { apikey: c.key, Authorization: "Bearer " + t, "Content-Type": file.type || "application/octet-stream" }, body: file });
+          } catch { throw new CloudError("Cannot reach the workspace — check your internet connection", "offline"); }
+          if (!r.ok) { const d = await r.json().catch(() => ({})); throw new CloudError(d.message || d.error || ("The file was not uploaded (HTTP " + r.status + ")"), "", r.status); }
+          return { path, name: String(file.name || safe).slice(0, 200), type: file.type || "", size: file.size || 0 };
+        },
+        // a private file to show or download (read with the signed-in person's own rights)
+        async fileUrl(bucket, path) {
+          const c = cfg(), t = await token();
+          const r = await fetch(`${c.url}/storage/v1/object/authenticated/${bucket}/${String(path).split("/").map(encodeURIComponent).join("/")}`,
+            { headers: { apikey: c.key, Authorization: "Bearer " + t } });
+          if (!r.ok) throw new CloudError("This file cannot be opened (HTTP " + r.status + ")", "", r.status);
+          return URL.createObjectURL(await r.blob());
+        },
+        // tell the other side (the team, or the customer): who is told is decided on the server
+        platformPush: async (event, id, extra) => req("POST", "/functions/v1/push", { action: "platform", event, id, ...(extra || {}) }, await token()).catch(() => null),
+        orderCheckout: async (order, phone) => req("POST", "/functions/v1/billing", { action: "checkout", order, phone: phone || "",
+          return_url: appUrl() ? appUrl() + "#/subscription?paid=1" : "" }, await token()),
         // open the app user that matches the signed-in workspace account
         async openSession() {
           const r = localRun("POST", "/api/cloud/session", { "x-requested-with": "BeyondERP", "content-type": "application/json", "x-beyond-static": "1" },
