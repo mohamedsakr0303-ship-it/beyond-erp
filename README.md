@@ -185,6 +185,21 @@ A backup is taken automatically once a day and before every "replace" import or 
   back to the partner first (a liability). The facility has a base line, an optional temporary line for loans to partners
   that can shrink as they repay, warning levels, the amount fronted today and once suppliers are paid, the peak, and a
   weekly statement. Distributions are tested against the room left in the facility.
+* **Several funding partners, and a bank alongside**: besides the main funding partner (account 3015, the company's
+  bank by default), other partners can fund the company each through his own account (3016, 3017…, created when he is
+  added under Partner settlement → Other funding partners). Each is capital (equity) or a facility (liability), with an
+  optional limit, a share of each client payment repaid to him, "repay him before distributing" and "distributions
+  through his account". A payment or receipt chooses his account, the bank or cash as "Paid from / Received in"; money
+  through a funding partner's account is always recorded in his name.
+* **Distributing through a funding partner's account**: when switched on (the distribution policy for the main one, his
+  settings for the others), the distributable amount is the clean profit owed to partners (after the reserve) less the
+  commitments the company's own money does not cover (suppliers and staff owed, client advances, money held for
+  remaining project costs, the overhead buffer, amounts due to funding partners), within his limit when he has one. It
+  is paid as a profit distribution from his account: Dr partners' drawings, Cr his account (the company owes him more).
+* **Funding account ⇄ capital** (Partners → Partner transaction): what the company owes a funding partner on his
+  account becomes his capital (Dr his account, Cr capital; the suggested maximum is what he is owed — more is allowed
+  with a warning), or part of his capital goes back to his account (Dr capital, Cr his account; never more than his
+  capital). Both are journal entries shown in the journal and ledger; shares stay, follow capital or are typed in.
 * **Cash in & out by project**: raw cash per project, what is still owed to suppliers for it, and where it stands.
 * **Ownership by stage**: a project stage can be owned differently from the project; profit is split over stages by
   the direct cost booked to each stage.

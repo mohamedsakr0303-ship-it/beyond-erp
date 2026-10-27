@@ -544,6 +544,12 @@ def plan_distribute(db, d):
         lines += [_L(payable, ps[k]["name"], credit=v) for k, v in split.items() if v]
     notes = [] if pay_now else ["Owed to the partners until paid — pay each one with a payment voucher "
                                 "against “Profit Distributions Payable”."]
+    if pay_now:
+        from . import funders
+        via = funders.by_account(db, lines[-1]["account"])
+        if via:
+            notes.append(f"Paid through {via['name']}'s account: he pays the partners for the company, so the company owes him "
+                         f"{total:,.2f} more there.")
     from .accounting import cash_position
     cp = cash_position(db)
     if pay_now and cp.get("facility"):
@@ -557,9 +563,46 @@ def plan_distribute(db, d):
                  {"split": {ps[k]["name"]: v for k, v in split.items()}, "paid_now": pay_now}, notes=notes)
 
 
+def plan_funder_capital(db, d):
+    """Move money between a funding partner's account and his capital, as a journal entry:
+       to_capital   — what the company owes him on his account becomes his capital: Dr his account, Cr capital
+                      (suggested at most what the company owes him; more is allowed with a warning);
+       from_capital — part of his capital goes back to his account (the company then owes it to him there):
+                      Dr capital, Cr his account (never more than his capital).
+    Ownership shares stay as they are, follow capital, or are typed in (chosen each time)."""
+    from . import funders
+    f = funders.by_name(db, d.get("funder") or d.get("partner"))
+    if not f or not f["account"]:
+        raise ValidationError("Choose a funding partner.")
+    p = partner(db, f["name"])
+    amount = num(d.get("amount"), "amount", allow_zero=False)
+    date = acc.clean_date(d.get("date"))
+    direction = d.get("direction") or "to_capital"
+    owed = funders.balance(db, f, date)
+    cap = balances(db, p["name"], date)["capital"]
+    notes = []
+    if direction == "to_capital":
+        if to_minor(amount) > to_minor(max(owed, 0)):
+            notes.append(f"The company owes {p['name']} {max(owed, 0):,.2f} on his account; moving {amount:,.2f} goes beyond it "
+                         f"(his account would then show {amount - max(owed, 0):,.2f} owed by him).")
+        lines = [_L(f["account"], p["name"], amount), _L(_role(db, "capital"), p["name"], credit=amount)]
+        kind, memo, base = "Capital Contribution", f"{p['name']}: from his funding account to capital", {str(p["id"]): amount}
+    elif direction == "from_capital":
+        if to_minor(amount) > to_minor(cap):
+            raise ValidationError(f"{p['name']}'s capital is only {cap:,.2f}")
+        lines = [_L(_role(db, "capital"), p["name"], amount), _L(f["account"], p["name"], credit=amount)]
+        kind, memo, base = "Capital Withdrawal", f"{p['name']}: from capital to his funding account", {str(p["id"]): -amount}
+    else:
+        raise ValidationError("Choose the direction of the move")
+    st = state(db)
+    return _plan(kind, text(d.get("memo")) or memo, p["name"], lines, date,
+                 {"funder_move": direction, "account": f["account"], "owed_before": owed, "capital_before": cap},
+                 _shares_from(db, d, st, base), notes=notes)
+
+
 PLANS = {"contribute": plan_contribute, "withdraw": plan_withdraw, "loan": plan_loan, "repay": plan_repay,
          "interest": plan_interest, "transfer": plan_transfer, "admit": plan_admit, "exit": plan_exit,
-         "distribute": plan_distribute}
+         "distribute": plan_distribute, "funder_capital": plan_funder_capital}
 OWNERSHIP_ACTIONS = ("transfer", "admit", "exit")
 
 

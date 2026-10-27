@@ -108,7 +108,8 @@ def money_account(db, method=None, explicit=None):
     method — and when the company has a funding partner, his account is where its money comes from and goes to."""
     if explicit:
         row = db.one("SELECT role FROM accounts WHERE code=?", (text(explicit),))
-        if row and row["role"] == "funding_partner":
+        from .funders import is_role
+        if row and is_role(row["role"]):               # any funding partner's account
             return account_code(db, explicit)
         return account_code(db, explicit, subtypes=("cash", "short_term_debt"))
     if (db.setting("funding_partner") or "").strip():
@@ -149,7 +150,8 @@ def _validate_lines(db, lines):
     if not lines or len(lines) < 2:
         raise ValidationError("An entry needs at least two lines")
     accounts = {r["code"]: r for r in db.q("SELECT code, active, role FROM accounts")}
-    funder = None
+    from .funders import is_role, name_for_account
+    funder = {}
     out, dr, cr = [], 0, 0
     touched = set()
     for ln in lines:
@@ -165,10 +167,11 @@ def _validate_lines(db, lines):
         if not d and not c:
             continue
         party = text(ln.get("party"))
-        if not party and accounts[acc]["role"] == "funding_partner":
-            # money through the funding partner's account is always his
-            funder = funder if funder is not None else (db.setting("funding_partner") or "").strip()
-            party = funder
+        if not party and is_role(accounts[acc]["role"]):
+            # money through a funding partner's account is always his
+            if acc not in funder:
+                funder[acc] = name_for_account(db, acc)
+            party = funder[acc]
         out.append((acc, d, c, party))
         touched.add((acc, party))
         dr += d
@@ -1484,7 +1487,8 @@ def balance_sheet(db, date_to=None, bu_id=None):
     cur_liab = sect(BS_CURRENT_LIABILITIES, -1)
     nc_liab = sect(BS_NONCURRENT_LIABILITIES, -1)
     # funding facility: what he has fronted is owed to him; a debit balance is the company's own money in his account
-    fund = {r["code"] for r in rows if r.get("role") == "funding_partner" and r["type"] == "Liability"}
+    from .funders import is_role
+    fund = {r["code"] for r in rows if is_role(r.get("role")) and r["type"] == "Liability"}
     for x in [x for x in cur_liab if x["code"] in fund and x["amount"] < 0]:
         cur_liab.remove(x)
         cur_assets.insert(0, {**x, "name": "Company money held in the funding partner's account", "subtype": "cash",
@@ -1722,13 +1726,15 @@ def bu_summaries(db, date_from=None, date_to=None, status=None, q=None):
     # invoices, advances, sales paid on the spot, cheques when they clear), less refunds to them — whether it landed in
     # cash / a bank, the funding partner's account (when it replaces the bank) or with a partner personally; not
     # partner money, loans, refundable deposits or supplier payments
+    from .funders import role_sql
+    FUNDER_A = role_sql("a")
     paid = {r["bid"]: r for r in db.q(f"""
         SELECT x.bid, SUM(x.cash) AS n, SUM(x.bank) AS bank, SUM(x.funder) AS funder, SUM(x.partner) AS partner FROM (
           SELECT e.bu_id AS bid, e.id,
-            SUM(CASE WHEN a.subtype IN ('cash','partner_current') OR a.role='funding_partner' THEN l.debit-l.credit ELSE 0 END) AS cash,
+            SUM(CASE WHEN a.subtype IN ('cash','partner_current') OR {FUNDER_A} THEN l.debit-l.credit ELSE 0 END) AS cash,
             SUM(CASE WHEN a.subtype='cash' THEN l.debit-l.credit ELSE 0 END) AS bank,
-            SUM(CASE WHEN a.role='funding_partner' THEN l.debit-l.credit ELSE 0 END) AS funder,
-            SUM(CASE WHEN a.subtype='partner_current' AND COALESCE(a.role,'')<>'funding_partner' THEN l.debit-l.credit ELSE 0 END) AS partner,
+            SUM(CASE WHEN {FUNDER_A} THEN l.debit-l.credit ELSE 0 END) AS funder,
+            SUM(CASE WHEN a.subtype='partner_current' AND NOT {FUNDER_A} THEN l.debit-l.credit ELSE 0 END) AS partner,
             MAX(CASE WHEN a.subtype IN ('receivable','deferred_revenue','operating_revenue','sales_discount') AND a.code<>? THEN 1 ELSE 0 END) AS client
           FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id JOIN accounts a ON a.code=l.account
           WHERE {w} AND e.bu_id IS NOT NULL GROUP BY e.bu_id, e.id) x
@@ -1900,9 +1906,10 @@ def deals(db, date_to=None):
     live entry naming the deal counts — costs, partial payments in the same entry, later payment vouchers, discounts.
     Booked = paid + still owed; paid = money out of cash / bank / the funding account; still owed = the deal's balance
     on payable accounts (taxes excluded). Payables not tagged with any deal show as one "no deal ref" line."""
-    money = {r["code"] for r in db.q("SELECT code FROM accounts WHERE subtype='cash' OR role='funding_partner'")}
+    from .funders import ROLE_SQL
+    money = {r["code"] for r in db.q(f"SELECT code FROM accounts WHERE subtype='cash' OR {ROLE_SQL}")}
     owe = {r["code"] for r in db.q("SELECT code FROM accounts WHERE type='Liability' AND COALESCE(role,'') NOT IN "
-                                   "('vat_output','vat_input','wht_payable','wht_receivable','funding_partner') "
+                                   f"('vat_output','vat_input','wht_payable','wht_receivable') AND NOT {ROLE_SQL} "
                                    "AND subtype IN ('payable','accrued')")}
     cond, p = (f"{LIVE} AND e.date<=?", [date_to]) if date_to else (LIVE, [])
     m = {}

@@ -407,9 +407,9 @@ def project_cash(db, date_from=None, date_to=None):
     """Raw cash per project: what came into any cash / bank (or the funding partner's) account for it and what went out,
     what is still owed to suppliers and staff for it, and where it stands once they are paid. Money with no project
     (overhead, loans to partners, distributions) is one company line."""
-    money = {r["code"] for r in db.q("SELECT code FROM accounts WHERE subtype='cash' OR role='funding_partner'")}
-    owe = {r["code"] for r in db.q("SELECT code FROM accounts WHERE type='Liability' AND subtype IN ('payable','accrued') "
-                                   "AND COALESCE(role,'') NOT IN ('funding_partner')")}
+    from .funders import ROLE_SQL
+    money = {r["code"] for r in db.q(f"SELECT code FROM accounts WHERE subtype='cash' OR {ROLE_SQL}")}
+    owe = {r["code"] for r in db.q(f"SELECT code FROM accounts WHERE type='Liability' AND subtype IN ('payable','accrued') AND NOT {ROLE_SQL}")}
     w, p = acc._where(date_from=date_from, date_to=date_to)
     agg = {}
     for r in db.q(f"""SELECT e.bu_id, l.account, SUM(l.debit) dr, SUM(l.credit) cr FROM journal_lines l

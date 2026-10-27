@@ -78,17 +78,21 @@ def policy(db):
             "repay_funder_first": (db.setting("repay_funder_first") or "1") not in ("0", "no", "false"),
             "funding_repay_pct": f("funding_repay_pct", None),
             # profit that is not cash yet (equipment, client balances) is shown but not offered for distribution unless allowed
-            "distribute_noncash": (db.setting("distribute_noncash") or "0") in ("1", "yes", "true")}
+            "distribute_noncash": (db.setting("distribute_noncash") or "0") in ("1", "yes", "true"),
+            # distributions may be paid through the main funding partner's account (he pays the partners for the company)
+            "distribute_from_funder": (db.setting("distribute_from_funder") or "0") in ("1", "yes", "true")}
 
 
-def funder_due(db, pct, funder, date_to):
+def funder_due(db, pct, funder, date_to, account=None):
     """The funding partner's share of what clients paid against invoices (his agreed % of each payment), less what he
-    has been paid back — never more than his money still in the company."""
+    has been paid back — never more than his money still in the company. account: another funding partner's account
+    (default: the main funding partner's)."""
     paid = db.one(f"""SELECT COALESCE(SUM(l.credit),0) n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
                       JOIN accounts a ON a.code=l.account WHERE {acc.LIVE} AND e.date<=? AND e.kind='Receipt Voucher'
                       AND (a.subtype='receivable' OR a.role='client_advances')""", (date_to,))["n"]
     back = db.one(f"""SELECT COALESCE(SUM(l.debit),0) n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
-                      JOIN accounts a ON a.code=l.account WHERE {acc.LIVE} AND e.date<=? AND a.role='funding_partner'""", (date_to,))["n"]
+                      JOIN accounts a ON a.code=l.account WHERE {acc.LIVE} AND e.date<=? AND """
+                  + ("a.code=?" if account else "a.role='funding_partner'"), (date_to, account) if account else (date_to,))["n"]
     share = to_major(int(round(paid * pct)))
     return {"client_payments": to_major(paid), "share": share, "repaid": to_major(back),
             "due": round(max(0.0, min(max(funder, 0.0), share - to_major(back))), 2)}
@@ -135,15 +139,60 @@ def distributable(db, pol, rows, bs, earned, held, reserve_amt, partners, date_t
     due = funder_due(db, pol["funding_repay_pct"], funder, date_to) if pol.get("funding_repay_pct") else None
     if due:
         free = round(free - due["due"], 2)
+    # the other funding partners: money of the company they hold counts as the company's; what is due to them under
+    # their share of client payments is held back; "repay him first" holds everything while any of his money is in
+    from . import funders as fd
+    others, held_for, others_hold, others_cash = [], 0.0, [], 0.0
+    for f in fd.extra(db):
+        if not f["active"]:
+            continue
+        bal = fd.balance(db, f, date_to)
+        others_cash += max(0.0, -bal)
+        d2 = funder_due(db, f["repay_pct"], bal, date_to, f["account"]) if f["repay_pct"] else None
+        if d2:
+            held_for += d2["due"]
+        if f["repay_first"] and bal > 0.005 and not f["distribute_from"]:
+            others_hold.append((f["name"], bal))
+        others.append({"name": f["name"], "account": f["account"], "mode": f["mode"], "balance": bal, "limit": f["limit"],
+                       "due": d2, "distribute_from": f["distribute_from"],
+                       "room": round(f["limit"] - max(bal, 0.0), 2) if f["limit"] else None})
+    if others_cash or held_for:
+        free = round(free + others_cash - held_for, 2)
+        cash = round(cash + others_cash, 2)
     to_partners = round(sum(max(0.0, x["undistributed"]) for x in partners), 2)
     ahead = round(sum(x["undistributed"] for x in partners), 2)
     # facility mode: the room left in his facility already counts his money, so there is no separate hold for him
     # ticked, "repay him first" holds everything until all his money is back, whatever his share of each payment
-    hold_funder = pol["repay_funder_first"] and funder > 0.005 and room is None
+    hold_funder = pol["repay_funder_first"] and funder > 0.005 and room is None and not pol.get("distribute_from_funder")
+    hold_funder = hold_funder or bool(others_hold)
     cash_safe = 0.0 if hold_funder else round(max(0.0, min(free, to_partners)), 2)
+    # through a funding partner's account (chosen in the policy): he pays the partners for the company. What can go out
+    # = the clean profit owed to partners (already after the reserve) less the commitments the company's own money does
+    # not cover (suppliers and staff owed, client advances, money held for remaining project costs, the overhead buffer,
+    # what is due to funding partners from client payments) — and, when he has a limit, no more than the room left
+    # under it after them
+    via, via_names, uncovered = 0.0, [], 0.0
+    payers = ([{"name": fd.primary(db)["name"], "limit": fac["limit"] if fac and fac["limit"] else 0.0,
+                "used": max(0.0, fac["fronted"]) if fac and fac["limit"] else max(0.0, funder)}]
+              if pol.get("distribute_from_funder") and fd.primary(db) else []) + \
+        [{"name": o["name"], "limit": o["limit"], "used": max(0.0, o["balance"])} for o in others if o["distribute_from"]]
+    if payers and not others_hold:
+        own = round(bs["cash"] + max(0.0, -funder) + others_cash, 2)
+        # the reserve is already out of the partners' share, so it is not taken off a second time here
+        commitments = round(owed + bs["advances"] + held + buffer + (due["due"] if due else 0) + held_for, 2)
+        uncovered = round(max(0.0, commitments - own), 2)
+        room_left = [p["limit"] - p["used"] for p in payers if p["limit"]]
+        cap = None if any(not p["limit"] for p in payers) else round(sum(room_left), 2)
+        via = round(max(0.0, to_partners - uncovered), 2)
+        if cap is not None:
+            via = round(max(0.0, min(via, cap - uncovered)), 2)
+        via_names = [p["name"] for p in payers]
+    via_extra = round(max(0.0, via - cash_safe), 2) if via else 0.0
     # earned but not in cash: still owed by clients, or spent on equipment / repaying funding
     not_in_cash = round(max(0.0, to_partners - cash_safe), 2) if not hold_funder else round(max(0.0, to_partners), 2)
     safe = round(max(0.0, to_partners), 2) if pol.get("distribute_noncash") and not hold_funder else cash_safe
+    if via > safe:
+        safe = via
     if room is not None and to_partners <= 0:          # facility mode, as the workbook: what is owed to partners first
         v = ((f"DO NOT DISTRIBUTE — partners are already ahead of their earned share by {-ahead:,.0f}",
               f"لا يُنصح بالتوزيع — حصل الشركاء على أكثر من نصيبهم المستحق بمقدار {-ahead:,.0f}") if ahead < 0 else
@@ -153,6 +202,10 @@ def distributable(db, pol, rows, bs, earned, held, reserve_amt, partners, date_t
              f"لا يُنصح بالتوزيع — حد التمويل أقل بمقدار {-free:,.0f} بعد الالتزامات")
     elif free < 0:
         v = (f"DO NOT DISTRIBUTE — own cash short by {-free:,.0f}", f"لا يُنصح بالتوزيع — النقدية الذاتية أقل بمقدار {-free:,.0f}")
+    elif hold_funder and others_hold:
+        nm, amt = others_hold[0]
+        v = (f"DO NOT DISTRIBUTE — repay {nm} first ({amt:,.0f} of his money is in the company)",
+             f"لا يُنصح بالتوزيع — يُسدد لـ {nm} أولاً ({amt:,.0f} من أمواله في الشركة)")
     elif hold_funder:
         v = (f"DO NOT DISTRIBUTE — repay the funding partner first ({funder:,.0f} of his money is in the company)",
              f"لا يُنصح بالتوزيع — يُسدد للشريك الممول أولاً ({funder:,.0f} من أمواله في الشركة)")
@@ -165,7 +218,13 @@ def distributable(db, pol, rows, bs, earned, held, reserve_amt, partners, date_t
         by = ("the funding facility", "حد التمويل") if room is not None else ("cash", "النقدية")
         v = (f"OK to distribute up to {safe:,.0f}" + (f" (limited by {by[0]})" if lim else " (limited by clean profit)"),
              f"يمكن التوزيع حتى {safe:,.0f}" + (f" (محدود ب{by[1]})" if lim else " (محدود بالربح الصافي)"))
-    if safe > cash_safe + 0.005:
+    if via > cash_safe + 0.005 and via >= safe - 0.005:
+        who = " / ".join(via_names)
+        v = (f"OK to distribute up to {via:,.0f} through {who}'s account (clean profit owed to partners, after the reserve,"
+             f" less {uncovered:,.0f} of commitments not covered by the company's own money)",
+             f"يمكن التوزيع حتى {via:,.0f} من خلال حساب {who} (الربح الصافي المستحق للشركاء بعد الاحتياطي، ناقص {uncovered:,.0f} "
+             f"التزامات لا تغطيها أموال الشركة)")
+    elif safe > cash_safe + 0.005:
         v = (f"OK to distribute up to {safe:,.0f}: {cash_safe:,.0f} from cash now, {safe - cash_safe:,.0f} not in cash yet "
              f"(distributing beyond cash is switched on)",
              f"يمكن التوزيع حتى {safe:,.0f}: {cash_safe:,.0f} من النقدية الآن، و{safe - cash_safe:,.0f} غير متاح نقداً بعد "
@@ -177,6 +236,8 @@ def distributable(db, pol, rows, bs, earned, held, reserve_amt, partners, date_t
             "max_safe": safe, "cash_safe": cash_safe, "not_in_cash": not_in_cash, "receivable": bs["receivable"],
             "noncash_allowed": bool(pol.get("distribute_noncash")), "verdict": v, "facility_room": room, "facility": fac, "capital_goal": goal, "progress": round(min(1, reserve_amt / goal), 4) if goal else None,
             "set_aside": set_aside, "not_backed": round(max(0.0, reserve_amt - set_aside), 2), "funder_due": due,
+            "through_funder": round(via, 2), "through_names": via_names, "uncovered_commitments": uncovered, "through_extra": via_extra,
+            "other_funders": others,
             "months_covered": round(reserve_amt / monthly, 2) if monthly else None}
 
 

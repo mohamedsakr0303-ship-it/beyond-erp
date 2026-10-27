@@ -115,7 +115,10 @@ TYPES = {
                               "Adjust cost), not income; depreciation follows. At month end, book rent earned but not yet billed "
                               "(Rental contracts → Month-end accrual).",
                               "A funding partner repaid a share of every client payment: set the share in Partners → Distribution "
-                              "policy; only what is due to him is held back from distributions."]},
+                              "policy; only what is due to him is held back from distributions.",
+                              "Several partners can fund the company, each through his own account, alongside a bank (Partner "
+                              "settlement → Other funding partners). Distributions can be paid through a funding partner's account, "
+                              "and his balance can be moved to or from his capital (Partners → Funding account ⇄ capital)."]},
     "healthcare": {"name": "Clinics & medical centres", "ar": "العيادات والمراكز الطبية", "hide": ["rentals", "shop", "estimating", "contracts", "projects"],
                    "departments": ["Clinics / Outpatient", "Laboratory", "Radiology", "Nursing", "Reception & Billing", "Insurance & Claims",
                                    "Pharmacy & Stores", "Finance", "Admin"],
@@ -225,7 +228,8 @@ TYPES_AR = {
         "تابع نسبة التشغيل (القطع المؤجرة ÷ المملوكة) واسترداد التكلفة (سعر الشراء ÷ الإيجار الشهري) لكل قطعة.",
         "الإيجار (4045) والتركيب والفك (4046) والنقل (4047) إيرادات منفصلة، فيعرض «التقارير ← الربح حسب الفئة» ربح كل منها بعد تكاليفه.",
         "خصم المورد أو التكلفة الإضافية بعد الشراء يغيّر تكلفة الدفعة (معدات التأجير ← الدفعة ← تعديل التكلفة) لا الإيراد، ويتبعه الإهلاك. وفي آخر الشهر سجّل الإيجار المستحق غير المفوتر (عقود التأجير ← استحقاق آخر الشهر).",
-        "الشريك الممول الذي يُسدَّد له نصيب من كل دفعة عميل: حدد النصيب من الشركاء ← سياسة التوزيع؛ ولا يُحتجز من التوزيع إلا المستحق له."]),
+        "الشريك الممول الذي يُسدَّد له نصيب من كل دفعة عميل: حدد النصيب من الشركاء ← سياسة التوزيع؛ ولا يُحتجز من التوزيع إلا المستحق له.",
+        "يمكن لأكثر من شريك تمويل الشركة، كلٌّ من حسابه الخاص، بجانب البنك (تسوية الشركاء ← شركاء ممولون آخرون). ويمكن صرف التوزيعات من خلال حساب الشريك الممول، ونقل رصيده إلى رأس ماله أو منه (الشركاء ← حساب التمويل ⇄ رأس المال)."]),
     "healthcare": ("فرع / عيادة / قسم", [
         "الرعاية الصحية: المرضى (بشركة التأمين / إدارة المطالبات، والوثيقة ونسبة التغطية)، وقائمة أسعار الخدمات (السعر النقدي، سعر التعاقد مع التأمين، حصة الطبيب، المستهلكات)، ومواعيد تتحول إلى زيارات.",
         "فوترة الزيارة تقسمها إلى حصة المريض (نقداً / ببطاقة في الاستقبال) وحصة التأمين (1105، تُطالب شهرياً)؛ والإيراد في 4061. حصة الطبيب تُسجّل كتكلفة (5090) مستحقة له (2115) — تُصرف من المدفوعات أو عبر الرواتب.",

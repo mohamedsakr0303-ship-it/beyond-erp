@@ -116,7 +116,7 @@ PUBLIC_SETTINGS = COMPANY_KEYS + ("demo_loaded", "desk_site", "workday_location"
                                   "reserve_early_until", "capital_goal", "buffer_months", "repay_funder_first", "funding_repay_pct", "expected_cost_pct", "legal_reserve_pct", "legal_reserve_cap", "funding_partner", "funding_limit",
                                   "funding_extra", "funding_extra_shrinks", "funding_warn", "funding_critical", "funding_mode", "costplus_overhead", "report_from", "report_to", "lock_date", "hidden_modules",
                                   "appearance", "po_self_approve_limit", "menu_layout", "form_custom", "duplicate_check", "two_step_required",
-                                  "profit_categories", "distribute_noncash")
+                                  "profit_categories", "distribute_noncash", "distribute_from_funder")
 JSON_SETTINGS = {"menu_labels": {}, "units": [], "hidden_modules": [], "appearance": {}, "regional": {}, "banks": [],
                  "menu_layout": {}, "form_custom": {}, "profit_categories": []}
 
@@ -351,7 +351,7 @@ def put_settings(ctx):
                     ctx.body["appearance"].pop(k, None)
     if keys & {"reserve_pct", "legal_reserve_pct", "legal_reserve_cap", "funding_partner", "funding_limit", "reserve_early_pct", "reserve_early_until",
                "capital_goal", "buffer_months", "repay_funder_first", "funding_repay_pct", "funding_extra", "funding_extra_shrinks", "funding_warn",
-               "funding_critical", "funding_mode", "distribute_noncash"} and not ctx.can("partners.equity", "edit"):
+               "funding_critical", "funding_mode", "distribute_noncash", "distribute_from_funder"} and not ctx.can("partners.equity", "edit"):
         ctx.require("settings.company", "edit")
     if "funding_mode" in keys:          # moves the funding account between equity and liabilities
         from . import settlement
@@ -438,7 +438,7 @@ def put_settings(ctx):
             v = "" if v in (None, "") else str(max(0.0, min(5.0, acc.num(v, "expected cost %"))))
         if k in ("reserve_early_until", "capital_goal", "buffer_months"):
             v = str(max(0.0, acc.num(v or 0, k.replace("_", " "))))
-        if k in ("repay_funder_first", "distribute_noncash"):
+        if k in ("repay_funder_first", "distribute_noncash", "distribute_from_funder"):
             v = "1" if v in (True, 1, "1", "yes", "true") else "0"
         # JSON settings were size-checked above; cutting them short would leave broken JSON behind
         ctx.db.set_setting(k, v if k in JSON_SETTINGS else acc.text(v, maxlen=20000))
@@ -3854,6 +3854,24 @@ def equity_exit(ctx):
         raise PermissionError()
     from . import settlement
     return ok(settlement.exit_view(ctx.db, ctx.q.get("date_to")))
+
+
+@route("GET", "/api/funders")
+def funders_get(ctx):
+    """Every funding partner (the main one and the others) with his account, settings and balance."""
+    if not ctx.can("partners.equity"):
+        raise PermissionError()
+    from . import funders
+    return ok({"funders": funders.overview(ctx.db, ctx.q.get("date_to")), "main": funders.primary(ctx.db)})
+
+
+@route("PUT", "/api/funders", "partners.equity", "edit")
+def funders_put(ctx):
+    """The other funding partners (the main one is set as before): each with his own account."""
+    from . import funders
+    out = funders.save_extra(ctx.db, ctx.body.get("funders") if isinstance(ctx.body, dict) else ctx.body)
+    ctx.log("funders.save", ", ".join(f["name"] for f in out))
+    return ok({"funders": funders.overview(ctx.db), "main": funders.primary(ctx.db)})
 
 
 @route("POST", "/api/equity/funding/book", "partners.equity", "edit")
