@@ -101,7 +101,7 @@ def minify():
     npx = shutil.which("npx")
     if not npx:
         raise SystemExit("npx (Node.js) is needed to minify the web app")
-    for f in ("app.js", "i18n.js", "bridge.js", "sw.js", "app.css"):
+    for f in ("app.js", "i18n.js", "bridge.js", "sw.js", "app.css", "owner.js", "owner.css"):
         path = OUT / f
         subprocess.run([npx, "--yes", ESBUILD, str(path), "--minify", "--legal-comments=none", f"--banner:{'css' if f.endswith('.css') else 'js'}={banner}",
                         "--target=es2020" if f.endswith(".js") else "--target=chrome100", f"--outfile={path}", "--allow-overwrite", "--log-level=warning"],
@@ -138,7 +138,8 @@ def build(make_zip=False):
             shutil.copytree(f, OUT / "vendor" / f.name, dirs_exist_ok=True)
         else:
             shutil.copy(f, OUT / "vendor" / f.name)
-    for f in ("index.html", "bridge.js", "p.html"):      # p.html: the public pages (booking, forms, signing, guest chat)
+    # p.html: the public pages (booking, forms, signing, guest chat); owner.*: the owner console, a page of its own
+    for f in ("index.html", "bridge.js", "p.html", "owner.html", "owner.js", "owner.css"):
         shutil.copy(ROOT / "web-src" / f, OUT / f)
     # installable app (manifest, offline service worker, icons) — used by hosted builds, left out of the zip
     for f in PWA_FILES:

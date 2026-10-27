@@ -588,7 +588,13 @@ const HIDE_PRESETS = {
 };
 const hiddenMods = () => (S.boot && S.boot.settings && S.boot.settings.hidden_modules) || [];
 // hidden for everyone in Settings → Menus: a whole section ("sales") or one screen ("sales.offers")
-const shown = key => String(key).split("|").some(k => !hiddenMods().includes(k.split(".")[0]) && !hiddenMods().includes(k));
+// what the company's plan includes (online workspace with billing): sections, and the AI assistant ("chat.ai")
+const licensed = k => { const b = S.billing; if (!b) return true;
+  if (k === "chat.ai") return b.ai !== false;
+  return !Array.isArray(b.modules) || b.modules.includes(k.split(".")[0]); };
+const shown = key => String(key).split("|").some(k => !hiddenMods().includes(k.split(".")[0]) && !hiddenMods().includes(k) && licensed(k));
+// a section the person may use but the plan does not include: say so, rather than hiding where they went
+const notInPlan = key => String(key).split("|").every(k => !licensed(k)) && String(key).split("|").some(k => !hiddenMods().includes(k.split(".")[0]));
 
 // sliders show their filled part (WebKit has no built-in fill): kept in step with the value wherever a slider appears
 const syncRange = el => { const lo = +el.min || 0, hi = el.max === "" ? 100 : +el.max, v = +el.value;
@@ -678,6 +684,14 @@ async function route() {
   // land on the first screen this user may open when the requested one is not permitted
   const menuItems = window.MENU.flatMap(([, items]) => items);
   const here = menuItems.find(i => i[1] === parts.join("/")) || menuItems.find(i => i[1] === parts[0]);
+  if (here && can(here[2]) && notInPlan(here[2])) {
+    renderNav(parts.join("/"));
+    const ai = here[2] === "chat.ai";
+    $("#view").innerHTML = `<div class="page"><div class="card" style="max-width:640px"><h2>${esc(t(here[0]))}</h2>
+      <p>${esc(ai ? L2("The AI assistant is not included in this company's plan.", "المساعد الذكي غير مشمول في باقة هذه الشركة.") : L2("This section is not included in this company's plan. Your data in it is kept.", "هذا القسم غير مشمول في باقة هذه الشركة. بياناتك فيه محفوظة."))}</p>
+      ${S.billing && S.billing.is_admin ? `<a class="btn pri" href="#/subscription">${esc(L2("Add it to the subscription", "إضافته إلى الاشتراك"))}</a>` : `<p class="muted">${esc(L2("Ask your company administrator to add it.", "اطلب من مسؤول الشركة إضافته."))}</p>`}</div></div>`;
+    return;
+  }
   if (here && (!can(here[2]) || !shown(here[2]))) {
     const first = menuItems.find(i => can(i[2]) && shown(i[2]));
     if (first && first !== here) { location.hash = "#/" + first[1]; return; }
@@ -1000,7 +1014,7 @@ function renderShell() {
 function userMenu() {
   return `<button data-a="theme">${esc(themeTitle())}</button>
     ${cloudOn() ? `<button data-a="coswitch">⇄ ${S.lang === "ar" ? "الشركات" : "Companies"}</button>` : ""}
-    ${cloudOn() && window.BeyondCloud && window.BeyondCloud.billing ? `<a href="#/subscription">◎ ${S.lang === "ar" ? "الاشتراك" : "Subscription"}</a>` : ""}${S.billing && S.billing.is_owner ? `<a href="#/console" class="conlink">⚙ ${S.lang === "ar" ? "لوحة المالك" : "Owner console"}</a>` : ""}
+    ${cloudOn() && window.BeyondCloud && window.BeyondCloud.billing ? `<a href="#/subscription">◎ ${S.lang === "ar" ? "الاشتراك" : "Subscription"}</a>` : ""}${S.billing && S.billing.is_owner ? `<a href="owner.html" target="_blank" rel="opener" class="conlink">⚙ ${S.lang === "ar" ? "لوحة المالك" : "Owner console"} ↗</a>` : ""}
     <a href="#/settings">${t("m_settings")}</a><button data-a="tour">➜ ${S.lang === "ar" ? "جولة تعريفية" : "Take the tour"}</button><a href="#/discover">✦ ${S.lang === "ar" ? "تعرّف على BeyondERP" : "Discover BeyondERP"}</a>${isPhone() ? `<button data-a="landscape">⟳ ${S.lang === "ar" ? "عرض أفقي" : "Landscape"}</button>` : ""}<a href="#/support">? ${S.lang === "ar" ? "المساعدة والدعم" : "Help and support"}</a>${STATIC && /^https?:$/.test(location.protocol) ? `<a href="#/download">⬇ ${S.lang === "ar" ? "تنزيل التطبيق" : "Download the app"}</a>` : ""}<button data-a="updcheck">↻ ${S.lang === "ar" ? "البحث عن تحديثات" : "Check for updates"}</button><button data-a="pw">${t("change_pw")}</button><button data-a="logout">${t("logout")}</button>`;
 }
 // the bell: what needs attention (bills to issue, overdue installments, depreciation, books checks…)
@@ -8558,8 +8572,14 @@ async function refreshBilling() {
   try { S.billing = await C.billing(); } catch { S.billing = null; }
   if (C.billingPublic) try { S.billingPublic = await C.billingPublic(); } catch { /* the bar shows without announcements */ }
   renderBillBar();
+  // the menus follow the plan: redraw them when what the company may use changed
+  const sig = JSON.stringify([S.billing && S.billing.modules, S.billing && S.billing.ai]);
+  if (sig !== S.licSig) { const first = S.licSig === undefined; S.licSig = sig; if (!first || (S.billing && (Array.isArray(S.billing.modules) || S.billing.ai === false))) renderNav(parseHash().parts.join("/")); }
+  const um = $(".ucard .dd-menu");
+  if (um && S.billing && S.billing.is_owner && !$(".conlink", um))
+    um.insertAdjacentHTML("afterbegin", `<a href="owner.html" target="_blank" rel="opener" class="conlink">⚙ ${S.lang === "ar" ? "لوحة المالك" : "Owner console"} ↗</a>`);
   if (S.billing && S.billing.is_owner && C.platform) {
-    try { const me = await C.platform("console_me"), n = ((me.badges || {}).orders || 0) + ((me.badges || {}).tickets || 0);
+    try { const me = await C.platform("console_me"), n = ((me.badges || {}).orders || 0) + ((me.badges || {}).tickets || 0) + ((me.badges || {}).visits || 0);
       $$(".conlink").forEach(a => { const old = $(".cbadge", a); if (old) old.remove(); if (n) a.insertAdjacentHTML("beforeend", ` <b class="cbadge">${n}</b>`); });
     } catch { /* the link stays without a count */ }
   }
@@ -8575,7 +8595,13 @@ function renderBillBar() {
     box.innerHTML = `<div class="banner ${lic.state === "unlicensed" ? "err" : lic.state === "trial" && lic.days_left > 3 ? "info" : "warn"} billbar">${esc(msg)} ${S.boot.user.is_super ? `<a class="btn sm" href="#/settings?tab=system">${ar ? "الترخيص" : "Licence"}</a>` : ""}</div>`;
     return;
   }
-  const b = S.billing, notes = noticesHtml(b);
+  const b = S.billing, mt = (S.billingPublic || {}).maintenance || {}, ar0 = S.lang === "ar";
+  const notes = (mt.on ? `<div class="banner warn billbar">🛠 ${esc((ar0 ? mt.message_ar || mt.message : mt.message) || L2("BeyondERP is under maintenance — changes are paused for a short while. Everything stays available to view.", "BeyondERP قيد الصيانة — الحفظ متوقف لفترة قصيرة. يبقى كل شيء متاحاً للعرض."))}</div>` : "") + noticesHtml(b);
+  if (b && ["suspended", "archived"].includes(b.status)) {
+    box.innerHTML = `<div class="banner err billbar">${esc(b.status === "archived" ? L2("This company is archived: everything stays available to view, print and export; changes are off. Contact BeyondERP to reopen it.", "هذه الشركة مؤرشفة: يبقى العرض والطباعة والتصدير متاحاً، والتعديل متوقف. تواصل مع BeyondERP لإعادة فتحها.")
+      : L2("This company is suspended", "هذه الشركة موقوفة") + (b.suspend_note ? ` — ${b.suspend_note}` : "") + L2(". Viewing, printing and exporting remain available; changes are off.", ". يبقى العرض والطباعة والتصدير متاحاً، والتعديل متوقف."))} <a class="btn sm" href="#/support">${esc(L2("Contact us", "تواصل معنا"))}</a></div>${notes}`;
+    return;
+  }
   if (!b || !b.enabled || ["comped", "free"].includes(b.status) || (b.status === "active" && b.days_left > 7)) { box.innerHTML = notes; return; }
   const ar = S.lang === "ar", d = b.days_left;
   const msg = b.status === "trial" ? (ar ? `فترة تجريبية مجانية — متبقي ${d} يوم.` : `Free trial — ${d} day${d === 1 ? "" : "s"} left.`)
@@ -8599,59 +8625,11 @@ function noticesHtml(b) {
 S.GLOBAL_H.noticehide = el => { try { localStorage.setItem("berp-notices-hidden", JSON.stringify([...noticeHidden(), +el.dataset.id].slice(-50))); } catch { /* shown again next time */ }
   el.closest(".notice").remove(); };
 const billDate = x => x ? fd(String(x).slice(0, 10)) : "—";
-const BILL_ST = { trial: ["Free trial", "تجربة مجانية", "warn"], active: ["Active", "ساري", "ok"], past_due: ["Payment due", "مستحق الدفع", "warn"], expired: ["Ended — read only", "منتهي — عرض فقط", "bad"], unpaid: ["Not subscribed — read only", "غير مشترك — عرض فقط", "bad"], comped: ["Free (complimentary)", "مجاني", "ok"], free: ["Billing not switched on", "الاشتراكات غير مفعلة", ""] };
+const BILL_ST = { trial: ["Free trial", "تجربة مجانية", "warn"], active: ["Active", "ساري", "ok"], past_due: ["Payment due", "مستحق الدفع", "warn"], expired: ["Ended — read only", "منتهي — عرض فقط", "bad"], unpaid: ["Not subscribed — read only", "غير مشترك — عرض فقط", "bad"], comped: ["Free (complimentary)", "مجاني", "ok"], free: ["Billing not switched on", "الاشتراكات غير مفعلة", ""],
+  suspended: ["Suspended — read only", "موقوفة — عرض فقط", "bad"], archived: ["Archived — read only", "مؤرشفة — عرض فقط", "bad"] };
 const billChip = st => `<span class="chip ${(BILL_ST[st] || BILL_ST.free)[2]}">${esc(L2(...(BILL_ST[st] || BILL_ST.free).slice(0, 2)))}</span>`;
 // the old owner page lives on in the console
-PAGES.platform = () => { location.hash = "#/console"; };
-function platformConfigForm(c) {
-  drawer(L2("Trial and payment settings", "إعدادات التجربة والدفع"), `<div class="grid g2">
-    <label class="f">${L2("Free trial (days)", "الفترة التجريبية المجانية (أيام)")}<input name="trial_days" type="number" min="0" max="365" value="${c.trial_days}"></label>
-    <label class="f">${L2("Trial plan", "باقة الفترة التجريبية")}<select name="trial_plan">${optHtml(c.plans.map(p => [p.code, p.name]), c.trial_plan)}</select></label>
-    <label class="f">${L2("Grace period after expiry (days)", "مهلة بعد الانتهاء (أيام)")}<input name="grace_days" type="number" min="0" max="60" value="${c.grace_days}"></label>
-    <label class="f">${L2("Annual price (in months)", "السعر السنوي (بعدد الأشهر)")}<input name="yearly_months" type="number" min="1" max="12" value="${c.yearly_months}"></label>
-    <label class="f">${L2("Additional user per month", "المستخدم الإضافي شهرياً")}<input name="extra_user" type="number" step="any" value="${c.extra_user}"></label>
-    <label class="f">${L2("Currency", "العملة")}<input name="currency" value="${esc(c.currency)}"></label>
-    <label class="f">${L2("Each further company in an order (% of the plan price)", "كل شركة إضافية في الطلب (% من سعر الباقة)")}<input name="extra_company_pct" type="number" min="0" max="100" step="any" value="${c.extra_company_pct ?? 100}"></label></div>
-    <h3>${L2("Support contacts shown to customers", "بيانات الدعم الظاهرة للعملاء")}</h3><div class="grid g2">
-    <label class="f">WhatsApp<input name="s_whatsapp" dir="ltr" inputmode="tel" value="${esc((c.support || {}).whatsapp || "")}" placeholder="${esc(L2("Number with country code", "الرقم مع كود الدولة"))}"></label>
-    <label class="f">${L2("Phone", "الهاتف")}<input name="s_phone" dir="ltr" inputmode="tel" value="${esc((c.support || {}).phone || "")}"></label>
-    <label class="f">${L2("Email", "البريد الإلكتروني")}<input name="s_email" type="email" dir="ltr" value="${esc((c.support || {}).email || "")}"></label>
-    <label class="f">${L2("Working hours", "مواعيد العمل")}<input name="s_hours" value="${esc((c.support || {}).hours || "")}"></label></div>
-    <p class="muted" style="font-size:.85em">${L2("Card and wallet payments require the payment gateway keys in Supabase → Edge Functions → Secrets (see docs/BILLING.md).", "يتطلب الدفع بالبطاقة والمحفظة مفاتيح بوابة الدفع في Supabase ← Edge Functions ← Secrets (راجع docs/BILLING.md).")}</p>`,
-    async v => { const support = { whatsapp: v.s_whatsapp.trim(), phone: v.s_phone.trim(), email: v.s_email.trim(), hours: v.s_hours.trim() };
-      ["s_whatsapp", "s_phone", "s_email", "s_hours"].forEach(k => delete v[k]);
-      await window.BeyondCloud.billingConfig({ ...v, trial_days: +v.trial_days, grace_days: +v.grace_days, yearly_months: +v.yearly_months, extra_user: +v.extra_user, extra_company_pct: +v.extra_company_pct, support });
-      S.billingPublic = null; toast(t("saved")); }, { wide: true });
-}
-function platformPlansForm(c) {
-  const row = (p = {}) => `<tr class="plrow"><td><input data-f="code" value="${esc(p.code || "")}" style="width:90px"></td><td>${S.lang === "ar" ? `<input data-f="name_ar" value="${esc(p.name_ar || p.name || "")}"><input type="hidden" data-f="name" value="${esc(p.name || "")}">` : `<input data-f="name" value="${esc(p.name || "")}"><input type="hidden" data-f="name_ar" value="${esc(p.name_ar || "")}">`}</td>
-    <td><input data-f="price" type="number" step="any" value="${p.price ?? ""}" style="width:90px"></td><td><input data-f="users" type="number" min="1" value="${p.users ?? 1}" style="width:70px"></td>
-    <td><textarea data-f="features" rows="2" style="min-width:220px">${esc((p.features || []).join("\n"))}</textarea></td><td><button type="button" class="btn sm danger" data-k="rm">✕</button></td></tr>`;
-  const f = drawer(L2("Plans and prices", "الباقات والأسعار"), `<div class="tbl"><table><thead><tr><th>${L2("Code", "الكود")}</th><th>${t("name")}</th><th>${L2("Price per month", "السعر الشهري")}</th><th>${L2("Users per company", "مستخدمون لكل شركة")}</th><th>${L2("Features (one per line)", "المزايا (سطر لكل ميزة)")}</th><th></th></tr></thead><tbody>${c.plans.map(row).join("")}</tbody></table></div>
-    <button type="button" class="btn sm" data-k="add">+ ${L2("Plan", "باقة")}</button>
-    <p class="muted" style="font-size:.85em">${L2("New prices apply from the next payment; paid periods are unaffected.", "تسري الأسعار الجديدة من الدفعة التالية، ولا تتأثر الفترات المدفوعة.")}</p>`,
-    async () => { const plans = $$("tr.plrow", f).map(tr => { const g = k => $(`[data-f=${k}]`, tr).value.trim();
-      return { code: g("code"), name: g("name") || g("name_ar"), name_ar: g("name_ar"), price: +g("price") || 0, users: +g("users") || 1, features: g("features").split("\n").map(x => x.trim()).filter(Boolean) }; }).filter(p => p.code);
-      await window.BeyondCloud.billingConfig({ plans }); S.billingPublic = null; toast(t("saved")); }, { wide: true });
-  f.addEventListener("click", e => { const k = e.target.dataset.k; if (k === "add") $("tbody", f).insertAdjacentHTML("beforeend", row()); if (k === "rm") e.target.closest("tr").remove(); });
-}
-function platformPayForm(x, c) {
-  drawer(`${x.name} — ${L2("Record payment", "تسجيل دفعة")}`, `<div class="grid g2">
-    <label class="f">${L2("Plan", "الباقة")}<select name="plan">${optHtml(c.plans.map(p => [p.code, `${p.name} — ${money(p.price)}`]), x.state.plan || c.trial_plan)}</select></label>
-    <label class="f">${L2("Months", "عدد الأشهر")}<input name="months" type="number" min="1" max="120" step="1" value="1" required></label>
-    <label class="f">${L2("Extra users", "مستخدمون إضافيون")}<input name="extra_users" type="number" min="0" value="${x.state.extra_users || 0}"></label>
-    <label class="f">${L2("Amount received (blank: list price; 0 for free)", "المبلغ المستلم (فارغ: سعر القائمة؛ 0 للمجاني)")}<input name="amount" type="number" step="any" min="0"></label>
-    <label class="f">${L2("Reference (transfer no.)", "المرجع (رقم التحويل)")}<input name="reference"></label>
-    <label class="f">${t("notes")}<input name="note"></label></div>
-    <p class="muted" style="font-size:.85em">${L2("The paid period starts when the current trial or paid period ends, or today if it has already ended.", "تبدأ الفترة المدفوعة عند انتهاء الفترة التجريبية أو المدفوعة الحالية، أو اليوم إن كانت قد انتهت.")}</p>`,
-    async v => { await window.BeyondCloud.billingRecord({ ...v, company: x.id }); toast(t("saved")); });
-}
-function platformCompanyForm(x) {
-  drawer(`${x.name}`, `<label class="f chk"><input type="checkbox" name="comped" ${x.comped ? "checked" : ""}>${L2("Free of charge (partner, staff, pilot)", "مجاني (شريك، موظفون، عميل تجريبي)")}</label>
-    <label class="f">${L2("Trial end (blank: automatic)", "نهاية الفترة التجريبية (فارغ: تلقائي)")}<input type="date" name="trial_ends" value="${esc(String(x.state.trial_ends || "").slice(0, 10))}"></label>
-    <label class="f">${L2("Paid until (adjustment)", "مدفوع حتى (تعديل)")}<input type="date" name="paid_until" value="${esc(String(x.state.paid_until || "").slice(0, 10))}"></label>`,
-    async v => { await window.BeyondCloud.billingSetCompany(x.id, { comped: !!v.comped, trial_ends: v.trial_ends ? v.trial_ends + "T23:59:59Z" : "", paid_until: v.paid_until ? v.paid_until + "T23:59:59Z" : "" }); toast(t("saved")); });
-}
+PAGES.platform = () => { location.hash = "#/console"; };   // the old address of the owner page
 // ------------------------------------------------------------ service subscriptions
 const SUB_KIND = { maintenance: ["Maintenance", "صيانة", "🔧"], warranty: ["Warranty", "ضمان", "🛡"], insurance: ["Insurance", "تأمين", "☂"], software: ["Software / app", "برنامج / تطبيق", "💻"], support: ["Support", "دعم فني", "☎"], addon: ["Add-on", "إضافة", "＋"], other: ["Other", "أخرى", "•"] };
 const SUB_ST = { active: ["Active", "سارية", "ok"], paused: ["Paused", "موقوفة", "warn"], cancelled: ["Cancelled", "ملغاة", "bad"], ended: ["Ended", "منتهية", ""] };
@@ -13299,7 +13277,7 @@ PAGES.subscription = async (view, parts, q) => {
   const C = window.BeyondCloud, ar = S.lang === "ar";
   const [b, pub, cos, orders] = await Promise.all([C.billing(), C.billingPublic(), C.companies().catch(() => []), PLAT("billing_my_orders").catch(() => [])]);
   S.billing = b; S.billingPublic = pub; S.billingAt = Date.now(); renderBillBar();
-  if (!b.enabled) { view.innerHTML = `<div class="card"><h2>${L2("Subscription", "الاشتراك")}</h2><p>${L2("Billing is not enabled for this workspace.", "الاشتراكات غير مفعّلة لمساحة العمل هذه.")}</p>${b.is_owner ? `<a class="btn pri" href="#/console">${L2("Owner console", "لوحة المالك")}</a>` : ""}</div>`; return; }
+  if (!b.enabled) { view.innerHTML = `<div class="card"><h2>${L2("Subscription", "الاشتراك")}</h2><p>${L2("Billing is not enabled for this workspace.", "الاشتراكات غير مفعّلة لمساحة العمل هذه.")}</p>${b.is_owner ? `<a class="btn pri" href="owner.html" target="_blank" rel="opener">${L2("Owner console", "لوحة المالك")} ↗</a>` : ""}</div>`; return; }
   const cur = pub.currency || b.currency || "EGP", plans = pub.plans || [], methods = pub.methods || [];
   const mine = cos.filter(c => c.is_admin && c.active !== false && !c.pending);
   const states = Object.fromEntries(await Promise.all(mine.map(async c => [c.id, await PLAT("billing_status", { p_company: c.id }).catch(() => null)])));
@@ -13307,12 +13285,15 @@ PAGES.subscription = async (view, parts, q) => {
   // what is being chosen stays while the page redraws
   const here = C.company();
   const st = S.subSt && S.subSt.key === mine.map(c => c.id).join() ? S.subSt : (S.subSt = { key: mine.map(c => c.id).join(),
-    plan: (b.status === "active" && b.plan) || pub.trial_plan || (plans[1] || plans[0] || {}).code, months: 1, extra: {},
+    plan: (b.status === "active" && plans.some(p => p.code === b.plan) && b.plan) || (plans.find(p => p.highlight) || plans[1] || plans[0] || {}).code, months: 1, extra: {}, add: {},
     sel: new Set(mine.filter(c => c.id === here || ["unpaid", "expired", "past_due"].includes((states[c.id] || {}).status) || q.add === c.id).map(c => c.id)) });
   Object.assign(S.H, {
     subplan: el => { st.plan = el.dataset.plan; draw(); }, submonths: el => { st.months = +el.dataset.m; draw(); },
     subsel: el => { if (el.checked) st.sel.add(el.dataset.id); else st.sel.delete(el.dataset.id); draw(); },
     subextra: el => { const id = el.dataset.id; st.extra[id] = Math.max(0, (st.extra[id] || 0) + (+el.dataset.d)); draw(); },
+    // add-ons for one company: a section the plan lacks, the AI assistant, online support
+    subadd: el => { const a = st.add[el.dataset.id] = st.add[el.dataset.id] || { mods: [], ai: false, support: false };
+      if (el.dataset.m) a.mods = el.checked ? [...new Set([...a.mods, el.dataset.m])] : a.mods.filter(m => m !== el.dataset.m); else a[el.dataset.k] = el.checked; draw(); },
     subopen: async () => { const m = $("[name=paymethod]:checked", view); if (!m) return toast(L2("Choose how to pay.", "اختر طريقة الدفع."), true);
       try { await PLAT("billing_order_open", { p_plan: st.plan, p_months: st.months, p_lines: lines(), p_method: +m.value }); route(); } catch (e) { fail(e); } },
     subcard: async el => { try { el.disabled = true; const r = await C.orderCheckout(+el.dataset.id); location.href = r.url; } catch (e) { el.disabled = false; fail(e); } },
@@ -13328,14 +13309,24 @@ PAGES.subscription = async (view, parts, q) => {
       try { await PLAT("billing_order_cancel", { p_order: +el.dataset.id }); route(); } catch (e) { fail(e); } },
     bcancel: async () => { const n = await uiPrompt(L2("Reason for not renewing (optional). Access continues until the end of the paid period.", "سبب عدم التجديد (اختياري). يستمر الوصول حتى نهاية الفترة المدفوعة.")); if (n === null) return;
       try { await C.billingCancel(n); toast(t("saved")); route(); } catch (e) { fail(e); } } });
-  const lines = () => [...st.sel].map(id => ({ company_id: id, extra_users: st.extra[id] || 0 }));
+  const lines = () => [...st.sel].map(id => { const a = st.add[id] || {}; return { company_id: id, extra_users: st.extra[id] || 0, modules: a.mods || [], ai: !!a.ai, support: !!a.support }; });
+  // what a plan includes, and what can be added to it
+  const SEC = Object.fromEntries((window.MENU || []).flatMap(([g, items]) => items.map(i => [String(i[2]).split(".")[0], t(g)])));
+  const secL = k => ({ dashboard: L2("Dashboard", "لوحة التحكم"), chat: L2("Team chat", "المحادثة"), team: L2("Knowledge base", "قاعدة المعرفة"), contracts: L2("Contracts", "العقود"),
+    import_export: L2("Import & export", "الاستيراد والتصدير"), users: L2("Users", "المستخدمون"), settings: L2("Settings", "الإعدادات") })[k] || SEC[k] || k;
+  const planMods = p => !p.modules || p.modules === "all" ? null : [...new Set([...(pub.core_modules || []), ...p.modules])];
+  const extrasFor = p => { const inc = planMods(p);
+    return { mods: inc ? Object.keys(pub.module_prices || {}).filter(k => !inc.includes(k)) : [],
+      ai: pub.ai_mode === "plan" && pub.ai_addon && !p.ai, support: pub.support_mode === "plan" && pub.support_addon && p.support === false }; };
+  const addonLine = l => [...(l.modules || []).map(secL), l.ai ? L2("AI assistant", "المساعد الذكي") : "", l.support ? L2("Online support", "الدعم الإلكتروني") : ""].filter(Boolean);
+  const pageT = k => { const pg = pub.page || {}; return (ar ? pg[k + "_ar"] || pg[k] : pg[k]) || ""; };
   const statusOf = id => states[id] || {};
   const orderCard = o => {
     if (!o) return "";
     const m = o.method || {}, manual = o.method_kind !== "card";
     const head = `<div class="row" style="gap:10px;flex-wrap:wrap;align-items:center"><h2 style="margin:0">${L2("Your order", "طلبك")} <span class="muted">${esc(o.ref)}</span></h2>${orderChip(o.status)}<span class="spacer"></span>
       ${["open", "submitted", "rejected"].includes(o.status) ? `<button class="btn sm" data-a="subcancelorder" data-id="${o.id}">${L2("Cancel order", "إلغاء الطلب")}</button>` : ""}</div>`;
-    const summary = `<div class="tbl"><table><tbody>${(o.lines || []).map(l => `<tr><td>${esc(l.name)}${l.extra_users ? ` <span class="muted">+${l.extra_users} ${L2("users", "مستخدمين")}</span>` : ""}</td>
+    const summary = `<div class="tbl"><table><tbody>${(o.lines || []).map(l => `<tr><td>${esc(l.name)}${l.extra_users ? ` <span class="muted">+${l.extra_users} ${L2("users", "مستخدمين")}</span>` : ""}${addonLine(l).length ? `<div class="muted" style="font-size:.82em">+ ${esc(addonLine(l).join(" · "))}</div>` : ""}</td>
         <td class="num">${l.pct !== 100 ? `<span class="muted">${money(l.base)} × ${l.pct}%</span> ` : ""}${+l.discount ? `<span class="chip ok">−${l.discount}%</span> ` : ""}${l.list_amount != null && +l.list_amount !== +l.amount ? `<s class="muted">${money(l.list_amount)}</s> ` : ""}${money(l.amount)}</td></tr>`).join("")}
       <tr><th>${L2("Total", "الإجمالي")} · ${esc((plans.find(p => p.code === o.plan) || {}).name || o.plan)} · ${o.months === 12 ? L2("1 year", "سنة") : L2("1 month", "شهر")}</th><th class="num">${money(o.amount)} ${esc(o.currency)}</th></tr></tbody></table></div>`;
     const pay = manual ? `<div class="pay-box"><div class="pay-h">${(BILL_KIND[m.kind] || BILL_KIND.other)[2]} <b>${esc(ar && m.name_ar ? m.name_ar : m.name || o.method_name)}</b></div>
@@ -13365,21 +13356,33 @@ PAGES.subscription = async (view, parts, q) => {
     ${b.cancel_note ? `<div class="banner warn">${L2("Renewal cancelled. Access continues until the end of the paid period; a new payment reactivates it.", "تم إلغاء التجديد. يستمر الوصول حتى نهاية الفترة المدفوعة، وأي دفعة جديدة تعيد التفعيل.")}</div>` : ""}
     ${orderCard(open)}
     ${!b.is_admin ? `<div class="card"><p>${L2("Only company administrators can change the subscription.", "يقتصر تغيير الاشتراك على مسؤولي الشركة.")}</p></div>` : open && open.status !== "rejected" ? "" : `
+    ${pageT("title") || pageT("intro") ? `<div class="card">${pageT("title") ? `<h2>${esc(pageT("title"))}</h2>` : ""}${pageT("intro") ? `<p style="white-space:pre-wrap;margin:0">${esc(pageT("intro"))}</p>` : ""}</div>` : ""}
     <div class="card"><h2>${L2("1. Companies", "١. الشركات")}</h2>
       <p class="muted" style="margin-top:0">${+pub.extra_company_pct === 100 ? L2("Each company is a full copy of the plan with its own users: every further company adds the plan's price.", "كل شركة نسخة كاملة من الباقة بمستخدميها: كل شركة إضافية تضيف سعر الباقة.")
         : L2(`Each company is a full copy of the plan with its own users: every further company adds ${pub.extra_company_pct}% of the plan's price.`, `كل شركة نسخة كاملة من الباقة بمستخدميها: كل شركة إضافية تضيف ${pub.extra_company_pct}% من سعر الباقة.`)}</p>
       <div class="tbl stack"><table><thead><tr><th></th><th>${L2("Company", "الشركة")}</th><th>${t("status")}</th><th>${L2("Until", "حتى")}</th><th class="num">${L2("People", "الأفراد")}</th><th>${L2("Extra users", "مستخدمون إضافيون")}</th></tr></thead><tbody>
-      ${mine.map(c => { const s = statusOf(c.id), on = st.sel.has(c.id), need = Math.max(0, (s.users || 0) - (+plan.users || 0));
+      ${mine.map(c => { const s = statusOf(c.id), on = st.sel.has(c.id), need = Math.max(0, (s.users || 0) - (+plan.users || 0)), ex = extrasFor(plan);
         if (on && (st.extra[c.id] || 0) < need) st.extra[c.id] = need;
         return `<tr><td><input type="checkbox" data-change="subsel" data-id="${c.id}" ${on ? "checked" : ""} aria-label="${esc(c.name)}"></td><td><b>${esc(c.name)}</b>${c.id === here ? ` <span class="chip">${L2("Open now", "المفتوحة")}</span>` : ""}</td>
           <td>${billChip(s.status)}</td><td>${billDate(s.ends)}</td><td class="num">${s.users || 0}</td>
-          <td>${on ? `<button class="btn sm" data-a="subextra" data-id="${c.id}" data-d="-1">−</button> <b>${st.extra[c.id] || 0}</b> <button class="btn sm" data-a="subextra" data-id="${c.id}" data-d="1">+</button>${need ? ` <span class="muted" style="font-size:.8em">${L2(`at least ${need}`, `${need} على الأقل`)}</span>` : ""}` : ""}</td></tr>`; }).join("")}</tbody></table></div>
+          <td>${on ? `<button class="btn sm" data-a="subextra" data-id="${c.id}" data-d="-1">−</button> <b>${st.extra[c.id] || 0}</b> <button class="btn sm" data-a="subextra" data-id="${c.id}" data-d="1">+</button>${need ? ` <span class="muted" style="font-size:.8em">${L2(`at least ${need}`, `${need} على الأقل`)}</span>` : ""}` : ""}</td></tr>
+          ${on && (ex.mods.length || ex.ai || ex.support) ? `<tr class="sub-addons"><td></td><td colspan="5"><span class="muted" style="font-size:.85em">${L2("Add to this company:", "إضافة لهذه الشركة:")}</span>
+            ${ex.mods.map(m => `<label class="chk addon"><input type="checkbox" data-change="subadd" data-id="${c.id}" data-m="${esc(m)}" ${((st.add[c.id] || {}).mods || []).includes(m) ? "checked" : ""}> ${esc(secL(m))} <small class="muted">${money((pub.module_prices || {})[m])}</small></label>`).join("")}
+            ${ex.ai ? `<label class="chk addon"><input type="checkbox" data-change="subadd" data-id="${c.id}" data-k="ai" ${(st.add[c.id] || {}).ai ? "checked" : ""}> ✦ ${L2("AI assistant", "المساعد الذكي")} <small class="muted">${money(pub.ai_price)}</small></label>` : ""}
+            ${ex.support ? `<label class="chk addon"><input type="checkbox" data-change="subadd" data-id="${c.id}" data-k="support" ${(st.add[c.id] || {}).support ? "checked" : ""}> ? ${L2("Online support", "الدعم الإلكتروني")} <small class="muted">${money(pub.support_price)}</small></label>` : ""}
+            <span class="muted" style="font-size:.8em">${esc(cur)} / ${L2("month", "شهر")}</span></td></tr>` : ""}`; }).join("")}</tbody></table></div>
       <p class="muted" style="font-size:.85em">${L2("A new company is added from Companies (⇄ in the menu); your first company has the free trial, later ones are subscribed here.", "تُضاف شركة جديدة من «الشركات» (⇄ في القائمة)؛ الشركة الأولى لها فترة تجريبية مجانية، وما بعدها يُشترك لها هنا.")}</p></div>
     <div class="card"><h2>${L2("2. Plan", "٢. الباقة")}</h2>
       <div class="seg" style="margin-bottom:12px">${[[1, L2("Monthly", "شهرياً")], [12, L2(`Yearly: ${12 - (+pub.yearly_months || 10)} months free`, `سنوي: ${12 - (+pub.yearly_months || 10)} شهر مجاناً`)]].map(([m, l]) => `<button class="btn sm ${st.months === m ? "pri" : ""}" data-a="submonths" data-m="${m}">${esc(l)}</button>`).join("")}</div>
-      <div class="plans">${plans.map(p => `<button type="button" class="plan ${p.code === st.plan ? "on" : ""}" data-a="subplan" data-plan="${esc(p.code)}"><h3>${esc(ar && p.name_ar ? p.name_ar : p.name)}</h3>
+      <div class="plans">${plans.map(p => { const inc = planMods(p), feats = ar && (p.features_ar || []).length ? p.features_ar : (p.features || []);
+        return `<button type="button" class="plan ${p.code === st.plan ? "on" : ""} ${p.highlight ? "hl" : ""}" style="${p.color ? `--pc:${esc(p.color)}` : ""}" data-a="subplan" data-plan="${esc(p.code)}">
+        ${p.badge || p.badge_ar ? `<span class="plan-badge">${esc(ar && p.badge_ar ? p.badge_ar : p.badge)}</span>` : ""}<h3>${esc(ar && p.name_ar ? p.name_ar : p.name)}</h3>
+        ${p.tagline || p.tagline_ar ? `<div class="muted" style="font-size:.88em">${esc(ar && p.tagline_ar ? p.tagline_ar : p.tagline)}</div>` : ""}
         <div class="price">${money((+p.price || 0) * (st.months === 12 ? (+pub.yearly_months || 10) : 1))} <small>${esc(cur)} / ${st.months === 12 ? L2("Year", "سنة") : L2("Month", "شهر")} · ${L2("per company", "لكل شركة")}</small></div>
-        <div class="muted">${L2(`${p.users} users per company`, `${p.users} مستخدمين لكل شركة`)}</div><ul>${(p.features || []).map(f => `<li>${esc(f)}</li>`).join("")}</ul></button>`).join("")}</div>
+        <div class="muted">${L2(`${p.users} users per company`, `${p.users} مستخدمين لكل شركة`)}</div><ul>${feats.map(f => `<li>${esc(f)}</li>`).join("")}</ul>
+        <div class="plan-inc">${inc ? `<span title="${esc(inc.map(secL).join(" · "))}">${esc(L2(`${inc.length} sections`, `${inc.length} قسماً`))}</span>` : `<span>${esc(L2("Every section", "كل الأقسام"))}</span>`}
+          ${pub.ai_mode === "off" ? "" : `<span class="${pub.ai_mode === "free" || p.ai ? "" : "off"}">✦ ${esc(L2("AI assistant", "المساعد الذكي"))}</span>`}
+          <span class="${pub.support_mode === "free" || p.support !== false ? "" : "off"}">? ${esc(L2("Online support", "الدعم الإلكتروني"))}</span></div></button>`; }).join("")}</div>
       <p class="muted" style="font-size:.85em">${L2(`Extra user: ${money(pub.extra_user)} ${cur} a month, for the company it is added to.`, `المستخدم الإضافي: ${money(pub.extra_user)} ${cur} شهرياً، للشركة المضاف إليها.`)}</p></div>
     <div class="card" id="subtotal"><h2>${L2("3. Total and payment", "٣. الإجمالي والدفع")}</h2><div class="muted">${st.sel.size ? t("loading") : L2("Choose at least one company.", "اختر شركة واحدة على الأقل.")}</div></div>`}
     ${orders.filter(o => o !== open).length ? `<div class="card"><h2>${L2("Orders", "الطلبات")}</h2><div class="tbl stack"><table><thead><tr><th>${L2("Reference", "المرجع")}</th><th>${t("date")}</th><th>${L2("Companies", "الشركات")}</th><th class="num">${t("amount")}</th><th>${L2("Method", "الطريقة")}</th><th>${t("status")}</th></tr></thead><tbody>
@@ -13394,12 +13397,13 @@ PAGES.subscription = async (view, parts, q) => {
     try {
       const qt = await PLAT("billing_order_quote", { p_plan: st.plan, p_months: st.months, p_lines: lines() });
       if (!box.isConnected) return;
-      box.innerHTML = `<h2>${L2("3. Total and payment", "٣. الإجمالي والدفع")}</h2><div class="tbl"><table><tbody>${qt.lines.map(l => `<tr><td>${esc(l.name)}${l.extra_users ? ` <span class="muted">+${l.extra_users} ${L2("users", "مستخدمين")}</span>` : ""}</td>
+      box.innerHTML = `<h2>${L2("3. Total and payment", "٣. الإجمالي والدفع")}</h2><div class="tbl"><table><tbody>${qt.lines.map(l => `<tr><td>${esc(l.name)}${l.extra_users ? ` <span class="muted">+${l.extra_users} ${L2("users", "مستخدمين")}</span>` : ""}${addonLine(l).length ? `<div class="muted" style="font-size:.82em">+ ${esc(addonLine(l).join(" · "))} (${money(l.addons)})</div>` : ""}</td>
           <td class="num">${l.pct !== 100 ? `<span class="muted">${money(l.base)} × ${l.pct}%</span> ` : ""}${+l.discount ? `<span class="chip ok">−${l.discount}%</span> ` : ""}${l.list_amount != null && +l.list_amount !== +l.amount ? `<s class="muted">${money(l.list_amount)}</s> ` : ""}${money(l.amount)}</td></tr>`).join("")}
         <tr><th>${L2("Total", "الإجمالي")} · ${st.months === 12 ? L2("1 year", "سنة") : L2("1 month", "شهر")}</th><th class="num">${money(qt.amount)} ${esc(qt.currency)}</th></tr></tbody></table></div>
         ${methods.length ? `<div class="paym">${methods.map((m, i) => `<label class="paym-o"><input type="radio" name="paymethod" value="${m.id}" ${i === 0 ? "checked" : ""}><span><b>${(BILL_KIND[m.kind] || BILL_KIND.other)[2]} ${esc(ar && m.name_ar ? m.name_ar : m.name)}</b>${kindName(m.kind) !== (ar && m.name_ar ? m.name_ar : m.name) ? `<small class="muted">${esc(kindName(m.kind))}</small>` : ""}</span></label>`).join("")}</div>
           <button class="btn pri" data-a="subopen">${L2("Continue", "متابعة")}</button>`
           : `<div class="banner warn">${L2("No payment method is set up yet — please contact us.", "لم تُضبط طريقة دفع بعد — يُرجى التواصل معنا.")}</div>`}
+        ${pageT("footer") ? `<p style="font-size:.88em;white-space:pre-wrap">${esc(pageT("footer"))}</p>` : ""}
         <p class="muted" style="font-size:.85em">${L2("Each payment extends access by one month or one year after the current period; nothing renews or charges by itself. A company whose period ends unpaid becomes read-only (viewing and export stay available) until it is paid.", "تمدد كل دفعة الوصول شهراً أو سنة بعد الفترة الحالية؛ لا يتجدد شيء ولا يُخصم تلقائياً. الشركة التي تنتهي فترتها دون دفع تصبح للعرض فقط (يبقى العرض والتصدير متاحين) حتى الدفع.")}</p>`;
     } catch (e) { if (box.isConnected) box.innerHTML = `<h2>${L2("3. Total and payment", "٣. الإجمالي والدفع")}</h2><div class="banner err">${esc(e.message)}</div>`; }
   };
@@ -13413,8 +13417,10 @@ async function supportCloud(view, parts, q) {
   $("#ttl").textContent = L2("Help and support", "المساعدة والدعم"); $("#crumb").textContent = L2("BeyondERP team", "فريق BeyondERP");
   const C = window.BeyondCloud, pub = S.billingPublic || await C.billingPublic().catch(() => ({})), sup = { ...SUPPORT, ...((pub && pub.support) || {}) };
   if (q.t) return supportTicket(view, +q.t, false);
-  const list = await PLAT("support_mine", { p_company: C.company() }).catch(() => []);
-  const d0 = supDiag();
+  if (q.v) return supportVisit(view, +q.v);
+  const [list, visits] = await Promise.all([PLAT("support_mine", { p_company: C.company() }).catch(() => []), PLAT("visit_mine", { p_company: C.company() }).catch(() => [])]);
+  const d0 = supDiag(), supOk = !S.billing || S.billing.support !== false, vis = (pub && pub.visits) || {};
+  S.H.visitnew = () => visitRequest(pub);
   Object.assign(S.H, {
     suprec: async el => { const f = await recordScreen(el); if (f) dzAdd($("#supfiles", view).closest(".dropzone"), [f]); },
     supsend: async el => {
@@ -13429,8 +13435,10 @@ async function supportCloud(view, parts, q) {
   view.innerHTML = `<div class="split sup"><div>
     <div class="card"><h2>${esc(L2("Report an issue", "الإبلاغ عن مشكلة"))}</h2>
       <p class="muted" style="margin-top:0">${esc(L2("Reports go straight to the BeyondERP team. Add screenshots or a short video of the problem; replies appear here and as a notification.", "تصل البلاغات مباشرة إلى فريق BeyondERP. أضف لقطات شاشة أو فيديو قصيراً للمشكلة؛ تظهر الردود هنا وفي الإشعارات."))}</p>
+      ${supOk ? "" : `<div class="banner warn">${esc(L2("Online support is not included in this company's plan. Questions about the subscription are always welcome; to report problems, add online support to the subscription.", "الدعم الإلكتروني غير مشمول في باقة هذه الشركة. الأسئلة عن الاشتراك مرحب بها دائماً؛ وللإبلاغ عن المشكلات أضف الدعم الإلكتروني إلى الاشتراك."))}
+        ${S.billing && S.billing.is_admin ? ` <a class="btn sm" href="#/subscription">${esc(L2("Subscription", "الاشتراك"))}</a>` : ""}</div>`}
       <form id="supf" class="grid g2" onsubmit="return false">
-        <label class="f">${esc(L2("Category", "التصنيف"))}<select name="kind">${SUP_KINDS().map(([k, l]) => `<option value="${k}">${esc(l)}</option>`).join("")}</select></label>
+        <label class="f">${esc(L2("Category", "التصنيف"))}<select name="kind">${SUP_KINDS().filter(([k]) => supOk || k === "billing").map(([k, l]) => `<option value="${k}">${esc(l)}</option>`).join("")}</select></label>
         <label class="f">${esc(L2("Summary", "الملخص"))}<input name="subject" required maxlength="200" dir="auto" placeholder="${esc(L2("e.g. Receipt voucher does not save", "مثال: سند القبض لا يُحفظ"))}"></label>
         <label class="f spanall">${esc(L2("Details", "التفاصيل"))}<textarea name="body" rows="5" dir="auto" placeholder="${esc(L2("Steps taken, expected result and actual result.", "الخطوات المتبعة، والنتيجة المتوقعة، والنتيجة الفعلية."))}"></textarea></label>
         <div class="spanall">${dropZone({ id: "supfiles", accept: "image/*,video/*,application/pdf,.txt,.xlsx,.zip", multiple: true, skip: true, hint: L2("Add screenshots or videos", "أضف لقطات شاشة أو فيديو") })}
@@ -13449,7 +13457,62 @@ async function supportCloud(view, parts, q) {
       ${sup.phone ? `<div class="sup-ch"><b>${esc(L2("Phone", "الهاتف"))}</b><a href="tel:${esc(sup.phone)}" dir="ltr">${esc(sup.phone)}</a></div>` : ""}
       ${sup.email ? `<div class="sup-ch"><b>${esc(L2("Email", "البريد الإلكتروني"))}</b><a href="mailto:${esc(sup.email)}" dir="ltr">${esc(sup.email)}</a></div>` : ""}
       ${sup.hours ? `<p class="muted" style="font-size:.9em">${esc(sup.hours)}</p>` : ""}
-      <button class="btn" data-a="tour">➜ ${esc(L2("Restart the tour", "إعادة الجولة"))}</button></div></div></div>`;
+      <button class="btn" data-a="tour">➜ ${esc(L2("Restart the tour", "إعادة الجولة"))}</button></div>
+    ${vis.on !== false || visits.length ? `<div class="card"><h2>${esc(L2("Support visits", "زيارات الدعم"))}</h2>
+      <p class="muted" style="margin-top:0;font-size:.9em">${esc(L2("For what cannot be fixed online, someone from the team can come to you. The team confirms the price and the time first.", "لما لا يمكن حله عن بُعد، يمكن أن يأتيك أحد من الفريق. يؤكد الفريق السعر والموعد أولاً."))}</p>
+      ${vis.on !== false ? `<button class="btn pri" data-a="visitnew">🚗 ${esc(L2("Ask for a visit", "طلب زيارة"))}</button>` : ""}
+      ${visits.length ? `<div class="vis-list">${visits.map(v => `<a class="vis-row" href="#/support?v=${v.id}"><b>${esc(v.ref)}</b> ${visitChip(v.status)}${v.customer_unread ? ` <span class="chip info">${esc(L2("Update", "تحديث"))}</span>` : ""}
+        <span class="muted" style="font-size:.85em">${esc(String(v.reason).slice(0, 60))}</span>${v.price != null ? `<span class="num">${money(v.price)} ${esc(v.currency || "")}</span>` : ""}</a>`).join("")}</div>` : ""}</div>` : ""}</div></div>`;
+}
+// ------------------------------------------------------------ support visits (asked for here, priced and scheduled by the team in the owner console)
+const VISIT_ST = { requested: ["Requested — the team will confirm the price", "مطلوبة — سيؤكد الفريق السعر", "warn"], quoted: ["Price sent — your answer is needed", "أُرسل السعر — بانتظار ردك", "info"],
+  accepted: ["Accepted — being scheduled", "مقبولة — جارٍ تحديد الموعد", "info"], scheduled: ["Scheduled", "مجدولة", "ok"], done: ["Done", "تمت", "ok"],
+  declined: ["Declined", "مرفوضة منك", ""], cancelled: ["Cancelled", "ملغاة", ""], rejected: ["Not possible", "غير ممكنة", "bad"] };
+const visitChip = s => `<span class="chip ${(VISIT_ST[s] || VISIT_ST.requested)[2]}">${esc(L2(...(VISIT_ST[s] || VISIT_ST.requested).slice(0, 2)))}</span>`;
+function visitRequest(pub) {
+  const vis = (pub && pub.visits) || {}, terms = S.lang === "ar" ? vis.terms_ar || vis.terms : vis.terms;
+  drawer(L2("Ask for a support visit", "طلب زيارة دعم"), `${form([
+      { k: "reason", l: L2("What the visit is for", "سبب الزيارة"), type: "textarea", req: 1, span: "spanall" },
+      { k: "address", l: L2("Address", "العنوان"), span: "spanall" }, { k: "phone", l: L2("Phone to arrange it", "هاتف للتنسيق"), req: 1 },
+      { k: "preferred", l: L2("Days / times that suit you", "الأيام / الأوقات المناسبة") },
+      { k: "vfiles", l: L2("Pictures or videos (optional)", "صور أو فيديو (اختياري)"), type: "file", accept: "image/*,video/*,application/pdf", multiple: true, span: "spanall" }])}
+    <p class="muted" style="font-size:.88em">${+vis.price ? esc(L2(`Usual price: ${money(vis.price)} ${pub.currency || ""}. The team confirms the final price before anything is due.`, `السعر المعتاد: ${money(vis.price)} ${pub.currency || ""}. يؤكد الفريق السعر النهائي قبل أي استحقاق.`)) : esc(L2("The team confirms the price before anything is due.", "يؤكد الفريق السعر قبل أي استحقاق."))}</p>
+    ${terms ? `<p style="font-size:.88em;white-space:pre-wrap">${esc(terms)}</p>` : ""}`,
+    async (v, f) => { const files = await uploadFiles("support-files", [...(($("input[type=file]", f) || {}).files || [])]);
+      const r = await PLAT("visit_request", { p_company: window.BeyondCloud.company(), p_reason: v.reason, p_address: v.address, p_phone: v.phone, p_preferred: v.preferred, p_files: files, p_ticket: null });
+      window.BeyondCloud.platformPush("visit", r.id, { isNew: true }); toast(L2(`Sent as ${r.ref}`, `أُرسل برقم ${r.ref}`)); closeDrawer(); location.hash = "#/support?v=" + r.id; return false; },
+    { submitLabel: L2("Send the request", "إرسال الطلب"), noDraft: true });
+}
+async function supportVisit(view, id) {
+  const C = window.BeyondCloud, ar = S.lang === "ar", [list, pub] = await Promise.all([PLAT("visit_mine", { p_company: C.company() }), S.billingPublic || C.billingPublic()]);
+  const v = list.find(x => x.id === id); if (!v) { view.innerHTML = `<div class="banner err">${esc(L2("Visit not found.", "الزيارة غير موجودة."))}</div>`; return; }
+  $("#ttl").textContent = `${v.ref} — ${L2("Support visit", "زيارة دعم")}`;
+  const act = async (a, p = {}) => { const r = await PLAT("visit_customer", { p_visit: id, p_action: a, p }); C.platformPush("visit", r.id); toast(t("saved")); route(); };
+  Object.assign(S.H, {
+    vaccept: () => act("accept").catch(fail),
+    vdecline: async () => { const n = await uiPrompt(L2("Decline the price? You can add a note for the team.", "رفض السعر؟ يمكنك إضافة ملاحظة للفريق."), ""); if (n !== null) act("decline", { note: n }).catch(fail); },
+    vcancel: async () => { if (await uiConfirm(L2("Cancel this visit?", "إلغاء هذه الزيارة؟"))) act("cancel").catch(fail); },
+    vpay: async el => { const m = $("[name=vmethod]:checked", view); if (!m) return toast(L2("Choose how you paid.", "اختر طريقة الدفع."), true);
+      try { el.disabled = true; const proof = await uploadFiles("billing-proofs", [...(($("#vproof", view) || {}).files || [])]);
+        await act("pay", { method: +m.value, proof, ref: $("[name=vref]", view).value, amount: $("[name=vamount]", view).value }); } catch (e) { el.disabled = false; fail(e); } } });
+  const methods = ((pub && pub.methods) || []).filter(m => m.kind !== "card");
+  const canPay = v.price != null && +v.price > 0 && v.pay_when !== "free" && v.pay_status === "none" && ["quoted", "accepted", "scheduled", "done"].includes(v.status);
+  view.innerHTML = `<div class="toolbar"><a class="btn" href="#/support">← ${esc(L2("Help and support", "المساعدة والدعم"))}</a>${visitChip(v.status)}<span class="spacer"></span>
+      ${!["done", "cancelled", "rejected", "declined"].includes(v.status) ? `<button class="btn" data-a="vcancel">${esc(L2("Cancel the visit", "إلغاء الزيارة"))}</button>` : ""}</div>
+    <div class="split"><div class="card"><h2>${esc(v.ref)}</h2><p style="white-space:pre-wrap">${esc(v.reason)}</p>${fileList("support-files", v.files)}
+      <div class="lines"><div><b>${esc(L2("Address", "العنوان"))}</b>: ${esc(v.address || "—")}</div><div><b>${esc(L2("Phone", "الهاتف"))}</b>: <span dir="ltr">${esc(v.phone)}</span></div><div><b>${esc(L2("Suits you", "يناسبك"))}</b>: ${esc(v.preferred || "—")}</div></div>
+      ${v.note ? `<div class="banner info" style="margin-top:10px"><b>${esc(L2("From the team", "من الفريق"))}</b>: <span style="white-space:pre-wrap">${esc(v.note)}</span></div>` : ""}</div>
+    <div><div class="card"><div class="kpis">${kpiBox(L2("Price", "السعر"), v.price != null ? `${money(v.price)} ${esc(v.currency || "")}` : esc(L2("To be confirmed", "قيد التأكيد")))}
+        ${kpiBox(L2("When", "الموعد"), v.scheduled_at ? dt16(v.scheduled_at) : esc(L2("To be arranged", "قيد التنسيق")), "", v.technician ? esc(v.technician) : "")}
+        ${kpiBox(L2("Payment", "الدفع"), esc(v.pay_status === "paid" ? L2("Paid", "مدفوعة") : v.pay_status === "waived" || v.pay_when === "free" ? L2("No charge", "بدون رسوم") : v.pay_status === "submitted" ? L2("Being checked", "قيد التحقق") : v.pay_when === "after" ? L2("After the visit", "بعد الزيارة") : L2("Before the visit", "قبل الزيارة")))}</div>
+      ${v.status === "quoted" ? `<div class="row" style="gap:8px"><button class="btn pri" data-a="vaccept">✓ ${esc(L2("Accept the price", "قبول السعر"))}</button><button class="btn" data-a="vdecline">${esc(L2("Decline…", "رفض…"))}</button></div>` : ""}</div>
+      ${canPay && methods.length ? `<div class="card"><h3 style="margin-top:0">${esc(L2("Pay for the visit", "دفع قيمة الزيارة"))}</h3>
+        <div class="paym">${methods.map((m, i) => `<label class="paym-o"><input type="radio" name="vmethod" value="${m.id}" ${i === 0 ? "checked" : ""}><span><b>${(BILL_KIND[m.kind] || BILL_KIND.other)[2]} ${esc(ar && m.name_ar ? m.name_ar : m.name)}</b>${m.details ? `<small dir="ltr">${esc(m.details)}</small>` : ""}</span></label>`).join("")}</div>
+        ${dropZone({ id: "vproof", accept: "image/*,application/pdf", multiple: true, skip: true, hint: L2("Add the transfer screenshot", "أضف لقطة شاشة التحويل") })}
+        <div class="grid g2"><label class="f">${esc(L2("Transfer reference (optional)", "رقم العملية (اختياري)"))}<input name="vref" dir="ltr"></label><label class="f">${esc(L2("Amount sent", "المبلغ المرسل"))}<input name="vamount" type="number" step="any" class="num" value="${v.price}"></label></div>
+        <button class="btn pri" data-a="vpay">${esc(L2("Send for verification", "إرسال للتحقق"))}</button></div>` : ""}
+      ${v.pay_status === "submitted" ? `<div class="banner info">${esc(L2("Payment received — the team is checking it.", "تم استلام الدفعة — يتحقق منها الفريق."))}</div>${fileList("billing-proofs", v.proof)}` : ""}</div></div>`;
+  filePreviews(view);
 }
 // one ticket: what was reported, then the conversation (the customer's view, or staff's in the console)
 async function supportTicket(view, id, staff) {
@@ -13498,275 +13561,12 @@ async function supportTicket(view, id, staff) {
   filePreviews(view);
 }
 
-// ------------------------------------------------------------ the owner console (platform staff, by permission)
-const CON_TABS = () => [["overview", L2("Overview", "نظرة عامة"), "overview"], ["customers", L2("Customers", "العملاء"), "customers"], ["payments", L2("Payments to verify", "مدفوعات للتحقق"), "billing"],
-  ["support", L2("Support", "الدعم"), "support"], ["cancellations", L2("Cancellations", "الإلغاءات"), "customers"], ["plans", L2("Plans and settings", "الباقات والإعدادات"), "settings"],
-  ["methods", L2("Payment methods", "طرق الدفع"), "settings"], ["notices", L2("Announcements", "الإعلانات"), "notices"], ["team", L2("Team", "الفريق"), "_full"], ["log", L2("Activity", "السجل"), "_full"]];
-const conCan = (me, area) => me.full || (area !== "_full" && !!(me.perms || {})[area]);
-PAGES.console = async (view, parts, q) => {
-  if (!platformOn()) { view.innerHTML = `<div class="card"><div class="empty">${L2("The owner console works in the online workspace.", "تعمل لوحة المالك في مساحة العمل الإلكترونية.")}</div></div>`; return; }
-  let me;
-  try { me = S.conMe = await PLAT("console_me"); } catch (e) { view.innerHTML = `<div class="banner err">${esc(e.message)}</div>`; return; }
-  const tabs = CON_TABS().filter(x => conCan(me, x[2]));
-  let sub = parts[1] || (tabs[0] || [])[0];
-  if (["company", "ticket"].includes(sub)) sub = sub === "company" ? "customers" : "support";
-  const tab = CON_TABS().find(x => x[0] === sub);
-  if (!tab || !conCan(me, tab[2])) { view.innerHTML = `<div class="banner err">${L2("Your team account does not have access to this.", "لا يملك حساب فريقك صلاحية الوصول إلى هذا.")}</div>`; return; }
-  $("#ttl").textContent = L2("Owner console", "لوحة المالك"); $("#crumb").textContent = tab[1];
-  const badge = k => { const n = k === "payments" ? (me.badges || {}).orders : k === "support" ? (me.badges || {}).tickets : 0; return n ? ` <b class="cbadge">${n}</b>` : ""; };
-  const nav = `<nav class="con-tabs">${tabs.map(([k, l]) => `<a class="tab ${k === sub ? "on" : ""}" href="#/console/${k}">${esc(l)}${badge(k)}</a>`).join("")}</nav>`;
-  const body = document.createElement("div");
-  view.innerHTML = nav; view.appendChild(body);
-  if (parts[1] === "company" && parts[2]) return conCompany(body, parts[2]);
-  if (parts[1] === "ticket" && parts[2]) return supportTicket(body, +parts[2], true);
-  return ({ overview: conOverview, customers: conCustomers, payments: conPayments, support: conSupport, cancellations: conCancellations,
-            plans: conPlans, methods: conMethods, notices: conNotices, team: conTeam, log: conLog })[sub](body, q, me);
+// ------------------------------------------------------------ the owner console: a page of its own (owner.html), for the platform team only
+const consoleUrl = path => "owner.html" + (path ? "#/" + path : "");
+PAGES.console = async (view, parts) => {
+  const path = parts.slice(1).join("/");
+  view.innerHTML = `<div class="card"><h2>${esc(L2("Owner console", "لوحة المالك"))}</h2><p>${esc(L2("The owner console opens in its own page.", "تفتح لوحة المالك في صفحة مستقلة."))}</p>
+    <a class="btn pri" href="${consoleUrl(path)}" target="_blank" rel="opener">${esc(L2("Open the owner console", "فتح لوحة المالك"))} ↗</a></div>`;
+  if (S.billing && S.billing.is_owner) window.open(consoleUrl(path), "_blank");
 };
-// two lines over time (expected and received), with the shared chart style and tips
-function conChart(series) {
-  if (!series.length) return `<div class="empty">${t("nothing")}</div>`;
-  const W = 640, H = 230, padB = 26, max = Math.max(1, ...series.map(s => Math.max(+s.expected, +s.real)));
-  const step = W / series.length, y = v => (H - padB) - v / max * (H - padB - 12), x = i => i * step + step / 2;
-  // straight segments: a smoothed curve would dip below zero between months with nothing
-  const line = k => series.map((s, i) => `${i ? "L" : "M"}${x(i).toFixed(1)} ${y(+s[k]).toFixed(1)}`).join(" ");
-  const grid = [0.25, 0.5, 0.75, 1].map(f => `<line x1="0" x2="${W}" y1="${y(max * f)}" y2="${y(max * f)}" class="gl"/>`).join("");
-  const pts = (k, c) => series.map((s, i) => `<circle cx="${x(i)}" cy="${y(+s[k])}" r="3.2" class="pt ${c}"/>`).join("");
-  const every = Math.max(1, Math.ceil(series.length / 12));
-  const hits = series.map((s, i) => `<g class="mb" data-tip="${esc(s.period)}&#10;${esc(L2("Expected", "المتوقع"))}: ${money(s.expected)}&#10;${esc(L2("Received", "المحصّل"))}: ${money(s.real)}">
-      <rect x="${x(i) - step / 2}" y="0" width="${step}" height="${H}" class="hit"/>${i % every === 0 ? `<text x="${x(i)}" y="${H - 8}">${esc(s.period.length > 7 ? s.period.slice(5) : s.period.slice(2))}</text>` : ""}</g>`).join("");
-  return `<div class="mchart con-chart"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${grid}<path d="${line("expected")}" class="ln c"/><path d="${line("real")}" class="ln r"/>${pts("expected", "c")}${pts("real", "r")}${hits}</svg><div class="tip" hidden></div></div>
-    <div class="con-legend"><span class="lg c">● ${esc(L2("Expected (renewals falling due)", "المتوقع (تجديدات مستحقة)"))}</span><span class="lg r">● ${esc(L2("Received", "المحصّل"))}</span></div>`;
-}
-async function conOverview(view, q, me) {
-  const range = q.range || "12m", useDates = q.from && q.to;
-  const back = { "12m": [11, "month"], "6m": [5, "month"], "30d": [29, "day"], "7d": [6, "day"] }[range] || [11, "month"];
-  const to = useDates ? q.to : today();
-  const from = useDates ? q.from : (() => { const d = new Date(); if (back[1] === "month") d.setMonth(d.getMonth() - back[0]); else d.setDate(d.getDate() - back[0]); return d.toISOString().slice(0, 10); })();
-  const by = useDates ? ((new Date(q.to) - new Date(q.from)) / 86400000 > 62 ? "month" : "day") : back[1];
-  const [d, cos] = await Promise.all([PLAT("console_overview", { p_from: from, p_to: to, p_by: by }), conCan(me, "customers") ? PLAT("console_companies").catch(() => []) : []]);
-  const cur = d.currency || "EGP", c = d.counts || {};
-  Object.assign(S.H, {
-    conrange: el => setQ({ range: el.dataset.r }),
-    condates: () => { const f = $("[name=cfrom]", view).value, tt = $("[name=cto]", view).value; if (f && tt) setQ({ from: f, to: tt }); },
-    conexport: () => { const rows = [["period", "expected", "received"], ...d.series.map(s => [s.period, s.expected, s.real])];
-      const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob(["﻿" + rows.map(r => r.join(",")).join("\n")], { type: "text/csv" }));
-      a.download = `revenue_${from}_${to}.csv`; a.click(); },
-    conpick: el => { const x = cos.find(cc => cc.id === el.value); $("#coninsight", view).innerHTML = x ? conInsight(x, cur) : conInsightEmpty(); } });
-  view.innerHTML = `<p class="con-hi">${esc(L2(`Hello ${me.name} —`, `مرحباً ${me.name} —`))} <b>${esc(L2("here's what's happening with the business today", "إليك ما يحدث في الأعمال اليوم"))}</b></p>
-    <div class="card"><div class="row con-range" style="gap:8px;flex-wrap:wrap;align-items:center">
-      <label class="chk"><input type="checkbox" ${useDates ? "checked" : ""} onclick="this.closest('.con-range').classList.toggle('dates', this.checked)"> ${esc(L2("Use date range", "نطاق تواريخ"))}</label>
-      <span class="con-dates"><input type="date" name="cfrom" value="${esc(from)}"> → <input type="date" name="cto" value="${esc(to)}"> <button class="btn sm" data-a="condates">${esc(L2("Apply", "تطبيق"))}</button></span>
-      ${[["12m", L2("12 months", "12 شهراً")], ["6m", L2("6 months", "6 أشهر")], ["30d", L2("30 days", "30 يوماً")], ["7d", L2("7 days", "7 أيام")]].map(([k, l]) => `<button class="btn sm ${!useDates && range === k ? "pri" : ""}" data-a="conrange" data-r="${k}">${esc(l)}</button>`).join("")}
-      <span class="spacer"></span><button class="btn sm" data-a="conexport">⬇ ${esc(L2("Export", "تصدير"))}</button></div>
-      ${conChart(d.series)}</div>
-    <div class="kpis">${kpiBox(L2("Monthly recurring revenue", "الإيراد الشهري المتكرر"), +d.mrr || 0, "", esc(cur))}${kpiBox(L2("Received this month", "المحصّل هذا الشهر"), +d.received_this_month || 0, "", esc(cur))}
-      ${kpiBox(L2("Paying", "مدفوع"), numf((c.active || 0) + (c.past_due || 0)), "", (c.past_due ? L2(`${c.past_due} payment due`, `${c.past_due} مستحق الدفع`) : ""))}${kpiBox(L2("On trial", "تجربة"), numf(c.trial || 0))}
-      ${kpiBox(L2("Not paying", "غير مدفوع"), numf((c.unpaid || 0) + (c.expired || 0)), (c.unpaid || 0) + (c.expired || 0) ? "warn" : "")}
-      ${kpiBox(L2("Payments to verify", "مدفوعات للتحقق"), `<a href="#/console/payments">${numf(d.orders_waiting)}</a>`, d.orders_waiting ? "warn" : "")}
-      ${kpiBox(L2("Open support tickets", "بلاغات دعم مفتوحة"), `<a href="#/console/support">${numf(d.tickets_open)}</a>`, d.tickets_unread ? "warn" : "", d.tickets_unread ? L2(`${d.tickets_unread} unread`, `${d.tickets_unread} غير مقروء`) : "")}
-      ${kpiBox(L2("Companies · people", "الشركات · الأفراد"), `${numf(d.companies)} · ${numf(d.people)}`, "", L2(`${d.new_companies_30d} new in 30 days`, `${d.new_companies_30d} جديدة خلال 30 يوماً`))}</div>
-    <div class="split con-split"><div class="card"><h2>${esc(L2("Coming up (30 days)", "القادم (30 يوماً)"))}</h2>${d.upcoming.length ? `<div class="con-list">${d.upcoming.map(u => `<a class="con-row" href="#/console/company/${u.company_id}">${billChip(u.status)}
-        <span class="con-who"><b>${esc(u.name)}</b><small class="muted" dir="ltr">${esc(u.owner || "")}</small></span>
-        <span class="con-amt">${u.amount != null ? `<b>${money(u.amount)}</b>` : `<b class="muted">${esc(u.plan || "")}</b>`}<small class="muted">${dt16(u.ends)}</small></span></a>`).join("")}</div>`
-      : `<div class="empty">${esc(L2("No renewals or trials ending in the next 30 days.", "لا تجديدات أو فترات تجريبية تنتهي خلال 30 يوماً."))}</div>`}</div>
-      <div class="card"><h2>${esc(L2("Company insight", "نظرة على شركة"))}</h2>${cos.length ? `<select data-change="conpick" style="width:100%"><option value="">${esc(L2("Search for a company…", "ابحث عن شركة…"))}</option>${cos.map(x => `<option value="${x.id}">${esc(x.name)} — ${esc(x.created_by || "")}</option>`).join("")}</select>` : ""}
-        <div id="coninsight">${conInsightEmpty()}</div></div></div>`;
-  chartTips(view);
-}
-const conInsightEmpty = () => `<div class="empty" style="padding:30px 10px">📊<br><b>${esc(L2("Select a company", "اختر شركة"))}</b><br><span class="muted">${esc(L2("Choose a company above to see where it stands, its use and its support.", "اختر شركة لرؤية وضعها واستخدامها ودعمها."))}</span></div>`;
-const conInsight = (x, cur) => `<div class="kpis sm">${kpiBox(L2("Status", "الحالة"), billChip(x.state.status))}${kpiBox(L2("Until", "حتى"), billDate(x.state.ends))}${kpiBox(L2("People", "الأفراد"), numf(x.people))}
-    ${kpiBox(L2("Paid in total", "إجمالي المدفوع"), +x.paid_total || 0, "", esc(cur))}${kpiBox(L2("Last change", "آخر تعديل"), dt16(x.last_change))}${kpiBox(L2("Open tickets", "بلاغات مفتوحة"), numf(x.tickets_open), x.tickets_open ? "warn" : "")}</div>
-  ${x.cancel_note ? `<div class="banner warn">✗ ${esc(x.cancel_note)}</div>` : ""}<a class="btn" href="#/console/company/${x.id}">${esc(L2("Open the company", "فتح الشركة"))} →</a>`;
-async function conCustomers(view, q, me) {
-  const rows0 = await PLAT("console_companies"), fil = q.f || "all", term = (q.s || "").toLowerCase();
-  const rows = rows0.filter(x => (fil === "all" || x.state.status === fil) && (!term || `${x.name} ${x.created_by}`.toLowerCase().includes(term)));
-  const counts = rows0.reduce((a, x) => { a[x.state.status] = (a[x.state.status] || 0) + 1; return a; }, {});
-  S.H.consearch = el => setQ({ ...q, s: el.value });
-  view.innerHTML = `<div class="card"><div class="row" style="gap:8px;flex-wrap:wrap;align-items:center"><div class="tabs" style="margin:0">${[["all", L2("All", "الكل")], ["trial", L2("Trial", "تجربة")], ["active", L2("Paying", "مدفوع")], ["past_due", L2("Payment due", "مستحق")], ["unpaid", L2("Not subscribed", "غير مشترك")], ["expired", L2("Ended", "منتهي")], ["comped", L2("Free", "مجاني")]].map(([k, l]) => `<a class="tab ${fil === k ? "on" : ""}" href="#/console/customers?${qs({ f: k, s: q.s || "" })}">${esc(l)}${k !== "all" && counts[k] ? ` (${counts[k]})` : k === "all" ? ` (${rows0.length})` : ""}</a>`).join("")}</div>
-      <span class="spacer"></span><input type="search" value="${esc(q.s || "")}" data-change="consearch" placeholder="${esc(L2("Search name or owner", "ابحث بالاسم أو المالك"))}"></div>
-    ${rows.length ? `<div class="tbl stack"><table><thead><tr><th>${L2("Company", "الشركة")}</th><th>${L2("Owner", "المالك")}</th><th>${t("status")}</th><th>${L2("Plan", "الباقة")}</th><th>${L2("Until", "حتى")}</th><th class="num">${L2("People", "الأفراد")}</th><th>${L2("Last change", "آخر تعديل")}</th><th class="num">${L2("Paid in total", "إجمالي المدفوع")}</th><th class="num">${L2("Tickets", "البلاغات")}</th></tr></thead><tbody>
-      ${rows.map(x => `<tr class="click" data-href="#/console/company/${x.id}"><td><b>${esc(x.name)}</b><div class="muted" style="font-size:.8em">${L2("since", "منذ")} ${billDate(x.created_at)}</div></td><td dir="ltr">${esc(x.created_by || "")}</td>
-        <td>${billChip(x.state.status)}${x.cancel_note ? `<div class="muted" style="font-size:.8em">✗ ${esc(x.cancel_note)}</div>` : ""}</td><td>${esc(x.state.plan_name || "")}</td><td>${billDate(x.state.ends)}</td>
-        <td class="num">${x.people}${x.state.users_allowed ? " / " + x.state.users_allowed : ""}</td><td>${x.last_change ? dt16(x.last_change) : "—"}</td><td class="num">${money(+x.paid_total || 0)}</td><td class="num ${x.tickets_open ? "warn" : ""}">${x.tickets_open || ""}</td></tr>`).join("")}</tbody></table></div>`
-      : `<div class="empty">${L2("No companies.", "لا توجد شركات.")}</div>`}</div>`;
-}
-async function conCompany(view, id) {
-  const [x, cfg] = await Promise.all([PLAT("console_company", { p_company: id }), window.BeyondCloud.billingAdmin().then(r => r.config).catch(() => null)]);
-  const me = S.conMe, approve = conCan(me, "approve");
-  $("#ttl").textContent = x.name;
-  const free = !!(x.billing || {}).comped, days = cfg ? cfg.trial_days : 15;
-  // one click on the server's clock: a fresh trial, the trial ended now, free of charge or charged again
-  const setCo = async p => { try { await window.BeyondCloud.billingSetCompany(x.id, p); toast(t("saved")); route(); } catch (e) { fail(e); } };
-  const act = async (p, ask) => { if (await uiConfirm(ask, { danger: false })) setCo(p); };
-  const askDays = async (msg, def) => { const v = await uiPrompt(msg, String(def)); if (v === null) return 0;
-    const n = Math.round(Number(v)); if (!(n >= 1 && n <= 3650)) { toast(L2("Enter 1 to 3650 days.", "أدخل من 1 إلى 3650 يوماً."), true); return 0; } return n; };
-  const disc = +((x.billing || {}).discount_pct || 0);
-  Object.assign(S.H, { pfpay: () => platformPayForm({ ...x, state: x.state }, cfg), pfset: () => platformCompanyForm({ ...x, comped: free, state: x.state }),
-    pftrial: async () => { const n = await askDays(L2(`New free trial for ${x.name}, starting now. How many days?`, `فترة تجريبية جديدة لـ ${x.name} تبدأ الآن. كم يوماً؟`), days); if (n) setCo({ trial: "restart", days: n }); },
-    pfextend: async () => { const paid = ["active", "past_due"].includes(x.state.status);
-      const n = await askDays(paid ? L2(`Add days to ${x.name}'s paid period. How many?`, `إضافة أيام إلى الفترة المدفوعة لـ ${x.name}. كم يوماً؟`)
-        : L2(`Add days to ${x.name}'s free trial. How many?`, `إضافة أيام إلى الفترة التجريبية لـ ${x.name}. كم يوماً؟`), 7); if (n) setCo({ trial: "extend", days: n }); },
-    pfdisc: async () => { const v = await uiPrompt(L2(`Standing discount for ${x.name} on every order (%). 0 removes it.`, `خصم دائم لـ ${x.name} على كل طلب (%). 0 يلغيه.`), String(disc));
-      if (v === null) return; const n = Number(String(v).replace("%", "").trim());
-      if (!isFinite(n) || n < 0 || n > 100) return toast(L2("Enter 0 to 100.", "أدخل من 0 إلى 100."), true); setCo({ discount_pct: n }); },
-    pftrialstop: () => act({ trial: "stop" }, L2(`End ${x.name}'s free trial now? Without a paid period it becomes read only (viewing and export stay available).`, `إنهاء الفترة التجريبية لـ ${x.name} الآن؟ بدون فترة مدفوعة تصبح للعرض فقط (يبقى العرض والتصدير متاحين).`)),
-    pffree: () => act({ comped: !free }, free ? L2(`Charge ${x.name} again? It follows its trial or paid period from now on.`, `إعادة احتساب الاشتراك لـ ${x.name}؟ تتبع فترتها التجريبية أو المدفوعة من الآن.`)
-      : L2(`Make ${x.name} free of charge? It can use everything with no subscription until you switch this off.`, `جعل ${x.name} مجانية؟ تستخدم كل شيء دون اشتراك حتى تلغي ذلك.`)) });
-  const u = x.use || {};
-  view.innerHTML = `<div class="toolbar"><a class="btn" href="#/console/customers">← ${esc(L2("Customers", "العملاء"))}</a>${billChip(x.state.status)}<span class="spacer"></span>
-      ${approve && cfg ? `<button class="btn pri" data-a="pfpay">${esc(L2("Record payment", "تسجيل دفعة"))}</button><button class="btn" data-a="pftrial">↻ ${esc(L2("Restart trial…", "إعادة التجربة…"))}</button>
-      <button class="btn" data-a="pfextend">+ ${esc(L2("Extend…", "تمديد…"))}</button>
-      <button class="btn" data-a="pfdisc">% ${esc(disc ? L2(`Discount ${disc}%`, `خصم ${disc}%`) : L2("Discount…", "خصم…"))}</button>
-      ${x.state.status === "trial" ? `<button class="btn" data-a="pftrialstop">■ ${esc(L2("Stop trial", "إيقاف التجربة"))}</button>` : ""}
-      <button class="btn ${free ? "" : "pri"}" data-a="pffree">${esc(free ? L2("Charge again", "إعادة الاحتساب") : L2("Make free", "جعلها مجانية"))}</button>
-      <button class="btn" data-a="pfset">${esc(L2("Set dates…", "ضبط التواريخ…"))}</button>` : ""}</div>
-    <div class="kpis">${kpiBox(L2("Plan", "الباقة"), esc(x.state.plan_name || "—"))}${kpiBox(L2("Until", "حتى"), billDate(x.state.ends))}${kpiBox(L2("Users", "المستخدمون"), `${x.state.users}${x.state.users_allowed ? " / " + x.state.users_allowed : ""}`)}
-      ${kpiBox(L2("Changes (30 days)", "التعديلات (30 يوماً)"), numf(u.changes_30d), "", L2(`${numf(u.changes)} in total · ${u.devices} device(s)`, `${numf(u.changes)} إجمالاً · ${u.devices} جهاز`))}${kpiBox(L2("Last change", "آخر تعديل"), dt16(u.last_change))}</div>
-    ${(x.billing || {}).cancel_note ? `<div class="banner warn">✗ ${esc(L2("Asked not to renew", "طلب عدم التجديد"))}: ${esc(x.billing.cancel_note)} · ${dt16(x.billing.cancel_at)}</div>` : ""}
-    <div class="split"><div>
-      <div class="card"><h2>${esc(L2("People", "الأفراد"))}</h2><div class="tbl stack"><table><tbody>${x.people.map(p => `<tr><td dir="ltr">${esc(p.email)}</td><td>${p.super ? `<span class="chip ok">${esc(L2("Super administrator", "مسؤول أعلى"))}</span>` : p.is_admin ? `<span class="chip">${esc(L2("Administrator", "مسؤول"))}</span>` : ""}${p.pending ? ` <span class="chip warn">${esc(L2("Asked to join", "طلب الانضمام"))}</span>` : !p.active ? ` <span class="chip">${esc(L2("Inactive", "غير نشط"))}</span>` : ""}</td></tr>`).join("")}</tbody></table></div></div>
-      <div class="card"><h2>${esc(L2("Payments", "المدفوعات"))}</h2>${x.payments.length ? `<div class="tbl stack"><table><thead><tr><th>${t("date")}</th><th>${L2("Plan", "الباقة")}</th><th>${L2("Period", "المدة")}</th><th class="num">${t("amount")}</th><th>${L2("Reference", "المرجع")}</th><th>${t("status")}</th></tr></thead><tbody>
-        ${x.payments.map(p => `<tr><td>${billDate(p.paid_at || p.created_at)}</td><td>${esc(p.plan)}</td><td>${billDate(p.period_start)} → ${billDate(p.period_end)}</td><td class="num">${money(p.amount)} ${esc(p.currency)}</td><td dir="ltr">${esc(p.reference || "")}</td><td>${esc(p.status)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${esc(L2("No payments.", "لا مدفوعات."))}</div>`}</div></div>
-      <div><div class="card"><h2>${esc(L2("Orders", "الطلبات"))}</h2>${x.orders.length ? `<div class="con-list">${x.orders.map(o => `<div class="con-row">${orderChip(o.status)}<span class="con-who"><b dir="ltr">${esc(o.ref)}</b><small class="muted">${billDate(o.created_at)}</small></span><span class="con-amt"><b>${money(o.amount)}</b></span></div>`).join("")}</div>` : `<div class="empty">${esc(L2("No orders.", "لا طلبات."))}</div>`}</div>
-      <div class="card"><h2>${esc(L2("Support", "الدعم"))}</h2>${x.tickets.length ? `<div class="con-list">${x.tickets.map(tk => `<a class="con-row" href="#/console/ticket/${tk.id}">${ticketChip(tk.status)}<span class="con-who"><b>${esc(tk.ref)}</b><small class="muted" dir="auto">${esc(tk.subject)}</small></span><span class="con-amt"><small class="muted">${dt16(tk.updated_at)}</small></span></a>`).join("")}</div>` : `<div class="empty">${esc(L2("No tickets.", "لا بلاغات."))}</div>`}</div></div></div>`;
-}
-async function conPayments(view, q, me) {
-  const stt = q.s ?? "submitted", rows = await PLAT("console_orders", { p_status: stt === "all" ? "" : stt }), approve = conCan(me, "approve");
-  Object.assign(S.H, {
-    conok: async el => { if (!await uiConfirm(L2("Approve this payment? The companies in it are activated at once.", "هل تريد اعتماد هذه الدفعة؟ تُفعَّل الشركات فيها فوراً."), { danger: false })) return;
-      try { const r = await PLAT("console_order_decide", { p_order: +el.dataset.id, p_approve: true, p_note: "" }); window.BeyondCloud.platformPush("order", r.id); toast(L2("Activated.", "تم التفعيل.")); route(); } catch (e) { fail(e); } },
-    conamt: async el => { const v = await uiPrompt(L2("New total for this order (a discount or an agreed price; 0 is allowed). The customer sees it.", "الإجمالي الجديد لهذا الطلب (خصم أو سعر متفق عليه؛ يُسمح بـ 0). يراه العميل."), el.dataset.v);
-      if (v === null || v.trim() === "") return; const n = Number(v); if (!isFinite(n) || n < 0) return toast(L2("Enter 0 or more.", "أدخل 0 أو أكثر."), true);
-      try { await PLAT("console_order_amount", { p_order: +el.dataset.id, p_amount: n, p_note: "" }); toast(t("saved")); route(); } catch (e) { fail(e); } },
-    conno: async el => { const why = await uiPrompt(L2("Why is it not accepted? The customer sees this.", "لماذا لم تُقبل؟ يرى العميل هذا السبب.")); if (!why) return;
-      try { const r = await PLAT("console_order_decide", { p_order: +el.dataset.id, p_approve: false, p_note: why }); window.BeyondCloud.platformPush("order", r.id); toast(t("saved")); route(); } catch (e) { fail(e); } } });
-  view.innerHTML = `<div class="tabs">${[["submitted", L2("To verify", "للتحقق")], ["open", L2("Not paid yet", "لم تُدفع بعد")], ["approved", L2("Approved", "معتمدة")], ["rejected", L2("Not accepted", "مرفوضة")], ["all", L2("All", "الكل")]].map(([k, l]) => `<a class="tab ${stt === k ? "on" : ""}" href="#/console/payments?s=${k}">${esc(l)}</a>`).join("")}</div>
-    ${rows.length ? rows.map(o => { const off = o.proof_amount != null && Math.abs(+o.proof_amount - +o.amount) > 0.005;
-      return `<div class="card con-order"><div class="row" style="gap:10px;flex-wrap:wrap;align-items:center"><h3 style="margin:0" dir="ltr">${esc(o.ref)}</h3>${orderChip(o.status)}<span class="muted" dir="ltr">${esc(o.email)}</span><span class="spacer"></span>
-        <b class="con-big">${money(o.amount)} ${esc(o.currency)}</b></div>
-        <div class="lines"><div><b>${esc(L2("Companies", "الشركات"))}</b>: ${(o.lines || []).map(l => `<a href="#/console/company/${l.company_id}">${esc(l.name)}</a>${l.extra_users ? ` (+${l.extra_users})` : ""}`).join(", ")}</div>
-          <div><b>${esc(L2("Plan", "الباقة"))}</b>: ${esc(o.plan)} · ${o.months === 12 ? L2("1 year", "سنة") : L2("1 month", "شهر")} · ${(BILL_KIND[o.method_kind] || BILL_KIND.other)[2]} ${esc(o.method_name || "")}</div>
-          ${o.submitted_at ? `<div><b>${esc(L2("Sent", "أُرسل"))}</b>: ${dt16(o.submitted_at)}${o.proof_ref ? ` · ${esc(L2("reference", "المرجع"))} <b dir="ltr">${esc(o.proof_ref)}</b>` : ""}${o.proof_amount != null ? ` · ${esc(L2("amount sent", "المبلغ المرسل"))} <b class="${off ? "neg" : ""}">${money(o.proof_amount)}</b>${off ? ` ⚠ ${esc(L2("differs from the order", "يختلف عن الطلب"))}` : ""}` : ""}</div>` : ""}
-          ${o.customer_note ? `<div><b>${esc(L2("Note", "ملاحظة"))}</b>: <span dir="auto">${esc(o.customer_note)}</span></div>` : ""}
-          ${o.review_note ? `<div><b>${esc(L2("Decision", "القرار"))}</b>: ${esc(o.review_note)} · ${esc(o.reviewed_by || "")} · ${dt16(o.reviewed_at)}</div>` : ""}</div>
-        ${fileList("billing-proofs", o.proof)}
-        ${approve && ["submitted", "open"].includes(o.status) ? `<div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap"><button class="btn pri" data-a="conok" data-id="${o.id}">✓ ${esc(L2("Approve and activate", "اعتماد وتفعيل"))}</button><button class="btn" data-a="conamt" data-id="${o.id}" data-v="${o.amount}">${esc(L2("Change amount…", "تعديل المبلغ…"))}</button><button class="btn danger" data-a="conno" data-id="${o.id}">${esc(L2("Not accepted…", "رفض…"))}</button></div>` : ""}</div>`; }).join("")
-      : `<div class="card"><div class="empty">${esc(stt === "submitted" ? L2("Nothing to verify.", "لا شيء للتحقق.") : L2("No orders.", "لا طلبات."))}</div></div>`}`;
-  filePreviews(view);
-}
-async function conSupport(view, q) {
-  const stt = q.s || "", rows = await PLAT("console_tickets", { p_status: stt });
-  view.innerHTML = `<div class="tabs">${[["", L2("Not closed", "غير مغلقة")], ["open", L2("Open", "مفتوحة")], ["answered", L2("Answered", "تم الرد")], ["resolved", L2("Resolved", "تم الحل")], ["closed", L2("Closed", "مغلقة")]].map(([k, l]) => `<a class="tab ${stt === k ? "on" : ""}" href="#/console/support${k ? "?s=" + k : ""}">${esc(l)}</a>`).join("")}</div>
-    <div class="card">${rows.length ? `<div class="tbl stack"><table><thead><tr><th>${L2("Ticket", "البلاغ")}</th><th>${L2("Subject", "الموضوع")}</th><th>${L2("Company", "الشركة")}</th><th>${L2("Priority", "الأولوية")}</th><th>${t("status")}</th><th>${L2("Updated", "آخر تحديث")}</th></tr></thead><tbody>
-      ${rows.map(x => `<tr class="click ${x.unread ? "unread" : ""}" data-href="#/console/ticket/${x.id}"><td><b>${esc(x.ref)}</b>${x.unread ? ` <span class="chip info">${esc(L2("New", "جديد"))}</span>` : ""}<div class="muted" style="font-size:.8em">${x.messages} ${esc(L2("messages", "رسائل"))}${x.files ? ` · ${x.files} 📎` : ""}</div></td>
-        <td dir="auto">${esc(x.subject)}<div class="muted" style="font-size:.8em" dir="ltr">${esc(x.app_user || "")} ${esc(x.email)}</div></td><td>${esc(x.company_name || "")}</td>
-        <td><span class="chip ${TK_PRIO[x.priority][2]}">${esc(L2(TK_PRIO[x.priority][0], TK_PRIO[x.priority][1]))}</span></td><td>${ticketChip(x.status)}${x.assignee ? `<div class="muted" style="font-size:.8em">→ ${esc(x.assignee)}</div>` : ""}</td><td>${dt16(x.updated_at)}</td></tr>`).join("")}</tbody></table></div>`
-      : `<div class="empty">${esc(L2("No tickets.", "لا بلاغات."))}</div>`}</div>`;
-}
-async function conCancellations(view) {
-  const rows = (await PLAT("console_companies")).filter(x => x.cancel_note || ["expired", "past_due"].includes(x.state.status));
-  view.innerHTML = `<div class="card"><p class="muted" style="margin-top:0">${esc(L2("Companies that asked not to renew, whose payment is due, or whose period ended.", "شركات طلبت عدم التجديد، أو استحق دفعها، أو انتهت فترتها."))}</p>
-    ${rows.length ? `<div class="tbl stack"><table><thead><tr><th>${L2("Company", "الشركة")}</th><th>${L2("Owner", "المالك")}</th><th>${t("status")}</th><th>${L2("Reason given", "السبب")}</th><th>${L2("Asked on", "تاريخ الطلب")}</th><th>${L2("Ends", "ينتهي")}</th><th class="num">${L2("Paid in total", "إجمالي المدفوع")}</th></tr></thead><tbody>
-      ${rows.map(x => `<tr class="click" data-href="#/console/company/${x.id}"><td><b>${esc(x.name)}</b></td><td dir="ltr">${esc(x.created_by || "")}</td><td>${billChip(x.state.status)}</td><td dir="auto">${esc(x.cancel_note || "—")}</td><td>${x.cancel_at ? dt16(x.cancel_at) : "—"}</td><td>${billDate(x.state.ends)}</td><td class="num">${money(+x.paid_total || 0)}</td></tr>`).join("")}</tbody></table></div>`
-      : `<div class="empty">${esc(L2("Nobody is leaving.", "لا أحد يغادر."))}</div>`}</div>`;
-}
-async function conPlans(view, q, me) {
-  const d = await window.BeyondCloud.billingAdmin(), c = d.config, cur = c.currency;
-  Object.assign(S.H, {
-    pftoggle: async () => { const on = !c.enabled;
-      if (!await uiConfirm(on ? L2(`Switch billing on? A person's first company gets a ${c.trial_days}-day free trial from now; later companies need a subscription.`, `هل تريد تفعيل الاشتراكات؟ تحصل الشركة الأولى لكل شخص على فترة تجريبية ${c.trial_days} يوماً من الآن؛ وتحتاج الشركات اللاحقة اشتراكاً.`)
-        : L2("Switch billing off? The application becomes free for everyone.", "هل تريد إيقاف الاشتراكات؟ يصبح التطبيق مجانياً للجميع."))) return;
-      try { await window.BeyondCloud.billingConfig({ enabled: on }); S.billingPublic = null; toast(t("saved")); route(); } catch (e) { fail(e); } },
-    pfcfg: () => platformConfigForm(c), pfplans: () => platformPlansForm(c) });
-  const sup = c.support || {};
-  view.innerHTML = `<div class="card"><div class="row" style="gap:12px;flex-wrap:wrap;align-items:center">
-      <h2 style="margin:0">${L2("Billing", "الاشتراكات")} ${c.enabled ? `<span class="chip ok">${L2("On", "مفعّلة")}</span>` : `<span class="chip">${L2("Off (free for everyone)", "معطلة (مجاني للجميع)")}</span>`}</h2><span class="spacer"></span>
-      ${conCan(me, "approve") ? `<button class="btn ${c.enabled ? "danger" : "pri"}" data-a="pftoggle">${c.enabled ? L2("Switch billing off", "إيقاف الاشتراكات") : L2("Switch billing on", "تفعيل الاشتراكات")}</button>` : ""}
-      <button class="btn" data-a="pfcfg">${L2("Trial, prices and support contacts", "التجربة والأسعار وبيانات الدعم")}</button><button class="btn" data-a="pfplans">${L2("Plans", "الباقات")}</button></div>
-    <div class="lines" style="margin-top:10px"><div>${L2(`Free trial ${c.trial_days} days on the ${c.trial_plan} plan — a person's first company only`, `تجربة مجانية ${c.trial_days} يوماً على باقة ${c.trial_plan} — للشركة الأولى لكل شخص فقط`)}</div>
-      <div>${L2(`Each further company in an order: ${c.extra_company_pct}% of the plan · extra user ${money(c.extra_user)} ${cur}/month per company · yearly = ${c.yearly_months} months · grace ${c.grace_days} days`, `كل شركة إضافية في الطلب: ${c.extra_company_pct}% من الباقة · المستخدم الإضافي ${money(c.extra_user)} ${cur}/شهر لكل شركة · السنة = ${c.yearly_months} شهور · مهلة ${c.grace_days} أيام`)}</div>
-      <div>${L2("Support shown to customers", "بيانات الدعم للعملاء")}: ${esc([sup.whatsapp && "WhatsApp " + sup.whatsapp, sup.phone, sup.email, sup.hours].filter(Boolean).join(" · ") || L2("not set", "غير مضبوطة"))}</div>
-      ${c.enabled_at ? `<div>${L2("Live since", "مفعّلة منذ")} ${billDate(c.enabled_at)}</div>` : ""}</div>
-    <div class="plans compact">${c.plans.map(p => `<div class="plan"><h3>${esc(p.name)}</h3><div class="price">${money(p.price)} <small>${esc(cur)}/${L2("month", "شهر")}</small></div><div class="muted">${p.users} ${L2("users per company", "مستخدمين لكل شركة")}</div></div>`).join("")}</div></div>`;
-}
-async function conMethods(view) {
-  const rows = await PLAT("console_methods");
-  const edit = m => {
-    m = m || { kind: "instapay", needs_proof: true, active: true, sort: rows.length * 10 };
-    drawer(m.id ? m.name : L2("New payment method", "طريقة دفع جديدة"), form([
-      { k: "kind", l: L2("Type", "النوع"), type: "select", v: m.kind, opts: Object.keys(BILL_KIND).map(k => [k, kindName(k)]) },
-      { k: "name", l: L2("Name shown to customers", "الاسم الظاهر للعملاء"), v: m.name, req: 1, ph: "InstaPay" }, { k: "name_ar", l: L2("Name (Arabic)", "الاسم (عربي)"), v: m.name_ar || "" },
-      { k: "details", l: L2("Number / InstaPay address / account (customers copy it)", "الرقم / عنوان إنستاباي / الحساب (ينسخه العملاء)"), v: m.details || "", span: "spanall" },
-      { k: "instructions", l: L2("Instructions", "التعليمات"), type: "textarea", v: m.instructions || "", span: "spanall" },
-      { k: "instructions_ar", l: L2("Instructions (Arabic)", "التعليمات (عربي)"), type: "textarea", v: m.instructions_ar || "", span: "spanall" },
-      { k: "needs_proof", l: L2("Customer uploads a picture of the transfer", "يرفع العميل صورة التحويل"), type: "checkbox", v: m.needs_proof },
-      { k: "active", l: L2("Offered to customers", "متاحة للعملاء"), type: "checkbox", v: m.active }, { k: "sort", l: L2("Order in the list", "الترتيب"), type: "number", v: m.sort }]),
-      async v => { await PLAT("console_method_save", { p: { ...v, id: m.id || "" } }); S.billingPublic = null; toast(t("saved")); },
-      { extraButtons: m.id ? `<button type="button" class="btn danger" data-a="cmdel">${t("delete")}</button>` : "" });
-    S.H.cmdel = async () => { if (!await uiConfirm(L2(`Delete ${m.name}? (Kept but switched off if orders used it.)`, `حذف ${m.name}؟ (تبقى معطلة إن استُخدمت في طلبات.)`))) return;
-      try { await PLAT("console_method_delete", { p_id: m.id }); closeDrawer(); route(); } catch (e) { fail(e); } };
-  };
-  Object.assign(S.H, { cmnew: () => edit(), cmedit: el => edit(rows.find(m => String(m.id) === el.dataset.id)) });
-  view.innerHTML = `<div class="toolbar"><button class="btn pri" data-a="cmnew">+ ${esc(L2("Payment method", "طريقة دفع"))}</button></div>
-    <div class="card">${rows.length ? `<div class="tbl stack"><table><thead><tr><th>${L2("Method", "الطريقة")}</th><th>${L2("Details", "البيانات")}</th><th>${L2("Proof", "إثبات")}</th><th>${t("status")}</th></tr></thead><tbody>
-      ${rows.map(m => `<tr class="click ${m.active ? "" : "void"}" data-a="cmedit" data-id="${m.id}"><td>${(BILL_KIND[m.kind] || BILL_KIND.other)[2]} <b>${esc(m.name)}</b><div class="muted" style="font-size:.8em">${esc(kindName(m.kind))}</div></td><td dir="ltr">${esc(m.details)}</td>
-        <td>${m.needs_proof ? "🖼" : ""}</td><td>${m.active ? `<span class="chip ok">${esc(L2("Offered", "متاحة"))}</span>` : `<span class="chip">${esc(L2("Off", "معطلة"))}</span>`}</td></tr>`).join("")}</tbody></table></div>`
-      : `<div class="empty">${esc(L2("No payment methods. Add InstaPay, a wallet number or a bank account; customers see them when they subscribe. Card payments need the Paymob keys (docs/BILLING.md) and a method of type Card.", "لا توجد طرق دفع. أضف إنستاباي أو رقم محفظة أو حساباً بنكياً؛ يراها العملاء عند الاشتراك. يتطلب الدفع بالبطاقة مفاتيح Paymob وطريقة من نوع بطاقة."))}</div>`}</div>`;
-}
-async function conNotices(view) {
-  const rows = await PLAT("console_notices");
-  const LV = { info: L2("Information", "معلومة"), warn: L2("Important", "مهم"), critical: L2("Urgent", "عاجل") };
-  const AU = { all: L2("Everyone", "الجميع"), trial: L2("Companies on trial", "شركات في التجربة"), paying: L2("Paying companies", "الشركات المدفوعة"), unpaid: L2("Companies not paying", "شركات غير مدفوعة") };
-  const edit = n => {
-    n = n || { level: "info", audience: "all", active: true };
-    drawer(n.id ? n.title : L2("New announcement", "إعلان جديد"), form([
-      { k: "title", l: L2("Title", "العنوان"), v: n.title, req: 1 }, { k: "title_ar", l: L2("Title (Arabic)", "العنوان (عربي)"), v: n.title_ar || "" },
-      { k: "body", l: L2("Text", "النص"), type: "textarea", v: n.body || "", span: "spanall" }, { k: "body_ar", l: L2("Text (Arabic)", "النص (عربي)"), type: "textarea", v: n.body_ar || "", span: "spanall" },
-      { k: "level", l: L2("Kind", "النوع"), type: "select", v: n.level, opts: Object.entries(LV) }, { k: "audience", l: L2("Shown to", "يظهر لـ"), type: "select", v: n.audience, opts: Object.entries(AU) },
-      { k: "starts_at", l: L2("From", "من"), type: "date", v: String(n.starts_at || today()).slice(0, 10) }, { k: "ends_at", l: L2("Until (blank: until switched off)", "حتى (فارغ: حتى الإيقاف)"), type: "date", v: String(n.ends_at || "").slice(0, 10) },
-      { k: "active", l: L2("Shown", "ظاهر"), type: "checkbox", v: n.active }]),
-      async v => { await PLAT("console_notice_save", { p: { ...v, id: n.id || "", starts_at: v.starts_at ? v.starts_at + "T00:00:00Z" : "", ends_at: v.ends_at ? v.ends_at + "T23:59:59Z" : "" } }); S.billingPublic = null; toast(t("saved")); },
-      { extraButtons: n.id ? `<button type="button" class="btn danger" data-a="cndel">${t("delete")}</button>` : "" });
-    S.H.cndel = async () => { if (!await uiConfirm(L2("Delete this announcement?", "حذف هذا الإعلان؟"))) return;
-      try { await PLAT("console_notice_save", { p: { id: n.id, title: n.title, delete: true } }); closeDrawer(); route(); } catch (e) { fail(e); } };
-  };
-  Object.assign(S.H, { cnnew: () => edit(), cnedit: el => edit(rows.find(n => String(n.id) === el.dataset.id)) });
-  view.innerHTML = `<div class="toolbar"><button class="btn pri" data-a="cnnew">+ ${esc(L2("Announcement", "إعلان"))}</button></div>
-    <div class="card"><p class="muted" style="margin-top:0">${esc(L2("Shown as a bar at the top of the app for the companies chosen (maintenance, new features, price changes). Each person can dismiss it.", "يظهر شريطاً أعلى التطبيق للشركات المختارة (صيانة، مزايا جديدة، تغيير الأسعار). يمكن لكل شخص إخفاؤه."))}</p>
-    ${rows.length ? `<div class="tbl stack"><table><thead><tr><th>${L2("Title", "العنوان")}</th><th>${L2("Shown to", "يظهر لـ")}</th><th>${L2("From", "من")}</th><th>${L2("Until", "حتى")}</th><th>${t("status")}</th></tr></thead><tbody>
-      ${rows.map(n => `<tr class="click ${n.active ? "" : "void"}" data-a="cnedit" data-id="${n.id}"><td><b>${esc(n.title)}</b><div class="muted" style="font-size:.8em">${esc(LV[n.level])}</div></td><td>${esc(AU[n.audience])}</td><td>${billDate(n.starts_at)}</td><td>${billDate(n.ends_at)}</td><td>${n.active ? `<span class="chip ok">${esc(L2("Shown", "ظاهر"))}</span>` : `<span class="chip">${esc(L2("Off", "معطل"))}</span>`}</td></tr>`).join("")}</tbody></table></div>`
-      : `<div class="empty">${esc(L2("No announcements.", "لا إعلانات."))}</div>`}</div>`;
-}
-const STAFF_AREAS = () => [["overview", L2("Overview", "نظرة عامة")], ["customers", L2("Customers and cancellations", "العملاء والإلغاءات")], ["billing", L2("See orders and payments", "عرض الطلبات والمدفوعات")],
-  ["approve", L2("Approve payments, trials and free use", "اعتماد المدفوعات والتجارب والاستخدام المجاني")], ["support", L2("Support", "الدعم")], ["notices", L2("Announcements", "الإعلانات")], ["settings", L2("Plans, prices and payment methods", "الباقات والأسعار وطرق الدفع")]];
-async function conTeam(view, q, me) {
-  const rows = await PLAT("console_staff");
-  const edit = s => {
-    s = s || { active: true, perms: {} };
-    drawer(s.email || L2("Add a team member", "إضافة عضو للفريق"), form([
-      { k: "email", l: L2("Their sign-in email", "بريد تسجيل الدخول"), v: s.email || "", req: 1, dis: !!s.email }, { k: "name", l: t("name"), v: s.name || "" },
-      { k: "full", l: L2("Full access (everything, including the team)", "صلاحية كاملة (كل شيء، بما في ذلك الفريق)"), type: "checkbox", v: !!s.email && s.perms == null, span: "spanall" },
-      ...STAFF_AREAS().map(([k, l]) => ({ k: "a_" + k, l, type: "checkbox", v: !!(s.perms || {})[k] })),
-      { k: "active", l: L2("Active", "نشط"), type: "checkbox", v: s.active }]),
-      async v => { const perms = Object.fromEntries(STAFF_AREAS().filter(([k]) => v["a_" + k]).map(([k]) => [k, true]));
-        await PLAT("console_staff_save", { p: { email: s.email || v.email, name: v.name, full: !!v.full, perms, active: !!v.active } }); toast(t("saved")); },
-      { extraButtons: s.email && s.email !== me.email ? `<button type="button" class="btn danger" data-a="ctdel">${esc(L2("Remove", "إزالة"))}</button>` : "" });
-    S.H.ctdel = async () => { if (!await uiConfirm(L2(`Remove ${s.email} from the team?`, `إزالة ${s.email} من الفريق؟`))) return;
-      try { await PLAT("console_staff_save", { p: { email: s.email, delete: true } }); closeDrawer(); route(); } catch (e) { fail(e); } };
-  };
-  Object.assign(S.H, { ctnew: () => edit(), ctedit: el => edit(rows.find(s => s.email === el.dataset.e)) });
-  view.innerHTML = `<div class="toolbar"><button class="btn pri" data-a="ctnew">+ ${esc(L2("Team member", "عضو فريق"))}</button></div>
-    <div class="card"><p class="muted" style="margin-top:0">${esc(L2("People who help run the service: each sees only the parts ticked for them. They sign in with their usual account; the console appears in their menu.", "أشخاص يساعدون في إدارة الخدمة: يرى كل منهم ما حُدد له فقط. يسجلون الدخول بحسابهم المعتاد؛ وتظهر اللوحة في قائمتهم."))}</p>
-    <div class="tbl stack"><table><thead><tr><th>${L2("Person", "الشخص")}</th><th>${L2("Access", "الصلاحيات")}</th><th>${t("status")}</th></tr></thead><tbody>
-      ${rows.map(s => `<tr class="click ${s.active ? "" : "void"}" data-a="ctedit" data-e="${esc(s.email)}"><td><b>${esc(s.name || s.email)}</b><div class="muted" style="font-size:.8em" dir="ltr">${esc(s.email)}</div></td>
-        <td>${s.perms == null ? `<span class="chip ok">${esc(L2("Full access", "صلاحية كاملة"))}</span>` : STAFF_AREAS().filter(([k]) => s.perms[k]).map(([, l]) => `<span class="chip">${esc(l)}</span>`).join(" ") || "—"}</td>
-        <td>${s.active ? `<span class="chip ok">${esc(L2("Active", "نشط"))}</span>` : `<span class="chip">${esc(L2("Off", "معطل"))}</span>`}</td></tr>`).join("")}</tbody></table></div></div>`;
-}
-async function conLog(view) {
-  const rows = await PLAT("console_log", { p_limit: 300 });
-  view.innerHTML = `<div class="card">${rows.length ? `<div class="tbl stack"><table><thead><tr><th>${L2("When", "متى")}</th><th>${L2("Who", "من")}</th><th>${L2("What", "ماذا")}</th><th>${L2("On", "على")}</th><th>${L2("Details", "التفاصيل")}</th></tr></thead><tbody>
-    ${rows.map(r => `<tr><td>${dt16(r.at)}</td><td dir="ltr">${esc(r.email)}</td><td>${esc(r.action)}</td><td dir="ltr">${esc(r.target || "")}</td><td dir="ltr" class="muted" style="font-size:.85em">${esc(r.detail ? JSON.stringify(r.detail).slice(0, 200) : "")}</td></tr>`).join("")}</tbody></table></div>`
-    : `<div class="empty">${esc(L2("Nothing yet.", "لا شيء بعد."))}</div>`}</div>`;
-}
-
 })();

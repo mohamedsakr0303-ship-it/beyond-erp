@@ -599,8 +599,9 @@ def cloud_new_books(name, email):
         billingSetCompany: (id, p) => rpc("billing_set_company", { p_company: id, p }),
         // --- the owner console, orders of several companies, support with files (supabase/migrations/*_owner_console.sql)
         async platform(name, params) {
-          if (!/^(billing_order_(quote|open|submit|cancel)|billing_my_orders|billing_status|support_(open|get|reply|close|mine)|console_[a-z_]+)$/.test(name)) throw new Error("Unknown workspace call");
-          return rpc(name, params || {});
+          if (!/^(billing_order_(quote|open|submit|cancel)|billing_my_orders|billing_status|support_(open|get|reply|close|mine)|visit_(request|mine|customer)|console_[a-z_]+)$/.test(name)) throw new Error("Unknown workspace call");
+          // the workspace prefixes some refusals with a code ("support_not_included: …"); people see the sentence
+          try { return await rpc(name, params || {}); } catch (e) { e.message = String(e.message || "").replace(/^[a-z_]+: /, ""); throw e; }
         },
         myEmail: () => ((get(SES) || {}).email || "").toLowerCase(),
         // a file into a private bucket, under the uploader's own folder (staff: "staff/"); the bucket's rules check it

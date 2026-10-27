@@ -11,7 +11,7 @@
 //                                                          the alerts' upcoming times (replace what waited for those rules)
 //   POST {action: "flush"}                                  send the reminders whose time has come (scheduled job)
 //   POST {action: "visitor", token}                         a public page received something (no sign-in)
-//   POST {action: "platform", event: "ticket" | "order", id, isNew?, text?}   owner console ⇄ customers (see below)
+//   POST {action: "platform", event: "ticket" | "order" | "visit", id, isNew?, text?}   owner console ⇄ customers (see below)
 //
 // The signing keys are made here the first time and kept in push_config, which only this function reads (service
 // key). Senders must be active members of the company; people are only notified inside their own company (or the
@@ -222,7 +222,7 @@ Deno.serve(async (req) => {
           (tk.company_id && ((await call("GET", `/rest/v1/members?select=email&company_id=eq.${enc(tk.company_id)}&email=eq.${enc(caller)}&active=is.true&is_admin=is.true`)).data || []).length);
         if (!mine) return fail(403, "Not your ticket");
         to = can("support");
-        msg = { title: `${b.isNew ? "New ticket" : "Customer replied"} · ${tk.ref}`, body: clip(tk.subject, 140), href: `#/console/ticket/${tk.id}`, tag: `ticket-${tk.id}` };
+        msg = { title: `${b.isNew ? "New ticket" : "Customer replied"} · ${tk.ref}`, body: clip(tk.subject, 140), href: `owner.html#/ticket/${tk.id}`, tag: `ticket-${tk.id}` };
       }
     } else if (b.event === "order") {
       const o = await call("GET", `/rest/v1/billing_orders?select=id,ref,email,amount,currency,status,review_note&id=eq.${enc(String(Number(b.id) || 0))}`);
@@ -237,7 +237,24 @@ Deno.serve(async (req) => {
       } else {
         if (String(od.email).toLowerCase() !== caller || od.status !== "submitted") return fail(403, "Not your order");
         to = can("billing");
-        msg = { title: `Payment to verify · ${od.ref}`, body: `${od.amount} ${od.currency} · ${caller}`, href: "#/console/payments", tag: `order-${od.id}` };
+        msg = { title: `Payment to verify · ${od.ref}`, body: `${od.amount} ${od.currency} · ${caller}`, href: "owner.html#/payments", tag: `order-${od.id}` };
+      }
+    } else if (b.event === "visit") {
+      const v = await call("GET", `/rest/v1/support_visits?select=id,ref,email,company_id,status,pay_status,reason,price,currency,scheduled_at&id=eq.${enc(String(Number(b.id) || 0))}`);
+      const vd = v.data?.[0];
+      if (!vd) return fail(404, "No such visit");
+      if (isStaff("support")) {
+        to = [String(vd.email).toLowerCase()];
+        msg = { title: `Support visit · ${vd.ref}`,
+          body: clip(vd.status === "quoted" ? `Price: ${vd.price} ${vd.currency}` : vd.status === "scheduled" ? `Scheduled ${String(vd.scheduled_at || "").slice(0, 16).replace("T", " ")}` : `Status: ${vd.status}`, 140),
+          href: `#/support?v=${vd.id}`, tag: `visit-${vd.id}` };
+      } else {
+        const mine = String(vd.email).toLowerCase() === caller ||
+          (vd.company_id && ((await call("GET", `/rest/v1/members?select=email&company_id=eq.${enc(vd.company_id)}&email=eq.${enc(caller)}&active=is.true&is_admin=is.true`)).data || []).length);
+        if (!mine) return fail(403, "Not your visit");
+        to = can("support");
+        msg = { title: `${b.isNew ? "Visit requested" : vd.pay_status === "submitted" ? "Visit payment to check" : "Visit updated"} · ${vd.ref}`,
+          body: clip(vd.reason, 140), href: `owner.html#/visit/${vd.id}`, tag: `visit-${vd.id}` };
       }
     } else return fail(400, "Unknown event");
     const sent = await deliver(null, to.filter((e) => e !== caller), { ...msg, kind: "notify", pref: "platform" }, { kind: "notify" });

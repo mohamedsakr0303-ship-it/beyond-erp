@@ -35,7 +35,7 @@ Screenshots are kept in a private storage bucket (`billing-proofs`): only the cu
    ```sql
    insert into public.platform_admins(email, name) values ('your-sign-in-email@example.com', 'Your name');
    ```
-   After that, your user menu shows **Owner console**. Everything else is done from there; you can add team members with limited access under **Team**.
+   After that, your user menu shows **Owner console ↗**, which opens the console page (`owner.html`). Everything else is done from there; you can add team members with limited access under **Team**.
 2. **Check the plans and prices.** Owner console → **Plans and settings → Plans**. Defaults are below; change them any time. New prices apply to the next payment.
 3. **Add payment methods.** Owner console → **Payment methods → + Payment method**: for example InstaPay with your InstaPay address, a mobile wallet number, a bank account. Tick *Customer uploads a picture of the transfer* for transfers.
 4. **Support contacts.** Owner console → Plans and settings → *Trial, prices and support contacts*: WhatsApp, phone, email and working hours shown on customers' Help and support page.
@@ -61,20 +61,45 @@ Screenshots are kept in a private storage bucket (`billing-proofs`): only the cu
 
 ## The owner console
 
-| Tab | What it is for |
-|---|---|
-| Overview | Expected (renewals falling due) against received, by month or day, with an export; monthly recurring revenue, paying / trial / not paying, payments to verify, open tickets; renewals and trials ending in the next 30 days; a quick look at any company |
-| Customers | Every company with owner, status, plan, end date, people, last activity, total paid and open tickets. A company page shows its people, payments, orders and tickets, with these controls: **Record payment** (any number of months, any amount, 0 included), **Restart trial…** (a fresh trial of any length from now), **Extend…** (adds days to the trial, or to the paid period while paid), **Stop trial**, **Make free / Charge again**, **Discount…** (a standing % off every order for that company), **Set dates…** |
-| Payments to verify | Orders waiting for your check, with the uploaded screenshots. **Change amount…** sets an agreed total before approving (a one-off discount, or 0); the companies in the order share it and the customer sees the new amount |
-| Support | Every ticket from every customer: text, screenshots, screen recordings, technical details and the activity before the report (screens opened, requests and their results, errors — never what was typed or figures). Set status, priority and who handles it; reply with files, or add **internal notes** the customer never sees |
-| Cancellations | Companies that asked not to renew (with their reason), whose payment is due, or whose period ended |
-| Plans and settings | Billing on/off, trial, grace days, yearly price, extra user, each further company %, currency, support contacts, plans |
-| Payment methods | The ways customers can pay, with the details they copy |
-| Announcements | A bar at the top of the app (maintenance, new features, price changes) for everyone, companies on trial, paying, or not paying, between two dates |
-| Team | People who help you, each with only the areas ticked (overview, customers, seeing payments, approving payments, support, announcements, settings). Only full-access members see this tab; at least one always remains |
-| Activity | Who did what in the console: approvals, rejections, payments recorded, settings changed |
+The console is **a page of its own**: `owner.html` on the same site (for example `https://your-site/owner.html`). It uses the same sign-in as the ERP. People on the team see **Owner console ↗** in their ERP user menu, which opens it in a new tab. Nobody else sees the button, and the page refuses anyone who is not on the team. Every action is checked again in the database.
 
-Notifications: your team is notified of new tickets, customer replies and payments to verify; the customer is notified of your replies and of an approval or rejection. Who is notified is decided on the server.
+| Area | What it is for |
+|---|---|
+| Overview | Expected against received (12 months … 7 days, or your own dates, with an export), totals, the companies falling due next, the latest payments, a quick look at any company, and what is waiting for you |
+| Notifications | Worked out from the data and checked every minute: new tickets and replies, visits (requested, accepted, payment to check, in the next 2 days), payments to verify, orders left unpaid for 3 days, trials ending without a subscription, trials that ended unpaid, payment due, customers who stopped paying, renewals coming up, requests not to renew, new companies, companies not subscribed, more people than the plan allows. The bell shows them; the Notifications page filters them. Each person marks them read, dismisses them and chooses which kinds they want. While the console is open they also pop up on the screen with a sound. Tickets, payments and visits also come as phone and computer notifications when the console is closed |
+| Customers | Every company, with search, filters (status, plan, archived or not, due dates, last payment dates, joined dates, amounts paid) and sorting on every column, plus a CSV export |
+| A company's page | **Subscription**: record a payment (any months, any amount including 0, with add-ons), restart a trial for any number of days, extend the trial or paid period, stop the trial, make free or charge again, a standing discount, dates and plan. **Access**: what it can use (all sections or chosen ones, the AI assistant on/off, online support on/off, number of users), and suspend. **Company**: rename, change owner, archive or bring back, download a backup, and delete for good. **People**: make admin or user, activate or deactivate, approve a request to join, remove, get a password reset link, turn off two-step sign-in, block the person |
+| People | Everyone using the workspace, with the companies they own and belong to, last activity, a private note, a company limit per person, and blocking |
+| Cancellations & churn | Requests not to renew (with the reason), ended without paying, payment due, never subscribed, suspended |
+| Payments to verify | Orders with the screenshots, filters and search. Approve and activate, change the amount first, or decline with a reason |
+| All payments | Every payment ever, kept even when a company is deleted, with filters, totals and an export |
+| Tickets, Support visits | The support inbox, and visits customers ask for: set the price and propose a time, schedule (date, who goes), confirm the payment or waive it, mark done, or decline with a reason |
+| Plans | Design what customers see: name, a line under it, price, users, features (English and Arabic), a badge, a colour, stand out, hidden (offered to nobody, but you can still give it), the sections it includes, AI assistant and online support. A live preview shows the card as customers will see it. You can also duplicate plans, change their order, and delete them |
+| Sections, AI & support | Which ERP sections are core (in every plan); which can be bought on their own and at what monthly price (0 = free to add); the AI assistant (everyone free, by plan with an optional paid add-on, or off); online support (everyone free, or by plan with an optional paid add-on); extra user price; each further company % |
+| Rules & switches | Billing on/off; maintenance (changes paused for every customer, with your message); accept new customers or not; trial length and plan; whether the trial shows every section; grace days; yearly price; currency; how many companies one person may own; when to warn you; support contacts; visit settings (on/off, usual price, before/after/no charge, terms); the texts of the customers' Subscription page |
+| Payment methods, Announcements | As before |
+| Team | Who helps you, and which areas each one may use. Only full-access members manage the team, download backups and delete companies |
+| Look of this console | Name, line under it, main colour, logo, light/dark, side menu style, spacing, corners. It is shared by the team, and each device can also switch light/dark |
+| Activity, Deleted companies | Everything the team did, filterable; and companies deleted, with a way to bring one back from its backup file |
+
+### Looking after customers' data
+
+* **Archive** keeps everything and makes the company read only. It leaves the main lists (use the "Show" filter to see archived ones). It can be undone any time.
+* **Download backup** (full-access owners) saves one file with the company's books, people, billing and payments. Keep it safe: it contains the customer's data.
+* **Delete for good** needs all of: the company archived first, a backup taken in the last 24 hours, and its name typed. Its payments stay in *All payments* under its name, so revenue figures do not change.
+* **Bring back**: Deleted companies → choose the backup file.
+
+### What customers see
+
+* Plans as you designed them, the sections, AI assistant and online support each one includes, and add-ons they can tick per company (sections sold on their own, the AI assistant, online support). Your texts are shown above and below.
+* Sections their plan does not include disappear from the menu. Opening one directly says it is not in the plan, with an "Add it to the subscription" button for administrators; their data stays.
+* Banners for maintenance, suspension and archiving.
+* **Help and support**: tickets (when online support is included; questions about the subscription are always allowed) and **Ask for a visit**. For a visit, they accept or decline your price, pay with a transfer screenshot, and follow its status.
+
+### What is enforced where
+
+* Billing, read only (unpaid, ended, suspended, archived, maintenance), user limits, company limits per person, new customers, blocking a person, online support, visits and the AI assistant are refused by the database or the server functions. Changing the page does not get around them.
+* Sections are hidden and refused by the app itself. Someone with technical skills could still reach a hidden section's screens in their own browser, but nothing outside their plan is offered to them.
 
 ## Pricing (October 2026)
 

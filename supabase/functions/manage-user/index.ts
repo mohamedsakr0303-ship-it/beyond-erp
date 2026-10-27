@@ -51,6 +51,43 @@ Deno.serve(async (req) => {
   // two-step sign-in on (an authenticator is set up): only a session that passed it may act
   const aal = (() => { try { return JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))).aal || ""; } catch { return ""; } })();
   if (aal !== "aal2" && (me.data?.factors || []).some((f: any) => f.status === "verified")) return fail(401, "Finish two-step sign-in first");
+  // the platform team (owner console, "approve" access) looks after any customer's sign-in account: two-step sign-in
+  // off, sign-in blocked / allowed again, or a one-time link to set a new password (to pass on to them)
+  if (b.platform) {
+    const st = await call("GET", `/rest/v1/platform_admins?select=email,perms&active=is.true&email=eq.${enc(caller)}`);
+    const me = st.ok && st.data.length ? st.data[0] : null;
+    if (!me || !(me.perms == null || me.perms?.approve === true)) return fail(403, "Your team account cannot manage customers' accounts");
+    const target = String(b.email || "").trim().toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+$/.test(target)) return fail(400, "Say whose account");
+    const other = await call("GET", `/rest/v1/platform_admins?select=email&email=eq.${enc(target)}`);
+    if (other.ok && other.data.length && target !== caller && me.perms != null) return fail(403, "Only a full-access owner can change a team member's account");
+    const id = (await call("POST", "/rest/v1/rpc/auth_user_id", { p_email: target })).data || null;
+    if (!id) return fail(404, "This person has no sign-in account");
+    const log = (action: string) => call("POST", "/rest/v1/platform_log", { email: caller, action, target, detail: null });
+    if (b.action === "mfa_off") {
+      const fs = await call("GET", `/auth/v1/admin/users/${id}/factors`);
+      let removed = 0;
+      for (const f of (fs.ok && Array.isArray(fs.data) ? fs.data : [])) if ((await call("DELETE", `/auth/v1/admin/users/${id}/factors/${f.id}`)).ok) removed++;
+      await log("account.mfa_off");
+      return reply(200, { removed });
+    }
+    if (b.action === "ban" || b.action === "unban") {
+      if (b.action === "ban" && other.ok && other.data.length) return fail(400, "Remove them from the team first");
+      const r = await call("PUT", `/auth/v1/admin/users/${id}`, { ban_duration: b.action === "ban" ? "876000h" : "none" });
+      if (!r.ok) return fail(400, msgOf(r.data));
+      await log(b.action === "ban" ? "account.ban" : "account.unban");
+      return reply(200, { ok: true });
+    }
+    if (b.action === "reset_link") {
+      const r = await call("POST", "/auth/v1/admin/generate_link", { type: "recovery", email: target,
+        ...(b.redirect ? { redirect_to: String(b.redirect) } : {}) });
+      if (!r.ok) return fail(400, msgOf(r.data));
+      await log("account.reset_link");
+      return reply(200, { link: r.data?.action_link || r.data?.properties?.action_link || "" });
+    }
+    return fail(400, "Unknown action");
+  }
+
   let company = String(b.company || "");
   if (!company) {  // app versions before 1.3: the caller's only company
     const mine = await call("GET", `/rest/v1/members?select=company_id&email=eq.${enc(caller)}&active=is.true&pending=is.false`);

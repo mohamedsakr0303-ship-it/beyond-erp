@@ -40,7 +40,13 @@ self.addEventListener("notificationclick", e => {
   e.notification.close();
   const href = (e.notification.data && e.notification.data.href) || "#/chat";
   e.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(list => {
-    const win = list.find(c => c.url.startsWith(self.registration.scope));
+    // the owner console is its own page: its notifications open (or reuse) that page, the others the app
+    if (href.startsWith("owner.html")) {
+      const con = list.find(c => c.url.startsWith(self.registration.scope + "owner.html"));
+      if (con) return con.navigate(self.registration.scope + href).then(w => (w || con).focus());
+      return self.clients.openWindow(self.registration.scope + href);
+    }
+    const win = list.find(c => c.url.startsWith(self.registration.scope) && !c.url.startsWith(self.registration.scope + "owner.html"));
     if (win) { win.postMessage({ href }); return win.focus(); }
     return self.clients.openWindow(self.registration.scope + href);
   }));

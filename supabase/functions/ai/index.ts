@@ -107,6 +107,10 @@ Deno.serve(async (req) => {
   const co = await call("GET", `/rest/v1/companies?select=created_by&id=eq.${enc(company)}`);
   const isSuper = !!mem.data[0].is_super || (co.ok && co.data.length && String(co.data[0].created_by || "").toLowerCase() === caller);
 
+  // the platform: the assistant available for this company's plan (and the person not blocked)
+  const allowed = await call("POST", "/rest/v1/rpc/beyond_ai_allowed", { p_company: company, p_email: caller });
+  if (allowed.ok && allowed.data && allowed.data.ok === false) return fail(403, String(allowed.data.reason || "The AI assistant is not available"));
+
   // 2. the company's assistant: switched on, the caller allowed, under the daily limit
   const cfg = await call("GET", `/rest/v1/ai_config?select=api_key,settings&${inCo}`);
   const row = cfg.ok && cfg.data.length ? cfg.data[0] : null;
