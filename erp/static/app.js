@@ -8638,9 +8638,9 @@ function platformPlansForm(c) {
 function platformPayForm(x, c) {
   drawer(`${x.name} — ${L2("Record payment", "تسجيل دفعة")}`, `<div class="grid g2">
     <label class="f">${L2("Plan", "الباقة")}<select name="plan">${optHtml(c.plans.map(p => [p.code, `${p.name} — ${money(p.price)}`]), x.state.plan || c.trial_plan)}</select></label>
-    <label class="f">${L2("Period", "المدة")}<select name="months">${optHtml([[1, L2("1 month", "شهر")], [3, L2("3 months", "3 أشهر")], [6, L2("6 months", "6 أشهر")], [12, L2("1 year", "سنة")]], 1)}</select></label>
+    <label class="f">${L2("Months", "عدد الأشهر")}<input name="months" type="number" min="1" max="120" step="1" value="1" required></label>
     <label class="f">${L2("Extra users", "مستخدمون إضافيون")}<input name="extra_users" type="number" min="0" value="${x.state.extra_users || 0}"></label>
-    <label class="f">${L2("Amount received (blank: list price)", "المبلغ المستلم (فارغ: سعر القائمة)")}<input name="amount" type="number" step="any"></label>
+    <label class="f">${L2("Amount received (blank: list price; 0 for free)", "المبلغ المستلم (فارغ: سعر القائمة؛ 0 للمجاني)")}<input name="amount" type="number" step="any" min="0"></label>
     <label class="f">${L2("Reference (transfer no.)", "المرجع (رقم التحويل)")}<input name="reference"></label>
     <label class="f">${t("notes")}<input name="note"></label></div>
     <p class="muted" style="font-size:.85em">${L2("The paid period starts when the current trial or paid period ends, or today if it has already ended.", "تبدأ الفترة المدفوعة عند انتهاء الفترة التجريبية أو المدفوعة الحالية، أو اليوم إن كانت قد انتهت.")}</p>`,
@@ -13336,7 +13336,7 @@ PAGES.subscription = async (view, parts, q) => {
     const head = `<div class="row" style="gap:10px;flex-wrap:wrap;align-items:center"><h2 style="margin:0">${L2("Your order", "طلبك")} <span class="muted">${esc(o.ref)}</span></h2>${orderChip(o.status)}<span class="spacer"></span>
       ${["open", "submitted", "rejected"].includes(o.status) ? `<button class="btn sm" data-a="subcancelorder" data-id="${o.id}">${L2("Cancel order", "إلغاء الطلب")}</button>` : ""}</div>`;
     const summary = `<div class="tbl"><table><tbody>${(o.lines || []).map(l => `<tr><td>${esc(l.name)}${l.extra_users ? ` <span class="muted">+${l.extra_users} ${L2("users", "مستخدمين")}</span>` : ""}</td>
-        <td class="num">${l.pct !== 100 ? `<span class="muted">${money(l.base)} × ${l.pct}%</span> ` : ""}${money(l.amount)}</td></tr>`).join("")}
+        <td class="num">${l.pct !== 100 ? `<span class="muted">${money(l.base)} × ${l.pct}%</span> ` : ""}${+l.discount ? `<span class="chip ok">−${l.discount}%</span> ` : ""}${l.list_amount != null && +l.list_amount !== +l.amount ? `<s class="muted">${money(l.list_amount)}</s> ` : ""}${money(l.amount)}</td></tr>`).join("")}
       <tr><th>${L2("Total", "الإجمالي")} · ${esc((plans.find(p => p.code === o.plan) || {}).name || o.plan)} · ${o.months === 12 ? L2("1 year", "سنة") : L2("1 month", "شهر")}</th><th class="num">${money(o.amount)} ${esc(o.currency)}</th></tr></tbody></table></div>`;
     const pay = manual ? `<div class="pay-box"><div class="pay-h">${(BILL_KIND[m.kind] || BILL_KIND.other)[2]} <b>${esc(ar && m.name_ar ? m.name_ar : m.name || o.method_name)}</b></div>
         ${m.details ? `<div class="pay-v"><code dir="ltr">${esc(m.details)}</code> ${copyBtn(m.details)}</div>` : ""}
@@ -13395,7 +13395,7 @@ PAGES.subscription = async (view, parts, q) => {
       const qt = await PLAT("billing_order_quote", { p_plan: st.plan, p_months: st.months, p_lines: lines() });
       if (!box.isConnected) return;
       box.innerHTML = `<h2>${L2("3. Total and payment", "٣. الإجمالي والدفع")}</h2><div class="tbl"><table><tbody>${qt.lines.map(l => `<tr><td>${esc(l.name)}${l.extra_users ? ` <span class="muted">+${l.extra_users} ${L2("users", "مستخدمين")}</span>` : ""}</td>
-          <td class="num">${l.pct !== 100 ? `<span class="muted">${money(l.base)} × ${l.pct}%</span> ` : ""}${money(l.amount)}</td></tr>`).join("")}
+          <td class="num">${l.pct !== 100 ? `<span class="muted">${money(l.base)} × ${l.pct}%</span> ` : ""}${+l.discount ? `<span class="chip ok">−${l.discount}%</span> ` : ""}${l.list_amount != null && +l.list_amount !== +l.amount ? `<s class="muted">${money(l.list_amount)}</s> ` : ""}${money(l.amount)}</td></tr>`).join("")}
         <tr><th>${L2("Total", "الإجمالي")} · ${st.months === 12 ? L2("1 year", "سنة") : L2("1 month", "شهر")}</th><th class="num">${money(qt.amount)} ${esc(qt.currency)}</th></tr></tbody></table></div>
         ${methods.length ? `<div class="paym">${methods.map((m, i) => `<label class="paym-o"><input type="radio" name="paymethod" value="${m.id}" ${i === 0 ? "checked" : ""}><span><b>${(BILL_KIND[m.kind] || BILL_KIND.other)[2]} ${esc(ar && m.name_ar ? m.name_ar : m.name)}</b>${kindName(m.kind) !== (ar && m.name_ar ? m.name_ar : m.name) ? `<small class="muted">${esc(kindName(m.kind))}</small>` : ""}</span></label>`).join("")}</div>
           <button class="btn pri" data-a="subopen">${L2("Continue", "متابعة")}</button>`
@@ -13594,10 +13594,32 @@ async function conCompany(view, id) {
   const [x, cfg] = await Promise.all([PLAT("console_company", { p_company: id }), window.BeyondCloud.billingAdmin().then(r => r.config).catch(() => null)]);
   const me = S.conMe, approve = conCan(me, "approve");
   $("#ttl").textContent = x.name;
-  Object.assign(S.H, { pfpay: () => platformPayForm({ ...x, state: x.state }, cfg), pfset: () => platformCompanyForm({ ...x, comped: !!(x.billing || {}).comped, state: x.state }) });
+  const free = !!(x.billing || {}).comped, days = cfg ? cfg.trial_days : 15;
+  // one click on the server's clock: a fresh trial, the trial ended now, free of charge or charged again
+  const setCo = async p => { try { await window.BeyondCloud.billingSetCompany(x.id, p); toast(t("saved")); route(); } catch (e) { fail(e); } };
+  const act = async (p, ask) => { if (await uiConfirm(ask, { danger: false })) setCo(p); };
+  const askDays = async (msg, def) => { const v = await uiPrompt(msg, String(def)); if (v === null) return 0;
+    const n = Math.round(Number(v)); if (!(n >= 1 && n <= 3650)) { toast(L2("Enter 1 to 3650 days.", "أدخل من 1 إلى 3650 يوماً."), true); return 0; } return n; };
+  const disc = +((x.billing || {}).discount_pct || 0);
+  Object.assign(S.H, { pfpay: () => platformPayForm({ ...x, state: x.state }, cfg), pfset: () => platformCompanyForm({ ...x, comped: free, state: x.state }),
+    pftrial: async () => { const n = await askDays(L2(`New free trial for ${x.name}, starting now. How many days?`, `فترة تجريبية جديدة لـ ${x.name} تبدأ الآن. كم يوماً؟`), days); if (n) setCo({ trial: "restart", days: n }); },
+    pfextend: async () => { const paid = ["active", "past_due"].includes(x.state.status);
+      const n = await askDays(paid ? L2(`Add days to ${x.name}'s paid period. How many?`, `إضافة أيام إلى الفترة المدفوعة لـ ${x.name}. كم يوماً؟`)
+        : L2(`Add days to ${x.name}'s free trial. How many?`, `إضافة أيام إلى الفترة التجريبية لـ ${x.name}. كم يوماً؟`), 7); if (n) setCo({ trial: "extend", days: n }); },
+    pfdisc: async () => { const v = await uiPrompt(L2(`Standing discount for ${x.name} on every order (%). 0 removes it.`, `خصم دائم لـ ${x.name} على كل طلب (%). 0 يلغيه.`), String(disc));
+      if (v === null) return; const n = Number(String(v).replace("%", "").trim());
+      if (!isFinite(n) || n < 0 || n > 100) return toast(L2("Enter 0 to 100.", "أدخل من 0 إلى 100."), true); setCo({ discount_pct: n }); },
+    pftrialstop: () => act({ trial: "stop" }, L2(`End ${x.name}'s free trial now? Without a paid period it becomes read only (viewing and export stay available).`, `إنهاء الفترة التجريبية لـ ${x.name} الآن؟ بدون فترة مدفوعة تصبح للعرض فقط (يبقى العرض والتصدير متاحين).`)),
+    pffree: () => act({ comped: !free }, free ? L2(`Charge ${x.name} again? It follows its trial or paid period from now on.`, `إعادة احتساب الاشتراك لـ ${x.name}؟ تتبع فترتها التجريبية أو المدفوعة من الآن.`)
+      : L2(`Make ${x.name} free of charge? It can use everything with no subscription until you switch this off.`, `جعل ${x.name} مجانية؟ تستخدم كل شيء دون اشتراك حتى تلغي ذلك.`)) });
   const u = x.use || {};
   view.innerHTML = `<div class="toolbar"><a class="btn" href="#/console/customers">← ${esc(L2("Customers", "العملاء"))}</a>${billChip(x.state.status)}<span class="spacer"></span>
-      ${approve && cfg ? `<button class="btn pri" data-a="pfpay">${esc(L2("Record payment", "تسجيل دفعة"))}</button><button class="btn" data-a="pfset">${esc(L2("Trial / free / dates", "تجربة / مجاني / تواريخ"))}</button>` : ""}</div>
+      ${approve && cfg ? `<button class="btn pri" data-a="pfpay">${esc(L2("Record payment", "تسجيل دفعة"))}</button><button class="btn" data-a="pftrial">↻ ${esc(L2("Restart trial…", "إعادة التجربة…"))}</button>
+      <button class="btn" data-a="pfextend">+ ${esc(L2("Extend…", "تمديد…"))}</button>
+      <button class="btn" data-a="pfdisc">% ${esc(disc ? L2(`Discount ${disc}%`, `خصم ${disc}%`) : L2("Discount…", "خصم…"))}</button>
+      ${x.state.status === "trial" ? `<button class="btn" data-a="pftrialstop">■ ${esc(L2("Stop trial", "إيقاف التجربة"))}</button>` : ""}
+      <button class="btn ${free ? "" : "pri"}" data-a="pffree">${esc(free ? L2("Charge again", "إعادة الاحتساب") : L2("Make free", "جعلها مجانية"))}</button>
+      <button class="btn" data-a="pfset">${esc(L2("Set dates…", "ضبط التواريخ…"))}</button>` : ""}</div>
     <div class="kpis">${kpiBox(L2("Plan", "الباقة"), esc(x.state.plan_name || "—"))}${kpiBox(L2("Until", "حتى"), billDate(x.state.ends))}${kpiBox(L2("Users", "المستخدمون"), `${x.state.users}${x.state.users_allowed ? " / " + x.state.users_allowed : ""}`)}
       ${kpiBox(L2("Changes (30 days)", "التعديلات (30 يوماً)"), numf(u.changes_30d), "", L2(`${numf(u.changes)} in total · ${u.devices} device(s)`, `${numf(u.changes)} إجمالاً · ${u.devices} جهاز`))}${kpiBox(L2("Last change", "آخر تعديل"), dt16(u.last_change))}</div>
     ${(x.billing || {}).cancel_note ? `<div class="banner warn">✗ ${esc(L2("Asked not to renew", "طلب عدم التجديد"))}: ${esc(x.billing.cancel_note)} · ${dt16(x.billing.cancel_at)}</div>` : ""}
@@ -13613,6 +13635,9 @@ async function conPayments(view, q, me) {
   Object.assign(S.H, {
     conok: async el => { if (!await uiConfirm(L2("Approve this payment? The companies in it are activated at once.", "هل تريد اعتماد هذه الدفعة؟ تُفعَّل الشركات فيها فوراً."), { danger: false })) return;
       try { const r = await PLAT("console_order_decide", { p_order: +el.dataset.id, p_approve: true, p_note: "" }); window.BeyondCloud.platformPush("order", r.id); toast(L2("Activated.", "تم التفعيل.")); route(); } catch (e) { fail(e); } },
+    conamt: async el => { const v = await uiPrompt(L2("New total for this order (a discount or an agreed price; 0 is allowed). The customer sees it.", "الإجمالي الجديد لهذا الطلب (خصم أو سعر متفق عليه؛ يُسمح بـ 0). يراه العميل."), el.dataset.v);
+      if (v === null || v.trim() === "") return; const n = Number(v); if (!isFinite(n) || n < 0) return toast(L2("Enter 0 or more.", "أدخل 0 أو أكثر."), true);
+      try { await PLAT("console_order_amount", { p_order: +el.dataset.id, p_amount: n, p_note: "" }); toast(t("saved")); route(); } catch (e) { fail(e); } },
     conno: async el => { const why = await uiPrompt(L2("Why is it not accepted? The customer sees this.", "لماذا لم تُقبل؟ يرى العميل هذا السبب.")); if (!why) return;
       try { const r = await PLAT("console_order_decide", { p_order: +el.dataset.id, p_approve: false, p_note: why }); window.BeyondCloud.platformPush("order", r.id); toast(t("saved")); route(); } catch (e) { fail(e); } } });
   view.innerHTML = `<div class="tabs">${[["submitted", L2("To verify", "للتحقق")], ["open", L2("Not paid yet", "لم تُدفع بعد")], ["approved", L2("Approved", "معتمدة")], ["rejected", L2("Not accepted", "مرفوضة")], ["all", L2("All", "الكل")]].map(([k, l]) => `<a class="tab ${stt === k ? "on" : ""}" href="#/console/payments?s=${k}">${esc(l)}</a>`).join("")}</div>
@@ -13625,7 +13650,7 @@ async function conPayments(view, q, me) {
           ${o.customer_note ? `<div><b>${esc(L2("Note", "ملاحظة"))}</b>: <span dir="auto">${esc(o.customer_note)}</span></div>` : ""}
           ${o.review_note ? `<div><b>${esc(L2("Decision", "القرار"))}</b>: ${esc(o.review_note)} · ${esc(o.reviewed_by || "")} · ${dt16(o.reviewed_at)}</div>` : ""}</div>
         ${fileList("billing-proofs", o.proof)}
-        ${approve && ["submitted", "open"].includes(o.status) ? `<div class="row" style="gap:8px;margin-top:10px"><button class="btn pri" data-a="conok" data-id="${o.id}">✓ ${esc(L2("Approve and activate", "اعتماد وتفعيل"))}</button><button class="btn danger" data-a="conno" data-id="${o.id}">${esc(L2("Not accepted…", "رفض…"))}</button></div>` : ""}</div>`; }).join("")
+        ${approve && ["submitted", "open"].includes(o.status) ? `<div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap"><button class="btn pri" data-a="conok" data-id="${o.id}">✓ ${esc(L2("Approve and activate", "اعتماد وتفعيل"))}</button><button class="btn" data-a="conamt" data-id="${o.id}" data-v="${o.amount}">${esc(L2("Change amount…", "تعديل المبلغ…"))}</button><button class="btn danger" data-a="conno" data-id="${o.id}">${esc(L2("Not accepted…", "رفض…"))}</button></div>` : ""}</div>`; }).join("")
       : `<div class="card"><div class="empty">${esc(stt === "submitted" ? L2("Nothing to verify.", "لا شيء للتحقق.") : L2("No orders.", "لا طلبات."))}</div></div>`}`;
   filePreviews(view);
 }

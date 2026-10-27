@@ -65,6 +65,65 @@ class OwnerConsole(unittest.TestCase):
         finally:
             self.ws.sql("update public.billing_config set one_trial_from = null where id = 1;")
 
+    def test_the_owner_restarts_stops_or_waives_a_trial(self):
+        dan = self.ws.as_user("dan@example.com")
+        d1 = dan.rpc("create_company", p_name="Dan One")["id"]
+        d2 = dan.rpc("create_company", p_name="Dan Two")["id"]
+        self.assertEqual(self.state(dan, d2)["status"], "unpaid")
+        st = self.owner.rpc("billing_set_company", p_company=d2, p={"trial": "restart"})
+        self.assertEqual(st["status"], "trial")
+        self.assertTrue(st["can_write"])
+        st = self.owner.rpc("billing_set_company", p_company=d1, p={"trial": "stop"})
+        self.assertEqual(st["status"], "expired")
+        self.assertFalse(st["can_write"])
+        self.assertEqual(self.owner.rpc("billing_set_company", p_company=d1, p={"comped": True})["status"], "comped")
+        self.assertEqual(self.owner.rpc("billing_set_company", p_company=d1, p={"comped": False})["status"], "expired")
+        self.assertEqual(self.owner.rpc("billing_set_company", p_company=d1, p={"trial": "restart"})["status"], "trial")
+        with self.assertRaises(pgtest.SQLError):                       # customers cannot give themselves a trial
+            dan.rpc("billing_set_company", p_company=d2, p={"trial": "restart"})
+        with self.assertRaises(pgtest.SQLError):
+            self.owner.rpc("billing_set_company", p_company=d2, p={"trial": "forever"})
+        actions = [r["action"] for r in self.owner.rpc("console_log", p_limit=20)]
+        self.assertIn("company.trial_restart", actions)
+        self.assertIn("company.trial_stop", actions)
+
+    def test_extend_discount_and_agreed_amounts(self):
+        eve = self.ws.as_user("eve@example.com")
+        e1 = eve.rpc("create_company", p_name="Eve One")["id"]
+        e2 = eve.rpc("create_company", p_name="Eve Two")["id"]
+        before = self.state(eve, e1)["trial_ends"]
+        after = self.owner.rpc("billing_set_company", p_company=e1, p={"trial": "extend", "days": 10})["trial_ends"]
+        gap = self.ws.sql(f"select extract(epoch from ('{after}'::timestamptz - '{before}'::timestamptz))::int / 86400;").strip()
+        self.assertEqual(gap, "10")
+        self.assertEqual(self.owner.rpc("billing_set_company", p_company=e2, p={"trial": "restart", "days": 30})["days_left"], 30)
+        # a standing discount on one company
+        self.owner.rpc("billing_set_company", p_company=e2, p={"discount_pct": 25})
+        q = eve.rpc("billing_order_quote", p_plan="business", p_months=1, p_lines=[{"company_id": e1}, {"company_id": e2}])
+        by = {l["name"]: l for l in q["lines"]}
+        price = by["Eve One"]["base"]
+        self.assertEqual(by["Eve One"]["amount"], price)
+        self.assertEqual(by["Eve Two"]["discount"], 25)
+        self.assertEqual(by["Eve Two"]["amount"], round(price * 0.75, 2))
+        with self.assertRaises(pgtest.SQLError):
+            self.owner.rpc("billing_set_company", p_company=e2, p={"discount_pct": 120})
+        # an agreed total for one order, shared by its companies; then approved at that price
+        o = eve.rpc("billing_order_open", p_plan="business", p_months=1, p_lines=[{"company_id": e1}, {"company_id": e2}], p_method=self.method)
+        with self.assertRaises(pgtest.SQLError):
+            eve.rpc("console_order_amount", p_order=o["id"], p_amount=1, p_note="")
+        o2 = self.owner.rpc("console_order_amount", p_order=o["id"], p_amount=0, p_note="Founding customer")
+        self.assertEqual(o2["amount"], 0)
+        self.assertEqual(sum(l["amount"] for l in o2["lines"]), 0)
+        self.owner.rpc("console_order_decide", p_order=o["id"], p_approve=True, p_note="")
+        self.assertEqual(self.state(eve, e1)["status"], "active")
+        self.assertEqual(self.state(eve, e2)["status"], "active")
+        paid = self.owner.rpc("console_company", p_company=e2)["payments"]
+        self.assertEqual([float(p["amount"]) for p in paid], [0.0])
+        # an agreed amount on a recorded payment, for any number of months
+        st = self.owner.rpc("billing_record_payment", p_company=e1, p_plan="business", p_months=24, p_extra_users=0,
+                            p_amount=0, p_reference="", p_note="Owner's own company")
+        self.assertEqual(st["status"], "active")
+        self.assertGreater(st["days_left"], 700)
+
     def test_plans_cover_one_company_each(self):
         plans = self.alice.rpc("billing_public")["plans"]
         self.assertEqual([p["code"] for p in plans], ["starter", "business", "pro"])           # order kept

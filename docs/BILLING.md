@@ -52,13 +52,20 @@ Screenshots are kept in a private storage bucket (`billing-proofs`): only the cu
 6. **Deploy the database and functions.** Apply the migrations (`supabase db push`) and deploy the `billing` and `push` edge functions, so the console, orders, support and notifications work.
 7. **Switch billing on.** Owner console → Plans and settings → **Switch billing on**. Each person's first company gets its trial from that moment. Switching off makes the app free again, and nothing is lost.
 
+## Billing on, off, per company
+
+* **Billing off** (Plans and settings): the app is free for everyone.
+* **Billing on**: from that moment every company that already exists gets a fresh free trial (the trial length setting, 15 days by default); after that, a person's first company gets the trial and later ones need a subscription.
+* **Per company**: *Make free* takes one company out of billing for good (your own companies, partners, pilots); *Charge again* puts it back. Or record a payment of 0 for as many months as you like, so it shows as paid.
+* Every action is written to the console's Activity tab.
+
 ## The owner console
 
 | Tab | What it is for |
 |---|---|
 | Overview | Expected (renewals falling due) against received, by month or day, with an export; monthly recurring revenue, paying / trial / not paying, payments to verify, open tickets; renewals and trials ending in the next 30 days; a quick look at any company |
-| Customers | Every company with owner, status, plan, end date, people, last activity, total paid and open tickets. A company page shows its people, payments, orders, tickets, and lets you **record a payment** (cash, a transfer you received directly) or set **trial / free / dates** |
-| Payments to verify | Orders waiting for your check, with the uploaded screenshots |
+| Customers | Every company with owner, status, plan, end date, people, last activity, total paid and open tickets. A company page shows its people, payments, orders and tickets, with these controls: **Record payment** (any number of months, any amount, 0 included), **Restart trial…** (a fresh trial of any length from now), **Extend…** (adds days to the trial, or to the paid period while paid), **Stop trial**, **Make free / Charge again**, **Discount…** (a standing % off every order for that company), **Set dates…** |
+| Payments to verify | Orders waiting for your check, with the uploaded screenshots. **Change amount…** sets an agreed total before approving (a one-off discount, or 0); the companies in the order share it and the customer sees the new amount |
 | Support | Every ticket from every customer: text, screenshots, screen recordings, technical details and the activity before the report (screens opened, requests and their results, errors — never what was typed or figures). Set status, priority and who handles it; reply with files, or add **internal notes** the customer never sees |
 | Cancellations | Companies that asked not to renew (with their reason), whose payment is due, or whose period ended |
 | Plans and settings | Billing on/off, trial, grace days, yearly price, extra user, each further company %, currency, support contacts, plans |
