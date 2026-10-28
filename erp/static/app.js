@@ -1145,6 +1145,8 @@ const appIconSrc = k => k === "custom" && S.boot.app_icon ? `data:${S.boot.app_i
 // Universal stand-ins where a company has not given its own details yet
 const GEN_NAME = () => L2("Company name", "اسم الشركة"), GEN_TAG = () => L2("Tagline", "الشعار النصي");
 // The app's name (Settings → Appearance); BeyondERP unless the company gave it another
+// BeyondERP's slogan under the name on the sign-in screens (not when the platform owner renamed the app)
+const slogan = () => appName() === "BeyondERP" ? `<p class="slogan">${esc(L2("Run the business, not the paperwork.", "أدِر أعمالك، لا أوراقها."))}</p>` : "";
 const appName = () => (platformOwner() && (((S.boot && S.boot.settings.appearance) || {}).app_name || "").trim()) || "BeyondERP";
 // The sidebar / sign-in logo: the company's own (document or uploaded), none, or the built-in BeyondERP mark
 const brandLogoSrc = () => { const ap = (S.boot && S.boot.settings.appearance) || {};
@@ -1387,7 +1389,7 @@ async function renderCloudAuth(msg, kind = "info", mode = "start") {
     <p class="muted" style="font-size:.85em">${ar ? "الحسابات المنشأة عبر Google ليس لها كلمة مرور هنا؛ استخدم تسجيل الدخول بحساب Google." : "Accounts created with Google have no password here; use Sign in with Google."}</p>
     <p class="muted" style="font-size:.85em">${ar ? "حسابات اسم المستخدم دون بريد إلكتروني: يمكن للمسؤول الأعلى تعيين كلمة مرور جديدة من المستخدمين. تتيح إضافة بريد إلكتروني لحسابك إعادة التعيين بنفسك. إن فقدت الهاتف المستخدم في التحقق بخطوتين، اطلب من المسؤول الأعلى تعطيله." : "Username accounts without an email: a super administrator can set a new password in Users. Adding an email to your account enables self-service reset. If you lost the phone used for two-step sign-in, ask a super administrator to disable it."}</p>`;
   $("#root").innerHTML = `<div class="login auth">${brandLogoSrc() ? `<img class="login-logo" src="${esc(brandLogoSrc())}" alt="">` : ""}
-    <div class="muted center" style="font-weight:600;letter-spacing:.4px">${esc(appName())}</div>
+    <div class="muted center" style="font-weight:600;letter-spacing:.4px">${esc(appName())}</div>${slogan()}
     <h1 class="center">${esc(title)}</h1><div id="lerr">${msg ? `<div class="banner ${kind}">${esc(msg)}</div>` : ""}</div>${body}
     ${mode !== "start" ? `<p class="center">${back}</p>` : ""}
     <div class="row" style="justify-content:space-between;margin-top:14px;font-size:.8em"><a href="#" data-a="lang2">${ar ? "English" : "العربية"}</a>
@@ -1613,7 +1615,7 @@ async function renderAuth() {
   applyLook();
   const setup = S.boot.needs_setup;
   if (setup && S.boot.workspace_preset && !store.get("separateBooks", false)) return renderFirstJoin();
-  $("#root").innerHTML = `<div class="login">${brandLogoSrc() ? `<img class="login-logo" src="${esc(brandLogoSrc())}" alt="">` : ""}<h1>${esc(appName())}</h1>
+  $("#root").innerHTML = `<div class="login">${brandLogoSrc() ? `<img class="login-logo" src="${esc(brandLogoSrc())}" alt="">` : ""}<h1>${esc(appName())}</h1>${slogan()}
     <p class="muted">${setup ? t("setup_title") : t("sign_in")}</p><div id="lerr"></div>
     <form id="lf" class="grid">${setup ? `<label class="f">${t("company_name")}<input name="company_name" value="${esc(S.boot.settings.company_name || "")}" placeholder="${esc(GEN_NAME())}"></label>
       <label class="f">${t("full_name")}<input name="full_name"></label>` : ""}
@@ -1644,7 +1646,7 @@ async function renderAuth() {
 // New desktop install that belongs to a workspace: sign in with the same account as the website, get the shared books.
 function renderFirstJoin() {
   const ar = S.lang === "ar";
-  $("#root").innerHTML = `<div class="login auth">${brandLogoSrc() ? `<img class="login-logo" src="${esc(brandLogoSrc())}" alt="">` : ""}<h1 class="center">${esc(appName())}</h1>
+  $("#root").innerHTML = `<div class="login auth">${brandLogoSrc() ? `<img class="login-logo" src="${esc(brandLogoSrc())}" alt="">` : ""}<h1 class="center">${esc(appName())}</h1>${slogan()}
     <p class="muted center">${ar ? "سجّل الدخول بالحساب الذي تستخدمه على الموقع" : "Sign in with the account you use on the website"}</p><div id="lerr"></div>
     <form id="lf" class="grid"><label class="f">${ar ? "البريد الإلكتروني أو اسم المستخدم" : "Email or username"}<input name="username" autocomplete="username" autocapitalize="none" required></label>
       ${pwFields(false)}<button class="btn pri" type="submit">${t("sign_in")}</button></form>

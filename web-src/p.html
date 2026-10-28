@@ -57,7 +57,7 @@ canvas.sig{width:100%;height:170px;border:1.5px dashed var(--line);border-radius
 <body>
 <div class="wrap"><header><div><div class="co" id="co">…</div><div class="t" id="pt"></div></div><span class="sp"></span><button class="lang" id="lang"></button></header>
 <main id="main"><div class="card muted">…</div></main>
-<div class="foot">Powered by <a href="./" rel="noopener">BeyondERP</a></div></div>
+<div class="foot" id="foot"><a href="./" rel="noopener">Powered by <b>BeyondERP</b> · Run your business on it too →</a></div></div>
 <script src="config.js"></script>
 <script>
 (() => {
@@ -97,6 +97,7 @@ function header() {
   document.title = (PG && (PG.title || PG.company)) || "BeyondERP";
   document.documentElement.lang = L; document.documentElement.dir = L === "ar" ? "rtl" : "ltr";
   $("#lang").textContent = L === "ar" ? "English" : "عربي";
+  $("#foot").innerHTML = `<a href="./" rel="noopener">${T("Powered by <b>BeyondERP</b> · Run your business on it too →", "بواسطة <b>BeyondERP</b> · أدِر أعمالك أنت أيضاً به ←")}</a>`;
   if (PG && PG.config && /^#[0-9a-f]{6}$/i.test(PG.config.color || "")) document.documentElement.style.setProperty("--brand", PG.config.color);
 }
 $("#lang").onclick = () => { L = L === "ar" ? "en" : "ar"; store.set("lang", L); try { localStorage.setItem("berp.p.lang", L); } catch {} render(); };

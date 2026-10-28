@@ -108,6 +108,33 @@ def minify():
                        check=True)
 
 
+AR = {"title": "BeyondERP · أدِر أعمالك، لا أوراقها",
+      "description": "أدِر أعمالك، لا أوراقها. يجمع BeyondERP الحسابات والمبيعات والمشتريات والمخزون والمشروعات والموارد البشرية والرواتب "
+                     "في نظام سحابي واحد، مع تقارير لحظية وفاتورة إلكترونية، بالعربية والإنجليزية. ابدأ بفترة تجريبية مجانية.",
+      "og": "الحسابات والمبيعات والمخزون والمشروعات والموارد البشرية والرواتب في نظام سحابي واحد، بالعربية والإنجليزية."}
+
+
+def arabic_page(html, site):
+    """The home page for Arabic searches and shares (ar.html): the same app, with its title, description and preview in
+    Arabic, opening in Arabic for a first-time visitor."""
+    html = html.replace('<html lang="en">', '<html lang="ar" dir="rtl">')
+    html = re.sub(r"<title>.*?</title>", f"<title>{AR['title']}</title>", html)
+    html = re.sub(r'<meta name="description" content="[^"]*">', f'<meta name="description" content="{AR["description"]}">', html)
+    html = re.sub(r'<meta property="og:title" content="[^"]*">', f'<meta property="og:title" content="{AR["title"]}">', html)
+    html = re.sub(r'<meta property="og:description" content="[^"]*">', f'<meta property="og:description" content="{AR["og"]}">', html)
+    html = html.replace('<meta property="og:locale" content="en_US">', '<meta property="og:locale" content="ar_AR">')
+    html = html.replace('<meta property="og:locale:alternate" content="ar_AR">', '<meta property="og:locale:alternate" content="en_US">')
+    if site:
+        html = html.replace(f'<link rel="canonical" href="{site}">', f'<link rel="canonical" href="{site}ar.html">')
+        html = html.replace(f'<meta property="og:url" content="{site}">', f'<meta property="og:url" content="{site}ar.html">')
+    html = re.sub(r"<noscript>.*?</noscript>", "<noscript><h1>BeyondERP</h1><p>أدِر أعمالك، لا أوراقها. نظام سحابي واحد للحسابات والمبيعات "
+                  "والمشتريات والمخزون والمشروعات والموارد البشرية والرواتب، بالعربية والإنجليزية. فعّل JavaScript لاستخدام التطبيق.</p></noscript>",
+                  html, flags=re.S)
+    # a first-time visitor of the Arabic page gets the app in Arabic (a language chosen before is kept)
+    return html.replace('<script>(function(){try{var l="";', '<script>try{if(!localStorage.getItem("berp.lang")&&!localStorage.getItem("berp.look"))'
+                        'localStorage.setItem("berp.lang",\'"ar"\');}catch(e){}</script>\n<script>(function(){try{var l="";', 1)
+
+
 def search_files():
     """What search engines read: the site's own address in the home page (canonical link, sharing preview, structured
     data), robots.txt and sitemap.xml. SITE_URL (set by the deploy) is the public address; without it the
@@ -125,13 +152,16 @@ def search_files():
         html = "\n".join(x for x in html.split("\n") if "__SITE__" not in x or "ld+json" in x)
         html = html.replace('"url":"__SITE__",', "")
     page.write_text(html, encoding="utf-8")
+    (OUT / "ar.html").write_text(arabic_page(html, site), encoding="utf-8")
     robots = "User-agent: *\nAllow: /\n"           # scripts and styles stay open: search engines render the page with them
     if site:
         robots += f"\nSitemap: {site}sitemap.xml\n"
         (OUT / "sitemap.xml").write_text('<?xml version="1.0" encoding="UTF-8"?>\n'
-                                         '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
-                                         f"  <url><loc>{site}</loc><lastmod>{datetime.date.today().isoformat()}</lastmod></url>\n"
-                                         "</urlset>\n", encoding="utf-8")
+                                         '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">\n'
+                                         + "".join(f"  <url><loc>{site}{p}</loc><lastmod>{datetime.date.today().isoformat()}</lastmod>"
+                                                   f'<xhtml:link rel="alternate" hreflang="en" href="{site}"/>'
+                                                   f'<xhtml:link rel="alternate" hreflang="ar" href="{site}ar.html"/></url>\n' for p in ("", "ar.html"))
+                                         + "</urlset>\n", encoding="utf-8")
     (OUT / "robots.txt").write_text(robots, encoding="utf-8")
 
 

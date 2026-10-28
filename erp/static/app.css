@@ -1989,3 +1989,6 @@ tr.unread td:first-child{box-shadow:inset 3px 0 0 var(--accent)}
 tr.sub-addons td{border-top:0;padding-top:0}label.chk.addon{display:inline-flex;margin-inline-end:12px;font-size:.88em}
 .vis-list{display:flex;flex-direction:column;margin-top:10px}.vis-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 4px;border-bottom:1px solid var(--line);color:var(--ink)}
 .vis-row:last-child{border-bottom:0}.vis-row .num{margin-inline-start:auto}
+
+/* the slogan under the name on the sign-in screens */
+.login .slogan{margin:-4px 0 10px;color:var(--muted);font-size:.9em;letter-spacing:.01em}.login.auth .slogan{text-align:center}
