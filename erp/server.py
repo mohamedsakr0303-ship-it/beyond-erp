@@ -113,7 +113,7 @@ COMPANY_KEYS = ("company_name", "company_tagline", "company_address", "company_t
                 "bank_holder", "bank_swift", "bank_iban", "offer_validity_days", "offer_prefix", "offer_digits", "regional",
                 "banks", "bank_default", "country", "invoice_style", "doc_lang")
 PUBLIC_SETTINGS = COMPANY_KEYS + ("demo_loaded", "desk_site", "workday_location", "menu_labels", "reserve_pct", "reserve_early_pct",
-                                  "reserve_early_until", "capital_goal", "buffer_months", "repay_funder_first", "funding_repay_pct", "expected_cost_pct", "legal_reserve_pct", "legal_reserve_cap", "funding_partner", "funding_limit",
+                                  "reserve_early_until", "capital_goal", "buffer_months", "repay_funder_first", "funding_repay_pct", "funding_interest_pct", "expected_cost_pct", "legal_reserve_pct", "legal_reserve_cap", "funding_partner", "funding_limit",
                                   "funding_extra", "funding_extra_shrinks", "funding_warn", "funding_critical", "funding_mode", "costplus_overhead", "report_from", "report_to", "lock_date", "hidden_modules",
                                   "appearance", "po_self_approve_limit", "menu_layout", "form_custom", "duplicate_check", "two_step_required",
                                   "profit_categories", "distribute_noncash", "distribute_from_funder")
@@ -350,7 +350,7 @@ def put_settings(ctx):
                 else:
                     ctx.body["appearance"].pop(k, None)
     if keys & {"reserve_pct", "legal_reserve_pct", "legal_reserve_cap", "funding_partner", "funding_limit", "reserve_early_pct", "reserve_early_until",
-               "capital_goal", "buffer_months", "repay_funder_first", "funding_repay_pct", "funding_extra", "funding_extra_shrinks", "funding_warn",
+               "capital_goal", "buffer_months", "repay_funder_first", "funding_repay_pct", "funding_interest_pct", "funding_extra", "funding_extra_shrinks", "funding_warn",
                "funding_critical", "funding_mode", "distribute_noncash", "distribute_from_funder"} and not ctx.can("partners.equity", "edit"):
         ctx.require("settings.company", "edit")
     if "funding_mode" in keys:          # moves the funding account between equity and liabilities
@@ -432,8 +432,8 @@ def put_settings(ctx):
                 raise acc.ValidationError("Closed financial years depend on the current start date. Reopen them before changing it.")
         if k == "font_size":
             v = str(max(11, min(22, int(float(v or 15)))))
-        if k in ("reserve_pct", "legal_reserve_pct", "legal_reserve_cap", "reserve_early_pct", "funding_repay_pct"):
-            v = "" if k in ("reserve_early_pct", "funding_repay_pct") and v in (None, "") else str(max(0.0, min(1.0, acc.num(v, "reserve %"))))
+        if k in ("reserve_pct", "legal_reserve_pct", "legal_reserve_cap", "reserve_early_pct", "funding_repay_pct", "funding_interest_pct"):
+            v = "" if k in ("reserve_early_pct", "funding_repay_pct", "funding_interest_pct") and v in (None, "") else str(max(0.0, min(1.0, acc.num(v, "reserve %"))))
         if k == "expected_cost_pct":
             v = "" if v in (None, "") else str(max(0.0, min(5.0, acc.num(v, "expected cost %"))))
         if k in ("reserve_early_until", "capital_goal", "buffer_months"):

@@ -194,5 +194,37 @@ class SeveralFunders(unittest.TestCase):
         self.assertTrue(any("Second's funding is near" in x["flag"] for x in flags))
 
 
+    def test_each_gets_back_his_own_money_with_interest_only_if_his_deal_has_it(self):
+        db = books(main=False)
+        out = funders.save_extra(db, [{"name": "Second", "mode": "facility", "repay_pct": 0.5, "interest_pct": 0.12},
+                                      {"name": "Third", "mode": "facility", "repay_pct": 0.5}])
+        f2, f3 = out
+        self.assertEqual((f2["interest_pct"], f3["interest_pct"]), (0.12, None))
+        # a client paid before anyone funded: none of it is theirs
+        a.record_journal(db, {"memo": "Invoice", "date": "2026-01-05", "bu_code": "P-1",
+                              "lines": [{"account": db.acct("ar"), "debit": 9000}, {"account": "4010", "credit": 9000}]})
+        a.record_journal(db, {"memo": "Early receipt", "date": "2026-01-10", "kind": "Receipt Voucher", "bu_code": "P-1",
+                              "lines": [{"account": db.acct("bank"), "debit": 5000}, {"account": db.acct("ar"), "credit": 5000}]})
+        for f, amt in ((f2, 3650), (f3, 1000)):
+            a.record_project_cost(db, {"bu_code": "P-1", "vendor": "Sup", "description": "Works", "qty": 1, "rate": amt,
+                                       "paid": amt, "paid_from": f["account"], "date": "2026-02-01"})
+        d = fundsched.build(db, "2026-02-20", {"months": 3}, funder="Second")
+        self.assertEqual((d["since"], d["paid"], d["share"]), ("2026-02-01", 0.0, 0.0))     # the early receipt is not his
+        self.assertEqual(d["due_now"], 0.0)
+        self.assertGreater(d["interest_ahead"], 0)                                          # projected on what he is owed
+        self.assertEqual(fundsched.build(db, "2026-02-20", {"months": 3}, funder="Third")["interest_ahead"], 0.0)
+        # booking his interest: Dr interest expense, Cr his account; the next booking starts where this one ended
+        r = equity.post(db, "funder_interest", {"funder": "Second", "date": "2026-03-02"})
+        ln = line(db, r["id"], f2["account"])
+        self.assertEqual((ln["credit"], ln["party"]), (3480, "Second"))                     # 3,650 × 12% × 29 days / 365 = 34.80
+        self.assertEqual(line(db, r["id"], db.acct("interest"))["debit"], 3480)
+        self.assertEqual(funders.balance(db, funders.by_name(db, "Second")), 3684.8)
+        with self.assertRaisesRegex(a.ValidationError, "already booked"):
+            equity.post(db, "funder_interest", {"funder": "Second", "date": "2026-03-02"})
+        with self.assertRaisesRegex(a.ValidationError, "no interest"):
+            equity.post(db, "funder_interest", {"funder": "Third", "date": "2026-03-02"})
+        self.assertTrue(a.balance_sheet(db)["balanced"])
+
+
 if __name__ == "__main__":
     unittest.main()

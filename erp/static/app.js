@@ -5288,14 +5288,15 @@ PAGES["funding-schedule"] = async (view, parts, q) => {
   const kpi = (l, v, cls = "", sub = "") => kpiBox(l, v, cls, sub);
   view.innerHTML = `<div class="toolbar"><h1>${t("m_fundsched")}</h1><span class="spacer"></span><button class="btn" data-a="doprint">${t("print")}</button>${exportMenu("funding_schedule", q.funder ? { funder: q.funder } : {})}</div>
     ${many ? `<div class="card"><h2>${esc(L2("Funding partners", "الشركاء الممولون"))}</h2><p class="muted" style="margin:-4px 0 10px">${esc(L2("Each is repaid from his own share of what clients pay, at the same time; the partners' part is what is left after all of them. Choose one to see his details.", "يُرد لكل منهم من نصيبه من تحصيل العملاء في الوقت نفسه، ونصيب الشركاء هو الباقي بعدهم جميعاً. اختر أحدهم لعرض تفاصيله."))}</p>
-      <div class="tbl stack"><table><thead><tr><th>${esc(L2("Funding partner", "الشريك الممول"))}</th><th class="num">${esc(L2("Share of each client payment", "النصيب من كل دفعة"))}</th><th class="num">${esc(L2("Owed to him today", "المستحق له اليوم"))}</th><th>${esc(L2("Repaid in full", "يُرد بالكامل في"))}</th><th></th></tr></thead><tbody>
-      ${d.funders.map(f => `<tr class="${f.name === d.partner ? "picked" : ""}"><td><b>${esc(f.name)}</b>${f.main ? ` <span class="chip">${esc(L2("Main", "الرئيسي"))}</span>` : ""}</td><td class="num">${f.pct != null ? pct(f.pct) : "—"}</td><td class="num">${money(f.owed)}</td>
+      <div class="tbl stack"><table><thead><tr><th>${esc(L2("Funding partner", "الشريك الممول"))}</th><th class="num">${esc(L2("Share of each client payment", "النصيب من كل دفعة"))}</th><th class="num">${esc(L2("Interest a year", "الفائدة سنوياً"))}</th><th class="num">${esc(L2("Owed to him today", "المستحق له اليوم"))}</th><th>${esc(L2("Repaid in full", "يُرد بالكامل في"))}</th><th></th></tr></thead><tbody>
+      ${d.funders.map(f => `<tr class="${f.name === d.partner ? "picked" : ""}"><td><b>${esc(f.name)}</b>${f.main ? ` <span class="chip">${esc(L2("Main", "الرئيسي"))}</span>` : ""}</td><td class="num">${f.pct != null ? pct(f.pct) : "—"}</td><td class="num">${f.interest_pct ? pct(f.interest_pct) : "—"}</td><td class="num">${money(f.owed)}</td>
         <td>${f.repaid_in ? esc(ym(f.repaid_in)) : f.pct == null ? `<span class="muted">${esc(L2("No share set", "لم يُحدد نصيب"))}</span>` : `<span class="neg">${esc(L2(`${money(f.left_at_end)} still owed at the end`, `يتبقى ${money(f.left_at_end)} في النهاية`))}</span>`}</td>
         <td>${f.name === d.partner ? "" : `<a class="btn sm" href="#/funding-schedule?${qs({ funder: f.name })}">${esc(L2("View", "عرض"))}</a>`}</td></tr>`).join("")}</tbody></table></div></div>` : ""}
     ${share == null ? `<div class="banner warn">${esc(d.funders.find(f => f.name === d.partner && f.main) ? L2("Set the funding partner's share of each client payment in Partners → Distribution policy to see the schedule.", "حدد نصيب الشريك الممول من كل دفعة عميل في الشركاء ← سياسة التوزيع لعرض الجدول.")
       : L2("Set this funding partner's share of each client payment in Partner settlement → Other funding partners to see his schedule.", "حدد نصيب هذا الشريك الممول من كل دفعة عميل في تسوية الشركاء ← الشركاء الممولون الآخرون لعرض جدوله."))}</div>` : ""}
-    <div class="kpis">${kpi(L2("Owed to him today", "المستحق له اليوم"), d.owed, "", esc(d.partner))}${kpi(L2("His share of each client payment", "نصيبه من كل دفعة عميل"), share != null ? pct(share) : "—")}
-      ${kpi(L2("Due to him now", "المستحق له الآن"), d.due_now, d.due_now > 0 ? "neg" : "pos", L2(`${money(d.repaid)} repaid of ${money(d.share)}`, `رُد ${money(d.repaid)} من ${money(d.share)}`))}
+    <div class="kpis">${kpi(L2("Owed to him today", "المستحق له اليوم"), d.owed, "", esc(d.partner) + (d.since ? " · " + esc(L2(`funding since ${fd(d.since)}`, `يمول منذ ${fd(d.since)}`)) : ""))}${kpi(L2("His share of each client payment", "نصيبه من كل دفعة عميل"), share != null ? pct(share) : "—",
+        "", d.interest_pct ? esc(L2(`interest ${pct(d.interest_pct)} a year`, `فائدة ${pct(d.interest_pct)} سنوياً`)) : esc(L2("no interest", "بدون فائدة")))}
+      ${kpi(L2("Due to him now", "المستحق له الآن"), d.due_now, d.due_now > 0 ? "neg" : "pos", L2(`his share of client payments since he started: ${money(d.share)} · repaid ${money(d.repaid)} · never more than he is owed`, `نصيبه من دفعات العملاء منذ بدأ: ${money(d.share)} · رُد ${money(d.repaid)} · لا يتجاوز المستحق له`))}
       ${kpi(d.repaid_in ? L2("Repaid in full", "يُرد بالكامل في") : L2("Still owed at the end", "المتبقي له في النهاية"), d.repaid_in ? esc(ym(d.repaid_in)) : d.left_at_end, d.repaid_in ? "pos" : "neg",
         L2(`over ${d.options.months} months`, `خلال ${d.options.months} شهراً`))}</div>
     <div class="card"><h2>${esc(L2("Money expected in", "التحصيل المتوقع"))}</h2>
@@ -5308,11 +5309,11 @@ PAGES["funding-schedule"] = async (view, parts, q) => {
         <label class="f" style="max-width:200px">${esc(L2("Months to show", "عدد الأشهر"))}<input id="fsm" type="number" min="6" max="120" value="${d.options.months}" ${ed ? "" : "disabled"}></label>
         <label class="f" style="max-width:240px">${esc(L2("Months between a bill and its payment", "الأشهر بين الفاتورة وسدادها"))}<input id="fsl" type="number" min="0" max="12" value="${d.options.lag}" ${ed ? "" : "disabled"}></label>
         ${ed ? `<button class="btn pri" data-a="fssave">${t("save")}</button>` : ""}</div></div>
-    <div class="card"><h2>${esc(L2("Month by month", "شهرياً"))}</h2><div class="tbl"><table><thead><tr><th>${esc(L2("Month", "الشهر"))}</th>${d.streams.map(s => `<th class="num">${esc(label(s))}</th>`).join("")}
-      <th class="num">${esc(L2("Clients pay", "تحصيل العملاء"))}</th>${many && payers.length > 1 ? payers.map(n => `<th class="num">${esc(L2("To ", "يُرد لـ ") + n)}</th>`).join("") : `<th class="num">${esc(L2("To him", "يُرد له"))}</th>`}<th class="num">${esc(many ? L2(`Owed to ${d.partner} after`, `المستحق لـ ${d.partner} بعدها`) : L2("Owed to him after", "المستحق له بعدها"))}</th><th class="num">${esc(L2("Partners' part", "نصيب الشركاء"))}</th></tr></thead><tbody>
+    <div class="card"><h2>${esc(L2("Month by month", "شهرياً"))}</h2>${d.interest_pct ? `<p class="muted" style="margin:-4px 0 10px">${esc(L2(`His deal adds ${pct(d.interest_pct)} a year on what is still owed to him; it is projected here and booked with Partner transaction → Funding partner interest.`, `يضيف اتفاقه ${pct(d.interest_pct)} سنوياً على المستحق له؛ تظهر هنا كتوقع وتُسجَّل من حركة شريك ← فائدة الشريك الممول.`))}</p>` : ""}<div class="tbl"><table><thead><tr><th>${esc(L2("Month", "الشهر"))}</th>${d.streams.map(s => `<th class="num">${esc(label(s))}</th>`).join("")}
+      <th class="num">${esc(L2("Clients pay", "تحصيل العملاء"))}</th>${many && payers.length > 1 ? payers.map(n => `<th class="num">${esc(L2("To ", "يُرد لـ ") + n)}</th>`).join("") : `<th class="num">${esc(L2("To him", "يُرد له"))}</th>`}${d.interest_pct ? `<th class="num">${esc(L2("His interest", "فائدته"))}</th>` : ""}<th class="num">${esc(many ? L2(`Owed to ${d.partner} after`, `المستحق لـ ${d.partner} بعدها`) : L2("Owed to him after", "المستحق له بعدها"))}</th><th class="num">${esc(L2("Partners' part", "نصيب الشركاء"))}</th></tr></thead><tbody>
       ${d.rows.map(r => `<tr class="${r.month === d.repaid_in ? "picked" : ""}"><td class="nowrap">${esc(ym(r.month))}</td>${d.streams.map(s => `<td class="num">${r.by[s.key] ? money(r.by[s.key]) : ""}</td>`).join("")}
-        <td class="num">${money(r.in)}</td>${many && payers.length > 1 ? payers.map(n => `<td class="num">${n === d.partner ? `<b>${money(r.to[n] || 0)}</b>` : money(r.to[n] || 0)}</td>`).join("") : `<td class="num"><b>${money(r.to_funder)}</b></td>`}<td class="num">${money(r.closing)}</td><td class="num">${money(r.partners)}</td></tr>`).join("")}
-      <tr class="total"><td>${t("total")}</td>${d.streams.map(() => "<td></td>").join("")}<td class="num">${money(d.rows.reduce((a, r) => a + r.in, 0))}</td>${many && payers.length > 1 ? payers.map(n => `<td class="num">${money(d.rows.reduce((a, r) => a + (r.to[n] || 0), 0))}</td>`).join("") : `<td class="num">${money(d.total_to_funder)}</td>`}<td class="num">${money(d.left_at_end)}</td><td class="num">${money(d.total_partners)}</td></tr></tbody></table></div></div>
+        <td class="num">${money(r.in)}</td>${many && payers.length > 1 ? payers.map(n => `<td class="num">${n === d.partner ? `<b>${money(r.to[n] || 0)}</b>` : money(r.to[n] || 0)}</td>`).join("") : `<td class="num"><b>${money(r.to_funder)}</b></td>`}${d.interest_pct ? `<td class="num">${money(r.interest_due || 0)}</td>` : ""}<td class="num">${money(r.closing)}</td><td class="num">${money(r.partners)}</td></tr>`).join("")}
+      <tr class="total"><td>${t("total")}</td>${d.streams.map(() => "<td></td>").join("")}<td class="num">${money(d.rows.reduce((a, r) => a + r.in, 0))}</td>${many && payers.length > 1 ? payers.map(n => `<td class="num">${money(d.rows.reduce((a, r) => a + (r.to[n] || 0), 0))}</td>`).join("") : `<td class="num">${money(d.total_to_funder)}</td>`}${d.interest_pct ? `<td class="num">${money(d.interest_ahead)}</td>` : ""}<td class="num">${money(d.left_at_end)}</td><td class="num">${money(d.total_partners)}</td></tr></tbody></table></div></div>
     <div class="card"><h2>${esc(L2("So far", "ما تم حتى تاريخه"))}</h2><div class="tbl"><table><thead><tr><th>${t("date")}</th><th>${t("description")}</th><th class="num">${esc(L2("Client paid", "دفعة العميل"))}</th><th class="num">${esc(L2("His share", "نصيبه"))}</th><th class="num">${esc(L2("Repaid to him", "رُد له"))}</th><th class="num">${esc(L2("Difference", "الفرق"))}</th></tr></thead><tbody>
       ${d.history.map(h => `<tr class="click" data-a="openv" data-id="${h.id}"><td>${fd(h.date)}</td><td>${esc(h.memo)}</td><td class="num">${money(h.payment)}</td><td class="num">${money(h.share)}</td><td class="num">${money(h.repaid)}</td><td class="num ${Math.abs(h.share - h.repaid) >= 0.01 ? "neg" : ""}">${money(h.share - h.repaid)}</td></tr>`).join("") || `<tr><td colspan="6" class="muted">${esc(L2("No client payments yet.", "لا توجد دفعات عملاء بعد."))}</td></tr>`}
       <tr class="total"><td colspan="2">${t("total")}</td><td class="num">${money(d.paid)}</td><td class="num">${money(d.share)}</td><td class="num">${money(d.repaid)}</td><td class="num">${money(d.share - d.repaid)}</td></tr></tbody></table></div>
@@ -6374,6 +6375,15 @@ const EQ = {
       { html: shareBlock(L2("New shares", "النسب الجديدة"), activePartners(), Object.fromEntries(activePartners().map(p => [p.id, pctIn(p.default_share)]))), span: "spanall" },
       { k: "memo", l: t("memo"), span: "spanall" }],
     blocks: v => (v.ownership === "set" ? ["eqsh"] : []), body: (v, f) => ({ ...v, shares: collectBlock(f, "eqsh") }) },
+  funder_interest: { title: ["Funding partner interest", "فائدة الشريك الممول"], mod: "partners.transactions",
+    fields: (d, pre) => [
+      { k: "funder", l: L2("Funding partner", "الشريك الممول"), type: "select", v: pre.funder, change: "eqsync",
+        opts: (d.funders || []).map(f => [f.name, `${f.name} — ${f.interest_pct ? pct(f.interest_pct) + " " + L2("a year", "سنوياً") : L2("no interest in his deal", "بدون فائدة في اتفاقه")} · ${L2("owed to him", "المستحق له")} ${money(Math.max(f.balance, 0))}`]) },
+      { k: "date", l: L2("Interest up to", "الفائدة حتى"), type: "date", v: today(), req: 1, change: "eqsync" },
+      { k: "rate", l: L2("Rate % a year (blank: as in his deal)", "النسبة % سنوياً (فارغ: حسب اتفاقه)"), type: "number", change: "eqsync" },
+      { k: "from", l: t("from"), type: "date", change: "eqsync", help: L2("Blank: the day after his interest was last booked (or his first funding).", "فارغ: اليوم التالي لآخر فائدة مسجلة (أو أول تمويل له).") },
+      { k: "memo", l: t("memo"), span: "spanall" }],
+    body: v => ({ ...v, rate: v.rate === "" ? "" : (+v.rate || 0) / 100 }) },
   appropriate: { title: ["Share the profit (close the period)", "توزيع أرباح الفترة (إقفال)"], mod: "partners.transactions",
     fields: d => [
       { k: "date_from", l: t("from"), type: "date", help: L2("Blank: the day after the last appropriated period.", "فارغ: اليوم التالي لآخر فترة موزعة.") },
@@ -6427,7 +6437,7 @@ async function equityForm(action, pre = {}) {
   const def = EQ[action]; if (!def) return;
   let d = { partners: [] };
   try { d = await api("GET", "/api/partners"); } catch { /* no permission to view the report — lists stay short */ }
-  if (action === "funder_capital") { try { d.funders = (await api("GET", "/api/funders")).funders; } catch { d.funders = []; }
+  if (action === "funder_capital" || action === "funder_interest") { try { d.funders = (await api("GET", "/api/funders")).funders; } catch { d.funders = []; }
     if (!d.funders.length) return toast(L2("Set a funding partner first (Partner settlement).", "حدد شريكاً ممولاً أولاً (تسوية الشركاء)."), true); }
   const partnerNames = (S.boot.partners || []).map(p => p.name);
   const html = form(def.fields(d, pre)) + datalist("eqpartners", partnerNames) + `<div id="eqplan" style="margin-top:14px"></div>`;
@@ -6456,7 +6466,7 @@ async function equityForm(action, pre = {}) {
     S.H.eqrate = () => { const pid = $("[name=partner]", f).value, r = $("[name=rate]", f);
       const p = (S.boot.partners || []).find(x => String(x.id) === String(pid)); if (r && p) r.value = pctIn(p.loan_rate) || 0; preview(); };
     f.addEventListener("input", preview); f.addEventListener("change", preview);
-    if ($("[name=rate]", f) && action !== "loan") S.H.eqrate();
+    if ($("[name=rate]", f) && $("[name=partner]", f) && action !== "loan") S.H.eqrate();   // a partner's loan rate (the funding interest form has its own)
     sync();
   } });
 }
@@ -6508,7 +6518,8 @@ PAGES["partner-exit"] = async (view, parts, q) => {
   const fac = d.facility, facMode = d.funding_mode === "facility";
   S.H.pxfund = async () => { const v = $("#pxfp").value, lim = $("#pxlim").value, num = id => { const x = ($(id) || {}).value; return x ? String(+x) : ""; };
     try { await api("PUT", "/api/settings", { funding_partner: v, funding_limit: lim ? String(+lim) : "", funding_mode: $("#pxmode").value,
-      funding_extra: num("#pxextra"), funding_extra_shrinks: ($("#pxshrink") || {}).checked ? "yes" : "no", funding_warn: num("#pxwarn"), funding_critical: num("#pxcrit") });
+      funding_extra: num("#pxextra"), funding_extra_shrinks: ($("#pxshrink") || {}).checked ? "yes" : "no", funding_warn: num("#pxwarn"), funding_critical: num("#pxcrit"),
+      funding_interest_pct: ($("#pxint") || {}).value ? String((+$("#pxint").value || 0) / 100) : "" });
       toast(t("saved")); route(); } catch (e) { fail(e); } };
   S.H.pxbook = async () => { if (!await uiConfirm(L2(`Record the partner's capital at the amount actually contributed (${money(f.own_money)})? A capital entry is posted for the difference.`, `هل تريد تسجيل رأس مال الشريك بقيمة ما ساهم به فعلاً (${money(f.own_money)})؟ يُرحَّل قيد رأس مال بالفرق.`))) return;
     try { await api("POST", "/api/equity/funding/book", {}); toast(t("posted")); route(); } catch (e) { fail(e); } };
@@ -6519,14 +6530,15 @@ PAGES["partner-exit"] = async (view, parts, q) => {
     const row = (x = {}) => `<tr class="fdrow"><td><select data-f="name"><option value="">—</option>${names.map(n => `<option ${n === x.name ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></td>
       <td><select data-f="mode"><option value="capital" ${x.mode === "facility" ? "" : "selected"}>${L2("Capital", "رأس مال")}</option><option value="facility" ${x.mode === "facility" ? "selected" : ""}>${L2("Facility", "تسهيل")}</option></select></td>
       <td><input data-f="limit" type="number" step="any" min="0" value="${x.limit || ""}" style="width:110px"></td><td><input data-f="repay_pct" type="number" step="any" min="0" max="100" value="${x.repay_pct != null ? +(x.repay_pct * 100).toFixed(2) : ""}" style="width:80px"></td>
-      <td><input data-f="repay_first" type="checkbox" ${x.repay_first ? "checked" : ""}></td><td><input data-f="distribute_from" type="checkbox" ${x.distribute_from ? "checked" : ""}></td>
+      <td><input data-f="interest_pct" type="number" step="any" min="0" max="100" value="${x.interest_pct ? +(x.interest_pct * 100).toFixed(4) : ""}" style="width:80px"></td><td><input data-f="repay_first" type="checkbox" ${x.repay_first ? "checked" : ""}></td><td><input data-f="distribute_from" type="checkbox" ${x.distribute_from ? "checked" : ""}></td>
       <td><input data-f="active" type="checkbox" ${x.active === false ? "" : "checked"}></td><td><button type="button" class="btn sm danger" data-k="rm">✕</button></td></tr>`;
     const f = drawer(L2("Other funding partners", "شركاء ممولون آخرون"), `<div class="tbl"><table><thead><tr><th>${t("partner")}</th><th>${L2("His money is", "أمواله")}</th><th>${L2("Limit (blank: none)", "الحد (فارغ: بدون)")}</th>
-        <th>${L2("% of each client payment", "% من كل دفعة عميل")}</th><th>${L2("Repay before distributing", "يُسدد قبل التوزيع")}</th><th>${L2("Distributions through his account", "التوزيعات من حسابه")}</th><th>${L2("Active", "نشط")}</th><th></th></tr></thead>
+        <th>${L2("% of each client payment", "% من كل دفعة عميل")}</th><th>${L2("Interest % a year (blank: none)", "الفائدة % سنوياً (فارغ: بدون)")}</th><th>${L2("Repay before distributing", "يُسدد قبل التوزيع")}</th><th>${L2("Distributions through his account", "التوزيعات من حسابه")}</th><th>${L2("Active", "نشط")}</th><th></th></tr></thead>
         <tbody>${others.map(row).join("")}</tbody></table></div><button type="button" class="btn sm" data-k="add">+ ${L2("Funding partner", "شريك ممول")}</button>
       <p class="muted" style="font-size:.85em">${L2("Each gets his own account in the chart of accounts. Capital: his money is his capital (equity). Facility: a credit line owed back to him (liability). Taking someone off keeps his account and its history.", "يحصل كل منهم على حسابه في دليل الحسابات. رأس مال: أمواله رأس ماله (حقوق ملكية). تسهيل: حد ائتماني يُرد له (التزام). إزالة أحدهم تُبقي حسابه وتاريخه.")}</p>`,
       async () => { const list = $$("tr.fdrow", f).map(tr => { const g = k => $(`[data-f=${k}]`, tr); return { name: g("name").value, mode: g("mode").value, limit: g("limit").value,
-          repay_pct: g("repay_pct").value === "" ? "" : (+g("repay_pct").value || 0) / 100, repay_first: g("repay_first").checked, distribute_from: g("distribute_from").checked, active: g("active").checked }; }).filter(x => x.name);
+          repay_pct: g("repay_pct").value === "" ? "" : (+g("repay_pct").value || 0) / 100,
+          interest_pct: g("interest_pct").value === "" ? "" : (+g("interest_pct").value || 0) / 100, repay_first: g("repay_first").checked, distribute_from: g("distribute_from").checked, active: g("active").checked }; }).filter(x => x.name);
         await api("PUT", "/api/funders", { funders: list }); await refreshBoot(); toast(t("saved")); }, { wide: true });
     f.addEventListener("click", e => { const k = e.target.dataset.k; if (k === "add") $("tbody", f).insertAdjacentHTML("beforeend", row()); if (k === "rm") e.target.closest("tr").remove(); });
   };
@@ -6546,6 +6558,7 @@ PAGES["partner-exit"] = async (view, parts, q) => {
         <label class="f" style="min-width:230px">${L2("What the partner's money is", "طبيعة أموال الشريك")}
           <select id="pxmode" ${ed ? "" : "disabled"}><option value="capital" ${facMode ? "" : "selected"}>${L2("Capital in the company (equity)", "رأس مال في الشركة (حقوق ملكية)")}</option>
             <option value="facility" ${facMode ? "selected" : ""}>${L2("A funding facility, repaid to the partner first (liability)", "تسهيل تمويلي يُرد للشريك أولاً (التزام)")}</option></select></label>
+        <label class="f" style="max-width:200px" title="${esc(L2("Only when his deal includes interest: his yearly rate on what the company owes him. Book it with Partner transaction → Funding partner interest.", "فقط إذا كان اتفاقه يشمل فائدة: نسبته السنوية على المستحق له على الشركة. تُسجَّل من حركة شريك ← فائدة الشريك الممول."))}">${L2("Interest % a year (blank: none)", "الفائدة % سنوياً (فارغ: بدون)")}<input id="pxint" type="number" step="any" min="0" max="100" value="${S.boot.settings.funding_interest_pct ? +(S.boot.settings.funding_interest_pct * 100).toFixed(4) : ""}" ${ed ? "" : "disabled"}></label>
         <label class="f" style="max-width:200px">${facMode ? L2("Base line the partner always covers", "الحد الأساسي الذي يغطيه الشريك دائماً") : L2("Agreed funding limit (blank: none)", "حد التمويل المتفق عليه (فارغ: بدون حد)")}<input id="pxlim" type="number" step="any" value="${esc(fac ? fac.base || "" : (f && f.limit ? f.limit : ""))}" ${ed ? "" : "disabled"}></label>
         ${facMode ? `<label class="f" style="max-width:220px">${L2("Temporary extra line for partner loans", "حد إضافي مؤقت لقروض الشركاء")}<input id="pxextra" type="number" step="any" value="${esc(fac && fac.extra ? fac.extra : "")}" ${ed ? "" : "disabled"}></label>
           <label class="chk"><input id="pxshrink" type="checkbox" ${!fac || fac.extra_shrinks ? "checked" : ""} ${ed ? "" : "disabled"}> ${L2("Shrinks as the loans are repaid", "يقل كلما سُددت القروض")}</label>
@@ -6641,7 +6654,7 @@ PAGES.partners = async (view, parts, q) => {
       <button data-a="eqdraw">${L2("Drawings (on account of profit)", "مسحوبات (تحت حساب الأرباح)")}</button>${act("distribute", L2("Profit distribution", "توزيع أرباح"))}
       ${act("appropriate", L2("Appropriate profit (close period)", "توزيع أرباح الفترة (إقفال)"))}
       ${act("loan", L2("Loan from a partner", "قرض من شريك"))}${act("interest", L2("Interest on a partner's loan", "فوائد قرض شريك"))}${act("repay", L2("Loan / interest repayment", "سداد قرض / فوائد"))}
-      ${S.boot.settings.funding_partner || otherFundAccts().length ? act("funder_capital", L2("Funding account ⇄ capital", "حساب التمويل ⇄ رأس المال")) : ""}</div></div>` : "";
+      ${S.boot.settings.funding_partner || otherFundAccts().length ? act("funder_capital", L2("Funding account ⇄ capital", "حساب التمويل ⇄ رأس المال")) + act("funder_interest", L2("Funding partner interest", "فائدة الشريك الممول")) : ""}</div></div>` : "";
   const ownMenu = own ? `<div class="dd"><button class="btn">${L2("Ownership", "الملكية")} ▾</button><div class="dd-menu">
       ${act("transfer", L2("Share transfer", "تنازل عن حصة"))}<button data-a="eqreplace">${L2("Partner replacement (entire share)", "استبدال شريك (كامل الحصة)")}</button>
       ${act("admit", L2("Admit a new partner", "دخول شريك جديد"))}${act("exit", L2("Partner retirement / buy-out", "تخارج شريك"))}${act("set", L2("Change shares directly", "تعديل النسب مباشرة"))}

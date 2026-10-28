@@ -79,6 +79,7 @@ def _funders(db, date_to):
         if not f.get("account"):
             continue
         out.append({"name": f["name"], "account": f["account"], "main": f["main"], "pct": f["repay_pct"],
+                    "interest_pct": f.get("interest_pct"), "since": fd.first_funded(db, f, date_to),
                     "owed": round(fd.balance(db, f, date_to), 2)})
     return out
 
@@ -93,12 +94,15 @@ def build(db, date_to=None, opts=None, funder=None):
     fl = _funders(db, date_to)
     sel = next((f for f in fl if funder and f["name"].lower() == str(funder).strip().lower()), None) or (fl[0] if fl else None)
     name, pct = (sel["name"], sel["pct"]) if sel else ("", None)
+    since = sel["since"] if sel else None
     owed_him = sel["owed"] if sel else 0.0
     rows = acc.account_totals(db, date_to=date_to)
     hist, used, back, other_back, paid, repaid, due_now = [], set(), {}, 0.0, 0.0, 0.0, 0.0
     if sel:
         pays, back = history(db, date_to, sel["account"])
         for p in pays:
+            if not since or p["date"] < since:
+                continue                         # before he put any money in: nothing of it is his
             amt = to_major(p["n"])
             rep = back.get(p["date"], 0.0) if p["date"] not in used else 0.0
             used.add(p["date"])
@@ -139,28 +143,35 @@ def build(db, date_to=None, opts=None, funder=None):
                 put("rent:" + r["code"], f"Rent {r['code']} — {r['client']}", _add(m, o["lag"]) if o["lag"] else m, monthly, f"#/rental/{r['id']}")
     # every funding partner with a share of client payments is repaid at the same time, each from his own share
     payers = [f for f in fl if f["pct"]]
+    # his deal's interest (if any) is added each month on what is still owed to him — a projection, booked only with
+    # Partner transaction → Funding partner interest
     bal = {f["name"]: max(f["owed"], 0.0) for f in payers}
     done = {f["name"]: "" for f in payers}
-    proj = []
+    proj, interest = [], {f["name"]: 0.0 for f in payers}
     for m in months:
         coll = round(sum(s["by"].get(m, 0.0) for s in streams.values()), 2)
-        to = {}
+        to, intr = {}, {}
         for f in payers:
-            n, opening = f["name"], bal[f["name"]]
+            n = f["name"]
+            intr[n] = round(bal[n] * (f.get("interest_pct") or 0) / 12, 2) if bal[n] > 0.005 else 0.0
+            interest[n] += intr[n]
+            opening = round(bal[n] + intr[n], 2)
             to[n] = round(max(0.0, min(opening, f["pct"] * coll)), 2)
             bal[n] = round(opening - to[n], 2)
             if not done[n] and opening > 0.005 and bal[n] <= 0.005:
                 done[n] = m
-        row = {"month": m, "in": coll, "to": to, "partners": round(coll - sum(to.values()), 2),
+        row = {"month": m, "in": coll, "to": to, "interest": intr, "partners": round(coll - sum(to.values()), 2),
                "by": {k: s["by"].get(m, 0.0) for k, s in streams.items()}}
         if name in to:
-            row.update(opening=round(bal[name] + to[name], 2), to_funder=to[name], closing=bal[name])
+            row.update(opening=round(bal[name] + to[name], 2), to_funder=to[name], closing=bal[name], interest_due=intr[name])
         else:
             row.update(opening=max(owed_him, 0.0), to_funder=0.0, closing=max(owed_him, 0.0))
         proj.append(row)
     summary = [{**f, "repaid_in": done.get(f["name"], ""), "left_at_end": bal.get(f["name"], max(f["owed"], 0.0)),
-                "total_to": round(sum(r["to"].get(f["name"], 0.0) for r in proj), 2)} for f in fl]
-    return {"partner": name, "pct": pct, "owed": owed_him, "date_to": date_to, "options": o,
+                "total_to": round(sum(r["to"].get(f["name"], 0.0) for r in proj), 2),
+                "interest_ahead": round(interest.get(f["name"], 0.0), 2)} for f in fl]
+    return {"partner": name, "pct": pct, "owed": owed_him, "date_to": date_to, "options": o, "since": since,
+            "interest_pct": sel.get("interest_pct") if sel else None, "interest_ahead": round(interest.get(name, 0.0), 2),
             "funders": summary, "payers": [f["name"] for f in payers],
             "history": hist, "paid": paid, "share": round(paid * (pct or 0), 2), "repaid": repaid, "other_repaid": other_back,
             "due_now": due_now, "streams": [{k: v for k, v in s.items() if k != "by"} for s in streams.values()],

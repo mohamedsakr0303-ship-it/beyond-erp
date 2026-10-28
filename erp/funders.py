@@ -59,7 +59,8 @@ def primary(db):
             "mode": db.setting("funding_mode") or "capital", "limit": _num(db.setting("funding_limit")),
             "repay_pct": _num(db.setting("funding_repay_pct"), None),
             "repay_first": _yes(db.setting("repay_funder_first"), True),
-            "distribute_from": _yes(db.setting("distribute_from_funder"), False)}
+            "distribute_from": _yes(db.setting("distribute_from_funder"), False),
+            "interest_pct": _num(db.setting("funding_interest_pct"), None)}
 
 
 def extra(db):
@@ -76,7 +77,8 @@ def extra(db):
         out.append({"name": str(r["name"]), "role": r["role"], "account": codes.get(r["role"], ""), "main": False,
                     "mode": r.get("mode") if r.get("mode") in MODES else "capital", "limit": _num(r.get("limit")),
                     "repay_pct": _num(r.get("repay_pct"), None), "repay_first": _yes(r.get("repay_first"), False),
-                    "distribute_from": _yes(r.get("distribute_from"), False), "active": _yes(r.get("active"), True)})
+                    "distribute_from": _yes(r.get("distribute_from"), False), "active": _yes(r.get("active"), True),
+                    "interest_pct": _num(r.get("interest_pct"), None)})
     return out
 
 
@@ -151,6 +153,8 @@ def save_extra(db, rows):
             mode = r.get("mode") if r.get("mode") in MODES else "capital"
             pct = r.get("repay_pct")
             pct = None if pct in (None, "") else max(0.0, min(1.0, _num(pct)))
+            rate = r.get("interest_pct")
+            rate = None if rate in (None, "", 0, "0") else max(0.0, min(1.0, _num(rate)))
             prev = old.get(name.lower())
             if prev and prev["account"]:
                 role = prev["role"]
@@ -162,11 +166,11 @@ def save_extra(db, rows):
                 role = _new_account(db, name, mode, nth)
             out.append({"name": name, "role": role, "mode": mode, "limit": max(0.0, _num(r.get("limit"))), "repay_pct": pct,
                         "repay_first": _yes(r.get("repay_first")), "distribute_from": _yes(r.get("distribute_from")),
-                        "active": _yes(r.get("active"), True)})
+                        "interest_pct": rate, "active": _yes(r.get("active"), True)})
         # anyone taken off the list stays in the books, inactive (his account keeps its history)
         for k, f in old.items():
             if k not in seen:
-                out.append({**{x: f[x] for x in ("name", "role", "mode", "limit", "repay_pct", "repay_first", "distribute_from")},
+                out.append({**{x: f[x] for x in ("name", "role", "mode", "limit", "repay_pct", "repay_first", "distribute_from", "interest_pct")},
                             "active": False})
         db.set_setting(KEY, json.dumps(out, ensure_ascii=False))
     return extra(db)
@@ -222,3 +226,13 @@ def facility_accounts(db):
     if p and p["account"] and p["mode"] == "facility":
         out.add(p["account"])
     return out
+
+
+def first_funded(db, f, date_to=None):
+    """The day this funding partner first put money in (the first credit on his account), or None."""
+    if not f or not f.get("account"):
+        return None
+    w, p = acc._where(date_to=date_to)
+    r = db.one(f"""SELECT MIN(e.date) d FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
+                   WHERE {w} AND l.account=? AND l.credit>0""", p + [f["account"]])
+    return r["d"] if r else None

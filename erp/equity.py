@@ -321,6 +321,8 @@ def plan_interest(db, d):
     last = None
     for r in db.q(f"SELECT meta FROM journal_entries e WHERE {acc.LIVE} AND e.reversed_by IS NULL AND kind='Partner Loan Interest' "
                   "AND party=?", (p["name"],)):
+        if json.loads(r["meta"] or "{}").get("funder_account"):
+            continue                                    # interest on his funding account: booked on its own
         to = json.loads(r["meta"] or "{}").get("period_to")
         last = max(last or to, to) if to else last
     if last:
@@ -600,9 +602,49 @@ def plan_funder_capital(db, d):
                  _shares_from(db, d, st, base), notes=notes)
 
 
+def plan_funder_interest(db, d):
+    """Interest a funding partner's deal gives him on the money the company owes him on his account: his agreed yearly
+    rate on the daily balance, from the day after the interest last booked (or his first funding) to a date.
+    Dr interest expense, Cr his account — so it is repaid to him with his money."""
+    from . import funders
+    f = funders.by_name(db, d.get("funder") or d.get("partner"))
+    if not f or not f["account"]:
+        raise ValidationError("Choose a funding partner.")
+    end = _dt.date.fromisoformat(acc.clean_date(d.get("date")))
+    rate = _pct(d.get("rate"), "interest rate") if d.get("rate") not in (None, "") else (f.get("interest_pct") or 0)
+    if not rate:
+        raise ValidationError(f"{f['name']}'s funding has no interest. Set his interest rate first (only if his deal has one).")
+    last = None
+    for r in db.q(f"SELECT meta FROM journal_entries e WHERE {acc.LIVE} AND e.reversed_by IS NULL AND kind='Partner Loan Interest' "
+                  "AND party=?", (f["name"],)):
+        m = json.loads(r["meta"] or "{}")
+        if m.get("funder_account") == f["account"] and m.get("period_to"):
+            last = max(last or m["period_to"], m["period_to"])
+    if last:
+        start = _dt.date.fromisoformat(last) + _dt.timedelta(days=1)
+    else:
+        first = funders.first_funded(db, f)
+        if not first:
+            raise ValidationError(f"{f['name']} has not funded the company yet")
+        start = _dt.date.fromisoformat(first) + _dt.timedelta(days=1)
+    if d.get("from"):
+        start = _dt.date.fromisoformat(acc.clean_date(d.get("from")))
+    if start > end:
+        raise ValidationError(f"Interest is already booked up to {last}")
+    amount = _daily_interest(db, f["name"], f["account"], start, end, rate)
+    if not amount:
+        raise ValidationError("No interest is due for this period (nothing owed to him on his account)")
+    lines = [_L(_role(db, "interest"), "", to_major(amount)), _L(f["account"], f["name"], credit=to_major(amount))]
+    return _plan("Partner Loan Interest", text(d.get("memo")) or
+                 f"Interest {rate * 100:.2f}% on {f['name']}'s funding, {start} to {end}", f["name"], lines, end.isoformat(),
+                 {"period_from": start.isoformat(), "period_to": end.isoformat(), "rate": rate, "funder_account": f["account"]},
+                 notes=[f"{(end - start).days + 1} days at {rate * 100:.2f}% a year on what the company owed him each day; "
+                        f"added to what it owes him on his account."])
+
+
 PLANS = {"contribute": plan_contribute, "withdraw": plan_withdraw, "loan": plan_loan, "repay": plan_repay,
          "interest": plan_interest, "transfer": plan_transfer, "admit": plan_admit, "exit": plan_exit,
-         "distribute": plan_distribute, "funder_capital": plan_funder_capital}
+         "distribute": plan_distribute, "funder_capital": plan_funder_capital, "funder_interest": plan_funder_interest}
 OWNERSHIP_ACTIONS = ("transfer", "admit", "exit")
 
 

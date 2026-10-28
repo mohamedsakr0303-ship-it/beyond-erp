@@ -84,12 +84,16 @@ def policy(db):
 
 
 def funder_due(db, pct, funder, date_to, account=None):
-    """The funding partner's share of what clients paid against invoices (his agreed % of each payment), less what he
-    has been paid back — never more than his money still in the company. account: another funding partner's account
+    """The funding partner's share of what clients paid against invoices since he first put money in (his agreed % of
+    each payment), less what he has been paid back — never more than his money still in the company. account: another funding partner's account
     (default: the main funding partner's)."""
+    # only client payments from the day he first put money in count: he gets back his own money, nothing before it
+    acct = account or (db.one("SELECT code FROM accounts WHERE role='funding_partner'") or {}).get("code")
+    since = db.one(f"""SELECT MIN(e.date) d FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
+                       WHERE {acc.LIVE} AND e.date<=? AND l.account=? AND l.credit>0""", (date_to, acct))["d"] if acct else None
     paid = db.one(f"""SELECT COALESCE(SUM(l.credit),0) n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
-                      JOIN accounts a ON a.code=l.account WHERE {acc.LIVE} AND e.date<=? AND e.kind='Receipt Voucher'
-                      AND (a.subtype='receivable' OR a.role='client_advances')""", (date_to,))["n"]
+                      JOIN accounts a ON a.code=l.account WHERE {acc.LIVE} AND e.date<=? AND e.date>=? AND e.kind='Receipt Voucher'
+                      AND (a.subtype='receivable' OR a.role='client_advances')""", (date_to, since or "0000-00-00"))["n"]
     back = db.one(f"""SELECT COALESCE(SUM(l.debit),0) n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
                       JOIN accounts a ON a.code=l.account WHERE {acc.LIVE} AND e.date<=? AND """
                   + ("a.code=?" if account else "a.role='funding_partner'"), (date_to, account) if account else (date_to,))["n"]
