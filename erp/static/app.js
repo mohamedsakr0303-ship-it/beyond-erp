@@ -105,8 +105,17 @@ async function staticApi(method, path, body, raw) {
   if (r.status >= 400) { const e = new Error((data && data.error) || `HTTP ${r.status}`); e.data = data; e.status = r.status; throw e; }
   return data;
 }
+// Excel workbooks and templates leave out the sheets of what the company's subscription switches off (as for hidden sections)
+function withPlatformOff(url) {
+  const b = S.billing; if (!b || !/^\/api\/(export|templates)\/workbook/.test(url)) return url;
+  const all = (S.boot && S.boot.enums && S.boot.enums.modules) || [];
+  const off = [...(Array.isArray(b.modules) ? all.filter(m => !b.modules.includes(m)) : []), ...(b.deny || [])];
+  if (!off.length) return url;
+  const u = new URL(url, location.href); u.searchParams.set("off", off.join(",")); return u.pathname + u.search;
+}
 // Open an /api/ download or printable page. Server mode: normal navigation. Static mode: via the bridge.
 async function openApi(url, newTab) {
+  url = withPlatformOff(url);
   if (!STATIC) { if (newTab) window.open(url, "_blank", "noopener"); else location.href = url; return; }
   const w = newTab ? window.open("", "_blank") : null;
   const busy = document.createElement("div"); busy.className = "toast busy";
@@ -157,7 +166,16 @@ const actNote = (k, x) => { ACT.push({ at: new Date().toISOString().slice(11, 19
 const noteErr = m => { if (!m) return; actNote("error", { m: String(m).slice(0, 300) }); RECENT_ERRS.push(`${new Date().toISOString().slice(11, 19)} ${String(m).slice(0, 300)}`); if (RECENT_ERRS.length > 8) RECENT_ERRS.shift(); };
 addEventListener("error", e => noteErr(e.message + (e.filename ? ` (${String(e.filename).split("/").pop()}:${e.lineno})` : "")));
 addEventListener("unhandledrejection", e => noteErr("Unhandled: " + ((e.reason && e.reason.message) || e.reason)));
-const fail = e => { noteErr(e.message || String(e)); toast(e.message || String(e), true); };
+const fail = e => { const m = String((e && e.message) || e).replace(/^(seat_limit|contact_us|support_not_included|maintenance|subscription_ended): /, "");
+  noteErr(m); if (/seat_limit|user\(s\) and all are taken/.test((e && e.message) || "")) return seatFull(m); toast(m, true); };
+// every user seat of the company's plan is taken (online workspace with billing): say so, and where to add seats
+const seatsTaken = () => { const b = S.billing; return !!(b && b.users_allowed != null && b.users >= b.users_allowed); };
+function seatFull(msg) {
+  const b = S.billing || {};
+  drawer(L2("No user seats left", "لا توجد مقاعد مستخدمين متاحة"), `<div class="banner warn">${esc(msg || L2(`This company's plan includes ${b.users_allowed} user(s) and all are taken.`, `تشمل باقة هذه الشركة ${b.users_allowed} مستخدم وجميعها مشغولة.`))}</div>
+    <p>${esc(L2("To add someone, add extra users or choose a bigger plan in Subscription, or deactivate a user who no longer needs access.", "لإضافة شخص، أضف مستخدمين إضافيين أو اختر باقة أكبر من الاشتراك، أو أوقف مستخدماً لم يعد يحتاج الوصول."))}</p>
+    <div class="row">${b.is_admin ? `<a class="btn pri" href="#/subscription" data-close>${esc(L2("Open Subscription", "فتح الاشتراك"))}</a>` : `<span class="muted">${esc(L2("Ask your company administrator.", "اطلب من مسؤول الشركة."))}</span>`}</div>`);
+}
 // In-app dialogs in the app's own look (never the browser's pop-ups):
 //   await uiConfirm(msg) → true / false · await uiPrompt(msg, value) → text or null · await uiAlert(msg)
 // options: ok / cancel (button labels, cancel: false = no cancel button), danger (red OK button), title
@@ -220,7 +238,9 @@ const actionOk = (key, action) => { const u = S.boot && S.boot.user; if (!u || u
 const screenKey = () => { const { parts } = parseHash(), items = window.MENU.flatMap(([, it]) => it);
   const here = items.find(i => i[1] === parts.join("/")) || items.find(i => i[1] === parts[0]); return here ? here[2] : ""; };
 // "a|b": either permission is enough (one screen that two sections share, e.g. the contacts directory)
-const can = (mod, lvl = "view") => String(mod).split("|").some(m => LV.indexOf(levelOf(m)) >= LV.indexOf(lvl));
+const canRaw = (mod, lvl = "view") => String(mod).split("|").some(m => LV.indexOf(levelOf(m)) >= LV.indexOf(lvl));
+// screens and tabs switched off for the company are off for everyone in it (denied: below)
+const can = (mod, lvl = "view") => String(mod).split("|").some(m => !denied(m) && LV.indexOf(levelOf(m)) >= LV.indexOf(lvl));
 
 // ---------------------------------------------------------- appearance
 // ---------------------------------------------------------- line icons (24×24, stroke) — bundled, so they work offline
@@ -589,7 +609,11 @@ const HIDE_PRESETS = {
 const hiddenMods = () => (S.boot && S.boot.settings && S.boot.settings.hidden_modules) || [];
 // hidden for everyone in Settings → Menus: a whole section ("sales") or one screen ("sales.offers")
 // what the company's plan includes (online workspace with billing): sections, and the AI assistant ("chat.ai")
+// switched off for this company by its plan or the platform: a section, a screen or a tab, with everything under it
+const denied = k => { const d = S.billing && S.billing.deny; if (!Array.isArray(d) || !d.length) return false;
+  const p = String(k).split("."); return p.some((_, i) => d.includes(p.slice(0, i + 1).join("."))); };
 const licensed = k => { const b = S.billing; if (!b) return true;
+  if (denied(k)) return false;
   if (k === "chat.ai") return b.ai !== false;
   return !Array.isArray(b.modules) || b.modules.includes(k.split(".")[0]); };
 const shown = key => String(key).split("|").some(k => !hiddenMods().includes(k.split(".")[0]) && !hiddenMods().includes(k) && licensed(k));
@@ -684,11 +708,11 @@ async function route() {
   // land on the first screen this user may open when the requested one is not permitted
   const menuItems = window.MENU.flatMap(([, items]) => items);
   const here = menuItems.find(i => i[1] === parts.join("/")) || menuItems.find(i => i[1] === parts[0]);
-  if (here && can(here[2]) && notInPlan(here[2])) {
+  if (here && canRaw(here[2]) && notInPlan(here[2])) {
     renderNav(parts.join("/"));
-    const ai = here[2] === "chat.ai";
+    const ai = here[2] === "chat.ai", off = String(here[2]).split("|").every(denied);
     $("#view").innerHTML = `<div class="page"><div class="card" style="max-width:640px"><h2>${esc(t(here[0]))}</h2>
-      <p>${esc(ai ? L2("The AI assistant is not included in this company's plan.", "المساعد الذكي غير مشمول في باقة هذه الشركة.") : L2("This section is not included in this company's plan. Your data in it is kept.", "هذا القسم غير مشمول في باقة هذه الشركة. بياناتك فيه محفوظة."))}</p>
+      <p>${esc(off ? L2("This screen is switched off for this company. Your data in it is kept.", "هذه الشاشة متوقفة لهذه الشركة. بياناتك فيها محفوظة.") : ai ? L2("The AI assistant is not included in this company's plan.", "المساعد الذكي غير مشمول في باقة هذه الشركة.") : L2("This section is not included in this company's plan. Your data in it is kept.", "هذا القسم غير مشمول في باقة هذه الشركة. بياناتك فيه محفوظة."))}</p>
       ${S.billing && S.billing.is_admin ? `<a class="btn pri" href="#/subscription">${esc(L2("Add it to the subscription", "إضافته إلى الاشتراك"))}</a>` : `<p class="muted">${esc(L2("Ask your company administrator to add it.", "اطلب من مسؤول الشركة إضافته."))}</p>`}</div></div>`;
     return;
   }
@@ -5988,7 +6012,7 @@ PAGES.users = async (view) => {
     extraButtons: (u.id && (u.two_step || (STATIC && cloudOn())) && S.boot.user.is_super && u.id !== S.boot.user.id ? `<button type="button" class="btn" data-a="utsoff">${esc(L2("Disable two-step sign-in", "تعطيل التحقق بخطوتين"))}</button>` : "") +
       (u.id && ed && u.id !== S.boot.user.id && S.boot.user.is_super ? `<button type="button" class="btn danger" data-a="udel">${t("delete")}</button>` : "") });
   S.H.udel = () => {};
-  S.H.unew = () => edit({ perms: { dashboard: "view" } });
+  S.H.unew = () => cloudOn() && seatsTaken() ? seatFull() : edit({ perms: { dashboard: "view" } });
   S.H.uedit = el => { const u = rows.find(x => String(x.id) === el.dataset.id);
     edit(u);
     S.H.utsoff = async () => { if (!await uiConfirm(L2(`Disable two-step sign-in for ${u.username}? The user signs in with a password and can set it up again.`, `هل تريد تعطيل التحقق بخطوتين لـ ${u.username}؟ يسجّل المستخدم الدخول بكلمة المرور ويمكنه تفعيله مجدداً.`))) return;
@@ -6181,7 +6205,7 @@ async function workspaceTab(view, head) {
   S.H.wsmsave = el => run(() => CloudAPI.setMember(mrow(el.dataset.e)), t("saved"));
   S.H.wsmdel = async el => await uiConfirm((ar ? "حذف حساب الدخول لـ " : "Delete the sign-in account of ") + el.dataset.e + (ar ? "؟ لن يتمكن المستخدم من تسجيل الدخول. يبقى مستخدم التطبيق، ويمكن حذفه من المستخدمين عند الحاجة." : "? The user can no longer sign in. The app user remains; delete it in Users if required."))
     && run(() => CloudAPI.deleteAccount({ email: el.dataset.e }), ar ? "تم الحذف." : "Deleted.");
-  S.H.wsmadd = () => { const email = $("#wsnew").value.trim().toLowerCase(); if (!email) return;
+  S.H.wsmadd = () => { const email = $("#wsnew").value.trim().toLowerCase(); if (!email) return; if (seatsTaken()) return seatFull();
     run(async () => { await CloudAPI.setMember({ email, is_admin: $("#wsnewadm").checked, gateway: $("#wsnewgw").checked, active: true });
       const username = ($("#wsnewuser").value.trim() || email.split("@")[0]).toLowerCase();
       await api("POST", "/api/users", { username, email, full_name: email.split("@")[0], is_admin: $("#wsnewadm").checked, _no_password: true, perms: { dashboard: "view" } }).catch(() => {});
@@ -8626,8 +8650,11 @@ async function refreshBilling() {
   if (C.billingPublic) try { S.billingPublic = await C.billingPublic(); } catch { /* the bar shows without announcements */ }
   renderBillBar();
   // the menus follow the plan: redraw them when what the company may use changed
-  const sig = JSON.stringify([S.billing && S.billing.modules, S.billing && S.billing.ai]);
-  if (sig !== S.licSig) { const first = S.licSig === undefined; S.licSig = sig; if (!first || (S.billing && (Array.isArray(S.billing.modules) || S.billing.ai === false))) renderNav(parseHash().parts.join("/")); }
+  const sig = JSON.stringify([S.billing && S.billing.modules, S.billing && S.billing.ai, S.billing && S.billing.deny]);
+  if (sig !== S.licSig) { const first = S.licSig === undefined; S.licSig = sig; if (!first || (S.billing && (Array.isArray(S.billing.modules) || S.billing.ai === false || (S.billing.deny || []).length))) { renderNav(parseHash().parts.join("/")); if (!first) route(); } }
+  // the platform learns the company's industry (its starter sections follow it)
+  const bt = S.boot && S.boot.settings && S.boot.settings.business_type;
+  if (S.billing && S.billing.is_admin && bt && S.billing.industry !== bt && C.platform && S.indSent !== bt) { S.indSent = bt; C.platform("company_set_industry", { p_company: C.company(), p_industry: bt }).then(st => { if (st) { S.billing = { ...S.billing, ...st }; S.billingAt = 0; } }).catch(() => {}); }
   const um = $(".ucard .dd-menu");
   if (um && S.billing && S.billing.is_owner && !$(".conlink", um))
     um.insertAdjacentHTML("afterbegin", `<a href="owner.html" target="_blank" rel="opener" class="conlink">⚙ ${S.lang === "ar" ? "لوحة المالك" : "Owner console"} ↗</a>`);
@@ -9557,7 +9584,9 @@ PAGES.industry = async (view) => {
   const ed = can("settings.menus", "edit");
   S.H.indapply = async el => { const k = el.dataset.k, ty = d.types.find(x => x.key === k);
     if (!await uiConfirm(L2(`Apply the “${ty.name}” template? Missing accounts are added, unused sections are hidden (restorable in Settings → Menus) and payroll departments and pay items are set. Nothing is deleted.`, `هل تريد تطبيق قالب «${ty.name_ar}»؟ تُضاف الحسابات الناقصة، وتُخفى الأقسام غير المستخدمة (ويمكن استعادتها من الإعدادات ← القوائم)، وتُضبط أقسام الرواتب وبنود الأجر. لا يُحذف شيء.`))) return;
-    try { const r = await api("POST", "/api/industries/apply", { type: k }); toast(L2(`Applied: ${r.accounts_added.length} account(s) added.`, `تم التطبيق: أُضيف ${r.accounts_added.length} حساب.`)); await refreshBoot(); route(); } catch (e) { fail(e); } };
+    try { const r = await api("POST", "/api/industries/apply", { type: k }); toast(L2(`Applied: ${r.accounts_added.length} account(s) added.`, `تم التطبيق: أُضيف ${r.accounts_added.length} حساب.`)); await refreshBoot(); route();
+      if (platformOn()) window.dispatchEvent(new Event("beyond-billing"));     // the platform learns the new industry
+    } catch (e) { fail(e); } };
   view.innerHTML = `<div class="banner info">${L2("Choose the company's business type. Each template enables the relevant sections, adds required accounts and sets payroll departments, job titles, pay items and crew work items. A ready Excel workbook is available for each type.", "اختر نوع نشاط الشركة. يفعّل كل قالب الأقسام المناسبة، ويضيف الحسابات اللازمة، ويضبط أقسام الرواتب والمسميات الوظيفية وبنود الأجر وبنود أعمال الأطقم. يتوفر مصنف Excel جاهز لكل نوع.")}</div>
     <div class="grid g2">${d.types.map(ty => `<div class="card"><h2>${esc(S.lang === "ar" ? ty.name_ar : ty.name)} ${d.current === ty.key ? `<span class="chip ok">${L2("Current", "الحالي")}</span>` : ""}</h2>
       <ul>${(S.lang === "ar" && ty.guide_ar && ty.guide_ar.length ? ty.guide_ar : ty.guide).map(g => `<li>${esc(g)}</li>`).join("")}</ul>
@@ -13338,7 +13367,7 @@ PAGES.subscription = async (view, parts, q) => {
   // what is being chosen stays while the page redraws
   const here = C.company();
   const st = S.subSt && S.subSt.key === mine.map(c => c.id).join() ? S.subSt : (S.subSt = { key: mine.map(c => c.id).join(),
-    plan: (b.status === "active" && plans.some(p => p.code === b.plan) && b.plan) || (plans.find(p => p.highlight) || plans[1] || plans[0] || {}).code, months: 1, extra: {}, add: {},
+    plan: (b.status === "active" && plans.some(p => p.code === b.plan && !p.contact) && b.plan) || (plans.find(p => p.highlight && !p.contact) || plans.filter(p => !p.contact)[1] || plans[0] || {}).code, months: 1, extra: {}, add: {},
     sel: new Set(mine.filter(c => c.id === here || ["unpaid", "expired", "past_due"].includes((states[c.id] || {}).status) || q.add === c.id).map(c => c.id)) });
   Object.assign(S.H, {
     subplan: el => { st.plan = el.dataset.plan; draw(); }, submonths: el => { st.months = +el.dataset.m; draw(); },
@@ -13414,11 +13443,11 @@ PAGES.subscription = async (view, parts, q) => {
       <p class="muted" style="margin-top:0">${+pub.extra_company_pct === 100 ? L2("Each company is a full copy of the plan with its own users: every further company adds the plan's price.", "كل شركة نسخة كاملة من الباقة بمستخدميها: كل شركة إضافية تضيف سعر الباقة.")
         : L2(`Each company is a full copy of the plan with its own users: every further company adds ${pub.extra_company_pct}% of the plan's price.`, `كل شركة نسخة كاملة من الباقة بمستخدميها: كل شركة إضافية تضيف ${pub.extra_company_pct}% من سعر الباقة.`)}</p>
       <div class="tbl stack"><table><thead><tr><th></th><th>${L2("Company", "الشركة")}</th><th>${t("status")}</th><th>${L2("Until", "حتى")}</th><th class="num">${L2("People", "الأفراد")}</th><th>${L2("Extra users", "مستخدمون إضافيون")}</th></tr></thead><tbody>
-      ${mine.map(c => { const s = statusOf(c.id), on = st.sel.has(c.id), need = Math.max(0, (s.users || 0) - (+plan.users || 0)), ex = extrasFor(plan);
+      ${mine.map(c => { const s = statusOf(c.id), on = st.sel.has(c.id), need = plan.contact ? 0 : Math.max(0, (s.users || 0) - (+plan.users || 0)), ex = plan.contact ? { mods: [] } : extrasFor(plan);
         if (on && (st.extra[c.id] || 0) < need) st.extra[c.id] = need;
         return `<tr><td><input type="checkbox" data-change="subsel" data-id="${c.id}" ${on ? "checked" : ""} aria-label="${esc(c.name)}"></td><td><b>${esc(c.name)}</b>${c.id === here ? ` <span class="chip">${L2("Open now", "المفتوحة")}</span>` : ""}</td>
           <td>${billChip(s.status)}</td><td>${billDate(s.ends)}</td><td class="num">${s.users || 0}</td>
-          <td>${on ? `<button class="btn sm" data-a="subextra" data-id="${c.id}" data-d="-1">−</button> <b>${st.extra[c.id] || 0}</b> <button class="btn sm" data-a="subextra" data-id="${c.id}" data-d="1">+</button>${need ? ` <span class="muted" style="font-size:.8em">${L2(`at least ${need}`, `${need} على الأقل`)}</span>` : ""}` : ""}</td></tr>
+          <td>${on && !plan.contact ? `<button class="btn sm" data-a="subextra" data-id="${c.id}" data-d="-1">−</button> <b>${st.extra[c.id] || 0}</b> <button class="btn sm" data-a="subextra" data-id="${c.id}" data-d="1">+</button>${need ? ` <span class="muted" style="font-size:.8em">${L2(`at least ${need}`, `${need} على الأقل`)}</span>` : ""}` : ""}</td></tr>
           ${on && (ex.mods.length || ex.ai || ex.support) ? `<tr class="sub-addons"><td></td><td colspan="5"><span class="muted" style="font-size:.85em">${L2("Add to this company:", "إضافة لهذه الشركة:")}</span>
             ${ex.mods.map(m => `<label class="chk addon"><input type="checkbox" data-change="subadd" data-id="${c.id}" data-m="${esc(m)}" ${((st.add[c.id] || {}).mods || []).includes(m) ? "checked" : ""}> ${esc(secL(m))} <small class="muted">${money((pub.module_prices || {})[m])}</small></label>`).join("")}
             ${ex.ai ? `<label class="chk addon"><input type="checkbox" data-change="subadd" data-id="${c.id}" data-k="ai" ${(st.add[c.id] || {}).ai ? "checked" : ""}> ✦ ${L2("AI assistant", "المساعد الذكي")} <small class="muted">${money(pub.ai_price)}</small></label>` : ""}
@@ -13431,8 +13460,8 @@ PAGES.subscription = async (view, parts, q) => {
         return `<button type="button" class="plan ${p.code === st.plan ? "on" : ""} ${p.highlight ? "hl" : ""}" style="${p.color ? `--pc:${esc(p.color)}` : ""}" data-a="subplan" data-plan="${esc(p.code)}">
         ${p.badge || p.badge_ar ? `<span class="plan-badge">${esc(ar && p.badge_ar ? p.badge_ar : p.badge)}</span>` : ""}<h3>${esc(ar && p.name_ar ? p.name_ar : p.name)}</h3>
         ${p.tagline || p.tagline_ar ? `<div class="muted" style="font-size:.88em">${esc(ar && p.tagline_ar ? p.tagline_ar : p.tagline)}</div>` : ""}
-        <div class="price">${money((+p.price || 0) * (st.months === 12 ? (+pub.yearly_months || 10) : 1))} <small>${esc(cur)} / ${st.months === 12 ? L2("Year", "سنة") : L2("Month", "شهر")} · ${L2("per company", "لكل شركة")}</small></div>
-        <div class="muted">${L2(`${p.users} users per company`, `${p.users} مستخدمين لكل شركة`)}</div><ul>${feats.map(f => `<li>${esc(f)}</li>`).join("")}</ul>
+        <div class="price">${p.contact ? L2("Contact us for pricing", "تواصل معنا لمعرفة السعر") : `${money((+p.price || 0) * (st.months === 12 ? (+pub.yearly_months || 10) : 1))} <small>${esc(cur)} / ${st.months === 12 ? L2("Year", "سنة") : L2("Month", "شهر")} · ${L2("per company", "لكل شركة")}</small>`}</div>
+        <div class="muted">${p.contact && !p.users ? L2("Users, companies and sections as agreed", "المستخدمون والشركات والأقسام حسب الاتفاق") : L2(`${p.users} users per company`, `${p.users} مستخدمين لكل شركة`)}</div><ul>${feats.map(f => `<li>${esc(f)}</li>`).join("")}</ul>
         <div class="plan-inc">${inc ? `<span title="${esc(inc.map(secL).join(" · "))}">${esc(L2(`${inc.length} sections`, `${inc.length} قسماً`))}</span>` : `<span>${esc(L2("Every section", "كل الأقسام"))}</span>`}
           ${pub.ai_mode === "off" ? "" : `<span class="${pub.ai_mode === "free" || p.ai ? "" : "off"}">✦ ${esc(L2("AI assistant", "المساعد الذكي"))}</span>`}
           <span class="${pub.support_mode === "free" || p.support !== false ? "" : "off"}">? ${esc(L2("Online support", "الدعم الإلكتروني"))}</span></div></button>`; }).join("")}</div>
@@ -13446,6 +13475,23 @@ PAGES.subscription = async (view, parts, q) => {
       ${b.is_admin && b.status === "active" && !b.cancel_note ? `<button class="btn" data-a="bcancel">${L2("Cancel renewal", "إلغاء التجديد")}</button>` : ""}</div>` : ""}`;
     filePreviews(view);
     const box = $("#subtotal", view);
+    if (box && plan.contact) {   // Enterprise: no price in the app — the customer asks, the platform team sets it up
+      box.innerHTML = `<h2>${L2("3. Ask for an offer", "٣. اطلب عرضاً")}</h2>
+        <p class="muted" style="margin-top:0">${L2("Tell us what you need; we reply with an offer and set everything up for you.", "أخبرنا بما تحتاجه؛ نرد بعرض ونجهز كل شيء لك.")}</p>
+        <div class="grid g2"><label class="f">${L2("Users needed", "عدد المستخدمين")}<input name="eu" type="number" min="1" inputmode="numeric" value="${Math.max(b.users || 1, 1)}"></label>
+          <label class="f">${L2("Companies", "عدد الشركات")}<input name="ec" type="number" min="1" inputmode="numeric" value="${Math.max(mine.length, 1)}"></label>
+          <label class="f">${L2("Phone", "الهاتف")}<input name="ep" dir="ltr" inputmode="tel"></label>
+          <label class="f">${L2("Sections you need (optional)", "الأقسام المطلوبة (اختياري)")}<input name="es"></label>
+          <label class="f" style="grid-column:1/-1">${L2("Anything else (optional)", "أي تفاصيل أخرى (اختياري)")}<textarea name="en" rows="3"></textarea></label></div>
+        <button class="btn pri" data-a="subent">${L2("Send the request", "إرسال الطلب")}</button>`;
+      S.H.subent = async el => { const v = k => $(`[name=${k}]`, box).value.trim();
+        if (!(+v("eu") >= 1)) return toast(L2("Enter how many users you need.", "أدخل عدد المستخدمين المطلوب."), true);
+        try { el.disabled = true; const r = await PLAT("enterprise_request", { p_company: here, p: { users: v("eu"), companies: v("ec"), phone: v("ep"), sections: v("es"), note: v("en"), app_user: (S.boot.user || {}).username || "" } });
+          if (C.platformPush) C.platformPush("ticket", r.id);
+          box.innerHTML = `<h2>${L2("3. Ask for an offer", "٣. اطلب عرضاً")}</h2><div class="banner ok">${esc(L2(`Sent (${r.ref}). We will contact you soon; you can follow it in Support.`, `تم الإرسال (${r.ref}). سنتواصل معك قريباً، ويمكنك متابعته من الدعم.`))}</div>`;
+        } catch (e) { el.disabled = false; fail(e); } };
+      return;
+    }
     if (!box || !st.sel.size) return;
     try {
       const qt = await PLAT("billing_order_quote", { p_plan: st.plan, p_months: st.months, p_lines: lines() });

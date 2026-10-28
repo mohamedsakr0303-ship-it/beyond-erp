@@ -126,7 +126,9 @@ class OwnerConsole(unittest.TestCase):
 
     def test_plans_cover_one_company_each(self):
         plans = self.alice.rpc("billing_public")["plans"]
-        self.assertEqual([p["code"] for p in plans], ["starter", "business", "pro"])           # order kept
+        self.assertEqual([p["code"] for p in plans], ["starter", "business", "pro", "enterprise"])   # order kept
+        self.assertTrue(plans[-1]["contact"])                                  # Enterprise: price on request, agreed per deal
+        plans = plans[:-1]
         self.assertFalse([p for p in plans if "companies" in p])
         self.assertFalse([f for p in plans for f in p["features"] if "companies" in f.lower()])
         self.assertIn("Priority support (same business day)", plans[-1]["features"])

@@ -68,19 +68,35 @@ The console is **a page of its own**: `owner.html` on the same site (for example
 | Overview | Expected against received (12 months … 7 days, or your own dates, with an export), totals, the companies falling due next, the latest payments, a quick look at any company, and what is waiting for you |
 | Notifications | Worked out from the data and checked every minute: new tickets and replies, visits (requested, accepted, payment to check, in the next 2 days), payments to verify, orders left unpaid for 3 days, trials ending without a subscription, trials that ended unpaid, payment due, customers who stopped paying, renewals coming up, requests not to renew, new companies, companies not subscribed, more people than the plan allows. The bell shows them; the Notifications page filters them. Each person marks them read, dismisses them and chooses which kinds they want. While the console is open they also pop up on the screen with a sound. Tickets, payments and visits also come as phone and computer notifications when the console is closed |
 | Customers | Every company, with search, filters (status, plan, archived or not, due dates, last payment dates, joined dates, amounts paid) and sorting on every column, plus a CSV export |
-| A company's page | **Subscription**: record a payment (any months, any amount including 0, with add-ons), restart a trial for any number of days, extend the trial or paid period, stop the trial, make free or charge again, a standing discount, dates and plan. **Access**: what it can use (all sections or chosen ones, the AI assistant on/off, online support on/off, number of users), and suspend. **Company**: rename, change owner, archive or bring back, download a backup, and delete for good. **People**: make admin or user, activate or deactivate, approve a request to join, remove, get a password reset link, turn off two-step sign-in, block the person |
+| A company's page | **Subscription**: record a payment (any months, any amount including 0, with add-ons), restart a trial for any number of days, extend the trial or paid period, stop the trial, make free or charge again, a standing discount, dates and plan. **Access**: what it can use (all sections or chosen ones, the AI assistant on/off, online support on/off, number of users), **Menus, screens & tabs** (switch any section, screen or tab off for this company alone, or give back one its plan switches off; a search box finds any of them), its **industry**, the **Enterprise deal** (plan, users agreed, how many companies the owner may have, sections, assistant, support, months and the agreed amount, in one step), and suspend. Each company is set on its own page, even when the same person owns several. **Company**: rename, change owner, archive or bring back, download a backup, and delete for good. **People**: make admin or user, activate or deactivate, approve a request to join, remove, get a password reset link, turn off two-step sign-in, block the person |
 | People | Everyone using the workspace, with the companies they own and belong to, last activity, a private note, a company limit per person, and blocking |
 | Cancellations & churn | Requests not to renew (with the reason), ended without paying, payment due, never subscribed, suspended |
 | Payments to verify | Orders with the screenshots, filters and search. Approve and activate, change the amount first, or decline with a reason |
 | All payments | Every payment ever, kept even when a company is deleted, with filters, totals and an export |
 | Tickets, Support visits | The support inbox, and visits customers ask for: set the price and propose a time, schedule (date, who goes), confirm the payment or waive it, mark done, or decline with a reason |
-| Plans | Design what customers see: name, a line under it, price, users, features (English and Arabic), a badge, a colour, stand out, hidden (offered to nobody, but you can still give it), the sections it includes, AI assistant and online support. A live preview shows the card as customers will see it. You can also duplicate plans, change their order, and delete them |
+| Plans | Design what customers see: name, a line under it, price, users (a hard limit), "price on request" (Enterprise: customers ask, they cannot order it in the app), the screens and tabs the plan switches off, features (English and Arabic), a badge, a colour, stand out, hidden (offered to nobody, but you can still give it), the sections it includes, AI assistant and online support. A live preview shows the card as customers will see it. You can also duplicate plans, change their order, and delete them |
+| Menus by industry | The starter sections of each industry (a table: sections × industries, plus the core column for every company). Every plan includes the core sections and the starter sections of the company's industry. They start as the sections each industry template shows; untick what an industry's plans should not include by default, add your own industries, rename or delete them |
 | Sections, AI & support | Which ERP sections are core (in every plan); which can be bought on their own and at what monthly price (0 = free to add); the AI assistant (everyone free, by plan with an optional paid add-on, or off); online support (everyone free, or by plan with an optional paid add-on); extra user price; each further company % |
 | Rules & switches | Billing on/off; maintenance (changes paused for every customer, with your message); accept new customers or not; trial length and plan; whether the trial shows every section; grace days; yearly price; currency; how many companies one person may own; when to warn you; support contacts; visit settings (on/off, usual price, before/after/no charge, terms); the texts of the customers' Subscription page |
 | Payment methods, Announcements | As before |
 | Team | Who helps you, and which areas each one may use. Only full-access members manage the team, download backups and delete companies |
 | Look of this console | Name, line under it, main colour, logo, light/dark, side menu style, spacing, corners. It is shared by the team, and each device can also switch light/dark |
 | Activity, Deleted companies | Everything the team did, filterable; and companies deleted, with a way to bring one back from its backup file |
+
+### Arranging the console
+
+* **Right-click** (long-press on a phone) a menu item to rename it, move it up or down or to another group, or hide it; a group heading to rename or move it; a column heading to sort, rename, move, hide or show columns; a row to open it or copy a cell or the whole row.
+* **Drag** menu items, group headings and column headings to a new place.
+* **Lock everything in place** (from any of those menus) stops changes until someone unlocks it (the 🔒 at the bottom of the side menu).
+* The arrangement is shared by the whole team when made by someone allowed to change the console's settings; anyone else's stays on their own device. *Reset the menu* / *Reset columns* puts things back.
+* On a phone, the side menu closes when you tap outside it or press Escape.
+
+### Users, plans and the Enterprise plan
+
+* **A plan's number of users is a hard limit.** Once every seat is taken, nobody can be added, no request to join can be approved and nobody can be re-activated, and the app cannot create another user (also through a desktop gateway). The app says "No user seats left" with a button to Subscription. Two additions at the same moment cannot both take the last seat. Requests to join still arrive, and wait.
+* A number of users set for one company in the console is a limit too, even when the company is free or billing is off.
+* Companies that already have more people than their plan (for example after moving to a smaller plan) keep them; they cannot add anyone until they are back under the limit. The *More people than the plan allows* notification and the *Users* filter on Customers show them.
+* **Enterprise** ("price on request") is added once to the plans. Customers see *Contact us for pricing*; choosing it shows a short form (users, companies, sections, phone, notes) that arrives in Tickets as an *Enterprise plan request*. You then set the company up with **Enterprise deal** on its page.
 
 ### Looking after customers' data
 
@@ -92,14 +108,15 @@ The console is **a page of its own**: `owner.html` on the same site (for example
 ### What customers see
 
 * Plans as you designed them, the sections, AI assistant and online support each one includes, and add-ons they can tick per company (sections sold on their own, the AI assistant, online support). Your texts are shown above and below.
-* Sections their plan does not include disappear from the menu. Opening one directly says it is not in the plan, with an "Add it to the subscription" button for administrators; their data stays.
+* Sections their plan does not include, and screens or tabs switched off for the company, disappear from the menu (and from their Excel workbook and templates). A screen switched off for the company says so when opened directly.
+* Opening a section not in the plan directly says so, with an "Add it to the subscription" button for administrators; their data stays.
 * Banners for maintenance, suspension and archiving.
 * **Help and support**: tickets (when online support is included; questions about the subscription are always allowed) and **Ask for a visit**. For a visit, they accept or decline your price, pay with a transfer screenshot, and follow its status.
 
 ### What is enforced where
 
 * Billing, read only (unpaid, ended, suspended, archived, maintenance), user limits, company limits per person, new customers, blocking a person, online support, visits and the AI assistant are refused by the database or the server functions. Changing the page does not get around them.
-* Sections are hidden and refused by the app itself. Someone with technical skills could still reach a hidden section's screens in their own browser, but nothing outside their plan is offered to them.
+* Sections, screens and tabs are hidden and refused by the app itself. Someone with technical skills could still reach a hidden section's screens in their own browser, but nothing outside their plan is offered to them.
 
 ## Pricing (October 2026)
 

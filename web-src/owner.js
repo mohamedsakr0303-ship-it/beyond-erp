@@ -148,7 +148,7 @@ matchMedia("(prefers-color-scheme: dark)").addEventListener("change", applyLook)
 
 // ================================================================== areas of the console, by permission
 const can = area => S.me && (S.me.full || (area !== "_full" && !!(S.me.perms || {})[area]));
-const NAV = () => [
+const NAV0 = () => [
   [L("Business", "الأعمال"), [["overview", "◧", L("Overview", "نظرة عامة"), "overview"], ["alerts", "🔔", L("Notifications", "الإشعارات"), "*"], ["customers", "▦", L("Customers", "العملاء"), "customers"],
     ["people", "☺", L("People", "الأشخاص"), "customers"], ["cancellations", "✗", L("Cancellations & churn", "الإلغاءات والمغادرة"), "customers"]]],
   [L("Money", "المال"), [["payments", "⧗", L("Payments to verify", "مدفوعات للتحقق"), "billing"], ["ledger", "≣", L("All payments", "كل المدفوعات"), "billing"],
@@ -156,10 +156,106 @@ const NAV = () => [
   [L("Support", "الدعم"), [["support", "✉", L("Tickets", "البلاغات"), "support"], ["visits", "🚗", L("Support visits", "زيارات الدعم"), "support"],
     ["notices", "📣", L("Announcements", "الإعلانات"), "notices"]]],
   [L("Product", "المنتج"), [["plans", "◎", L("Plans", "الباقات"), "settings"], ["addons", "＋", L("Sections, AI & support", "الأقسام والذكاء الاصطناعي والدعم"), "settings"],
-    ["settings", "⚙", L("Rules & switches", "القواعد والمفاتيح"), "settings"]]],
+    ["menus", "☰", L("Menus by industry", "القوائم حسب النشاط"), "settings"], ["settings", "⚙", L("Rules & switches", "القواعد والمفاتيح"), "settings"]]],
   [L("Console", "اللوحة"), [["team", "☷", L("Team", "الفريق"), "_full"], ["look", "🎨", L("Look of this console", "مظهر اللوحة"), "settings"],
     ["log", "⌚", L("Activity", "السجل"), "_full"], ["deleted", "⌫", L("Deleted companies", "الشركات المحذوفة"), "customers"]]]];
 const navOk = a => a === "*" || can(a);
+
+// ================================================================== arranging the console: right-click, drag and drop, lock
+// The team's arrangement (shared setting "console_layout") applies to everyone; a team member who cannot change the
+// console's settings keeps their own arrangement on this device. {nav: {order: [[group, [page…]]…], names: {en: {}, ar: {}},
+// gnames: {en: {}, ar: {}}, hidden: [page…]}, cols: {table: {order, hidden, names: {en, ar}}}, locked}
+const GIDS = ["business", "money", "support", "product", "console"];
+const teamLay = () => can("settings");
+const lay = () => (teamLay() ? S.me && S.me.layout : LS("berp.console.layout", null) || (S.me && S.me.layout)) || {};
+async function saveLay(next, msg) {
+  if (teamLay()) { await rpc("console_setting_save", { p_key: "console_layout", p_value: next }); S.me.layout = next; }
+  else LSset("berp.console.layout", next);
+  toast(msg || (teamLay() ? L("Saved for the whole team.", "حُفظ للفريق كله.") : L("Saved on this device.", "حُفظ على هذا الجهاز.")));
+  shell(); route();
+}
+const editLay = fn => { const y = JSON.parse(JSON.stringify(lay())); fn(y); return saveLay(y); };
+const locked = () => !!lay().locked;
+// the menu as arranged: [label, items, group id]; every page stays reachable (hidden ones too, by link)
+const NAV = () => {
+  const base = NAV0(), nv = lay().nav || {}, names = (nv.names || {})[S.lang] || {}, gn = (nv.gnames || {})[S.lang] || {};
+  const all = base.flatMap(([, it], gi) => it.map(i => [i, GIDS[gi]])), used = new Set();
+  const out = (Array.isArray(nv.order) && nv.order.length ? nv.order : base.map(([, it], gi) => [GIDS[gi], it.map(i => i[0])]))
+    .filter(([g]) => GIDS.includes(g)).map(([g, keys]) => [g, (keys || []).map(k => all.find(([i]) => i[0] === k)).filter(x => x && !used.has(x[0][0]) && used.add(x[0][0])).map(([i]) => i)]);
+  all.forEach(([i, g]) => { if (used.has(i[0])) return; let grp = out.find(o => o[0] === g); if (!grp) out.push(grp = [g, []]); grp[1].push(i); });
+  return out.map(([g, it]) => [gn[g] || base[GIDS.indexOf(g)][0], it.map(i => names[i[0]] ? [i[0], i[1], names[i[0]], i[3], i[2]] : i), g]);
+};
+const navHidden = () => (lay().nav || {}).hidden || [];
+const navOrder = () => NAV().map(([, it, g]) => [g, it.map(i => i[0])]);
+const editNav = fn => editLay(y => { y.nav = y.nav || {}; y.nav.order = navOrder(); fn(y.nav, y); });
+const setName = (bag, k, v) => { bag[S.lang] = bag[S.lang] || {}; if (v) bag[S.lang][k] = v; else delete bag[S.lang][k]; };
+function moveNav(key, toGroup, beforeKey) {
+  return editNav(nv => { nv.order.forEach(o => { o[1] = o[1].filter(k => k !== key); });
+    const grp = nv.order.find(o => o[0] === toGroup); if (!grp) return;
+    const at = beforeKey ? grp[1].indexOf(beforeKey) : -1; if (at < 0) grp[1].push(key); else grp[1].splice(at, 0, key); });
+}
+// a small menu at the pointer: items [{l, ic, a, dis}] or "-"
+function ctxMenu(e, items) {
+  e.preventDefault(); closeCtx();
+  const m = document.createElement("div"); m.className = "ctx"; m.id = "ctx"; m.setAttribute("role", "menu");
+  m.innerHTML = items.filter(Boolean).map((it, i) => it === "-" ? "<hr>" : `<button type="button" role="menuitem" data-ci="${i}" ${it.dis ? "disabled" : ""}><span class="ic">${it.ic || ""}</span>${esc(it.l)}</button>`).join("");
+  document.body.appendChild(m);
+  const list = items.filter(Boolean), r = m.getBoundingClientRect();
+  m.style.left = Math.max(6, Math.min(e.clientX, innerWidth - r.width - 6)) + "px"; m.style.top = Math.max(6, Math.min(e.clientY, innerHeight - r.height - 6)) + "px";
+  m.addEventListener("click", ev => { const b = ev.target.closest("[data-ci]"); if (!b) return; closeCtx(); Promise.resolve(list[+b.dataset.ci].a()).catch(fail); });
+  const f = $("button:not([disabled])", m); if (f) f.focus({ preventScroll: true });
+}
+const closeCtx = () => { const m = $("#ctx"); if (m) m.remove(); };
+const lockItem = () => ({ l: locked() ? L("Unlock the arrangement", "فك قفل الترتيب") : L("Lock everything in place", "قفل كل شيء في مكانه"), ic: locked() ? "🔓" : "🔒",
+  a: () => editLay(y => { y.locked = !y.locked; }) });
+function navCtx(e, key) {
+  if (locked()) return ctxMenu(e, [{ l: L("Open", "فتح"), ic: "↗", a: () => { location.hash = "#/" + key; } }, "-", lockItem()]);
+  const nav = NAV(), gi = nav.findIndex(([, it]) => it.some(i => i[0] === key)), items = nav[gi][1], ii = items.findIndex(i => i[0] === key), it = items[ii];
+  ctxMenu(e, [{ l: L("Open", "فتح"), ic: "↗", a: () => { location.hash = "#/" + key; } },
+    { l: L("Rename…", "إعادة التسمية…"), ic: "✎", a: async () => { const v = await ask(L("Name in the menu (blank: the original)", "الاسم في القائمة (فارغ: الأصلي)"), it[2]); if (v === null) return;
+      editNav(nv => { nv.names = nv.names || {}; setName(nv.names, key, v.trim() === (it[4] || it[2]) ? "" : v.trim()); }); } },
+    { l: L("Move up", "تحريك لأعلى"), ic: "↑", dis: ii === 0 && gi === 0, a: () => ii > 0 ? moveNav(key, nav[gi][2], items[ii - 1][0]) : moveNav(key, nav[gi - 1][2]) },
+    { l: L("Move down", "تحريك لأسفل"), ic: "↓", dis: ii === items.length - 1 && gi === nav.length - 1, a: () => ii < items.length - 2 ? moveNav(key, nav[gi][2], items[ii + 2][0]) : ii === items.length - 2 ? moveNav(key, nav[gi][2]) : moveNav(key, nav[gi + 1][2], (nav[gi + 1][1][0] || [])[0]) },
+    ...nav.filter((_, j) => j !== gi).map(([gl, , g]) => ({ l: L(`Move to “${gl}”`, `نقل إلى «${gl}»`), ic: "⇢", a: () => moveNav(key, g) })),
+    { l: L("Hide from the menu", "إخفاء من القائمة"), ic: "⊘", a: () => editNav(nv => { nv.hidden = [...new Set([...(nv.hidden || []), key])]; }) },
+    "-", ...arrangeItems()]);
+}
+function groupCtx(e, g) {
+  if (locked()) return ctxMenu(e, [lockItem()]);
+  const nav = NAV(), gi = nav.findIndex(x => x[2] === g);
+  ctxMenu(e, [{ l: L("Rename group…", "إعادة تسمية المجموعة…"), ic: "✎", a: async () => { const v = await ask(L("Group name (blank: the original)", "اسم المجموعة (فارغ: الأصلي)"), nav[gi][0]); if (v === null) return;
+      editNav(nv => { nv.gnames = nv.gnames || {}; setName(nv.gnames, g, v.trim()); }); } },
+    { l: L("Move group up", "تحريك المجموعة لأعلى"), ic: "↑", dis: gi === 0, a: () => editNav(nv => { const o = nv.order; [o[gi - 1], o[gi]] = [o[gi], o[gi - 1]]; }) },
+    { l: L("Move group down", "تحريك المجموعة لأسفل"), ic: "↓", dis: gi === nav.length - 1, a: () => editNav(nv => { const o = nv.order; [o[gi + 1], o[gi]] = [o[gi], o[gi + 1]]; }) },
+    "-", ...arrangeItems()]);
+}
+const arrangeItems = () => [
+  { l: L(`Show hidden items (${navHidden().length})`, `إظهار العناصر المخفية (${navHidden().length})`), ic: "◉", dis: !navHidden().length, a: showHidden },
+  { l: L("Reset the menu", "إعادة القائمة لأصلها"), ic: "↺", a: async () => { if (await confirmIt(L("Put the menu back as it came (names, order and hidden items)?", "إعادة القائمة كما كانت (الأسماء والترتيب والعناصر المخفية)؟"))) editLay(y => { delete y.nav; }); } },
+  lockItem()];
+function showHidden() {
+  const all = NAV0().flatMap(([, it]) => it), hid = navHidden();
+  panel(L("Hidden menu items", "عناصر القائمة المخفية"), `<p class="muted small">${esc(L("Hidden pages stay reachable by link. Tick to show again.", "الصفحات المخفية تبقى متاحة بالرابط. حدد لإظهارها مجدداً."))}</p>
+    <div class="checks">${hid.map(k => { const i = all.find(x => x[0] === k); return i ? `<label class="chk"><input type="checkbox" name="h_${k}"> ${esc(i[2])}</label>` : ""; }).join("")}</div>`,
+    v => { closePanel(); return editNav(nv => { nv.hidden = (nv.hidden || []).filter(k => !v["h_" + k]); }).then(() => false); }, { saveLabel: L("Show", "إظهار") });
+}
+// dragging menu items (and groups) to a new place
+let dragNav = null;
+document.addEventListener("dragstart", e => {
+  const a = e.target.closest && e.target.closest(".nav a[data-nav],.nav-h[data-g]"); if (!a || locked()) return;
+  dragNav = a.dataset.nav ? { key: a.dataset.nav } : { group: a.dataset.g }; e.dataTransfer.effectAllowed = "move"; try { e.dataTransfer.setData("text/plain", a.dataset.nav || a.dataset.g); } catch { /* old browsers */ }
+  a.classList.add("dragging");
+});
+document.addEventListener("dragover", e => { if (!dragNav) return; const t = e.target.closest && e.target.closest(".nav a[data-nav],.nav-h[data-g]"); if (!t) return;
+  e.preventDefault(); $$(".drop-at").forEach(x => x.classList.remove("drop-at")); t.classList.add("drop-at"); });
+document.addEventListener("dragend", () => { dragNav = null; $$(".dragging,.drop-at").forEach(x => x.classList.remove("dragging", "drop-at")); });
+document.addEventListener("drop", e => {
+  if (!dragNav) return; const t = e.target.closest && e.target.closest(".nav a[data-nav],.nav-h[data-g]"); const d = dragNav; dragNav = null; if (!t) return; e.preventDefault();
+  const nav = NAV(), groupOf = k => (nav.find(([, it]) => it.some(i => i[0] === k)) || [])[2];
+  if (d.key) { if (t.dataset.nav === d.key) return; moveNav(d.key, t.dataset.nav ? groupOf(t.dataset.nav) : t.dataset.g, t.dataset.nav || ((nav.find(x => x[2] === t.dataset.g) || [, []])[1][0] || [])[0]); }
+  else { const to = t.dataset.g || groupOf(t.dataset.nav); if (to === d.group) return;
+    editNav(nv => { const o = nv.order, from = o.findIndex(x => x[0] === d.group), g = o.splice(from, 1)[0]; o.splice(o.findIndex(x => x[0] === to), 0, g); }); }
+});
 
 // ================================================================== the frame
 function shell() {
@@ -167,8 +263,10 @@ function shell() {
   const badge = k => { const n = k === "payments" ? b.orders : k === "support" ? b.tickets : k === "visits" ? b.visits : k === "alerts" ? unreadCount() : 0; return n ? `<span class="cnt">${n}</span>` : ""; };
   document.body.innerHTML = `<div class="app" id="app">
     <aside class="side"><div class="brand">${lk.logo ? `<img src="${esc(lk.logo)}" alt="">` : `<span class="mark">${esc(initials(lk.name))}</span>`}<div><b>${esc(lk.name)}</b><small>${esc(lk.sub || L("Owner console", "لوحة المالك"))}</small></div></div>
-      ${NAV().map(([h, items]) => { const ok = items.filter(i => navOk(i[3])); return ok.length ? `<div class="nav-h">${esc(h)}</div><nav class="nav">${ok.map(([k, ic, l]) => `<a href="#/${k}" data-nav="${k}"><span class="ic">${ic}</span>${esc(l)}<span class="cnt-slot" data-badge="${k}">${badge(k)}</span></a>`).join("")}</nav>` : ""; }).join("")}
-      <div class="foot"><a href="index.html" style="color:inherit">← ${esc(L("Open the ERP", "فتح النظام"))}</a><br>${esc(S.me.email)}</div></aside>
+      ${NAV().map(([h, items, g]) => { const ok = items.filter(i => navOk(i[3]) && !navHidden().includes(i[0])), dr = locked() ? "" : 'draggable="true"';
+        return ok.length ? `<div class="nav-h" data-g="${g}" ${dr}>${esc(h)}</div><nav class="nav">${ok.map(([k, ic, l]) => `<a href="#/${k}" data-nav="${k}" ${dr}><span class="ic">${ic}</span>${esc(l)}<span class="cnt-slot" data-badge="${k}">${badge(k)}</span></a>`).join("")}</nav>` : ""; }).join("")}
+      <div class="foot">${locked() ? `<button type="button" class="lockb" data-a="unlock" title="${esc(L("Unlock the arrangement", "فك قفل الترتيب"))}">🔒 ${esc(L("Arrangement locked", "الترتيب مقفل"))}</button><br>` : `<span class="hint">${esc(L("Right-click or drag to arrange", "انقر بالزر الأيمن أو اسحب للترتيب"))}</span><br>`}
+        <a href="index.html" style="color:inherit">← ${esc(L("Open the ERP", "فتح النظام"))}</a><br>${esc(S.me.email)}</div></aside>
     <div class="main"><header class="top"><button class="btn icon ghost menu-btn" data-a="menu" aria-label="Menu">${ICON.menu}</button>
       <div style="min-width:0"><div class="ttl" id="ttl"></div><div class="crumb" id="crumb"></div></div><span class="sp"></span>
       <div class="bell" id="bell"><button class="btn icon" data-a="bell" aria-label="${esc(L("Notifications", "الإشعارات"))}">${ICON.bell}<span id="bellcnt"></span></button></div>
@@ -229,6 +327,11 @@ function table(host, key, rows, o) {
   st.n = st.n || 100;
   const colOf = k => o.cols.find(c => c.k === k);
   const val = (c, r) => c.v ? c.v(r) : r[c.k];
+  // the columns as arranged (order, hidden, own names) — right-click a heading, or drag it
+  const cl = (lay().cols || {})[key] || {}, cn = (cl.names || {})[S.lang] || {};
+  const cols = [...(cl.order || []).map(colOf).filter(Boolean), ...o.cols.filter(c => !(cl.order || []).includes(c.k))]
+    .filter(c => !(cl.hidden || []).includes(c.k)).map(c => cn[c.k] ? { ...c, l: cn[c.k] } : c);
+  const editCols = fn => editLay(y => { y.cols = y.cols || {}; const c = y.cols[key] = y.cols[key] || {}; c.order = cols.map(x => x.k).concat(o.cols.map(x => x.k).filter(k => !cols.some(x => x.k === k))); fn(c); });
   const keep = () => LSset("berp.console.dt." + key, { q: st.q, f: st.f, sort: st.sort, dir: st.dir });
   const pass = r => {
     if (st.q) { const q = st.q.toLowerCase(); if (!(o.search || o.cols.map(c => c.k)).some(k => { const c = colOf(k); return String(c ? val(c, r) : r[k] ?? "").toLowerCase().includes(q); })) return false; }
@@ -251,8 +354,8 @@ function table(host, key, rows, o) {
         if (ex && ey) return 0; if (ex) return 1; if (ey) return -1;
         if (c.num) return (Number(x) - Number(y)) * m; return String(x).localeCompare(String(y), undefined, { numeric: true }) * m; }); }
     const shown = list.slice(0, st.n);
-    $(".dt-body", host).innerHTML = list.length ? `<div class="tbl"><table><thead><tr>${o.cols.map(c => `<th class="${c.nosort ? "" : "sort"} ${st.sort === c.k ? "on" : ""} ${c.num ? "num" : ""}" data-sort="${c.k}">${esc(c.l)}${c.nosort ? "" : `<span class="ar">${st.sort === c.k ? (st.dir === "asc" ? "▲" : "▼") : "↕"}</span>`}</th>`).join("")}</tr></thead>
-      <tbody>${shown.map((r, i) => `<tr class="${o.rowCls ? o.rowCls(r) : ""} ${o.onRow ? "click" : ""}" data-i="${rows.indexOf(r)}">${o.cols.map(c => `<td class="${c.num ? "num" : ""} ${c.cls || ""}">${c.h ? c.h(r) : esc(val(c, r) ?? "")}</td>`).join("")}</tr>`).join("")}</tbody></table></div>
+    $(".dt-body", host).innerHTML = list.length ? `<div class="tbl"><table><thead><tr>${cols.map(c => `<th class="${c.nosort ? "" : "sort"} ${st.sort === c.k ? "on" : ""} ${c.num ? "num" : ""}" data-sort="${c.k}" ${locked() ? "" : 'draggable="true"'}>${esc(c.l)}${c.nosort ? "" : `<span class="ar">${st.sort === c.k ? (st.dir === "asc" ? "▲" : "▼") : "↕"}</span>`}</th>`).join("")}</tr></thead>
+      <tbody>${shown.map((r, i) => `<tr class="${o.rowCls ? o.rowCls(r) : ""} ${o.onRow ? "click" : ""}" data-i="${rows.indexOf(r)}">${cols.map(c => `<td class="${c.num ? "num" : ""} ${c.cls || ""}">${c.h ? c.h(r) : esc(val(c, r) ?? "")}</td>`).join("")}</tr>`).join("")}</tbody></table></div>
       ${list.length > st.n ? `<div class="more"><button class="btn sm" data-more>${esc(L(`Show ${Math.min(100, list.length - st.n)} more of ${list.length - st.n}`, `عرض ${Math.min(100, list.length - st.n)} أخرى من ${list.length - st.n}`))}</button></div>` : ""}`
       : `<div class="empty">${esc(o.empty || L("Nothing matches.", "لا نتائج مطابقة."))}</div>`;
     $(".dt-count", host).textContent = L(`${list.length} of ${rows.length}`, `${list.length} من ${rows.length}`);
@@ -274,9 +377,33 @@ function table(host, key, rows, o) {
     if (e.target.closest("[data-more]")) { st.n += 100; draw(); return; }
     if (e.target.closest("[data-ftog]")) { $(".dt-bar", host).classList.toggle("open"); return; }
     if (e.target.closest("[data-reset]")) { st.q = ""; st.f = {}; keep(); table(host, key, rows, o); return; }
-    if (e.target.closest("[data-csv]")) { download(`${key}_${today()}.csv`, csv([o.cols.filter(c => !c.nocsv).map(c => c.l), ...host._list.map(r => o.cols.filter(c => !c.nocsv).map(c => val(c, r)))])); return; }
+    if (e.target.closest("[data-csv]")) { download(`${key}_${today()}.csv`, csv([cols.filter(c => !c.nocsv).map(c => c.l), ...host._list.map(r => cols.filter(c => !c.nocsv).map(c => val(c, r)))])); return; }
     const tr = e.target.closest("tr[data-i]"); if (tr && o.onRow && !e.target.closest("a,button,input,select")) o.onRow(rows[+tr.dataset.i]);
   };
+  host.dataset.dt = key;
+  const sortBy = (k, dir) => { st.sort = k; st.dir = dir; keep(); draw(); };
+  const copy = async t => { try { await navigator.clipboard.writeText(t); toast(L("Copied.", "تم النسخ.")); } catch { ask("", t); } };
+  host._dt = {
+    colCtx: (e, k) => { const c = colOf(k), i = cols.findIndex(x => x.k === k), hid = cl.hidden || [];
+      ctxMenu(e, [!c.nosort && { l: L("Sort ascending", "ترتيب تصاعدي"), ic: "▲", a: () => sortBy(k, "asc") }, !c.nosort && { l: L("Sort descending", "ترتيب تنازلي"), ic: "▼", a: () => sortBy(k, "desc") },
+        ...(locked() ? ["-", lockItem()] : ["-",
+        { l: L("Rename column…", "إعادة تسمية العمود…"), ic: "✎", a: async () => { const v = await ask(L("Column name (blank: the original)", "اسم العمود (فارغ: الأصلي)"), cols[i].l); if (v === null) return;
+          editCols(x => { x.names = x.names || {}; setName(x.names, k, v.trim() === c.l ? "" : v.trim()); }); } },
+        { l: L("Move left", "تحريك لليسار"), ic: "←", dis: S.lang === "ar" ? i === cols.length - 1 : i === 0, a: () => editCols(x => { const j = x.order.indexOf(k), t = j + (S.lang === "ar" ? 1 : -1); if (t < 0 || t >= x.order.length) return; [x.order[j], x.order[t]] = [x.order[t], x.order[j]]; }) },
+        { l: L("Move right", "تحريك لليمين"), ic: "→", dis: S.lang === "ar" ? i === 0 : i === cols.length - 1, a: () => editCols(x => { const j = x.order.indexOf(k), t = j + (S.lang === "ar" ? -1 : 1); if (t < 0 || t >= x.order.length) return; [x.order[j], x.order[t]] = [x.order[t], x.order[j]]; }) },
+        { l: L("Hide column", "إخفاء العمود"), ic: "⊘", dis: cols.length < 2, a: () => editCols(x => { x.hidden = [...new Set([...(x.hidden || []), k])]; }) },
+        ...o.cols.filter(x => hid.includes(x.k)).map(x => ({ l: L(`Show “${x.l}”`, `إظهار «${x.l}»`), ic: "◉", a: () => editCols(y => { y.hidden = (y.hidden || []).filter(h => h !== x.k); }) })),
+        { l: L("Reset columns", "إعادة الأعمدة لأصلها"), ic: "↺", a: () => editLay(y => { if (y.cols) delete y.cols[key]; }) }, lockItem()])]); },
+    rowCtx: (e, tr, td) => { const r = rows[+tr.dataset.i];
+      ctxMenu(e, [o.onRow && { l: L("Open", "فتح"), ic: "↗", a: () => o.onRow(r) },
+        td && { l: L("Copy this cell", "نسخ هذه الخلية"), ic: "⧉", a: () => copy(td.innerText.trim()) },
+        { l: L("Copy the row", "نسخ السطر"), ic: "⧉", a: () => copy(cols.map(c => String(val(c, r) ?? "")).join("\t")) }]); },
+  };
+  // drag a heading onto another to move the column there
+  host.ondragstart = e => { const th = e.target.closest("th[data-sort]"); if (!th || locked()) return; host._drag = th.dataset.sort; e.dataTransfer.effectAllowed = "move"; try { e.dataTransfer.setData("text/plain", th.dataset.sort); } catch { /* old browsers */ } };
+  host.ondragover = e => { if (host._drag && e.target.closest("th[data-sort]")) e.preventDefault(); };
+  host.ondrop = e => { const th = e.target.closest("th[data-sort]"), k = host._drag; host._drag = null; if (!th || !k || th.dataset.sort === k) return; e.preventDefault();
+    editCols(x => { x.order = x.order.filter(h => h !== k); x.order.splice(x.order.indexOf(th.dataset.sort), 0, k); }); };
   draw();
 }
 
@@ -295,6 +422,31 @@ const SECTIONS = () => [["dashboard", L("Dashboard & calculators", "لوحة ا�
   ["assets", L("Assets & treasury", "الأصول والخزينة")], ["partners", L("Owners' equity", "حقوق الملكية")], ["care", L("Healthcare", "الرعاية الصحية")],
   ["import_export", L("Import & export", "الاستيراد والتصدير")], ["settings", L("Settings & automations", "الإعدادات والأتمتة")], ["users", L("Users & audit", "المستخدمون والتدقيق")]];
 const secName = k => (SECTIONS().find(s => s[0] === k) || [k, k])[1];
+// industries in the order the ERP lists them (erp/industries.py ORDER), then any added in the console
+const IND_ORDER = ["general", "interior", "contracting", "development", "sales", "investment", "scaffolding", "healthcare", "homecare"];
+const industriesOf = cfg => { const rank = k => IND_ORDER.includes(k) ? IND_ORDER.indexOf(k) : 99;
+  return Object.entries(cfg.core_by_industry || {}).sort((a, b) => rank(a[0]) - rank(b[0]) || a[0].localeCompare(b[0])); };
+// sections → screens → tabs of the ERP, named as the ERP names them (its i18n.js). Tabs: as erp/db.py SUBTABS.
+const TABS = () => ({ "shop.subscriptions": [["plans", L("Plans tab", "تبويب الخطط")]], "payroll.attendance": [["summary", L("Summary and productivity tab", "تبويب الملخص والإنتاجية")]],
+  "reports.forecast": [["prices", L("Price list", "قائمة الأسعار")], ["items", L("Items and materials", "الأصناف والمواد")], ["expenses", L("Spending by account", "المصروفات حسب الحساب")],
+    ["payroll", L("Payroll", "الرواتب")], ["depreciation", L("Depreciation and amortisation", "الإهلاك والاستهلاك")], ["loans", L("Loan instalments", "أقساط القروض")], ["sales", L("Sales", "المبيعات")]] });
+const erpLabel = k => { const x = (window.I18N || {})[k]; return x ? (S.lang === "ar" ? x[1] : x[0]) : k; };
+const TREE = () => { const sp = window.SUBPERM || {}, tabs = TABS();
+  return SECTIONS().map(([m, l]) => ({ k: m, l, kids: Object.keys(sp).filter(k => k.split(".")[0] === m).map(k => ({ k, l: erpLabel(sp[k]), kids: (tabs[k] || []).map(([t, tl]) => ({ k: `${k}.${t}`, l: tl, kids: [] })) })) })); };
+const keyName = k => { for (const s of TREE()) { if (s.k === k) return s.l; for (const c of s.kids) { if (c.k === k) return `${s.l} › ${c.l}`; for (const t of c.kids) if (t.k === k) return `${s.l} › ${c.l} › ${t.l}`; } } return k; };
+// a picker over the whole tree. mode "off": a tick switches it off. mode "tri": as the plan / off / on (given back).
+function treeHtml(val, mode) {
+  const node = (n, lvl) => mode === "tri"
+    ? `<div class="tn l${lvl}"><span>${esc(n.l)}</span><select name="t:${n.k}" class="tsel ${val[n.k] || ""}" data-change="tsel">${[["", L("As its plan", "حسب الباقة")], ["off", L("Off", "متوقف")], ["on", L("On (given back)", "متاح (استثناء)")]].map(([v, l]) => `<option value="${v}" ${(val[n.k] || "") === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></div>`
+    : `<label class="tn l${lvl} chk"><input type="checkbox" name="t:${n.k}" ${val[n.k] === "off" ? "checked" : ""}> ${esc(n.l)}</label>`;
+  const open = s => [s, ...s.kids, ...s.kids.flatMap(c => c.kids)].some(n => val[n.k]);
+  return `<div class="tree"><input type="search" class="tfind" placeholder="${esc(L("Find a section, screen or tab…", "ابحث عن قسم أو شاشة أو تبويب…"))}">
+    ${TREE().map(sct => `<div class="tsec" data-find="${esc([sct.l, ...sct.kids.map(c => c.l), ...sct.kids.flatMap(c => c.kids.map(t => t.l))].join(" ").toLowerCase())}">${node(sct, 1)}
+      ${sct.kids.length ? `<details ${open(sct) ? "open" : ""}><summary>${esc(L(`${sct.kids.length} screens`, `${sct.kids.length} شاشات`))}</summary>${sct.kids.map(c => node(c, 2) + c.kids.map(t => node(t, 3)).join("")).join("")}</details>` : ""}</div>`).join("")}</div>`;
+}
+const treeRead = (v, want) => Object.keys(v).filter(k => k.startsWith("t:") && (want === true ? v[k] === true : v[k] === want)).map(k => k.slice(2));
+const treeWire = f => { const q = $(".tfind", f); if (q) q.addEventListener("input", () => { const t = q.value.trim().toLowerCase();
+  $$(".tsec", f).forEach(x => { x.hidden = !!t && !x.dataset.find.includes(t); if (t && !x.hidden) { const d = $("details", x); if (d) d.open = true; } }); }); };
 const ORDER_ST = () => ({ open: [L("Not paid yet", "لم يُدفع"), "warn"], submitted: [L("To verify", "للتحقق"), "info"], approved: [L("Approved", "معتمد"), "ok"],
   rejected: [L("Not accepted", "مرفوض"), "bad"], cancelled: [L("Cancelled", "ملغى"), ""] });
 const TK_ST = () => ({ open: [L("Open", "مفتوح"), "warn"], answered: [L("Answered", "تم الرد"), "info"], waiting: [L("Waiting for customer", "بانتظار العميل"), "info"],
@@ -337,6 +489,9 @@ window.addEventListener("hashchange", route);
 
 // ================================================================== clicks and changes anywhere
 document.addEventListener("click", async e => {
+  if (!e.target.closest("#ctx")) closeCtx();
+  const app = $("#app");
+  if (app && app.classList.contains("menu") && !e.target.closest(".side,[data-a=menu]")) { app.classList.remove("menu"); e.preventDefault(); return; }   // a tap outside the side menu closes it
   const pop = $("#alpop"); if (pop && !e.target.closest("#bell")) pop.remove();
   const el = e.target.closest("[data-a]"); if (!el) return;
   const a = el.dataset.a, G = GLOBAL[a] || S.H[a];
@@ -345,9 +500,19 @@ document.addEventListener("click", async e => {
   try { await G(el, e); } catch (er) { fail(er); }
 });
 document.addEventListener("change", e => { const el = e.target.closest("[data-change]"); if (el && S.H[el.dataset.change]) Promise.resolve(S.H[el.dataset.change](el, e)).catch(fail); });
-document.addEventListener("keydown", e => { if (e.key === "Escape") { closePanel(); const p = $("#alpop"); if (p) p.remove(); } });
+document.addEventListener("keydown", e => { if (e.key === "Escape") { if ($("#ctx")) return closeCtx(); const app = $("#app"); if (app && app.classList.contains("menu")) return app.classList.remove("menu"); closePanel(); const p = $("#alpop"); if (p) p.remove(); } });
+document.addEventListener("contextmenu", e => {
+  if (!S.me || e.target.closest("input,textarea,select,[contenteditable],#ctx")) return;     // typing keeps the browser's own menu
+  const a = e.target.closest(".nav a[data-nav]"); if (a) return navCtx(e, a.dataset.nav);
+  const h = e.target.closest(".nav-h[data-g]"); if (h) return groupCtx(e, h.dataset.g);
+  const host = e.target.closest("[data-dt]"); if (!host || !host._dt) return;
+  const th = e.target.closest("th[data-sort]"); if (th) return host._dt.colCtx(e, th.dataset.sort);
+  const tr = e.target.closest("tr[data-i]"); if (tr) return host._dt.rowCtx(e, tr, e.target.closest("td"));
+});
+addEventListener("resize", closeCtx); addEventListener("scroll", closeCtx, true);
 const GLOBAL = {
   menu: () => $("#app").classList.toggle("menu"),
+  unlock: () => editLay(y => { y.locked = false; }),
   mode: () => { const cur = document.documentElement.dataset.mode; LSset("berp.console.mode", cur === "dark" ? "light" : "dark"); applyLook(); },
   lang: () => { S.lang = S.lang === "ar" ? "en" : "ar"; LSset("berp.console.lang", S.lang); applyLook(); shell(); route(); },
   signout: async () => { if (!await confirmIt(L("Sign out of the console on this device? (The ERP on this device signs out too.)", "تسجيل الخروج من اللوحة على هذا الجهاز؟ (يُسجَّل الخروج من النظام أيضاً.)"))) return; putSes(null); location.reload(); },
@@ -531,6 +696,7 @@ PAGES.customers = async (view, parts, q) => {
       { k: "owner", l: L("Owner", "المالك"), v: x => x.created_by, h: x => `<span dir="ltr">${esc(x.created_by || "")}</span>` },
       { k: "status", l: L("Status", "الحالة"), v: x => (ST()[x.state.status] || [x.state.status])[0], h: x => stChip(x.state.status) + (x.cancel_note ? `<span class="sub">✗ ${esc(x.cancel_note)}</span>` : "") },
       { k: "plan", l: L("Plan", "الباقة"), v: x => x.state.plan_name || "" },
+      { k: "industry", l: L("Industry", "النشاط"), v: x => x.state.industry || "" },
       { k: "ends", l: L("Next due", "الاستحقاق التالي"), date: true, v: x => x.state.ends ? String(x.state.ends).slice(0, 10) : "", h: x => x.state.ends ? `${esc(day(x.state.ends))}<span class="sub ${daysTo(x.state.ends) < 0 ? "neg" : daysTo(x.state.ends) <= 7 ? "" : ""}">${esc(daysTo(x.state.ends) < 0 ? L(`${-daysTo(x.state.ends)} days ago`, `منذ ${-daysTo(x.state.ends)} يوم`) : L(`in ${daysTo(x.state.ends)} days`, `خلال ${daysTo(x.state.ends)} يوم`))}</span>` : "—" },
       { k: "people", l: L("People", "الأفراد"), num: true, h: x => `${x.people}${x.state.users_allowed ? " / " + x.state.users_allowed : ""}` },
       { k: "lpa", l: L("Last paid", "آخر دفعة"), num: true, v: x => lastPay(x).amount ?? "", h: x => lastPay(x).amount != null ? `${money(lastPay(x).amount)}<span class="sub">${esc(day(lastPay(x).date))}</span>` : "—" },
@@ -541,6 +707,9 @@ PAGES.customers = async (view, parts, q) => {
     filters: [{ k: "st", l: L("Status", "الحالة"), type: "select", opts: Object.entries(ST()).map(([k, v]) => [k, v[0]]), test: (x, v) => x.state.status === v || (v === "active" && x.state.status === "past_due" && false) },
       { k: "arch", l: L("Show", "عرض"), type: "select", opts: [["live", L("Not archived", "غير مؤرشفة")], ["archived", L("Archived only", "المؤرشفة فقط")]], test: (x, v) => (v === "archived") === (x.state.status === "archived") },
       { k: "plan", l: L("Plan", "الباقة"), type: "select", opts: plans.map(p => [p, p]) },
+      { k: "industry", l: L("Industry", "النشاط"), type: "select", opts: [...new Set(rows.map(x => x.state.industry).filter(Boolean))].map(k => [k, k]) },
+      { k: "over", l: L("Users", "المستخدمون"), type: "select", opts: [["full", L("All seats taken", "كل المقاعد مشغولة")], ["over", L("More than allowed", "أكثر من المسموح")]],
+        test: (x, v) => x.state.users_allowed != null && (v === "over" ? x.people > x.state.users_allowed : x.people >= x.state.users_allowed) },
       { k: "duefrom", l: L("Due from", "مستحق من"), type: "from", col: "ends" }, { k: "dueto", l: L("Due to", "مستحق حتى"), type: "to", col: "ends" },
       { k: "pfrom", l: L("Last paid from", "آخر دفعة من"), type: "from", col: "lpd" }, { k: "pto", l: L("Last paid to", "آخر دفعة حتى"), type: "to", col: "lpd" },
       { k: "cfrom", l: L("Joined from", "انضمت من"), type: "from", test: (x, v) => String(x.created_at).slice(0, 10) >= v }, { k: "cto", l: L("Joined to", "انضمت حتى"), type: "to", test: (x, v) => String(x.created_at).slice(0, 10) <= v },
@@ -575,6 +744,12 @@ PAGES.company = async (view, parts) => {
       { k: "clear_cancel", l: L("Clear its request not to renew", "إلغاء طلب عدم التجديد"), type: "check", v: false, span: 1 }]),
       v => setCo({ trial_ends: v.trial_ends ? v.trial_ends + "T23:59:59Z" : "", paid_until: v.paid_until ? v.paid_until + "T23:59:59Z" : "", plan: v.plan, extra_users: +v.extra_users || 0, clear_cancel: v.clear_cancel })),
     access: () => accessPanel(x, cfg, setCo),
+    menus: () => menusPanel(x, cfg, setCo),
+    industry: () => { const inds = industriesOf(cfg);
+      panel(L("Industry", "النشاط"), `<p class="muted small">${esc(L("Its industry's starter sections are included in every plan. The app sets this when an industry template is applied; you can change it here.", "الأقسام المبدئية لنشاطها مشمولة في كل باقة. يضبطه النظام عند تطبيق قالب النشاط، ويمكنك تغييره هنا."))}</p>
+        ${form([{ k: "industry", l: L("Industry", "النشاط"), type: "select", v: b.industry || "", span: 1, opts: [["", L("Not known", "غير معروف")], ...inds.map(([k, d]) => [k, S.lang === "ar" && d.name_ar ? d.name_ar : d.name || k])] }], 1)}`,
+        v => setCo({ industry: v.industry })); },
+    deal: () => dealPanel(x, cfg, setCo),
     suspend: async () => { if (b.suspended) { if (await confirmIt(L("Lift the suspension?", "رفع الإيقاف؟"))) setCo({ suspended: false }); return; }
       const why = await ask(L("Suspend this company: everyone can still view and export, nobody can save. Reason (they see it):", "إيقاف هذه الشركة: يبقى العرض والتصدير متاحين ولا يمكن الحفظ. السبب (يظهر لهم):"), ""); if (why === null) return; setCo({ suspended: true, suspend_note: why }); },
     rename: async () => { const n = await ask(L("New name", "الاسم الجديد"), x.name); if (n && n.trim() !== x.name) { await rpc("console_company_edit", { p_company: id, p: { name: n } }); toast(L("Saved.", "تم الحفظ.")); route(); } },
@@ -605,6 +780,8 @@ PAGES.company = async (view, parts) => {
         <button class="btn sm" data-a="free">${esc(free ? L("Charge again", "إعادة الاحتساب") : L("Make free", "جعلها مجانية"))}</button><button class="btn sm" data-a="disc">% ${esc(L("Discount…", "خصم…"))}</button>
         <button class="btn sm" data-a="dates">${esc(L("Dates & plan…", "التواريخ والباقة…"))}</button></div>
       <div class="row" style="margin-top:8px"><b class="small muted">${esc(L("Access", "الوصول"))}</b><button class="btn sm" data-a="access">${esc(L("What it can use…", "ما يمكنها استخدامه…"))}</button>
+        <button class="btn sm" data-a="menus">☰ ${esc(L("Menus, screens & tabs…", "القوائم والشاشات والتبويبات…"))}</button><button class="btn sm" data-a="industry">◎ ${esc(L("Industry…", "النشاط…"))}</button>
+        ${(cfg.plans || []).some(p => p.contact) ? `<button class="btn sm" data-a="deal">★ ${esc(L("Enterprise deal…", "اتفاق المؤسسات…"))}</button>` : ""}
         <button class="btn sm ${b.suspended ? "" : "danger"}" data-a="suspend">${esc(b.suspended ? L("Lift suspension", "رفع الإيقاف") : L("Suspend…", "إيقاف…"))}</button></div>
       <div class="row" style="margin-top:8px"><b class="small muted">${esc(L("Company", "الشركة"))}</b><button class="btn sm" data-a="rename">${esc(L("Rename…", "إعادة التسمية…"))}</button>
         <button class="btn sm" data-a="owner">${esc(L("Change owner…", "تغيير المالك…"))}</button>
@@ -616,7 +793,10 @@ PAGES.company = async (view, parts) => {
       ${kpi(L("Paid in total", "إجمالي المدفوع"), money(x.payments.filter(p => p.status === "paid").reduce((s, p) => s + +p.amount, 0)), "", esc(cur))}</div>
     <div class="card"><h2>${esc(L("What it can use", "ما يمكنها استخدامه"))}</h2><div class="small">${esc(ent)}</div>
       <div class="row" style="margin-top:6px">${chip(st.ai ? L("AI assistant: on", "المساعد الذكي: متاح") : L("AI assistant: off", "المساعد الذكي: غير متاح"), st.ai ? "ok" : "")}${chip(st.support !== false ? L("Online support: included", "الدعم الإلكتروني: مشمول") : L("Online support: not included", "الدعم الإلكتروني: غير مشمول"), st.support !== false ? "ok" : "")}
-      ${Object.keys(ov).length ? chip(L("Your overrides apply", "تنطبق استثناءاتك"), "warn") : ""}</div></div>
+      ${Object.keys(ov).length ? chip(L("Your overrides apply", "تنطبق استثناءاتك"), "warn") : ""}
+      ${chip(L("Industry: ", "النشاط: ") + (((cfg.core_by_industry || {})[b.industry] || {})[S.lang === "ar" ? "name_ar" : "name"] || b.industry || L("not known", "غير معروف")), b.industry ? "info" : "")}
+      ${(st.deny || []).length ? chip(L(`${st.deny.length} switched off`, `${st.deny.length} متوقف`), "warn") : ""}</div>
+      ${(st.deny || []).length ? `<div class="small muted" style="margin-top:6px">⊘ ${st.deny.map(k => esc(keyName(k))).join(" · ")}</div>` : ""}</div>
     <div class="split"><div>
       <div class="card"><h2>${esc(L("People", "الأفراد"))}</h2><div class="tbl"><table><thead><tr><th>${esc(L("Email", "البريد"))}</th><th>${esc(L("Role", "الدور"))}</th><th></th></tr></thead><tbody>
         ${x.people.map(p => `<tr class="${p.active ? "" : "dim"}"><td dir="ltr">${esc(p.email)}</td><td>${p.email === x.created_by ? chip(L("Owner", "المالك"), "ok") : p.super ? chip(L("Super administrator", "مسؤول أعلى"), "ok") : p.is_admin ? chip(L("Administrator", "مسؤول")) : chip(L("User", "مستخدم"))}
@@ -652,8 +832,39 @@ function accessPanel(x, cfg, setCo) {
       { k: "users", l: L("Users allowed (blank: as its plan)", "المستخدمون المسموح بهم (فارغ: حسب الباقة)"), type: "number", v: ov.users ?? "", min: 1 },
       tri("ai", L("AI assistant", "المساعد الذكي")), tri("support", L("Online support", "الدعم الإلكتروني")),
       { type: "html", span: 1, html: `<div class="checks">${SECTIONS().map(([k, l]) => `<label class="chk"><input type="checkbox" name="s_${k}" ${list.includes(k) ? "checked" : ""}> ${esc(l)}</label>`).join("")}</div>` }])}`,
-    v => { const o = {}; if (v.mods === "all") o.modules = "all"; if (v.mods === "list") o.modules = SECTIONS().map(s => s[0]).filter(k => v["s_" + k]);
+    v => { const o = {}; for (const k of ["deny", "allow"]) if (ov[k]) o[k] = ov[k]; if (v.mods === "all") o.modules = "all"; if (v.mods === "list") o.modules = SECTIONS().map(s => s[0]).filter(k => v["s_" + k]);
       if (v.users !== "") o.users = +v.users; if (v.ai) o.ai = v.ai === "on"; if (v.support) o.support = v.support === "on"; return setCo({ overrides: o }); });
+}
+// what one company sees, down to each screen and tab: switched off for it, or given back when its plan switches it off
+function menusPanel(x, cfg, setCo) {
+  const ov = (x.billing || {}).overrides || {}, val = {};
+  (ov.deny || []).forEach(k => { val[k] = "off"; }); (ov.allow || []).forEach(k => { val[k] = "on"; });
+  const plan = (cfg.plans || []).find(p => p.code === x.state.plan) || {};
+  panel(`${x.name} — ${L("Menus, screens & tabs", "القوائم والشاشات والتبويبات")}`, `<p class="muted small">${esc(L("Only for this company — other companies of the same people are set on their own pages. “Off” hides it from everyone in this company (even when it is free or billing is off). “On” gives back what its plan switches off. Sections its plan does not include are added in “What it can use”.", "لهذه الشركة فقط — شركات نفس الأشخاص الأخرى تُضبط من صفحاتها. «متوقف» يخفيه عن الجميع في هذه الشركة (حتى لو كانت مجانية أو الاشتراكات متوقفة). «متاح» يعيد ما توقفه الباقة. الأقسام غير المشمولة في الباقة تُضاف من «ما يمكنها استخدامه»."))}</p>
+    ${(plan.deny || []).length ? `<div class="banner warn small">${esc(L("Its plan switches off: ", "توقف الباقة: "))}${plan.deny.map(k => esc(keyName(k))).join(" · ")}</div>` : ""}
+    ${treeHtml(val, "tri")}`,
+    v => setCo({ overrides: { ...ov, deny: treeRead(v, "off"), allow: treeRead(v, "on") } }), { wide: true, onOpen: treeWire });
+  S.H.tsel = el => { el.className = "tsel " + el.value; };
+}
+// an Enterprise customer: the plan, the users and companies agreed, what it uses, and the price agreed
+function dealPanel(x, cfg, setCo) {
+  const ov = (x.billing || {}).overrides || {}, ent = (cfg.plans || []).filter(p => p.contact), st = x.state;
+  panel(`${x.name} — ${L("Enterprise deal", "اتفاق المؤسسات")}`, `<p class="muted small">${esc(L("Everything agreed with the customer in one go. The users number is a hard limit; the companies number applies to the owner's account (every company they own).", "كل ما اتُّفق عليه مع العميل مرة واحدة. عدد المستخدمين حد لا يُتجاوز؛ وعدد الشركات ينطبق على حساب المالك (كل الشركات التي يملكها)."))}</p>
+    ${form([{ k: "plan", l: L("Plan", "الباقة"), type: "select", v: ent.some(p => p.code === st.plan) ? st.plan : ent[0].code, opts: ent.map(p => [p.code, p.name]) },
+      { k: "users", l: L("Users agreed (this company)", "المستخدمون المتفق عليهم (هذه الشركة)"), type: "number", v: ov.users ?? Math.max(st.users || 1, 1), min: 1, req: 1 },
+      { k: "companies", l: L(`Companies ${x.created_by || "the owner"} may own (blank: the general rule)`, `الشركات التي يملكها ${x.created_by || "المالك"} (فارغ: القاعدة العامة)`), type: "number", min: 0, v: "" },
+      { k: "mods", l: L("Sections", "الأقسام"), type: "select", v: ov.modules === "all" || !ov.modules ? "all" : "plan", opts: [["all", L("Every section", "كل الأقسام")], ["plan", L("As the plan", "حسب الباقة")]] },
+      { k: "ai", l: L("AI assistant", "المساعد الذكي"), type: "check", v: ov.ai !== false }, { k: "support", l: L("Online support", "الدعم الإلكتروني"), type: "check", v: ov.support !== false },
+      { k: "months", l: L("Months paid for", "الأشهر المدفوعة"), type: "number", v: 12, min: 1, max: 120, req: 1 },
+      { k: "amount", l: L(`Agreed amount for the period (${cfg.currency || ""})`, `المبلغ المتفق عليه للفترة (${cfg.currency || ""})`), type: "number", min: 0, req: 1 },
+      { k: "reference", l: L("Reference (contract or transfer number)", "المرجع (رقم العقد أو التحويل)") }, { k: "note", l: L("Note", "ملاحظة") }])}`,
+    async v => {
+      await rpc("console_record_payment", { p: { company: x.id, plan: v.plan, months: +v.months, amount: +v.amount, reference: v.reference, note: v.note || "Enterprise deal" } });
+      const o = { ...ov, users: +v.users, ai: !!v.ai, support: !!v.support }; if (v.mods === "all") o.modules = "all"; else delete o.modules;
+      await rpc("billing_set_company", { p_company: x.id, p: { overrides: o } });
+      if (v.companies !== "" && x.created_by) await rpc("console_person_save", { p: { email: x.created_by, max_companies: +v.companies } });
+      toast(L("Deal saved.", "تم حفظ الاتفاق."));
+    }, { saveLabel: L("Save the deal", "حفظ الاتفاق") });
 }
 function memberPanel(x, p) {
   const act = async (q, msg) => { await rpc("console_member_set", { p_company: x.id, p_email: p.email, p: q }); toast(msg || L("Saved.", "تم الحفظ.")); closePanel(); route(); };
@@ -924,8 +1135,8 @@ const planCard = (p, cfg, tools = "") => {
   return `<div class="plan ${p.highlight ? "hl" : ""}" style="--pc:${esc(p.color || "var(--accent)")}">${p.badge || p.badge_ar ? `<span class="badge">${esc(ar && p.badge_ar ? p.badge_ar : p.badge)}</span>` : ""}
     <h3 style="margin:0">${esc(ar && p.name_ar ? p.name_ar : p.name)} ${p.hidden ? chip(L("Hidden", "مخفية")) : ""}${p.code === cfg.trial_plan ? chip(L("Trial plan", "باقة التجربة"), "info") : ""}</h3>
     ${p.tagline || p.tagline_ar ? `<div class="muted small">${esc(ar && p.tagline_ar ? p.tagline_ar : p.tagline)}</div>` : ""}
-    <div class="price">${money(p.price)} <small>${esc(cfg.currency)} / ${esc(L("month · per company", "شهر · لكل شركة"))}</small></div>
-    <div class="small">${esc(L(`${p.users} users`, `${p.users} مستخدمين`))} · ${esc(p.modules && p.modules !== "all" ? L(`${p.modules.length} sections + core`, `${p.modules.length} أقسام + الأساسية`) : L("every section", "كل الأقسام"))}
+    <div class="price">${p.contact ? esc(L("Contact us", "تواصل معنا")) : `${money(p.price)} <small>${esc(cfg.currency)} / ${esc(L("month · per company", "شهر · لكل شركة"))}</small>`}</div>
+    <div class="small">${esc(p.users ? L(`${p.users} users`, `${p.users} مستخدمين`) : L("users as agreed", "المستخدمون حسب الاتفاق"))}${(p.deny || []).length ? ` · ${esc(L(`${p.deny.length} screen(s) off`, `${p.deny.length} شاشة متوقفة`))}` : ""} · ${esc(p.modules && p.modules !== "all" ? L(`${p.modules.length} sections + core`, `${p.modules.length} أقسام + الأساسية`) : L("every section", "كل الأقسام"))}
       · ${esc(cfg.ai_mode === "free" ? L("AI free for all", "الذكاء الاصطناعي مجاني للجميع") : cfg.ai_mode === "off" ? L("AI off", "الذكاء الاصطناعي متوقف") : p.ai ? L("AI included", "يشمل الذكاء الاصطناعي") : L("no AI", "بدون ذكاء اصطناعي"))}
       · ${esc(cfg.support_mode === "free" || p.support !== false ? L("online support", "دعم إلكتروني") : L("no online support", "بدون دعم إلكتروني"))}</div>
     <ul>${feats.map(f => `<li>${esc(f)}</li>`).join("")}</ul>${tools ? `<div class="tools">${tools}</div>` : ""}</div>`;
@@ -944,21 +1155,25 @@ PAGES.plans = async view => {
       { k: "features", l: L("What it says (one line each)", "المزايا المعروضة (سطر لكل ميزة)"), type: "area", rows: 5, v: (p.features || []).join("\n") },
       { k: "features_ar", l: L("What it says (Arabic)", "المزايا (عربي)"), type: "area", rows: 5, v: (p.features_ar || []).join("\n") },
       { k: "badge", l: L("Badge (e.g. Most popular)", "شارة (مثل الأكثر طلباً)"), v: p.badge || "" }, { k: "badge_ar", l: L("Badge (Arabic)", "الشارة (عربي)"), v: p.badge_ar || "" },
-      { k: "color", l: L("Colour", "اللون"), type: "color", v: p.color || "#4f46e5" }, { k: "users", l: L("Users per company", "المستخدمون لكل شركة"), type: "number", v: p.users, min: 1, req: 1 },
+      { k: "color", l: L("Colour", "اللون"), type: "color", v: p.color || "#4f46e5" }, { k: "users", l: L("Users per company (a hard limit; blank on a “contact us” plan: set per deal)", "المستخدمون لكل شركة (حد لا يُتجاوز؛ فارغ في باقة «تواصل معنا»: يُحدد لكل اتفاق)"), type: "number", v: p.users ?? "", min: 1 },
+      { k: "contact", l: L("Price on request: customers contact you (Enterprise); it cannot be ordered in the app", "السعر عند الطلب: يتواصل العميل معك (المؤسسات)؛ لا يمكن طلبها من التطبيق"), type: "check", v: p.contact, span: 1 },
       { k: "highlight", l: L("Stand out (outlined)", "مميزة (بإطار)"), type: "check", v: p.highlight }, { k: "hidden", l: L("Hidden: not offered, you can still give it", "مخفية: لا تُعرض، ويمكنك منحها"), type: "check", v: p.hidden },
       { k: "ai", l: L("Includes the AI assistant", "تشمل المساعد الذكي"), type: "check", v: p.ai }, { k: "support", l: L("Includes online support", "تشمل الدعم الإلكتروني"), type: "check", v: p.support !== false },
       { k: "mods", l: L("Sections", "الأقسام"), type: "select", v: p.modules === "all" || !p.modules ? "all" : "list", opts: [["all", L("Every section", "كل الأقسام")], ["list", L("Core sections plus these:", "الأقسام الأساسية بالإضافة إلى:")]], span: 1 },
       { type: "html", span: 1, html: `<div class="checks">${SECTIONS().filter(([k]) => !(cfg.core_modules || []).includes(k)).map(([k, l]) => `<label class="chk"><input type="checkbox" name="s_${k}" ${mods.includes(k) ? "checked" : ""}> ${esc(l)}</label>`).join("")}</div>
-        <p class="muted small">${esc(L("Core sections (always included) are set in “Sections, AI & support”.", "تُضبط الأقسام الأساسية (المشمولة دائماً) من «الأقسام والذكاء الاصطناعي والدعم»."))}</p>` }])}</div>
+        <p class="muted small">${esc(L("Core sections and each industry's starter sections are always included (Menus by industry).", "الأقسام الأساسية والأقسام المبدئية لكل نشاط مشمولة دائماً (القوائم حسب النشاط)."))}</p>` },
+      { type: "html", span: 1, html: `<b class="small">${esc(L("Switch off screens or tabs on this plan (tick to switch off)", "إيقاف شاشات أو تبويبات في هذه الباقة (حدد للإيقاف)"))}</b>${treeHtml(Object.fromEntries((p.deny || []).map(k => [k, "off"])), "off")}` }])}</div>
       <div><b class="small muted">${esc(L("Preview", "معاينة"))}</b><div class="preview" id="pprev"></div></div></div>`,
       async v => { const np = { ...p, code: (i == null ? v.code : p.code).trim().toLowerCase().replace(/[^a-z0-9_-]/g, ""), name: v.name.trim(), name_ar: v.name_ar.trim(), tagline: v.tagline.trim(), tagline_ar: v.tagline_ar.trim(),
-          price: +v.price, users: +v.users, features: v.features.split("\n").map(s => s.trim()).filter(Boolean), features_ar: v.features_ar.split("\n").map(s => s.trim()).filter(Boolean),
+          price: +v.price, users: v.users === "" ? null : +v.users, contact: !!v.contact, deny: treeRead(v, true), features: v.features.split("\n").map(s => s.trim()).filter(Boolean), features_ar: v.features_ar.split("\n").map(s => s.trim()).filter(Boolean),
           badge: v.badge.trim(), badge_ar: v.badge_ar.trim(), color: v.color, highlight: !!v.highlight, hidden: !!v.hidden, ai: !!v.ai, support: !!v.support,
           modules: v.mods === "all" ? "all" : SECTIONS().map(s => s[0]).filter(k => v["s_" + k]) };
         if (!np.code) throw new Error(L("Give the plan a code.", "أدخل كود الباقة."));
+        if (!np.contact && !(np.users >= 1)) throw new Error(L("Set how many users the plan includes.", "حدد عدد المستخدمين في الباقة."));
+        if (np.users == null) delete np.users; if (!np.deny.length) delete np.deny;
         const list = plans.slice(); if (i == null) list.push(np); else list[i] = np; await save(list); }, { wide: true,
         extra: i != null ? `<button type="button" class="btn" data-a="pdup">${esc(L("Duplicate", "نسخ"))}</button>${p.code !== cfg.trial_plan ? `<button type="button" class="btn danger" data-a="pdel">${esc(L("Delete", "حذف"))}</button>` : ""}` : "",
-        onOpen: f => { const draw = () => { const v = readForm(f); $("#pprev", f).innerHTML = planCard({ ...p, ...v, price: +v.price, users: +v.users, features: v.features.split("\n").filter(Boolean), features_ar: v.features_ar.split("\n").filter(Boolean),
+        onOpen: f => { treeWire(f); const draw = () => { const v = readForm(f); $("#pprev", f).innerHTML = planCard({ ...p, ...v, price: +v.price, users: +v.users, features: v.features.split("\n").filter(Boolean), features_ar: v.features_ar.split("\n").filter(Boolean),
           modules: v.mods === "all" ? "all" : SECTIONS().map(s => s[0]).filter(k => v["s_" + k]) }, cfg); }; f.addEventListener("input", draw); f.addEventListener("change", draw); draw(); } });
     S.H.pdup = () => { closePanel(); const c = { ...p, code: p.code + "-2", name: p.name + " 2", hidden: true }; save([...plans, c], L("Copied as a hidden plan.", "نُسخت كباقة مخفية.")); };
     S.H.pdel = async () => { if (!await confirmIt(L(`Delete the plan ${p.name}? Companies already on it keep their paid period; renewals then need another plan.`, `حذف الباقة ${p.name}؟ تحتفظ الشركات المشتركة بفترتها المدفوعة؛ ويلزمها باقة أخرى عند التجديد.`), { danger: true })) return; closePanel(); save(plans.filter((_, j) => j !== i)); };
@@ -999,6 +1214,37 @@ PAGES.addons = async view => {
       { k: "extra_user", l: L(`Extra user, per month (${cfg.currency})`, `المستخدم الإضافي شهرياً (${cfg.currency})`), type: "number", v: cfg.extra_user, min: 0 },
       { k: "extra_company_pct", l: L("Each further company in an order (% of the plan)", "كل شركة إضافية في الطلب (% من الباقة)"), type: "number", v: cfg.extra_company_pct, min: 0, max: 1000 }])}</div>
     <button class="btn pri" data-a="asave">${esc(L("Save", "حفظ"))}</button></form>`;
+};
+
+// ================================================================== menus by industry: the starter sections every plan includes
+PAGES.menus = async view => {
+  const cfg = (await rpc("billing_admin_overview")).config, core = cfg.core_modules || [];
+  const inds = industriesOf(cfg), secs = SECTIONS();
+  const iname = (k, d) => S.lang === "ar" && d.name_ar ? d.name_ar : d.name || k;
+  const save = async next => { await rpc("billing_set_config", { p: next }); toast(L("Saved.", "تم الحفظ.")); route(); };
+  Object.assign(S.H, {
+    msave: () => { const v = readForm($("#mf")), next = {};
+      inds.forEach(([k, d]) => { next[k] = { ...d, modules: secs.map(s => s[0]).filter(m => v[`i_${k}_${m}`]) }; });
+      return save({ core_modules: secs.map(s => s[0]).filter(m => v["c_" + m]), core_by_industry: next }); },
+    mnew: () => panel(L("New industry", "نشاط جديد"), form([{ k: "key", l: L("Code (small letters)", "الكود (حروف صغيرة)"), req: 1, dir: "ltr" }, { k: "name", l: L("Name", "الاسم"), req: 1 }, { k: "name_ar", l: L("Name (Arabic)", "الاسم (عربي)") }]),
+      v => { const k = v.key.trim().toLowerCase().replace(/[^a-z_]/g, ""); if (!k) throw new Error(L("Give it a code.", "أدخل الكود.")); if ((cfg.core_by_industry || {})[k]) throw new Error(L("This code is used.", "هذا الكود مستخدم."));
+        return save({ core_by_industry: { ...(cfg.core_by_industry || {}), [k]: { name: v.name.trim(), name_ar: v.name_ar.trim(), modules: [] } } }); }),
+    mren: el => { const k = el.dataset.k, d = cfg.core_by_industry[k];
+      panel(L("Industry", "النشاط"), form([{ k: "name", l: L("Name", "الاسم"), v: d.name || "", req: 1 }, { k: "name_ar", l: L("Name (Arabic)", "الاسم (عربي)"), v: d.name_ar || "" }]),
+        v => save({ core_by_industry: { ...cfg.core_by_industry, [k]: { ...d, name: v.name.trim(), name_ar: v.name_ar.trim() } } }), {
+          extra: `<button type="button" class="btn danger" data-a="mdel" data-k="${esc(k)}">${esc(L("Delete", "حذف"))}</button>` }); },
+    mdel: async el => { const k = el.dataset.k; if (!await confirmIt(L("Delete this industry? Companies set to it keep only the core sections and their plan's.", "حذف هذا النشاط؟ الشركات المرتبطة به تحتفظ بالأقسام الأساسية وأقسام باقتها فقط."), { danger: true })) return;
+      const next = { ...cfg.core_by_industry }; delete next[k]; closePanel(); save({ core_by_industry: next }); },
+    mall: el => { const k = el.dataset.k, boxes = $$(`input[name^="i_${k}_"]`, $("#mf")), on = boxes.some(b => !b.checked); boxes.forEach(b => { b.checked = on; }); },
+  });
+  view.innerHTML = `<form id="mf" onsubmit="return false"><div class="card"><div class="row"><h2 style="margin:0">${esc(L("Starter sections by industry", "الأقسام المبدئية حسب النشاط"))}</h2><span class="sp"></span>
+      <button class="btn sm" data-a="mnew">+ ${esc(L("Industry", "نشاط"))}</button></div>
+    <p class="muted small">${esc(L("Every plan includes the core sections and the starter sections of the company's industry, so each business has what it needs from day one. Plans add more; one company can get more on its own page (What it can use), and any screen or tab can be switched off per plan or per company. The trial and free companies see every section.", "تشمل كل باقة الأقسام الأساسية والأقسام المبدئية لنشاط الشركة، ليجد كل نشاط ما يحتاجه من اليوم الأول. تضيف الباقات المزيد، ويمكن منح شركة واحدة المزيد من صفحتها (ما يمكنها استخدامه)، ويمكن إيقاف أي شاشة أو تبويب لكل باقة أو لكل شركة. التجربة والشركات المجانية ترى كل الأقسام."))}</p>
+    <div class="tbl matrix"><table><thead><tr><th>${esc(L("Section", "القسم"))}</th><th class="center">${esc(L("Core (all)", "أساسي (للكل)"))}</th>
+      ${inds.map(([k, d]) => `<th class="center"><button type="button" class="linkb" data-a="mren" data-k="${esc(k)}" title="${esc(L("Rename or delete", "إعادة التسمية أو الحذف"))}">${esc(iname(k, d))}</button><br><button type="button" class="linkb small" data-a="mall" data-k="${esc(k)}">${esc(L("all / none", "الكل / لا شيء"))}</button></th>`).join("")}</tr></thead>
+      <tbody>${secs.map(([m, l]) => `<tr><td>${esc(l)}</td><td class="center"><input type="checkbox" name="c_${m}" ${core.includes(m) ? "checked" : ""}></td>
+        ${inds.map(([k, d]) => `<td class="center"><input type="checkbox" name="i_${k}_${m}" ${(d.modules || []).includes(m) ? "checked" : ""} title="${esc(iname(k, d) + " · " + l)}"></td>`).join("")}</tr>`).join("")}</tbody></table></div>
+    <div class="row" style="margin-top:12px"><button class="btn pri" data-a="msave">${esc(L("Save", "حفظ"))}</button></div></div></form>`;
 };
 
 // ================================================================== rules and switches

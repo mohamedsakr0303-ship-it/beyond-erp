@@ -387,6 +387,8 @@ def cloud_new_books(name, email):
               window.dispatchEvent(new CustomEvent("beyond-billing", { detail: { status: "expired" } }));
               return jsonReply(402, { error: e.message.replace(/^.*subscription_ended:\s*/, ""), billing: "expired" });
             }
+            if (/seat_limit/.test(e.message))             // every user seat of the plan is taken: nothing was saved
+              return jsonReply(402, { error: e.message.replace(/^.*seat_limit:\s*/, ""), billing: "seat_limit" });
             fail(e);
             const msg = e.code === "offline" ? "You are offline — changes need a connection to the shared workspace (viewing still works)." :
               e.code === "update" ? e.message : e.code === "signed_out" || e.status === 401 ? "Your workspace sign-in expired — sign out and sign in again." : "Workspace: " + e.message;
@@ -599,7 +601,7 @@ def cloud_new_books(name, email):
         billingSetCompany: (id, p) => rpc("billing_set_company", { p_company: id, p }),
         // --- the owner console, orders of several companies, support with files (supabase/migrations/*_owner_console.sql)
         async platform(name, params) {
-          if (!/^(billing_order_(quote|open|submit|cancel)|billing_my_orders|billing_status|support_(open|get|reply|close|mine)|visit_(request|mine|customer)|console_[a-z_]+)$/.test(name)) throw new Error("Unknown workspace call");
+          if (!/^(billing_order_(quote|open|submit|cancel)|billing_my_orders|billing_status|support_(open|get|reply|close|mine)|visit_(request|mine|customer)|enterprise_request|company_set_industry|console_[a-z_]+)$/.test(name)) throw new Error("Unknown workspace call");
           // the workspace prefixes some refusals with a code ("support_not_included: …"); people see the sentence
           try { return await rpc(name, params || {}); } catch (e) { e.message = String(e.message || "").replace(/^[a-z_]+: /, ""); throw e; }
         },

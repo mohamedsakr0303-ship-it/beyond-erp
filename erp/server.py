@@ -4770,8 +4770,22 @@ def export_workbook(ctx):
     if ctx.q.get("files") == "1":     # the workbook plus every attached file, in month folders, as one .zip
         return download(interchange.workbook_zip(ctx.db, lang, secrets=_with_secrets(ctx)), f"BEYOND_ERP_{acc.today()}{'_AR' if lang == 'ar' else ''}_with_files.zip",
                         "application/zip")
-    data = workbook.build_workbook(ctx.db, template=False, lang=lang, secrets=_with_secrets(ctx))
+    data = workbook.build_workbook(ctx.db, template=False, lang=lang, secrets=_with_secrets(ctx), hide=_hide_with_off(ctx))
     return download(data, f"BEYOND_ERP_{acc.today()}{'_AR' if lang == 'ar' else ''}.xlsx", XLSX)
+
+
+def _hide_with_off(ctx, base=None):
+    """Sections and screens whose sheets are hidden: the company's own hidden ones (or `base`), plus what its online
+    subscription switches off (?off=sales.offers,stock — sent by the app; sheets holding rows always stay visible)."""
+    off = [k for k in (ctx.q.get("off") or "").split(",") if re.fullmatch(r"[a-z_]+(\.[a-z_]+){0,2}", k)]
+    if not off:
+        return base
+    if base is None:
+        try:
+            base = json.loads(ctx.db.setting("hidden_modules") or "[]")
+        except ValueError:
+            base = []
+    return list(dict.fromkeys(list(base) + off))
 
 
 @route("GET", "/api/templates/workbook", "import_export")
@@ -4788,9 +4802,9 @@ def template_workbook(ctx):
             if ctx.db.setting(k):
                 db2.set_setting(k, ctx.db.setting(k))
         industries.apply(db2, kind)
-        return download(workbook.build_workbook(db2, template=True, hide=industries.TYPES[kind]["hide"], lang=lang, identity=ident),
+        return download(workbook.build_workbook(db2, template=True, hide=_hide_with_off(ctx, industries.TYPES[kind]["hide"]), lang=lang, identity=ident),
                         f"ERP_Template_{kind}{'_AR' if lang == 'ar' else ''}.xlsx", XLSX)
-    return download(workbook.build_workbook(ctx.db, template=True, lang=lang), f"BEYOND_ERP_Import_Template{'_AR' if lang == 'ar' else ''}.xlsx", XLSX)
+    return download(workbook.build_workbook(ctx.db, template=True, lang=lang, hide=_hide_with_off(ctx)), f"BEYOND_ERP_Import_Template{'_AR' if lang == 'ar' else ''}.xlsx", XLSX)
 
 
 @route("GET", "/api/industries", "settings")
