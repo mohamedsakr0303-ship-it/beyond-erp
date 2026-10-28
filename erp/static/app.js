@@ -4196,14 +4196,14 @@ async function deskPageForm(kind, pg, d) {
     if (svcs.length) fields.push({ html: `<div class="f">${esc(L2("Bookable services (from Healthcare → Services)", "الخدمات المتاحة للحجز (من الرعاية الصحية ← الخدمات)"))}<div class="row" style="flex-wrap:wrap;gap:6px 14px">${svcs.map(s =>
       `<label class="chk"><input type="checkbox" data-skip="1" class="dk-svc" value="${s.id}" ${!c.services || c.services.some(x => String(x.id) === String(s.id)) ? "checked" : ""}> ${esc(careSvcName(s))}</label>`).join("")}</div></div>`, span: "spanall" });
     else fields.push({ k: "svc_text", l: L2("Services, one per line: name | minutes | price", "الخدمات، سطر لكل خدمة: الاسم | الدقائق | السعر"), type: "textarea", span: "spanall",
-      v: (c.services || []).map(s => [s.name, s.minutes || "", s.price || ""].join(" | ")).join("\n"), ph: L2("Service | 30 | 100", "خدمة | 30 | 100") });
+      v: (c.services || []).map(s => [s.name, s.minutes || "", s.price || ""].join(" | ")).join("\n"), ph: L2("e.g. Consultation | 30 | 500", "مثال: استشارة | 30 | 500") });
     fields.push({ html: `<div class="f">${esc(L2("Working days", "أيام العمل"))}<div class="row" style="gap:6px 14px;flex-wrap:wrap">${wd.map((n, i) => `<label class="chk"><input type="checkbox" data-skip="1" class="dk-day" value="${i}" ${days.includes(i) ? "checked" : ""}> ${esc(n)}</label>`).join("")}</div></div>`, span: "spanall" },
       { k: "from", l: L2("Opening time", "وقت البدء"), type: "time", v: c.from || "09:00" }, { k: "to", l: L2("Closing time", "وقت الانتهاء"), type: "time", v: c.to || "17:00" },
       { k: "slot", l: L2("Slot length (minutes)", "مدة الموعد (بالدقائق)"), type: "number", v: c.slot || 30 }, { k: "per_slot", l: L2("Bookings per slot", "الحجوزات لكل موعد"), type: "number", v: c.per_slot || 1 },
       { k: "ahead", l: L2("Booking window (days)", "فترة الحجز المتاحة (بالأيام)"), type: "number", v: c.ahead || 30 }, { k: "notice_hours", l: L2("Minimum notice (hours)", "الحد الأدنى للإشعار المسبق (بالساعات)"), type: "number", v: c.notice_hours || 2 },
       { k: "place", l: L2("Location", "المكان"), type: "select", v: c.place || (S.boot.settings.business_type === "homecare" ? "home" : "clinic"), opts: [["clinic", L2("On premises", "في المقر")], ["home", L2("At the customer's address", "لدى العميل")], ["both", L2("Customer's choice", "حسب اختيار العميل")]] },
       { k: "closed", l: L2("Closed dates (YYYY-MM-DD, comma-separated)", "أيام الإغلاق (YYYY-MM-DD، مفصولة بفواصل)"), v: (c.closed || []).join(", "), span: "spanall" },
-      { k: "show_prices", l: L2("Show prices", "إظهار الأسعار"), type: "switch", v: !!c.show_prices });
+      { k: "show_prices", l: L2("Show prices (each service's price, from the services above)", "إظهار الأسعار (سعر كل خدمة من الخدمات أعلاه)"), type: "switch", v: !!c.show_prices });
   }
   if (kind === "form") fields.push({ k: "intro", l: L2("Text above the form", "نص أعلى النموذج"), type: "textarea", v: c.intro || "", span: "spanall" },
     { k: "fields_text", l: L2("Questions, one per line: label | type | required. Types: text, tel, email, textarea, select:A/B/C", "الأسئلة، سطر لكل سؤال: العنوان | النوع | إلزامي. الأنواع: text، tel، email، textarea، select:A/B/C"), type: "textarea", span: "spanall",
@@ -4217,13 +4217,15 @@ async function deskPageForm(kind, pg, d) {
   drawer(`${DESK_KIND()[kind][1]} ${pg.id ? pg.title : DESK_KIND()[kind][0]}`, form(fields), async (v, f) => {
     const cfg = { ...c, lang: v.lang, color: v.color, title_ar: v.title_ar };
     if (kind === "booking") {
-      cfg.note = v.note; cfg.from = v.from; cfg.to = v.to; cfg.slot = +v.slot || 30; cfg.per_slot = +v.per_slot || 1; cfg.ahead = +v.ahead || 30; cfg.notice_hours = +v.notice_hours || 0; cfg.place = v.place; cfg.show_prices = !!v.show_prices;
+      cfg.note = v.note; cfg.from = v.from; cfg.to = v.to; cfg.slot = +v.slot || 30; cfg.per_slot = +v.per_slot || 1; cfg.ahead = +v.ahead || 30; cfg.notice_hours = +v.notice_hours || 0; cfg.place = v.place; cfg.show_prices = !!v.show_prices; cfg.currency = S.boot.settings.currency || "";
       cfg.days = $$(".dk-day", f).filter(x => x.checked).map(x => +x.value);
       cfg.closed = String(v.closed || "").split(/[,\s]+/).filter(x => /^\d{4}-\d{2}-\d{2}$/.test(x));
       cfg.services = svcs.length ? svcs.filter(s => $$(".dk-svc", f).some(x => x.checked && x.value === String(s.id))).map(s => ({ id: s.id, name: s.name, name_ar: s.name_ar, minutes: s.minutes, price: s.price }))
         : String(v.svc_text || "").split("\n").map(x => x.split("|").map(y => y.trim())).filter(x => x[0]).map(([name, m, p]) => ({ name, minutes: +m || 0, price: +p || 0 }));
       cfg.busy = d.busy || [];
       if (!cfg.days.length) throw new Error(L2("Choose at least one working day.", "اختر يوم عمل واحداً على الأقل."));
+      if (cfg.show_prices && !cfg.services.some(s => +s.price > 0))
+        throw new Error(L2("Prices are shown per service: add services with a price (one per line: name | minutes | price), or switch Show prices off.", "تُعرض الأسعار لكل خدمة: أضف خدمات بسعرها (سطر لكل خدمة: الاسم | الدقائق | السعر)، أو أوقف إظهار الأسعار."));
     }
     if (kind === "form") { cfg.intro = v.intro; cfg.thanks = v.thanks;
       cfg.fields = String(v.fields_text || "").split("\n").map(x => x.split("|").map(y => y.trim())).filter(x => x[0]).map(([label, ty, rq], i) => {
@@ -4272,7 +4274,7 @@ PAGES.desk = async (view, parts, q) => {
     <div class="banner info">${esc(L2("To request an online signature, open the offer and choose “Send for e-signature”.", "لطلب توقيع إلكتروني، افتح العرض واختر «إرسال للتوقيع الإلكتروني»."))}</div>`;
   if (tab === "bookings") body = `<div class="card">${d.bookings.length ? `<div class="tbl stack"><table><thead><tr><th>${esc(L2("Date", "التاريخ"))}</th><th>${esc(L2("Customer", "العميل"))}</th><th>${esc(L2("Service", "الخدمة"))}</th><th>${t("status")}</th><th></th></tr></thead><tbody>
       ${d.bookings.map(b => `<tr><td>${b.slot ? `<b>${fd(b.slot.slice(0, 10))}</b> ${esc(b.slot.slice(11))}` : "—"}<div class="lines">${esc(b.ref)}</div></td><td><b>${esc(b.name)}</b><div class="lines" dir="ltr">${esc(b.phone)}</div></td>
-        <td>${esc(b.service || b.page_title)}${b.place === "home" ? " 🏠" : ""}${b.notes ? `<div class="lines">${esc(b.notes)}</div>` : ""}</td>
+        <td>${esc(b.service || b.page_title)}${b.price != null && b.price !== "" ? ` · <b>${money(b.price)}</b>` : ""}${b.place === "home" ? " 🏠" : ""}${b.notes ? `<div class="lines">${esc(b.notes)}</div>` : ""}</td>
         <td>${b.cancelled ? `<span class="chip bad">${esc(L2("Cancelled by customer", "ألغاه العميل"))}</span>` : b.confirmed === "declined" ? `<span class="chip bad">${esc(L2("Declined", "مرفوض"))}</span>` : b.confirmed === "confirmed" ? `<span class="chip ok">${esc(L2("Confirmed", "مؤكد"))}</span>` : `<span class="chip warn">${esc(L2("New: awaiting confirmation", "جديد: بانتظار التأكيد"))}</span>`}
           ${b.state === "error" ? `<div class="neg">⚠ ${esc(b.error)}</div>` : ""}</td>
         <td style="white-space:nowrap">${!b.cancelled && !b.confirmed && b.state === "done" ? `<button class="btn sm pri" data-a="dkanswer" data-how="confirmed" data-id="${b.id}">✓ ${esc(L2("Confirm", "تأكيد"))}</button><button class="btn sm" data-a="dkanswer" data-how="declined" data-id="${b.id}">✕</button>` : ""}

@@ -220,7 +220,7 @@ def bookings(db, date_from=None):
             continue
         out.append({"id": r["id"], "ref": r["ref"], "page_id": r["page_id"], "page_title": r["page_title"], "slot": slot,
                     "cancelled": bool(last and last["kind"] == "cancel"), "name": p.get("name", ""), "phone": p.get("phone", ""),
-                    "service": p.get("service", ""), "place": p.get("place", ""), "notes": p.get("notes", ""),
+                    "service": p.get("service", ""), "price": p.get("price"), "place": p.get("place", ""), "notes": p.get("notes", ""),
                     "state": r["state"], "error": r["error"], "target": r["target"], "target_id": r["target_id"],
                     "confirmed": r["confirmed"]})
     return out

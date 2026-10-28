@@ -182,5 +182,17 @@ class WorkbooksFollowTheSubscription(unittest.TestCase):
         self.assertEqual(server._hide_with_off(ctx({"off": "rentals"}), ["shop"]), ["shop", "rentals"])
 
 
+class BookingPrices(unittest.TestCase):
+    def test_the_price_chosen_on_the_booking_page_reaches_the_bookings_list(self):
+        from erp import desk
+        from erp.db import Database
+        db = Database(":memory:")
+        db.x("INSERT INTO desk_rows(id, page_id, kind, ref, slot, payload) VALUES (1, 'p', 'booking', 'R1', '2026-11-02 10:00', ?)",
+             (json.dumps({"name": "Visitor", "service": "Consultation", "price": 500}),))
+        self.assertEqual(desk.bookings(db)[0]["price"], 500)
+        js = (ROOT / "web-src" / "p.html").read_text(encoding="utf-8")
+        self.assertIn("price: +B.svc.price", js)                  # sent with the booking when the page shows prices
+
+
 if __name__ == "__main__":
     unittest.main()

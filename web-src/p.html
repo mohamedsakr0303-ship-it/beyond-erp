@@ -90,6 +90,8 @@ const fmtDate = (iso, opts) => new Date(iso + "T12:00:00").toLocaleDateString(L 
 const pad = n => String(n).padStart(2, "0");
 const isoDay = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const nm = o => L === "ar" && o.name_ar ? o.name_ar : o.name;
+// a service's price, when the page shows prices (with the company's currency)
+const priceOf = s => PG && PG.config && PG.config.show_prices && s && +s.price ? `${Number(s.price).toLocaleString(L === "ar" ? "ar-EG" : "en-US")}${PG.config.currency ? " " + PG.config.currency : ""}` : "";
 function header() {
   $("#co").textContent = PG ? PG.company || "" : ""; $("#pt").textContent = ttl();
   document.title = (PG && (PG.title || PG.company)) || "BeyondERP";
@@ -129,14 +131,14 @@ function bookingView() {
   const times = B.day ? slotsFor(B.day) : [];
   main().innerHTML = (mine && !B.moving ? `<div class="card row"><span>${esc(T("You have a booking here.", "لديك حجز هنا."))}</span><span class="sp"></span><a class="btn" href="#t=${encodeURIComponent(TOK)}&r=${encodeURIComponent(mine.ref)}&m=${encodeURIComponent(mine.manage)}">${esc(T("See my booking", "عرض حجزي"))}</a></div>` : "") +
     `<div class="card"><h1>${esc(B.moving ? T("Choose a new time", "اختر موعداً جديداً") : (ttl() || T("Book an appointment", "احجز موعداً")))}</h1>${c.note ? `<p class="muted">${esc(c.note)}</p>` : ""}
-    ${svcs.length && !B.moving ? `<h2>${esc(T("1. What do you need?", "١. ما الخدمة المطلوبة؟"))}</h2><div class="opts">${svcs.map((s, i) => `<button type="button" class="opt ${B.svc === s ? "on" : ""}" data-svc="${i}"><b>${esc(nm(s))}</b>${s.minutes ? `<span class="muted small">${s.minutes} ${esc(T("min", "دقيقة"))}</span>` : ""}${c.show_prices && s.price ? `<span class="chip">${esc(Number(s.price).toLocaleString())}</span>` : ""}</button>`).join("")}</div>` : ""}
+    ${svcs.length && !B.moving ? `<h2>${esc(T("1. What do you need?", "١. ما الخدمة المطلوبة؟"))}</h2><div class="opts">${svcs.map((s, i) => `<button type="button" class="opt ${B.svc === s ? "on" : ""}" data-svc="${i}"><b>${esc(nm(s))}</b>${s.minutes ? `<span class="muted small">${s.minutes} ${esc(T("min", "دقيقة"))}</span>` : ""}${priceOf(s) ? `<span class="chip">${esc(priceOf(s))}</span>` : ""}</button>`).join("")}</div>` : ""}
     ${!svcs.length || B.svc || B.moving ? `<h2 style="margin-top:18px">${esc(B.moving ? T("Day", "اليوم") : T("2. Pick a day", "٢. اختر اليوم"))}</h2>
       ${days.length ? `<div class="days">${days.map(d => { const x = new Date(d + "T12:00:00"); return `<button type="button" class="day ${d === B.day ? "on" : ""}" data-day="${d}"><small>${esc(x.toLocaleDateString(L === "ar" ? "ar-EG" : "en-GB", { weekday: "short" }))}</small><b>${x.getDate()}</b><small>${esc(x.toLocaleDateString(L === "ar" ? "ar-EG" : "en-GB", { month: "short" }))}</small></button>`; }).join("")}</div>
       <h2 style="margin-top:16px">${esc(B.moving ? T("Time", "الوقت") : T("3. Pick a time", "٣. اختر الوقت"))}</h2>${times.length ? `<div class="times">${times.map(t => `<button type="button" class="tm ${t === B.time ? "on" : ""}" data-time="${t}">${t}</button>`).join("")}</div>` : `<p class="muted">${esc(T("No free times this day.", "لا توجد مواعيد متاحة في هذا اليوم."))}</p>`}`
       : `<p class="muted">${esc(T("No free days in the coming weeks — please contact us.", "لا توجد أيام متاحة في الأسابيع القادمة — تواصل معنا."))}</p>`}` : ""}
     </div>` +
     (B.time ? (B.moving ? `<div class="card"><button class="btn pri full" id="mv">${esc(T("Move my booking to ", "نقل الحجز إلى ") + fmtDate(B.day) + " " + B.time)}</button><div id="err" hidden></div></div>` :
-    `<div class="card"><h2>${esc(T("4. Your details", "٤. بياناتك"))}</h2><form id="bf">
+    `<div class="card"><h2>${esc(T("4. Your details", "٤. بياناتك"))}</h2>${B.svc ? `<p class="muted">${esc(nm(B.svc))}${priceOf(B.svc) ? ` — <b>${esc(priceOf(B.svc))}</b>` : ""}</p>` : ""}<form id="bf">
       <label>${esc(T("Full name", "الاسم بالكامل"))} *</label><input name="name" required autocomplete="name">
       <label>${esc(T("Mobile number", "رقم الموبايل"))} *</label><input name="phone" required inputmode="tel" autocomplete="tel" dir="ltr">
       <label>${esc(T("Email (optional)", "البريد الإلكتروني (اختياري)"))}</label><input name="email" type="email" autocomplete="email" dir="ltr">
@@ -150,7 +152,7 @@ function bookingView() {
   const pl = $("[name=place]"); if (pl && pl.tagName === "SELECT") { const sync = () => { $("#addr").hidden = pl.value !== "home"; }; pl.onchange = sync; sync(); }
   const f = $("#bf"); if (f) f.onsubmit = async e => { e.preventDefault(); const btn = $("button", f); btn.disabled = true;
     const v = Object.fromEntries(new FormData(f).entries()), slot = `${B.day} ${B.time}`;
-    try { const r = await rpc("public_send", { p_token: TOK, p_kind: "booking", p_payload: { ...v, slot, service: B.svc ? B.svc.name : "", service_id: B.svc ? B.svc.id : null } });
+    try { const r = await rpc("public_send", { p_token: TOK, p_kind: "booking", p_payload: { ...v, slot, service: B.svc ? B.svc.name : "", service_id: B.svc ? B.svc.id : null, ...(priceOf(B.svc) ? { price: +B.svc.price } : {}) } });
       store.set("bk:" + TOK, { ref: r.ref, manage: r.manage, slot }); location.hash = `t=${encodeURIComponent(TOK)}&r=${encodeURIComponent(r.ref)}&m=${encodeURIComponent(r.manage)}&new=1`; }
     catch (x) { btn.disabled = false; fail(x); if (/taken/i.test(x.message)) { await reload(); } } };
   const mv = $("#mv"); if (mv) mv.onclick = async () => { mv.disabled = true;
@@ -177,7 +179,7 @@ async function manageView() {
   const svc = (d.payload && d.payload.service) || "";
   main().innerHTML = `<div class="card">${hp.get("new") ? `<div class="big-ok ok">✓</div><h1>${esc(T("Booking received", "تم استلام الحجز"))}</h1>` : `<h1>${esc(T("Your booking", "حجزك"))}</h1>`}
     <p>${st}</p>${d.slot ? `<p style="font-size:1.15em"><b>${esc(fmtDate(d.slot.slice(0, 10)))}</b> — <b>${esc(d.slot.slice(11))}</b></p>` : ""}
-    ${svc ? `<p class="muted">${esc(svc)}</p>` : ""}<p class="muted small">${esc(T("Reference", "رقم الحجز"))}: <b>${esc(ref)}</b></p>
+    ${svc ? `<p class="muted">${esc(svc)}${priceOf((PG.config.services || []).find(s => s.name === svc)) ? ` — <b>${esc(priceOf((PG.config.services || []).find(s => s.name === svc)))}</b>` : ""}</p>` : ""}<p class="muted small">${esc(T("Reference", "رقم الحجز"))}: <b>${esc(ref)}</b></p>
     ${notes.length ? `<div class="card" style="box-shadow:none">${notes.map(n => `<p style="margin:4px 0">💬 ${esc(n.body)}</p>`).join("")}</div>` : ""}
     ${d.slot && !declined ? `<div class="row" style="margin-top:12px"><a class="btn" id="cal" download="booking.ics">📅 ${esc(T("Add to my calendar", "أضف إلى التقويم"))}</a>
       <button class="btn" id="move">${esc(T("Change time", "تغيير الموعد"))}</button><button class="btn bad" id="cancel">${esc(T("Cancel", "إلغاء الحجز"))}</button></div>` : ""}
