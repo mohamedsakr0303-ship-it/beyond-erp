@@ -6,6 +6,7 @@ window.BEYOND_STATIC = true;
 (function () {
   const V = "vendor/";
   const say = m => { const el = document.getElementById("bootmsg"); if (el) el.textContent = m; };
+  const T = (en, ar) => document.documentElement.lang === "ar" ? ar : en;   // the start screen speaks the person's language (index.html)
   const load = src => new Promise((ok, bad) => { const s = document.createElement("script"); s.src = src; s.onload = ok; s.onerror = () => bad(new Error("Could not load " + src)); document.head.appendChild(s); });
 
   // ---------- IndexedDB (one key: the whole database image)
@@ -41,8 +42,8 @@ window.BEYOND_STATIC = true;
     const stored = cache ? new Set((await cache.keys()).map(k => new URL(k.url).pathname)) : new Set();
     const fresh = files.some(f => !stored.has(new URL(f, location.href).pathname));
     let done = 0;
-    const show = () => say(fresh ? `Loading the ERP engine… ${Math.round(done / files.length * 100)}% (downloaded once, about 19 MB — afterwards it starts from this device)`
-      : `Starting the ERP engine… ${Math.round(done / files.length * 100)}%`);
+    const show = () => say(fresh ? T(`Loading the ERP engine… ${Math.round(done / files.length * 100)}% (downloaded once, about 19 MB — afterwards it starts from this device)`, `جارٍ تحميل محرك النظام… ${Math.round(done / files.length * 100)}% (يُنزَّل مرة واحدة، نحو 19 ميجابايت — بعدها يبدأ من هذا الجهاز)`)
+      : T(`Starting the ERP engine… ${Math.round(done / files.length * 100)}%`, `جارٍ تشغيل محرك النظام… ${Math.round(done / files.length * 100)}%`));
     show();
     await Promise.all(files.map(f => (web ? packFromStore(f, cache) : load(f)).then(() => { done++; show(); })));
     // engine files of earlier versions are no longer needed on this device
@@ -68,7 +69,7 @@ window.BEYOND_STATIC = true;
   window.__beyondReady = (async () => {
     if (!window.indexedDB) console.warn("IndexedDB unavailable — data will not persist");
     await unpackAll();
-    say("Loading database engine…");
+    say(T("Loading database engine…", "جارٍ تحميل محرك قاعدة البيانات…"));
     await load(V + "sql-wasm.js");
     const SQL = await window.initSqlJs({ locateFile: f => V + f, wasmBinary: BLOBS["sql-wasm.wasm"] });
     // Each company of the shared workspace keeps its own copy of its books in this browser ("db:<company id>");
@@ -115,14 +116,14 @@ window.BEYOND_STATIC = true;
     window.addEventListener("pagehide", persist);
     document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") persist(); });
 
-    say("Starting the ERP engine…");
+    say(T("Starting the ERP engine…", "جارٍ تشغيل محرك النظام…"));
     await load(V + "pyodide/pyodide.js");
     await load(V + "pyodide/pyodide.asm.js");
     const py = await window.loadPyodide({ indexURL: new URL(V + "pyodide/", location.href).href });
     const unpack = async (url, fmt, dir) => { const r = await fetch(url); if (!r.ok) throw new Error("Missing " + url); py.unpackArchive(await r.arrayBuffer(), fmt, dir ? { extractDir: dir } : undefined); };
     await unpack("erp.zip", "zip", "/app");
     for (const w of (window.BEYOND_WHEELS || [])) await unpack(V + "wheels/" + w, "wheel");
-    say("Starting…");
+    say(T("Starting…", "جارٍ التشغيل…"));
     py.runPython(`
 import os, sys, json
 os.environ["BEYOND_ERP_STATIC"] = "1"

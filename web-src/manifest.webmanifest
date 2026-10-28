@@ -2,7 +2,7 @@
   "id": "./",
   "name": "BeyondERP",
   "short_name": "BeyondERP",
-  "description": "Accounting, projects, partners and assets",
+  "description": "Run the business, not the paperwork.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
