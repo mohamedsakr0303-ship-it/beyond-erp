@@ -108,6 +108,33 @@ def minify():
                        check=True)
 
 
+def search_files():
+    """What search engines read: the site's own address in the home page (canonical link, sharing preview, structured
+    data), robots.txt and sitemap.xml. SITE_URL (set by the deploy) is the public address; without it the
+    address-dependent tags are left out. The app's other pages (owner console, public booking / form pages) say noindex."""
+    import datetime
+    import os
+    site = (os.environ.get("SITE_URL") or "").strip()
+    if site and not site.endswith("/"):
+        site += "/"
+    page = OUT / "index.html"
+    html = page.read_text(encoding="utf-8")
+    if site:
+        html = html.replace("__SITE__", site)
+    else:
+        html = "\n".join(x for x in html.split("\n") if "__SITE__" not in x or "ld+json" in x)
+        html = html.replace('"url":"__SITE__",', "")
+    page.write_text(html, encoding="utf-8")
+    robots = "User-agent: *\nAllow: /\n"           # scripts and styles stay open: search engines render the page with them
+    if site:
+        robots += f"\nSitemap: {site}sitemap.xml\n"
+        (OUT / "sitemap.xml").write_text('<?xml version="1.0" encoding="UTF-8"?>\n'
+                                         '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+                                         f"  <url><loc>{site}</loc><lastmod>{datetime.date.today().isoformat()}</lastmod></url>\n"
+                                         "</urlset>\n", encoding="utf-8")
+    (OUT / "robots.txt").write_text(robots, encoding="utf-8")
+
+
 def build(make_zip=False):
     if OUT.exists():
         shutil.rmtree(OUT)
@@ -141,6 +168,7 @@ def build(make_zip=False):
     # p.html: the public pages (booking, forms, signing, guest chat); owner.*: the owner console, a page of its own
     for f in ("index.html", "bridge.js", "p.html", "owner.html", "owner.js", "owner.css"):
         shutil.copy(ROOT / "web-src" / f, OUT / f)
+    search_files()
     # installable app (manifest, offline service worker, icons) — used by hosted builds, left out of the zip
     for f in PWA_FILES:
         shutil.copy(ROOT / "web-src" / f, OUT / f)

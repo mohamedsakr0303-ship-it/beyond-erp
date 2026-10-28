@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from erp import accounting as a  # noqa: E402
-from erp import equity, funders, interchange, partner_pack, settlement  # noqa: E402
+from erp import cashplan, equity, funders, fundsched, interchange, partner_pack, settlement  # noqa: E402
 from erp.db import Database  # noqa: E402
 
 
@@ -153,6 +153,45 @@ class SeveralFunders(unittest.TestCase):
         self.assertEqual(funders.balance(dst, g), 250)
         self.assertEqual(dst.setting("distribute_from_funder"), "1")
         self.assertEqual(funders.primary(dst)["name"], "Main")
+
+
+    def test_the_repayment_schedule_covers_every_funding_partner(self):
+        db = books()
+        db.set_setting("funding_repay_pct", "0.5")
+        f = funders.save_extra(db, [{"name": "Second", "mode": "facility", "repay_pct": 0.25}])[0]
+        main = funders.primary(db)["account"]
+        a.record_project_cost(db, {"bu_code": "P-1", "vendor": "Sup", "description": "Works", "qty": 1, "rate": 1000,
+                                   "paid": 1000, "paid_from": main, "date": "2026-02-02"})
+        a.record_project_cost(db, {"bu_code": "P-1", "vendor": "Sup", "description": "Works", "qty": 1, "rate": 400,
+                                   "paid": 400, "paid_from": f["account"], "date": "2026-02-03"})
+        a.record_journal(db, {"memo": "Invoice", "date": "2026-02-10", "bu_code": "P-1",
+                              "lines": [{"account": db.acct("ar"), "debit": 6000}, {"account": "4010", "credit": 6000}]})
+        d = fundsched.build(db, "2026-02-20", {"months": 6})
+        self.assertEqual(d["partner"], "Main")                                  # the main one by default
+        self.assertEqual({x["name"]: (x["pct"], x["owed"]) for x in d["funders"]}, {"Main": (0.5, 1000.0), "Second": (0.25, 400.0)})
+        first = d["rows"][0]                                                    # customers owe 6,000: collected this month
+        self.assertEqual(first["in"], 6000)
+        self.assertEqual(first["to"], {"Main": 1000.0, "Second": 400.0})        # each from his own share, capped at what he is owed
+        self.assertEqual(first["partners"], 4600.0)                              # what is left after both
+        self.assertEqual((first["to_funder"], first["closing"]), (1000.0, 0.0))
+        d2 = fundsched.build(db, "2026-02-20", {"months": 6}, funder="second")
+        self.assertEqual((d2["partner"], d2["pct"], d2["owed"], d2["rows"][0]["to_funder"]), ("Second", 0.25, 400.0, 400.0))
+        self.assertTrue(d2["repaid_in"])
+        t = fundsched.table(db, "2026-02-20", funder="Second")
+        self.assertIn("Second", t["subtitle"])
+        self.assertTrue(any("Main" in r[0] if isinstance(r, (list, tuple)) else "Main" in str(r) for r in t["rows"]))
+
+    def test_other_funding_partners_count_in_cash_and_limit_warnings(self):
+        db = books(main=False)
+        f = funders.save_extra(db, [{"name": "Second", "mode": "facility", "limit": 1000}])[0]
+        a.record_project_cost(db, {"bu_code": "P-1", "vendor": "Sup", "description": "Works", "qty": 1, "rate": 950,
+                                   "paid": 950, "paid_from": f["account"], "date": "2026-02-02"})
+        m = funders.others_money(db)
+        self.assertEqual((m["held"], m["room"]), (0.0, 50.0))
+        self.assertEqual(cashplan.build(db, 30)["cash_now"], round(cashplan.cash_now(db) + 50, 2))
+        self.assertEqual(funders.limit_states(db)[0]["state"], "near")
+        flags = a.review_flags(db)
+        self.assertTrue(any("Second's funding is near" in x["flag"] for x in flags))
 
 
 if __name__ == "__main__":

@@ -180,3 +180,45 @@ def overview(db, date_to=None):
         out.append({**f, "balance": bal, "owed_to_him": round(max(bal, 0.0), 2), "held_by_him": round(max(-bal, 0.0), 2),
                     "room": round(f["limit"] - max(bal, 0.0), 2) if f["limit"] else None})
     return out
+
+
+def others_money(db, date_to=None):
+    """What the other funding partners make available to the company: money of the company each one holds (a debit
+    balance on his account), and the room left under each facility limit (facility mode with a limit). The main
+    funding partner's facility is worked out by settlement.facility."""
+    held = room = 0.0
+    rows = []
+    for f in extra(db):
+        if not f["active"] or not f["account"]:
+            continue
+        bal = balance(db, f, date_to)
+        h = max(0.0, -bal)
+        r = max(0.0, f["limit"] - max(bal, 0.0)) if f["mode"] == "facility" and f["limit"] else 0.0
+        held, room = held + h, room + r
+        rows.append({"name": f["name"], "account": f["account"], "balance": bal, "held": round(h, 2), "room": round(r, 2)})
+    return {"held": round(held, 2), "room": round(room, 2), "rows": rows}
+
+
+def limit_states(db, date_to=None):
+    """The other funding partners with a limit, and how close each is to it (the same warning levels as the main one)."""
+    warn = _num(db.setting("funding_warn"), 0.75)
+    crit = _num(db.setting("funding_critical"), 0.9)
+    out = []
+    for f in extra(db):
+        if not f["active"] or not f["limit"]:
+            continue
+        used_amt = max(0.0, balance(db, f, date_to))
+        used = used_amt / f["limit"]
+        state = "over" if used >= 1 else "near" if used >= crit else "approaching" if used >= warn else "ok"
+        out.append({"name": f["name"], "account": f["account"], "limit": f["limit"], "used": round(used, 4),
+                    "fronted": round(used_amt, 2), "left": round(f["limit"] - used_amt, 2), "state": state})
+    return out
+
+
+def facility_accounts(db):
+    """Funding partners' accounts that work as a credit line (facility mode): money paid through them is spending."""
+    out = {f["account"] for f in extra(db) if f["active"] and f["account"] and f["mode"] == "facility"}
+    p = primary(db)
+    if p and p["account"] and p["mode"] == "facility":
+        out.add(p["account"])
+    return out

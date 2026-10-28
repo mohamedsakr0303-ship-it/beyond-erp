@@ -168,18 +168,23 @@ def _t_loan_due(db, p):
 def _t_cash_low(db, p):
     """Cash and bank together fall below an amount."""
     floor = float(p.get("below") or 0)
+    from . import funders
+    others = funders.others_money(db)        # other funding partners: what they hold for the company and their room
+    extra = round(others["held"] + others["room"], 2)
     if (db.setting("funding_mode") or "capital") == "facility":       # his account is the bank: the room left in it
         from . import settlement
         f = settlement.facility(db)
         if f and f["limit"]:
-            if f["room_after"] < floor:
+            if f["room_after"] + extra < floor:
                 yield {"ref": f"cash:{_local_day(p)}", "href": "#/partner-exit",
-                       "text": f"Funding room left is {f['room_after']:,.2f} once suppliers are paid — below {floor:,.2f}"}
+                       "text": f"Funding room left is {f['room_after'] + extra:,.2f} once suppliers are paid — below {floor:,.2f}"}
             return
     bal = acc.to_major(db.one("""SELECT COALESCE(SUM(l.debit-l.credit),0) n FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
                                   JOIN accounts a ON a.code=l.account WHERE e.status='posted' AND a.subtype='cash'""")["n"])
-    if bal < floor:
-        yield {"ref": f"cash:{_local_day(p)}", "href": "#/cash", "text": f"Cash & bank are at {bal:,.2f} — below {floor:,.2f}"}
+    if bal + extra < floor:
+        yield {"ref": f"cash:{_local_day(p)}", "href": "#/cash",
+               "text": (f"Cash & bank are at {bal:,.2f} (plus {extra:,.2f} with funding partners) — below {floor:,.2f}" if extra
+                        else f"Cash & bank are at {bal:,.2f} — below {floor:,.2f}")}
 
 
 def _t_approvals_waiting(db, p):

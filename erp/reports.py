@@ -1029,7 +1029,7 @@ def build(db, name, p):
         return partner_pack.table(db, p.get("date_from") or None, p.get("date_to") or None, lang)
     if name == "funding_schedule":
         from . import fundsched
-        return fundsched.table(db, p.get("date_to") or None, lang)
+        return fundsched.table(db, p.get("date_to") or None, lang, p.get("funder") or None)
     if name == "profit_categories":
         from . import categories
         return categories.table(db, p.get("date_from") or None, p.get("date_to") or None, bu, lang)

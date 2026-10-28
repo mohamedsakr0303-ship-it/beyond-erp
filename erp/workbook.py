@@ -987,7 +987,7 @@ def build_workbook(db, template=False, data=None, hide=None, lang="en", extend=N
     _dashboard(wb, data, colmap, POSTING_SHEETS, rng, pl_refs, bs_refs, n_bu, audit_ref, currency, F, fill, L, hide)
     wb.move_sheet("Dashboard", offset=-(len(wb.sheetnames) - 2))
     _partner_pack(wb, data, colmap, POSTING_SHEETS, rng, within, upto, pl_refs, n_bu, audit_ref, currency, F, fill, L, WIPACCT, CUSTACCT,
-                  legs=leg_sum, role_f=ROLE_F)
+                  legs=leg_sum, role_f=ROLE_F, other_funders=_other_funders(db))
     for name in hidden:
         wb[name].sheet_state = "hidden"
     # sheet order: as in the BEYOND V1.4 workbook — what partners and managers read first, then the books, then the
@@ -2222,8 +2222,17 @@ def _polish(wb, data, fill):
 
 
 # ------------------------------------------------------------------ partner pack
+def _other_funders(db):
+    """The other funding partners who are repaid a share of each client payment (for the Partner Pack's due-now line)."""
+    try:
+        from . import funders
+        return [f for f in funders.extra(db) if f["active"] and f["repay_pct"]]
+    except Exception:          # books without the setting: nothing to add
+        return []
+
+
 def _partner_pack(wb, data, colmap, posting, rng, within, upto, pl_refs, n_bu, audit_ref, currency, F, fill, L, wipacct, custacct,
-                  legs=None, role_f=None):
+                  legs=None, role_f=None, other_funders=()):
     """The partners' management accounts (BEYOND V1.4 'Partner Pack'), live formulas over this workbook:
     at a glance & project results, income statement earned vs cash, balance sheet, cash flow, partners' equity.
     Profit is distributable once BILLED: a project's billed profit = its net result when it has no revenue or makes a
@@ -2342,13 +2351,22 @@ def _partner_pack(wb, data, colmap, posting, rng, within, upto, pl_refs, n_bu, a
     setting = lambda key, default: (f'IFERROR(VALUE(INDEX(Settings!${st["value"]}$5:${st["value"]}$500,'  # noqa: E731
                                     f'MATCH("{key}",Settings!$A$5:$A$500,0))&""),{default})')
     # the funding partner's agreed share of each client payment, less what he was paid back = what is due to him now
-    ws.cell(he + 13, 11, "Funding partner: share of client payments, less repaid (due now)")
+    ws.cell(he + 13, 11, "Funding partners: share of client payments, less repaid (due now)")
     if legs and role_f:   # helpers beside it: client payments against invoices (N), his account (M) and what he got back (N)
         rv = [sh for sh in posting if sh["name"] == "Receipt Vouchers"]
         ws.cell(he + 13, 14, "=" + "+".join(legs(role_f(x), "C", upto, rv) for x in ("ar", "client_advances")))
         ws.cell(he + 14, 13, "=" + role_f("funding_partner"))
         ws.cell(he + 14, 14, "=" + legs(f"$M${he + 14}", "D", upto))
-        ws.cell(he + 13, 12, f'=MAX(0,{setting("funding_repay_pct", 0)}*$N${he + 13}-$N${he + 14})')
+        due = f'MAX(0,{setting("funding_repay_pct", 0)}*$N${he + 13}-$N${he + 14})'
+        # the other funding partners, each with his own share (as set in the app) and his own account: helpers T..W
+        for i, f in enumerate(other_funders):
+            row = he + 13 + i
+            ws.cell(row, 20, f"{f['name']}: {f['repay_pct']:.2%} of each client payment")
+            ws.cell(row, 21, f'=IFERROR({role_f(f["role"])},"")')
+            ws.cell(row, 22, f'=IFERROR({legs(f"$U${row}", "D", upto)},0)')
+            ws.cell(row, 23, f"=MAX(0,{f['repay_pct']}*$N${he + 13}-$V${row})")
+            due += f"+$W${row}"
+        ws.cell(he + 13, 12, "=" + due)
     else:
         ws.cell(he + 13, 12, 0)
     ws.cell(he + 7, 11, "Cash safety floor (months of overhead in Settings + owed + due to the funding partner)")

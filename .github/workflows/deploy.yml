@@ -205,6 +205,8 @@ jobs:
           path: .web-cache
           key: web-runtimes-${{ hashFiles('build_web.py') }}
       - name: Build the web app
+        env:
+          SITE_URL: ${{ vars.SITE_URL || format('https://{0}.pages.dev/', vars.CLOUDFLARE_PAGES_PROJECT || 'beyond-erp') }}
         run: python build_web.py
       - name: Fetch the desktop installers built in this run
         if: needs.desktop.result == 'success'

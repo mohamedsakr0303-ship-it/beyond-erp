@@ -2277,7 +2277,7 @@ def funding_schedule_get(ctx):
     if not (ctx.can("partners.equity") or ctx.can("reports.partner_pack")):
         raise PermissionError()
     from . import fundsched
-    return ok(fundsched.build(ctx.db, ctx.q.get("date_to")))
+    return ok(fundsched.build(ctx.db, ctx.q.get("date_to"), funder=ctx.q.get("funder")))
 
 
 @route("PUT", "/api/funding-schedule", "partners.equity", "edit")
@@ -2285,7 +2285,7 @@ def funding_schedule_put(ctx):
     from . import fundsched
     ctx.db.set_setting(fundsched.KEY, json.dumps(fundsched.clean(ctx.body), ensure_ascii=False))
     ctx.log("settings", "funding schedule")
-    return ok(fundsched.build(ctx.db))
+    return ok(fundsched.build(ctx.db, funder=ctx.body.get("funder")))
 
 
 @route("GET", "/api/stage-shares", "partners.ownership")

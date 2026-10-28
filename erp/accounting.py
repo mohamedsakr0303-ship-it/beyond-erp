@@ -2066,6 +2066,13 @@ def cash_position(db):
         if f and f["limit"]:
             out["facility"] = {k: f[k] for k in ("partner", "limit", "fronted", "after_suppliers", "room_after", "used", "state", "status", "status_ar")}
             out["gap"] = round(max(0.0, -f["room_after"]), 2)
+    # the other funding partners: money of the company they hold and the room left under their limits is money too
+    from . import funders
+    others = funders.others_money(db)
+    if others["rows"]:
+        out["other_funders"] = others
+        if not out["facility"]:
+            out["gap"] = round(max(0.0, out["floor"] - out["cash"] - others["held"] - others["room"]), 2)
     return out
 
 
@@ -2170,6 +2177,14 @@ def review_flags(db, date_from=None, date_to=None, partners=None):
                   (f"near its {lim} limit, {left} left", f"قريب جداً من حده البالغ {lim}، متبقٍ {left}") if f["state"] == "near" else
                   (f"getting close to its {lim} limit, {left} left", f"يقترب من حده البالغ {lim}، متبقٍ {left}"))
         add(f"{f['partner']}'s funding is {en}", f"تمويل {f['partner']} {ar}", f["partner"], "#/partner-exit")
+    from . import funders
+    for o in funders.limit_states(db, date_to):          # each other funding partner against his own limit
+        if o["state"] in ("approaching", "near", "over"):
+            lim, left = f"{o['limit']:,.0f}", f"{abs(o['left']):,.0f}"
+            en, ar = ((f"over its {lim} limit by {left}", f"تجاوز حده البالغ {lim} بمقدار {left}") if o["state"] == "over" else
+                      (f"near its {lim} limit, {left} left", f"قريب جداً من حده البالغ {lim}، متبقٍ {left}") if o["state"] == "near" else
+                      (f"getting close to its {lim} limit, {left} left", f"يقترب من حده البالغ {lim}، متبقٍ {left}"))
+            add(f"{o['name']}'s funding is {en}", f"تمويل {o['name']} {ar}", o["name"], "#/partner-exit")
     from . import ratecap
     n = len(ratecap.candidates(db))
     if n:

@@ -1,6 +1,7 @@
-"""What each partner would take out if he left today, and the funding partner's own account.
+"""What each partner would take out if he left today, and the main funding partner's own account.
 
-Funding partner (BEYOND's model): one partner's personal account is the company's bank. Every client payment lands in
+Funding partner: one partner's personal account is the company's bank (the main funding partner; other funding
+partners, each with his own account, are in funders.py). Every client payment lands in
 it and every cost, loan to a partner or distribution leaves it. The money he has put in of his own is therefore
 "out − in" across the company's cash / bank movements — live, so it moves with every payment, like the workbook's
 Balances Tracker section 5. His capital in the books is the same figure once it is booked (the workbook's automatic
@@ -59,7 +60,9 @@ def funding_ledger(db, name=None, date_to=None):
             continue                                    # a transfer between the company's own accounts
         other = [x for x in ls if not is_money(x)]
         e = ls[0]
-        if e["bu_code"]:
+        if any(str(x["role"] or "").startswith("funding_partner_") for x in other):
+            key, label = "funders", "To / from other funding partners"        # money moved between funding partners' accounts
+        elif e["bu_code"]:
             key, label = "bu:" + e["bu_code"], f"{e['bu_code']} · {e['bu_name'] or ''}".strip(" ·")
         elif any(x["role"] == "custody" for x in other):
             key, label = "custody", "Cash handed to staff as custody (عهدة)"
