@@ -86,7 +86,7 @@ def pack(wheel_names):
                                   f"window.BEYOND_PACK_FILES = {json.dumps(files)};\n", encoding="utf-8")
 
 
-PWA_FILES = ("manifest.webmanifest", "manifest-beyond.webmanifest", "sw.js", "icon-192.png", "icon-512.png", "icon-maskable-512.png", "apple-touch-icon.png", "favicon.png")
+PWA_FILES = ("og-image.jpg", "og-image-ar.jpg", "manifest.webmanifest", "manifest-beyond.webmanifest", "sw.js", "icon-192.png", "icon-512.png", "icon-maskable-512.png", "apple-touch-icon.png", "favicon.png")
 
 
 COPYRIGHT = "BeyondERP — © {year} BEYONDERP. All rights reserved. Proprietary and confidential: copying, modifying, " \
@@ -124,6 +124,9 @@ def arabic_page(html, site):
     html = re.sub(r'<meta property="og:description" content="[^"]*">', f'<meta property="og:description" content="{AR["og"]}">', html)
     html = html.replace('<meta property="og:locale" content="en_US">', '<meta property="og:locale" content="ar_AR">')
     html = html.replace('<meta property="og:locale:alternate" content="ar_AR">', '<meta property="og:locale:alternate" content="en_US">')
+    html = html.replace("og-image.jpg", "og-image-ar.jpg").replace(
+        '<meta property="og:image:alt" content="BeyondERP: Run the business, not the paperwork.">',
+        '<meta property="og:image:alt" content="BeyondERP: أدِر أعمالك، لا أوراقها.">')
     if site:
         html = html.replace(f'<link rel="canonical" href="{site}">', f'<link rel="canonical" href="{site}ar.html">')
         html = html.replace(f'<meta property="og:url" content="{site}">', f'<meta property="og:url" content="{site}ar.html">')

@@ -32,7 +32,7 @@ class SearchFiles(unittest.TestCase):
         build_web.search_files()
         html = self.page()
         self.assertIn('<link rel="canonical" href="https://erp.example.com/">', html)
-        self.assertIn('content="https://erp.example.com/icon-512.png"', html)
+        self.assertIn('content="https://erp.example.com/og-image.jpg"', html)             # a wide card, not the bare icon
         self.assertIn('<meta name="description"', html)
         self.assertEqual(len(re.findall(r"<h1[ >]", html)), 2)              # the page's one heading (and its no-script copy)
         self.assertIn("© 2026 BEYONDERP", html)
@@ -45,6 +45,7 @@ class SearchFiles(unittest.TestCase):
         self.assertIn('<html lang="ar" dir="rtl">', ar)
         self.assertIn("<title>BeyondERP · أدِر أعمالك، لا أوراقها</title>", ar)
         self.assertIn('<link rel="canonical" href="https://erp.example.com/ar.html">', ar)
+        self.assertIn('content="https://erp.example.com/og-image-ar.jpg"', ar)
         self.assertIn('localStorage.setItem("berp.lang",\'"ar"\')', ar)          # opens in Arabic the first time
         self.assertIn("<loc>https://erp.example.com/ar.html</loc>", (self.out / "sitemap.xml").read_text())
 
@@ -56,6 +57,13 @@ class SearchFiles(unittest.TestCase):
         self.assertNotIn("url", json.loads(re.search(r'ld\+json">(.*?)</script>', html).group(1)))
         self.assertFalse((self.out / "sitemap.xml").exists())
         self.assertIn("Allow: /", (self.out / "robots.txt").read_text())
+
+    def test_the_share_cards_exist(self):
+        for f in ("og-image.jpg", "og-image-ar.jpg"):
+            data = (ROOT / "web-src" / f).read_bytes()
+            self.assertEqual(data[:3], b"\xff\xd8\xff", f)                         # JPEG: no transparency to turn white
+            self.assertLess(len(data), 300_000, f)                                    # small enough for WhatsApp
+            self.assertIn(f, build_web.PWA_FILES)
 
     def test_private_pages_stay_out_of_search(self):
         for f in ("owner.html", "p.html"):
