@@ -155,7 +155,7 @@ jobs:
         env:
           URL: ${{ vars.SUPABASE_URL }}
           KEY: ${{ vars.SUPABASE_ANON_KEY }}
-          SITE: ${{ vars.SITE_URL || format('https://{0}.pages.dev/', vars.CLOUDFLARE_PAGES_PROJECT || 'beyond-erp') }}
+          SITE: ${{ vars.SITE_URL || 'https://beyonderp.org/' }}
         run: |
           echo "$SITE" > packaging/site_url.txt
           if [ -n "$URL" ] && [ -n "$KEY" ]; then printf '{"url": "%s", "key": "%s"}' "$URL" "$KEY" > erp/workspace_preset.json; fi
@@ -206,7 +206,7 @@ jobs:
           key: web-runtimes-${{ hashFiles('build_web.py') }}
       - name: Build the web app
         env:
-          SITE_URL: ${{ vars.SITE_URL || format('https://{0}.pages.dev/', vars.CLOUDFLARE_PAGES_PROJECT || 'beyond-erp') }}
+          SITE_URL: ${{ vars.SITE_URL || 'https://beyonderp.org/' }}
         run: python build_web.py
       - name: Fetch the desktop installers built in this run
         if: needs.desktop.result == 'success'
@@ -216,7 +216,7 @@ jobs:
         run: gh release download desktop-app -R "${{ github.repository }}" -D dl --clobber
       - name: Add the public downloads (the connected desktop app only)
         env:
-          SITE: ${{ vars.SITE_URL || format('https://{0}.pages.dev/', vars.CLOUDFLARE_PAGES_PROJECT || 'beyond-erp') }}
+          SITE: ${{ vars.SITE_URL || 'https://beyonderp.org/' }}
         run: python packaging/collect_downloads.py dl "$SITE"
       - name: Keep the site for GitHub Pages
         if: vars.USE_GITHUB_PAGES == 'true'

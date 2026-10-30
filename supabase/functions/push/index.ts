@@ -22,7 +22,7 @@ import { newKeys, send } from "./webpush.ts";
 const URL_ = Deno.env.get("SUPABASE_URL")!;
 const SERVICE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const ANON = Deno.env.get("SUPABASE_ANON_KEY")!;
-const SUBJECT = Deno.env.get("PUSH_SUBJECT") || "https://beyond-erp.pages.dev/";
+const SUBJECT = Deno.env.get("PUSH_SUBJECT") || "https://beyonderp.org/";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",

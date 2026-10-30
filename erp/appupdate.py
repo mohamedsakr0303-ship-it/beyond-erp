@@ -20,7 +20,7 @@ from pathlib import Path
 
 from . import __version__
 
-SITE = (os.environ.get("BEYOND_UPDATE_SITE") or "https://beyond-erp.pages.dev/").rstrip("/") + "/"
+SITE = (os.environ.get("BEYOND_UPDATE_SITE") or "https://beyonderp.org/").rstrip("/") + "/"
 UA = {"User-Agent": "Mozilla/5.0 (BeyondERP desktop)"}   # Cloudflare refuses Python's default user agent
 _cache = {"at": 0.0, "info": None}
 
