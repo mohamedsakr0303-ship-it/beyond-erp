@@ -174,7 +174,7 @@ function seatFull(msg) {
   const b = S.billing || {};
   drawer(L2("No user seats left", "لا توجد مقاعد مستخدمين متاحة"), `<div class="banner warn">${esc(msg || L2(`This company's plan includes ${b.users_allowed} user(s) and all are taken.`, `تشمل باقة هذه الشركة ${b.users_allowed} مستخدم وجميعها مشغولة.`))}</div>
     <p>${esc(L2("To add someone, add extra users or choose a bigger plan in Subscription, or deactivate a user who no longer needs access.", "لإضافة شخص، أضف مستخدمين إضافيين أو اختر باقة أكبر من الاشتراك، أو أوقف مستخدماً لم يعد يحتاج الوصول."))}</p>
-    <div class="row">${b.is_admin ? `<a class="btn pri" href="#/subscription" data-close>${esc(L2("Open Subscription", "فتح الاشتراك"))}</a>` : `<span class="muted">${esc(L2("Ask your company administrator.", "اطلب من مسؤول الشركة."))}</span>`}</div>`);
+    <div class="row">${b.is_admin ? `<a class="btn pri" href="#/subscription" data-close>${esc(L2("Open Subscription", "فتح الاشتراك"))}</a>` : `<span class="muted">${esc(L2("Ask your company administrator.", "اطلب من مسؤول الشركة."))}</span>`}</div>`, null, { readOnly: true });
 }
 // In-app dialogs in the app's own look (never the browser's pop-ups):
 //   await uiConfirm(msg) → true / false · await uiPrompt(msg, value) → text or null · await uiAlert(msg)
@@ -1039,7 +1039,7 @@ function userMenu() {
   return `<button data-a="theme">${esc(themeTitle())}</button>
     ${cloudOn() ? `<button data-a="coswitch">⇄ ${S.lang === "ar" ? "الشركات" : "Companies"}</button>` : ""}
     ${cloudOn() && window.BeyondCloud && window.BeyondCloud.billing ? `<a href="#/subscription">◎ ${S.lang === "ar" ? "الاشتراك" : "Subscription"}</a>` : ""}${S.billing && S.billing.is_owner ? `<a href="owner.html" target="_blank" rel="opener" class="conlink">⚙ ${S.lang === "ar" ? "لوحة المالك" : "Owner console"} ↗</a>` : ""}
-    <a href="#/settings">${t("m_settings")}</a><button data-a="tour">➜ ${S.lang === "ar" ? "جولة تعريفية" : "Take the tour"}</button><a href="#/discover">✦ ${S.lang === "ar" ? "تعرّف على BeyondERP" : "Discover BeyondERP"}</a>${isPhone() ? `<button data-a="landscape">⟳ ${S.lang === "ar" ? "عرض أفقي" : "Landscape"}</button>` : ""}<a href="#/support">? ${S.lang === "ar" ? "المساعدة والدعم" : "Help and support"}</a>${STATIC && /^https?:$/.test(location.protocol) ? `<a href="#/download">⬇ ${S.lang === "ar" ? "تنزيل التطبيق" : "Download the app"}</a>` : ""}<button data-a="updcheck">↻ ${S.lang === "ar" ? "البحث عن تحديثات" : "Check for updates"}</button><button data-a="pw">${t("change_pw")}</button><button data-a="logout">${t("logout")}</button>`;
+    <a href="#/settings">${t("m_settings")}</a><button data-a="tour">➜ ${S.lang === "ar" ? "جولة تعريفية" : "Take the tour"}</button><a href="#/discover">✦ ${S.lang === "ar" ? "تعرّف على BeyondERP" : "Discover BeyondERP"}</a>${appName() === "BeyondERP" ? `<button data-a="shareapp">↗ ${S.lang === "ar" ? "شارك BeyondERP" : "Share BeyondERP"}</button>` : ""}${isPhone() ? `<button data-a="landscape">⟳ ${S.lang === "ar" ? "عرض أفقي" : "Landscape"}</button>` : ""}<a href="#/support">? ${S.lang === "ar" ? "المساعدة والدعم" : "Help and support"}</a>${STATIC && /^https?:$/.test(location.protocol) ? `<a href="#/download">⬇ ${S.lang === "ar" ? "تنزيل التطبيق" : "Download the app"}</a>` : ""}<button data-a="updcheck">↻ ${S.lang === "ar" ? "البحث عن تحديثات" : "Check for updates"}</button><button data-a="pw">${t("change_pw")}</button><button data-a="logout">${t("logout")}</button>`;
 }
 // the bell: what needs attention (bills to issue, overdue installments, depreciation, books checks…)
 async function loadAlerts(force) {
@@ -13375,6 +13375,23 @@ async function recordScreen(btn) {
   return new File(parts, `screen-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.webm`, { type: "video/webm" });
 }
 const copyBtn = v => `<button type="button" class="btn sm" data-a="copyval" data-v="${esc(v)}" title="${esc(L2("Copy", "نسخ"))}">⧉</button>`;
+// Share BeyondERP: the device's own share sheet where there is one (phones, the app), else the link with the usual
+// places to send it. Each share gets its own small tag on the link, so chat apps show the current preview card.
+const PUBLIC_SITE = "https://beyonderp.org/";
+S.GLOBAL_H.shareapp = async () => {
+  const ar = S.lang === "ar", url = `${PUBLIC_SITE}${ar ? "ar.html" : ""}?s=${Date.now().toString(36)}`;
+  const title = ar ? "BeyondERP · أدِر أعمالك، لا أوراقها" : "BeyondERP · Run the business, not the paperwork";
+  const text = ar ? "الحسابات والمبيعات والمخزون والمشروعات والموارد البشرية والرواتب في نظام واحد. جرّب BeyondERP مجاناً:"
+    : "Accounting, sales, inventory, projects, HR and payroll in one place. Try BeyondERP free:";
+  if (navigator.share) { try { await navigator.share({ title, text, url }); return; } catch (e) { if (e && e.name === "AbortError") return; } }
+  const msg = encodeURIComponent(`${text} ${url}`), u = encodeURIComponent(url);
+  const go = [["WhatsApp", `https://wa.me/?text=${msg}`], [L2("Email", "البريد"), `mailto:?subject=${encodeURIComponent(title)}&body=${msg}`],
+    ["LinkedIn", `https://www.linkedin.com/sharing/share-offsite/?url=${u}`], ["Facebook", `https://www.facebook.com/sharer/sharer.php?u=${u}`],
+    ["X", `https://x.com/intent/post?text=${encodeURIComponent(text)}&url=${u}`]];
+  drawer(L2("Share BeyondERP", "شارك BeyondERP"), `<p class="muted" style="margin-top:0">${esc(L2("Know someone who would like it? Send them the link.", "تعرف من قد يفيده؟ أرسل له الرابط."))}</p>
+    <div class="row" style="gap:8px;align-items:center"><input class="in" readonly value="${esc(url)}" style="flex:1;min-width:0" dir="ltr">${copyBtn(url)}</div>
+    <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:14px">${go.map(([l, h]) => `<a class="btn" href="${esc(h)}" target="_blank" rel="noopener">${esc(l)}</a>`).join("")}</div>`, null, { readOnly: true });
+};
 S.GLOBAL_H.copyval = async el => { try { await navigator.clipboard.writeText(el.dataset.v); toast(L2("Copied.", "تم النسخ.")); } catch { uiPrompt("", el.dataset.v); } };
 
 // ------------------------------------------------------------ the customer's subscription (one or several companies)
