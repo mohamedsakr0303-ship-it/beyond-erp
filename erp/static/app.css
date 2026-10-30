@@ -1992,3 +1992,10 @@ tr.sub-addons td{border-top:0;padding-top:0}label.chk.addon{display:inline-flex;
 
 /* the slogan under the name on the sign-in screens */
 .login .slogan{margin:-4px 0 10px;color:var(--muted);font-size:.9em;letter-spacing:.01em}.login.auth .slogan{text-align:center}
+
+/* referral program */
+.ref-hero{display:flex;gap:18px;align-items:center;background:linear-gradient(135deg,color-mix(in srgb,var(--accent) 16%,var(--card,transparent)),transparent)}
+.ref-gift{font-size:2.6em;line-height:1}.ref-step{display:flex;gap:12px;align-items:flex-start;margin:10px 0}
+.ref-n{flex:none;width:28px;height:28px;border-radius:50%;display:grid;place-items:center;background:var(--accent);color:#fff;font-size:.9em}
+@media (max-width:640px){.ref-hero{flex-direction:column;align-items:stretch}.ref-gift{display:none}}
+.up-co{border:1px solid var(--line,rgba(127,127,127,.25));border-radius:12px;padding:10px 12px;margin:8px 0}.up-co.on{border-color:var(--accent)}

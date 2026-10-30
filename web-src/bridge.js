@@ -602,7 +602,7 @@ def cloud_new_books(name, email):
         billingSetCompany: (id, p) => rpc("billing_set_company", { p_company: id, p }),
         // --- the owner console, orders of several companies, support with files (supabase/migrations/*_owner_console.sql)
         async platform(name, params) {
-          if (!/^(billing_order_(quote|open|submit|cancel)|billing_my_orders|billing_status|support_(open|get|reply|close|mine)|visit_(request|mine|customer)|enterprise_request|company_set_industry|console_[a-z_]+)$/.test(name)) throw new Error("Unknown workspace call");
+          if (!/^(billing_order_(quote|open|submit|cancel)|billing_my_orders|billing_status|support_(open|get|reply|close|mine)|visit_(request|mine|customer)|enterprise_request|company_set_industry|referral_(claim|my)|billing_upgrade_(quote|open)|console_[a-z_]+)$/.test(name)) throw new Error("Unknown workspace call");
           // the workspace prefixes some refusals with a code ("support_not_included: …"); people see the sentence
           try { return await rpc(name, params || {}); } catch (e) { e.message = String(e.message || "").replace(/^[a-z_]+: /, ""); throw e; }
         },

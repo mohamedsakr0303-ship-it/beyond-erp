@@ -11,7 +11,8 @@
 //                                                          the alerts' upcoming times (replace what waited for those rules)
 //   POST {action: "flush"}                                  send the reminders whose time has come (scheduled job)
 //   POST {action: "visitor", token}                         a public page received something (no sign-in)
-//   POST {action: "platform", event: "ticket" | "order" | "visit", id, isNew?, text?}   owner console ⇄ customers (see below)
+//   POST {action: "platform", event: "ticket" | "order" | "visit", id, isNew?, text?}   owner console ⇄ customers (see below);
+//                                                          an approved order that paid off a referral also tells the person who shared
 //
 // The signing keys are made here the first time and kept in push_config, which only this function reads (service
 // key). Senders must be active members of the company; people are only notified inside their own company (or the
@@ -257,7 +258,15 @@ Deno.serve(async (req) => {
           body: clip(vd.reason, 140), href: `owner.html#/visit/${vd.id}`, tag: `visit-${vd.id}` };
       }
     } else return fail(400, "Unknown event");
-    const sent = await deliver(null, to.filter((e) => e !== caller), { ...msg, kind: "notify", pref: "platform" }, { kind: "notify" });
+    let sent = await deliver(null, to.filter((e) => e !== caller), { ...msg, kind: "notify", pref: "platform" }, { kind: "notify" });
+    // an approved order that was an invited person's first payment: the person who shared the link earned a reward
+    if (b.event === "order" && msg && msg.title === "Subscription activated") {
+      const od = (await call("GET", `/rest/v1/billing_orders?select=ref&id=eq.${enc(String(Number(b.id) || 0))}`)).data?.[0];
+      const rf = od && (await call("GET", `/rest/v1/referrals?select=referrer&status=eq.paid&order_ref=eq.${enc(od.ref)}`)).data?.[0];
+      if (rf) sent += await deliver(null, [String(rf.referrer).toLowerCase()], { title: "Your referral subscribed 🎁",
+        body: "Someone you invited just subscribed — your reward is ready to use.", href: "#/referrals", tag: `referral-${od.ref}`,
+        kind: "notify", pref: "platform" }, { kind: "notify" });
+    }
     await logSend(null, caller, "platform", sent);
     return reply(200, { sent });
   }

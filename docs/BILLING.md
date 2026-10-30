@@ -118,6 +118,27 @@ The console is **a page of its own**: `owner.html` on the same site (for example
 * Billing, read only (unpaid, ended, suspended, archived, maintenance), user limits, company limits per person, new customers, blocking a person, online support, visits and the AI assistant are refused by the database or the server functions. Changing the page does not get around them.
 * Sections, screens and tabs are hidden and refused by the app itself. Someone with technical skills could still reach a hidden section's screens in their own browser, but nothing outside their plan is offered to them.
 
+## Referral program and upgrades
+
+Every signed-in user of the online workspace has a personal share link (`https://beyonderp.org/?ref=CODE`) on **🎁 Referral program** in the user menu. The share button uses the same link.
+
+**The rules (set in the console under Referrals; defaults shown):**
+
+| Who | Discount | When |
+|---|---|---|
+| Invited person | 20 % | Their first paid subscription, once |
+| Person who shared | 20 % | Their own first subscription, if they have not paid yet |
+| Person who shared | 30 % | An upgrade while subscribed (a bigger plan, more sections, AI, support or users) |
+
+* A link only links someone who is new: not a paying customer, not a member of the sharer's companies, and not the sharer.
+* The sharer earns one reward per invited person, only when that person's **first payment is approved**. Signing up alone earns nothing.
+* Discounts never add up. One reward is used per payment, and if a company already has a bigger standing discount, that one applies and the reward waits.
+* Plain renewals keep rewards for later.
+* The sharer is notified (push and in-app) when a reward is earned; the page shows sign-ups, subscribers, rewards ready and used, and each invited person with a masked email.
+* The console can switch the program off, change the percentages, and void or restore any referral.
+
+**Upgrades (the basket):** on Subscription → Upgrade, a customer with an active paid period picks a bigger plan, extra users or more add-ons for each company. They pay only the difference in the monthly price for the days left in the paid period (`difference × days left ÷ 30`, at the yearly rate if they paid yearly). The paid-until date does not change; from the next renewal they pay the new monthly price. The upgrade is applied when the console approves the payment, like any order.
+
 ## Pricing (October 2026)
 
 ### Why the first prices were too low

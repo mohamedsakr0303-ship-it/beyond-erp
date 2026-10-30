@@ -150,7 +150,7 @@ matchMedia("(prefers-color-scheme: dark)").addEventListener("change", applyLook)
 const can = area => S.me && (S.me.full || (area !== "_full" && !!(S.me.perms || {})[area]));
 const NAV0 = () => [
   [L("Business", "الأعمال"), [["overview", "◧", L("Overview", "نظرة عامة"), "overview"], ["alerts", "🔔", L("Notifications", "الإشعارات"), "*"], ["customers", "▦", L("Customers", "العملاء"), "customers"],
-    ["people", "☺", L("People", "الأشخاص"), "customers"], ["cancellations", "✗", L("Cancellations & churn", "الإلغاءات والمغادرة"), "customers"]]],
+    ["people", "☺", L("People", "الأشخاص"), "customers"], ["referrals", "🎁", L("Referrals", "الإحالات"), "customers"], ["cancellations", "✗", L("Cancellations & churn", "الإلغاءات والمغادرة"), "customers"]]],
   [L("Money", "المال"), [["payments", "⧗", L("Payments to verify", "مدفوعات للتحقق"), "billing"], ["ledger", "≣", L("All payments", "كل المدفوعات"), "billing"],
     ["methods", "💳", L("Payment methods", "طرق الدفع"), "settings"]]],
   [L("Support", "الدعم"), [["support", "✉", L("Tickets", "البلاغات"), "support"], ["visits", "🚗", L("Support visits", "زيارات الدعم"), "support"],
@@ -950,12 +950,49 @@ PAGES.payments = async (view, parts, q) => {
 const orderCard = (o, appr) => `<div class="card"><div class="row"><h2 style="margin:0" dir="ltr">${esc(o.ref)}</h2>${mapChip(ORDER_ST(), o.status)}<span class="muted" dir="ltr">${esc(o.email)}</span><span class="sp"></span><b style="font-size:1.25em">${money(o.amount)} ${esc(o.currency)}</b></div>
   <div class="tbl" style="margin:10px 0"><table><tbody>${(o.lines || []).map(l => `<tr><td><a href="#/company/${l.company_id}">${esc(l.name)}</a>${l.extra_users ? ` +${l.extra_users} ${esc(L("users", "مستخدمين"))}` : ""}${(l.modules || []).length ? `<span class="sub">+ ${esc(l.modules.map(secName).join(", "))}</span>` : ""}${l.ai ? `<span class="sub">+ ${esc(L("AI assistant", "المساعد الذكي"))}</span>` : ""}${l.support ? `<span class="sub">+ ${esc(L("Online support", "الدعم الإلكتروني"))}</span>` : ""}</td>
     <td class="num">${l.pct !== 100 ? `<span class="muted">× ${l.pct}%</span> ` : ""}${+l.discount ? chip(`−${l.discount}%`, "ok") + " " : ""}${l.list_amount != null && +l.list_amount !== +l.amount ? `<s class="muted">${money(l.list_amount)}</s> ` : ""}${money(l.amount)}</td></tr>`).join("")}</tbody></table></div>
-  <div class="small">${esc(o.plan)} · ${o.months === 12 ? esc(L("1 year", "سنة")) : esc(L("1 month", "شهر"))} · ${KIND_ICON[o.method_kind] || ""} ${esc(o.method_name || "")}
+  ${o.discount && o.discount.pct ? `<div class="small">🎁 ${esc(o.discount.source === "friend" ? L(`Invited by a customer: ${o.discount.pct}% off their first subscription`, `مدعو من عميل: خصم ${o.discount.pct}% على اشتراكه الأول`) : L(`Referral reward: ${o.discount.pct}% off`, `مكافأة إحالة: خصم ${o.discount.pct}%`))}</div>` : ""}
+  <div class="small">${o.kind === "upgrade" ? chip(L("Upgrade: the difference for the days left", "ترقية: الفرق عن الأيام المتبقية"), "info") : `${esc(o.plan)} · ${o.months === 12 ? esc(L("1 year", "سنة")) : esc(L("1 month", "شهر"))}`} · ${KIND_ICON[o.method_kind] || ""} ${esc(o.method_name || "")}
     ${o.submitted_at ? ` · ${esc(L("sent", "أُرسل"))} ${esc(dt(o.submitted_at))}` : ""}${o.proof_ref ? ` · ${esc(L("reference", "المرجع"))} <b dir="ltr">${esc(o.proof_ref)}</b>` : ""}${o.proof_amount != null ? ` · ${esc(L("amount sent", "المبلغ المرسل"))} <b>${money(o.proof_amount)}</b>` : ""}</div>
   ${o.customer_note ? `<p class="small">💬 ${esc(o.customer_note)}</p>` : ""}${o.review_note ? `<p class="small muted">${esc(L("Decision", "القرار"))}: ${esc(o.review_note)} · ${esc(o.reviewed_by || "")}</p>` : ""}
   ${fileList("billing-proofs", o.proof)}
   ${appr && ["submitted", "open", "rejected"].includes(o.status) ? `<div class="row"><button class="btn pri" data-a="ok" data-id="${o.id}">✓ ${esc(L("Approve and activate", "اعتماد وتفعيل"))}</button>
     <button class="btn" data-a="amt" data-id="${o.id}" data-v="${o.amount}">${esc(L("Change amount…", "تعديل المبلغ…"))}</button>${o.status !== "rejected" ? `<button class="btn danger" data-a="no" data-id="${o.id}">${esc(L("Not accepted…", "رفض…"))}</button>` : ""}</div>` : ""}</div>`;
+
+// ================================================================== referrals: the programme's rules and every referral
+PAGES.referrals = async view => {
+  const d = await rpc("console_referrals"), cfg = d.settings || {}, rows = d.rows, ed = can("settings"), appr = can("approve");
+  const ST = () => ({ joined: [L("Signed up", "سجّل"), "warn"], paid: [L("Subscribed", "اشترك"), "ok"], void: [L("Voided", "أُلغيت"), "bad"] });
+  const RW = () => ({ available: [L("Reward ready", "مكافأة جاهزة"), "ok"], used: [L("Reward used", "استُخدمت"), "info"], void: [L("Reward voided", "أُلغيت"), "bad"] });
+  Object.assign(S.H, {
+    rsave: async () => { const v = readForm($("#rf")); await rpc("console_referral_settings", { p: { on: !!v.on, friend_pct: +v.friend_pct || 0, first_pct: +v.first_pct || 0, upgrade_pct: +v.upgrade_pct || 0 } });
+      toast(L("Saved.", "تم الحفظ.")); route(); },
+    rvoid: async el => { const on = el.dataset.v === "1";
+      if (!await confirmIt(on ? L("Void this referral? Its reward is cancelled unless it was already used.", "إلغاء هذه الإحالة؟ تُلغى مكافأتها ما لم تكن استُخدمت.") : L("Bring this referral back?", "استعادة هذه الإحالة؟"), { danger: on })) return;
+      await rpc("console_referral_set", { p_id: +el.dataset.id, p_void: on }); toast(L("Saved.", "تم الحفظ.")); route(); } });
+  const paid = rows.filter(r => r.status === "paid").length, used = rows.filter(r => r.reward && r.reward.status === "used").length;
+  view.innerHTML = `<div class="kpis">${kpi(L("Signed up through a link", "سجّلوا من رابط"), num(rows.filter(r => r.status !== "void").length))}${kpi(L("Became paying customers", "أصبحوا عملاء دافعين"), num(paid), paid ? "ok" : "")}
+      ${kpi(L("Rewards waiting", "مكافآت بانتظار الاستخدام"), num(rows.filter(r => r.reward && r.reward.status === "available").length))}${kpi(L("Rewards used", "مكافآت مستخدمة"), num(used))}</div>
+    <form id="rf" class="card" onsubmit="return false"><h2>${esc(L("The programme", "البرنامج"))}</h2>${form([
+      { k: "on", l: L("Referral program on (customers see their link and page; new links can be claimed)", "برنامج الإحالة مفعّل (يرى العملاء رابطهم وصفحتهم ويمكن استخدام الروابط الجديدة)"), type: "check", v: cfg.on !== false, span: 1, dis: !ed },
+      { k: "friend_pct", l: L("Invited person: % off their first subscription", "المدعو: خصم % على اشتراكه الأول"), type: "number", v: cfg.friend_pct, min: 0, max: 100, dis: !ed },
+      { k: "first_pct", l: L("Reward: % off the sharer's first subscription", "المكافأة: خصم % على أول اشتراك لصاحب الرابط"), type: "number", v: cfg.first_pct, min: 0, max: 100, dis: !ed },
+      { k: "upgrade_pct", l: L("Reward: % off an upgrade", "المكافأة: خصم % على الترقية"), type: "number", v: cfg.upgrade_pct, min: 0, max: 100, dis: !ed }], 3)}
+      <p class="muted small">${esc(L("Rules: a reward is earned only when the invited person completes a payment; one reward per payment and discounts never add up (the biggest applies, including a company's standing discount); renewals keep rewards for later; people who already paid, the sharer's own team and their own link cannot be claimed.", "القواعد: تُكتسب المكافأة فقط عند إتمام المدعو دفعة؛ مكافأة واحدة لكل دفعة ولا تُجمع الخصومات (يُطبق الأكبر، بما فيه خصم الشركة الدائم)؛ تنتظر المكافآت عند التجديد؛ ولا يمكن استخدام الرابط لمن دفع سابقاً أو لفريق صاحب الرابط أو لرابطه نفسه."))}</p>
+      ${ed ? `<button class="btn pri" data-a="rsave">${esc(L("Save", "حفظ"))}</button>` : ""}</form>
+    <div class="card"><div id="rtbl"></div></div>`;
+  afterHooks.push(v => table($("#rtbl", v), "referrals", rows, { sort: "joined_at", dir: "desc", search: ["referrer", "referred", "code", "order_ref"],
+    rowCls: r => r.status === "void" ? "dim" : "",
+    cols: [{ k: "referrer", l: L("Shared by", "صاحب الرابط"), h: r => `<span dir="ltr">${esc(r.referrer)}</span><span class="sub" dir="ltr">${esc(r.code)}</span>` },
+      { k: "referred", l: L("Invited person", "المدعو"), h: r => `<span dir="ltr">${esc(r.referred)}</span>` },
+      { k: "status", l: L("Status", "الحالة"), h: r => mapChip(ST(), r.status) },
+      { k: "joined_at", l: L("Signed up", "التسجيل"), date: true, h: r => esc(day(r.joined_at)) },
+      { k: "paid_at", l: L("First payment", "أول دفعة"), date: true, h: r => r.paid_at ? `${esc(day(r.paid_at))}<span class="sub" dir="ltr">${esc(r.order_ref || "")}</span>` : "—" },
+      { k: "reward", l: L("Reward", "المكافأة"), v: r => r.reward ? r.reward.status : "", h: r => r.reward ? mapChip(RW(), r.reward.status) + (r.reward.status === "used" ? `<span class="sub">${r.reward.pct}% · ${esc(r.reward.order_ref || "")}</span>` : "") : "—" },
+      { k: "act", l: "", nosort: true, nocsv: true, h: r => appr ? `<button class="btn sm ${r.status === "void" ? "" : "danger"}" data-a="rvoid" data-id="${r.id}" data-v="${r.status === "void" ? 0 : 1}">${esc(r.status === "void" ? L("Restore", "استعادة") : L("Void", "إلغاء"))}</button>` : "" }],
+    filters: [{ k: "st", l: L("Status", "الحالة"), type: "select", opts: Object.entries(ST()).map(([k, v]) => [k, v[0]]), test: (r, v) => r.status === v },
+      { k: "from", l: L("Signed up from", "التسجيل من"), type: "from", col: "joined_at" }, { k: "to", l: L("Signed up to", "التسجيل حتى"), type: "to", col: "joined_at" }],
+    empty: L("No referrals yet.", "لا إحالات بعد.") }));
+};
 
 // ================================================================== every payment (the revenue ledger)
 PAGES.ledger = async view => {

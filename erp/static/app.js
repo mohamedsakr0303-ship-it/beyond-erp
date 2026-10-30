@@ -1039,7 +1039,7 @@ function userMenu() {
   return `<button data-a="theme">${esc(themeTitle())}</button>
     ${cloudOn() ? `<button data-a="coswitch">⇄ ${S.lang === "ar" ? "الشركات" : "Companies"}</button>` : ""}
     ${cloudOn() && window.BeyondCloud && window.BeyondCloud.billing ? `<a href="#/subscription">◎ ${S.lang === "ar" ? "الاشتراك" : "Subscription"}</a>` : ""}${S.billing && S.billing.is_owner ? `<a href="owner.html" target="_blank" rel="opener" class="conlink">⚙ ${S.lang === "ar" ? "لوحة المالك" : "Owner console"} ↗</a>` : ""}
-    <a href="#/settings">${t("m_settings")}</a><button data-a="tour">➜ ${S.lang === "ar" ? "جولة تعريفية" : "Take the tour"}</button><a href="#/discover">✦ ${S.lang === "ar" ? "تعرّف على BeyondERP" : "Discover BeyondERP"}</a>${appName() === "BeyondERP" ? `<button data-a="shareapp">↗ ${S.lang === "ar" ? "شارك BeyondERP" : "Share BeyondERP"}</button>` : ""}${isPhone() ? `<button data-a="landscape">⟳ ${S.lang === "ar" ? "عرض أفقي" : "Landscape"}</button>` : ""}<a href="#/support">? ${S.lang === "ar" ? "المساعدة والدعم" : "Help and support"}</a>${STATIC && /^https?:$/.test(location.protocol) ? `<a href="#/download">⬇ ${S.lang === "ar" ? "تنزيل التطبيق" : "Download the app"}</a>` : ""}<button data-a="updcheck">↻ ${S.lang === "ar" ? "البحث عن تحديثات" : "Check for updates"}</button><button data-a="pw">${t("change_pw")}</button><button data-a="logout">${t("logout")}</button>`;
+    <a href="#/settings">${t("m_settings")}</a><button data-a="tour">➜ ${S.lang === "ar" ? "جولة تعريفية" : "Take the tour"}</button><a href="#/discover">✦ ${S.lang === "ar" ? "تعرّف على BeyondERP" : "Discover BeyondERP"}</a>${appName() === "BeyondERP" ? `<button data-a="shareapp">↗ ${S.lang === "ar" ? "شارك BeyondERP" : "Share BeyondERP"}</button>` : ""}${platformOn() && appName() === "BeyondERP" ? `<a href="#/referrals">🎁 ${S.lang === "ar" ? "برنامج الإحالة" : "Referral program"}</a>` : ""}${isPhone() ? `<button data-a="landscape">⟳ ${S.lang === "ar" ? "عرض أفقي" : "Landscape"}</button>` : ""}<a href="#/support">? ${S.lang === "ar" ? "المساعدة والدعم" : "Help and support"}</a>${STATIC && /^https?:$/.test(location.protocol) ? `<a href="#/download">⬇ ${S.lang === "ar" ? "تنزيل التطبيق" : "Download the app"}</a>` : ""}<button data-a="updcheck">↻ ${S.lang === "ar" ? "البحث عن تحديثات" : "Check for updates"}</button><button data-a="pw">${t("change_pw")}</button><button data-a="logout">${t("logout")}</button>`;
 }
 // the bell: what needs attention (bills to issue, overdue installments, depreciation, books checks…)
 async function loadAlerts(force) {
@@ -8676,6 +8676,14 @@ async function refreshBilling() {
   // the menus follow the plan: redraw them when what the company may use changed
   const sig = JSON.stringify([S.billing && S.billing.modules, S.billing && S.billing.ai, S.billing && S.billing.deny]);
   if (sig !== S.licSig) { const first = S.licSig === undefined; S.licSig = sig; if (!first || (S.billing && (Array.isArray(S.billing.modules) || S.billing.ai === false || (S.billing.deny || []).length))) { renderNav(parseHash().parts.join("/")); if (!first) route(); } }
+  // a share link opened before signing in: link this person to whoever shared it (once), and say what it gives them
+  const ref = store.get("ref", ""); if (ref && C.platform && !S.refTried) { S.refTried = true;
+    C.platform("referral_claim", { p_code: ref }).then(r => { store.set("ref", null);
+      if (r && r.ok) toast(L2(`Welcome! You have ${r.friend_pct}% off your first subscription.`, `أهلاً بك! لديك خصم ${r.friend_pct}% على اشتراكك الأول.`)); }).catch(() => {}); }
+  // someone subscribed through this person's link: tell them once
+  if (C.platform && !S.refNews) { S.refNews = true;
+    C.platform("referral_my").then(m => { S.referral = m; if (m && m.unseen) toast(L2(`${m.unseen} ${m.unseen > 1 ? "people" : "person"} subscribed through your link — your reward is waiting (Referral program).`,
+      `اشترك ${m.unseen} من خلال رابطك — مكافأتك بانتظارك (برنامج الإحالة).`)); }).catch(() => {}); }
   // the platform learns the company's industry (its starter sections follow it)
   const bt = S.boot && S.boot.settings && S.boot.settings.business_type;
   if (S.billing && S.billing.is_admin && bt && S.billing.industry !== bt && C.platform && S.indSent !== bt) { S.indSent = bt; C.platform("company_set_industry", { p_company: C.company(), p_industry: bt }).then(st => { if (st) { S.billing = { ...S.billing, ...st }; S.billingAt = 0; } }).catch(() => {}); }
@@ -13309,6 +13317,9 @@ PAGES["alloc-rules"] = async (view, parts, q) => {
 // (web app with a shared workspace; supabase/migrations/*_owner_console.sql). Everything here is decided in the database:
 // prices, who may see what, which staff may act. The page only shows it and passes on what people chose.
 const PLAT = (name, params) => window.BeyondCloud.platform(name, params);
+// what a referral discount on an order says
+const refLabel = d => d.source === "friend" ? L2(`Invited-friend discount: ${d.pct}% off your first subscription`, `خصم الدعوة: ${d.pct}% على اشتراكك الأول`)
+  : L2(`Referral reward: ${d.pct}% off (one reward per payment)`, `مكافأة الإحالة: خصم ${d.pct}% (مكافأة واحدة لكل دفعة)`);
 const platformOn = () => STATIC && cloudOn() && window.BeyondCloud && !!window.BeyondCloud.platform;
 const BILL_KIND = { instapay: ["InstaPay", "إنستاباي", "⚡"], wallet: ["Mobile wallet", "محفظة إلكترونية", "📱"], bank: ["Bank transfer", "تحويل بنكي", "🏦"],
   card: ["Card", "بطاقة", "💳"], cash: ["Cash", "نقداً", "💵"], other: ["Other", "أخرى", "•"] };
@@ -13379,7 +13390,9 @@ const copyBtn = v => `<button type="button" class="btn sm" data-a="copyval" data
 // places to send it. Each share gets its own small tag on the link, so chat apps show the current preview card.
 const PUBLIC_SITE = "https://beyonderp.org/";
 S.GLOBAL_H.shareapp = async () => {
-  const ar = S.lang === "ar", url = `${PUBLIC_SITE}${ar ? "ar.html" : ""}?s=${Date.now().toString(36)}`;
+  const ar = S.lang === "ar"; let code = S.referral && S.referral.on !== false && S.referral.code;
+  if (!code && platformOn()) try { S.referral = await PLAT("referral_my"); code = S.referral.on !== false && S.referral.code; } catch { /* plain link */ }
+  const url = `${PUBLIC_SITE}${ar ? "ar.html" : ""}?${code ? `ref=${code}&` : ""}s=${Date.now().toString(36)}`;
   const title = ar ? "BeyondERP · أدِر أعمالك، لا أوراقها" : "BeyondERP · Run the business, not the paperwork";
   const text = ar ? "الحسابات والمبيعات والمخزون والمشروعات والموارد البشرية والرواتب في نظام واحد. جرّب BeyondERP مجاناً:"
     : "Accounting, sales, inventory, projects, HR and payroll in one place. Try BeyondERP free:";
@@ -13393,6 +13406,40 @@ S.GLOBAL_H.shareapp = async () => {
     <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:14px">${go.map(([l, h]) => `<a class="btn" href="${esc(h)}" target="_blank" rel="noopener">${esc(l)}</a>`).join("")}</div>`, null, { readOnly: true });
 };
 S.GLOBAL_H.copyval = async el => { try { await navigator.clipboard.writeText(el.dataset.v); toast(L2("Copied.", "تم النسخ.")); } catch { uiPrompt("", el.dataset.v); } };
+
+// ------------------------------------------------------------ referral program: the person's own link, rules, progress
+// (supabase/migrations/*_referrals_upgrades.sql). Only what really happened counts: a copied link is not a referral.
+PAGES.referrals = async view => {
+  $("#ttl").textContent = L2("Referral program", "برنامج الإحالة");
+  if (!platformOn()) { view.innerHTML = `<div class="card"><div class="empty">${L2("The referral program is part of the online workspace.", "برنامج الإحالة جزء من مساحة العمل الإلكترونية.")}</div></div>`; return; }
+  const m = S.referral = await PLAT("referral_my"), ar = S.lang === "ar";
+  if (!m.on) { view.innerHTML = `<div class="card"><div class="empty">${L2("The referral program is paused at the moment.", "برنامج الإحالة متوقف حالياً.")}</div></div>`; return; }
+  const url = `${PUBLIC_SITE}${ar ? "ar.html" : ""}?ref=${m.code}`;
+  const ST = { joined: [L2("Signed up", "سجّل"), "warn"], paid: [L2("Subscribed: reward earned", "اشترك: حصلت على المكافأة"), "ok"] };
+  const RW = { available: [L2("Ready to use", "جاهزة للاستخدام"), "ok"], used: [L2("Used", "مستخدمة"), ""] };
+  const step = (n, h, p) => `<div class="ref-step"><b class="ref-n">${n}</b><div><b>${esc(h)}</b><div class="muted">${esc(p)}</div></div></div>`;
+  view.innerHTML = `<div class="card ref-hero"><div class="ref-gift">🎁</div><div style="flex:1;min-width:0">
+      <h2 style="margin:0 0 4px">${esc(L2(`Give ${m.friend_pct}%, get up to ${m.upgrade_pct}%`, `امنح ${m.friend_pct}% واحصل على ما يصل إلى ${m.upgrade_pct}%`))}</h2>
+      <p class="muted" style="margin:0">${esc(L2(`Friends you invite get ${m.friend_pct}% off their first subscription. When they subscribe, you get ${m.first_pct}% off your first subscription, or ${m.upgrade_pct}% off an upgrade.`,
+        `يحصل من تدعوهم على خصم ${m.friend_pct}% على اشتراكهم الأول. وعندما يشتركون تحصل أنت على خصم ${m.first_pct}% على اشتراكك الأول، أو ${m.upgrade_pct}% على ترقية.`))}</p>
+      <div class="row" style="gap:8px;margin-top:14px;align-items:center"><input class="in" readonly value="${esc(url)}" dir="ltr" style="flex:1;min-width:0;font-weight:600">${copyBtn(url)}
+        <button class="btn pri" data-a="shareapp">↗ ${esc(L2("Share", "مشاركة"))}</button></div></div></div>
+    ${m.invited && m.invited.discount_left ? `<div class="banner ok">${esc(L2(`You were invited by ${m.invited.by}: you have ${m.friend_pct}% off your first subscription.`, `دعاك ${m.invited.by}: لديك خصم ${m.friend_pct}% على اشتراكك الأول.`))} <a href="#/subscription">${esc(L2("Subscribe", "اشترك"))}</a></div>` : ""}
+    <div class="kpis">${kpiBox(L2("Signed up through your link", "سجّلوا من رابطك"), esc(String(m.joined)))}${kpiBox(L2("Subscribed", "اشتركوا"), esc(String(m.paid)), m.paid ? "pos" : "")}
+      ${kpiBox(L2("Rewards ready", "مكافآت جاهزة"), esc(String(m.available)), m.available ? "pos" : "", m.available ? L2("used on your next eligible payment", "تُستخدم في دفعتك المؤهلة التالية") : "")}${kpiBox(L2("Rewards used", "مكافآت مستخدمة"), esc(String(m.used)))}</div>
+    <div class="grid g2"><div class="card"><h2>${esc(L2("How it works", "كيف يعمل"))}</h2>
+      ${step(1, L2("Share your link", "شارك رابطك"), L2("Send it on WhatsApp, email or anywhere. It is yours alone.", "أرسله عبر واتساب أو البريد أو أي مكان. الرابط خاص بك."))}
+      ${step(2, L2("They sign up and subscribe", "يسجّلون ويشتركون"), L2(`New customers only. They get ${m.friend_pct}% off their first subscription.`, `للعملاء الجدد فقط. يحصلون على خصم ${m.friend_pct}% على اشتراكهم الأول.`))}
+      ${step(3, L2("You get your reward", "تحصل على مكافأتك"), L2(`As soon as their payment is confirmed: ${m.first_pct}% off your first subscription, or ${m.upgrade_pct}% off an upgrade (a bigger plan or more sections).`, `فور تأكيد دفعتهم: خصم ${m.first_pct}% على اشتراكك الأول، أو ${m.upgrade_pct}% على ترقية (باقة أكبر أو أقسام إضافية).`))}
+      <p class="muted" style="font-size:.85em;margin-bottom:0">${esc(L2("One reward per payment: rewards do not add up, and the bigger of your discounts applies. Rewards wait for your next first subscription or upgrade; renewals keep them for later.", "مكافأة واحدة لكل دفعة: لا تُجمع المكافآت، ويُطبق الخصم الأكبر. تنتظر المكافآت اشتراكك الأول أو ترقيتك التالية؛ ولا تُستخدم في التجديد."))}</p></div>
+      <div class="card"><h2>${esc(L2("Your rewards", "مكافآتك"))}</h2>${m.rewards.length ? `<div class="list">${m.rewards.map(r => `<div class="li"><span class="chip ${RW[r.status][1]}">${esc(RW[r.status][0])}</span>
+          <span style="flex:1">${esc(L2(`From ${r.from || "—"}`, `من ${r.from || "—"}`))}<div class="lines">${esc(L2("Earned", "تاريخ الاستحقاق"))} ${fd(String(r.earned_at).slice(0, 10))}${r.used_at ? ` · ${esc(L2("used", "استُخدمت"))} ${fd(String(r.used_at).slice(0, 10))} (${r.pct}%${r.order_ref ? " · " + esc(r.order_ref) : ""})` : ""}</div></span></div>`).join("")}</div>`
+        : `<div class="empty">${esc(L2("No rewards yet. They appear here as soon as someone you invited subscribes.", "لا مكافآت بعد. تظهر هنا فور اشتراك من دعوته."))}</div>`}
+        ${m.available ? `<a class="btn pri" href="#/subscription" style="margin-top:10px">${esc(L2("Use it: upgrade or subscribe", "استخدمها: ترقية أو اشتراك"))}</a>` : ""}</div></div>
+    <div class="card"><h2>${esc(L2("People you invited", "من دعوتهم"))}</h2>${m.people.length ? `<div class="tbl stack"><table><thead><tr><th>${esc(L2("Person", "الشخص"))}</th><th>${t("status")}</th><th>${esc(L2("Signed up", "التسجيل"))}</th><th>${esc(L2("Subscribed", "الاشتراك"))}</th></tr></thead><tbody>
+      ${m.people.map(p => `<tr><td dir="ltr">${esc(p.who)}</td><td><span class="chip ${ST[p.status][1]}">${esc(ST[p.status][0])}</span></td><td>${fd(String(p.joined_at).slice(0, 10))}</td><td>${p.paid_at ? fd(String(p.paid_at).slice(0, 10)) : "—"}</td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="empty">${esc(L2("Nobody yet. Share your link: people who sign up through it appear here, and you are notified when they subscribe.", "لا أحد بعد. شارك رابطك: من يسجّل من خلاله يظهر هنا، وتصلك رسالة عند اشتراكه."))}</div>`}</div>`;
+};
 
 // ------------------------------------------------------------ the customer's subscription (one or several companies)
 PAGES.subscription = async (view, parts, q) => {
@@ -13452,7 +13499,8 @@ PAGES.subscription = async (view, parts, q) => {
       ${["open", "submitted", "rejected"].includes(o.status) ? `<button class="btn sm" data-a="subcancelorder" data-id="${o.id}">${L2("Cancel order", "إلغاء الطلب")}</button>` : ""}</div>`;
     const summary = `<div class="tbl"><table><tbody>${(o.lines || []).map(l => `<tr><td>${esc(l.name)}${l.extra_users ? ` <span class="muted">+${l.extra_users} ${L2("users", "مستخدمين")}</span>` : ""}${addonLine(l).length ? `<div class="muted" style="font-size:.82em">+ ${esc(addonLine(l).join(" · "))}</div>` : ""}</td>
         <td class="num">${l.pct !== 100 ? `<span class="muted">${money(l.base)} × ${l.pct}%</span> ` : ""}${+l.discount ? `<span class="chip ok">−${l.discount}%</span> ` : ""}${l.list_amount != null && +l.list_amount !== +l.amount ? `<s class="muted">${money(l.list_amount)}</s> ` : ""}${money(l.amount)}</td></tr>`).join("")}
-      <tr><th>${L2("Total", "الإجمالي")} · ${esc((plans.find(p => p.code === o.plan) || {}).name || o.plan)} · ${o.months === 12 ? L2("1 year", "سنة") : L2("1 month", "شهر")}</th><th class="num">${money(o.amount)} ${esc(o.currency)}</th></tr></tbody></table></div>`;
+      <tr><th>${L2("Total", "الإجمالي")} · ${o.kind === "upgrade" ? L2("Upgrade", "ترقية") : `${esc((plans.find(p => p.code === o.plan) || {}).name || o.plan)} · ${o.months === 12 ? L2("1 year", "سنة") : L2("1 month", "شهر")}`}</th><th class="num">${money(o.amount)} ${esc(o.currency)}</th></tr></tbody></table></div>
+      ${o.discount && o.discount.pct ? `<p class="muted" style="margin:6px 0 0">🎁 ${esc(refLabel(o.discount))}</p>` : ""}`;
     const pay = manual ? `<div class="pay-box"><div class="pay-h">${(BILL_KIND[m.kind] || BILL_KIND.other)[2]} <b>${esc(ar && m.name_ar ? m.name_ar : m.name || o.method_name)}</b></div>
         ${m.details ? `<div class="pay-v"><code dir="ltr">${esc(m.details)}</code> ${copyBtn(m.details)}</div>` : ""}
         <div class="pay-v">${L2("Amount", "المبلغ")}: <b>${money(o.amount)} ${esc(o.currency)}</b> ${copyBtn(String(o.amount))} · ${L2("Reference", "المرجع")}: <b dir="ltr">${esc(o.ref)}</b> ${copyBtn(o.ref)}</div>
@@ -13472,13 +13520,14 @@ PAGES.subscription = async (view, parts, q) => {
     return `<div class="card">${head}${summary}${pay}${action}</div>`;
   };
   const draw = async () => {
+    if (st.mode === "upgrade" && canUpgrade()) return drawUpgrade();
     const plan = plans.find(p => p.code === st.plan) || plans[0] || {};
     const per = (+plan.price || 0) * (st.months === 12 ? (+pub.yearly_months || 10) : 1);
     view.innerHTML = `${q.paid ? `<div class="banner ok">${L2("Payment is being confirmed. This page updates within a minute.", "يجري تأكيد الدفع. تُحدَّث هذه الصفحة خلال دقيقة.")}</div>` : ""}
     <div class="kpis">${kpiBox(L2("This company", "هذه الشركة"), billChip(b.status))}${kpiBox(b.status === "trial" ? L2("Trial ends", "نهاية الفترة التجريبية") : L2("Paid until", "مدفوع حتى"), billDate(b.status === "trial" ? b.trial_ends : b.paid_until))}
       ${kpiBox(L2("Plan", "الباقة"), esc(b.plan_name || "—"))}${kpiBox(L2("Users", "المستخدمون"), `${b.users}${b.users_allowed ? " / " + b.users_allowed : ""}`, b.users_allowed && b.users > b.users_allowed ? "neg" : "")}</div>
     ${b.cancel_note ? `<div class="banner warn">${L2("Renewal cancelled. Access continues until the end of the paid period; a new payment reactivates it.", "تم إلغاء التجديد. يستمر الوصول حتى نهاية الفترة المدفوعة، وأي دفعة جديدة تعيد التفعيل.")}</div>` : ""}
-    ${orderCard(open)}
+    ${orderCard(open)}${modeSwitch()}
     ${!b.is_admin ? `<div class="card"><p>${L2("Only company administrators can change the subscription.", "يقتصر تغيير الاشتراك على مسؤولي الشركة.")}</p></div>` : open && open.status !== "rejected" ? "" : `
     ${pageT("title") || pageT("intro") ? `<div class="card">${pageT("title") ? `<h2>${esc(pageT("title"))}</h2>` : ""}${pageT("intro") ? `<p style="white-space:pre-wrap;margin:0">${esc(pageT("intro"))}</p>` : ""}</div>` : ""}
     <div class="card"><h2>${L2("1. Companies", "١. الشركات")}</h2>
@@ -13541,6 +13590,7 @@ PAGES.subscription = async (view, parts, q) => {
       box.innerHTML = `<h2>${L2("3. Total and payment", "٣. الإجمالي والدفع")}</h2><div class="tbl"><table><tbody>${qt.lines.map(l => `<tr><td>${esc(l.name)}${l.extra_users ? ` <span class="muted">+${l.extra_users} ${L2("users", "مستخدمين")}</span>` : ""}${addonLine(l).length ? `<div class="muted" style="font-size:.82em">+ ${esc(addonLine(l).join(" · "))} (${money(l.addons)})</div>` : ""}</td>
           <td class="num">${l.pct !== 100 ? `<span class="muted">${money(l.base)} × ${l.pct}%</span> ` : ""}${+l.discount ? `<span class="chip ok">−${l.discount}%</span> ` : ""}${l.list_amount != null && +l.list_amount !== +l.amount ? `<s class="muted">${money(l.list_amount)}</s> ` : ""}${money(l.amount)}</td></tr>`).join("")}
         <tr><th>${L2("Total", "الإجمالي")} · ${st.months === 12 ? L2("1 year", "سنة") : L2("1 month", "شهر")}</th><th class="num">${money(qt.amount)} ${esc(qt.currency)}</th></tr></tbody></table></div>
+        ${qt.referral ? `<div class="banner ok" style="margin-top:8px">🎁 ${esc(refLabel(qt.referral))}</div>` : ""}
         ${methods.length ? `<div class="paym">${methods.map((m, i) => `<label class="paym-o"><input type="radio" name="paymethod" value="${m.id}" ${i === 0 ? "checked" : ""}><span><b>${(BILL_KIND[m.kind] || BILL_KIND.other)[2]} ${esc(ar && m.name_ar ? m.name_ar : m.name)}</b>${kindName(m.kind) !== (ar && m.name_ar ? m.name_ar : m.name) ? `<small class="muted">${esc(kindName(m.kind))}</small>` : ""}</span></label>`).join("")}</div>
           <button class="btn pri" data-a="subopen">${L2("Continue", "متابعة")}</button>`
           : `<div class="banner warn">${L2("No payment method is set up yet — please contact us.", "لم تُضبط طريقة دفع بعد — يُرجى التواصل معنا.")}</div>`}
@@ -13548,6 +13598,59 @@ PAGES.subscription = async (view, parts, q) => {
         <p class="muted" style="font-size:.85em">${L2("Each payment extends access by one month or one year after the current period; nothing renews or charges by itself. A company whose period ends unpaid becomes read-only (viewing and export stay available) until it is paid.", "تمدد كل دفعة الوصول شهراً أو سنة بعد الفترة الحالية؛ لا يتجدد شيء ولا يُخصم تلقائياً. الشركة التي تنتهي فترتها دون دفع تصبح للعرض فقط (يبقى العرض والتصدير متاحين) حتى الدفع.")}</p>`;
     } catch (e) { if (box.isConnected) box.innerHTML = `<h2>${L2("3. Total and payment", "٣. الإجمالي والدفع")}</h2><div class="banner err">${esc(e.message)}</div>`; }
   };
+  // ---- upgrade: a company already paid up adds a bigger plan, sections, the assistant, support or users now, and pays
+  // only the difference for the days left in its paid period (the renewal then runs at the new price)
+  const activeCos = () => mine.filter(c => (statusOf(c.id).billing_status || statusOf(c.id).status) === "active");
+  function canUpgrade() { return b.is_admin && !(open && open.status !== "rejected") && activeCos().length > 0; }
+  function modeSwitch() { if (!canUpgrade()) return "";
+    return `<div class="seg" style="margin:4px 0 12px">${[["renew", L2("Subscribe or renew", "اشتراك أو تجديد")], ["upgrade", L2("Upgrade now", "ترقية الآن")]].map(([k, l]) =>
+      `<button class="btn ${(st.mode || "renew") === k ? "pri" : ""}" data-a="submode" data-k="${k}">${esc(l)}</button>`).join("")}</div>`; }
+  const up = id => { st.up = st.up || {}; if (!st.up[id]) { const s = statusOf(id), a = s.addons || {};
+    st.up[id] = { on: false, plan: s.plan, mods: [...(a.modules || [])], ai: !!a.ai, support: !!a.support, extra: s.extra_users || 0 }; } return st.up[id]; };
+  const upLines = () => activeCos().filter(c => up(c.id).on).map(c => { const u = up(c.id);
+    return { company_id: c.id, plan: u.plan, modules: u.mods, ai: u.ai, support: u.support, extra_users: u.extra }; });
+  async function drawUpgrade() {
+    const sold = Object.keys(pub.module_prices || {}), price = p => +(plans.find(x => x.code === p) || {}).price || 0;
+    view.innerHTML = `${orderCard(open)}${modeSwitch()}
+      <div class="card"><h2>${L2("1. What to add", "١. ما تريد إضافته")}</h2>
+        <p class="muted" style="margin-top:0">${L2("Choose a bigger plan, more sections, the assistant, support or users. It starts as soon as the payment is confirmed, and you pay only the difference for the days left in the current period.", "اختر باقة أكبر أو أقساماً إضافية أو المساعد أو الدعم أو مستخدمين. تبدأ فور تأكيد الدفع، وتدفع الفرق فقط عن الأيام المتبقية من الفترة الحالية.")}</p>
+        ${activeCos().map(c => { const s = statusOf(c.id), u = up(c.id), pl = plans.find(x => x.code === u.plan) || {}, inc = planMods(pl), owned = (s.addons || {}).modules || [];
+          return `<div class="up-co ${u.on ? "on" : ""}"><label class="chk" style="font-weight:700"><input type="checkbox" data-change="upsel" data-id="${c.id}" ${u.on ? "checked" : ""}> ${esc(c.name)}</label>
+            <span class="muted" style="font-size:.85em">${esc(s.plan_name || "")} · ${L2("paid until", "مدفوع حتى")} ${billDate(s.paid_until)}</span>
+            ${u.on ? `<div class="grid g3" style="margin-top:8px"><label class="f">${L2("Plan", "الباقة")}<select data-change="upplan" data-id="${c.id}">${plans.filter(p => !p.contact && price(p.code) >= price(s.plan)).map(p =>
+                `<option value="${esc(p.code)}" ${p.code === u.plan ? "selected" : ""}>${esc(ar && p.name_ar ? p.name_ar : p.name)} — ${money(p.price)}</option>`).join("")}</select></label>
+              <div class="f">${L2("Extra users", "مستخدمون إضافيون")}<div><button class="btn sm" data-a="upextra" data-id="${c.id}" data-d="-1" ${u.extra <= (s.extra_users || 0) ? "disabled" : ""}>−</button> <b>${u.extra}</b> <button class="btn sm" data-a="upextra" data-id="${c.id}" data-d="1">+</button> <span class="muted" style="font-size:.8em">${money(pub.extra_user)} / ${L2("month", "شهر")}</span></div></div></div>
+              <div class="row" style="flex-wrap:wrap;gap:4px 14px;margin-top:6px">${sold.filter(k => !(inc && inc.includes(k)) && inc !== null).map(k =>
+                `<label class="chk addon"><input type="checkbox" data-change="upadd" data-id="${c.id}" data-m="${esc(k)}" ${u.mods.includes(k) ? "checked" : ""} ${owned.includes(k) ? "disabled" : ""}> ${esc(secL(k))} <small class="muted">${money(pub.module_prices[k])}</small></label>`).join("")}
+                ${pub.ai_mode === "plan" && pub.ai_addon && !pl.ai ? `<label class="chk addon"><input type="checkbox" data-change="upadd" data-id="${c.id}" data-k="ai" ${u.ai ? "checked" : ""} ${(s.addons || {}).ai ? "disabled" : ""}> ✦ ${L2("AI assistant", "المساعد الذكي")} <small class="muted">${money(pub.ai_price)}</small></label>` : ""}
+                ${pub.support_mode === "plan" && pub.support_addon && pl.support === false ? `<label class="chk addon"><input type="checkbox" data-change="upadd" data-id="${c.id}" data-k="support" ${u.support ? "checked" : ""} ${(s.addons || {}).support ? "disabled" : ""}> ? ${L2("Online support", "الدعم الإلكتروني")} <small class="muted">${money(pub.support_price)}</small></label>` : ""}</div>` : ""}</div>`; }).join("")}</div>
+      <div class="card" id="upbasket"><h2>${L2("2. Your basket", "٢. سلتك")}</h2><div class="muted">${upLines().length ? t("loading") : L2("Tick a company and choose what to add.", "حدد شركة واختر ما تريد إضافته.")}</div></div>`;
+    const box = $("#upbasket", view); if (!upLines().length) return;
+    try {
+      const qt = await PLAT("billing_upgrade_quote", { p_lines: upLines() }); if (!box.isConnected) return;
+      const what = l => { const s = statusOf(l.company_id), a = s.addons || {}, out = [];
+        if (l.plan !== s.plan) out.push(`${(plans.find(p => p.code === s.plan) || {}).name || s.plan} → ${l.plan_name}`);
+        (l.modules || []).filter(m => !(a.modules || []).includes(m)).forEach(m => out.push("+ " + secL(m)));
+        if (l.ai && !a.ai) out.push("+ " + L2("AI assistant", "المساعد الذكي")); if (l.support && !a.support) out.push("+ " + L2("Online support", "الدعم الإلكتروني"));
+        if (l.extra_users > (s.extra_users || 0)) out.push(`+${l.extra_users - (s.extra_users || 0)} ${L2("users", "مستخدمين")}`); return out; };
+      box.innerHTML = `<h2>${L2("2. Your basket", "٢. سلتك")}</h2><div class="tbl"><table><tbody>${qt.lines.map(l => `<tr><td><b>${esc(l.name)}</b><div class="muted" style="font-size:.85em">${esc(what(l).join(" · "))}</div>
+          <div class="muted" style="font-size:.8em">${esc(L2(`${money(l.monthly_now)} → ${money(l.monthly_new)} a month · ${l.days} days left (until ${String(l.until).slice(0, 10)})${l.yearly ? " · yearly rate" : ""}`, `${money(l.monthly_now)} ← ${money(l.monthly_new)} شهرياً · ${l.days} يوماً متبقية (حتى ${String(l.until).slice(0, 10)})${l.yearly ? " · بالسعر السنوي" : ""}`))}</div></td>
+          <td class="num">${+l.discount ? `<span class="chip ok">−${l.discount}%</span> <s class="muted">${money(l.list_amount != null ? l.list_amount : l.pre)}</s> ` : ""}${money(l.amount)}</td></tr>`).join("")}
+        <tr><th>${L2("To pay now", "المطلوب الآن")}</th><th class="num">${money(qt.amount)} ${esc(qt.currency)}</th></tr></tbody></table></div>
+        ${qt.referral ? `<div class="banner ok" style="margin-top:8px">🎁 ${esc(refLabel(qt.referral))}</div>` : ""}
+        ${methods.length ? `<div class="paym">${methods.map((m, i) => `<label class="paym-o"><input type="radio" name="paymethod" value="${m.id}" ${i === 0 ? "checked" : ""}><span><b>${(BILL_KIND[m.kind] || BILL_KIND.other)[2]} ${esc(ar && m.name_ar ? m.name_ar : m.name)}</b></span></label>`).join("")}</div>
+          <button class="btn pri" data-a="upopen">${L2("Continue", "متابعة")}</button>` : `<div class="banner warn">${L2("No payment method is set up yet — please contact us.", "لم تُضبط طريقة دفع بعد — يُرجى التواصل معنا.")}</div>`}
+        <p class="muted" style="font-size:.85em">${L2("Your paid period stays the same; from the next renewal you pay the new monthly price.", "تبقى فترتك المدفوعة كما هي؛ ومن التجديد التالي تدفع السعر الشهري الجديد.")}</p>`;
+    } catch (e) { if (box.isConnected) box.innerHTML = `<h2>${L2("2. Your basket", "٢. سلتك")}</h2><div class="banner err">${esc(e.message)}</div>`; }
+  }
+  Object.assign(S.H, {
+    submode: el => { st.mode = el.dataset.k; draw(); },
+    upsel: el => { up(el.dataset.id).on = el.checked; draw(); },
+    upplan: el => { up(el.dataset.id).plan = el.value; draw(); },
+    upextra: el => { const u = up(el.dataset.id); u.extra = Math.max(statusOf(el.dataset.id).extra_users || 0, u.extra + (+el.dataset.d)); draw(); },
+    upadd: el => { const u = up(el.dataset.id); if (el.dataset.m) u.mods = el.checked ? [...new Set([...u.mods, el.dataset.m])] : u.mods.filter(m => m !== el.dataset.m); else u[el.dataset.k] = el.checked; draw(); },
+    upopen: async el => { const m = $("[name=paymethod]:checked", view); if (!m) return toast(L2("Choose how to pay.", "اختر طريقة الدفع."), true);
+      try { el.disabled = true; await PLAT("billing_upgrade_open", { p_lines: upLines(), p_method: +m.value }); st.mode = "renew"; route(); } catch (e) { el.disabled = false; fail(e); } } });
   await draw();
   if (q.paid && b.status !== "active") setTimeout(() => { if (location.hash.startsWith("#/subscription")) route(); }, 8000);
 };
